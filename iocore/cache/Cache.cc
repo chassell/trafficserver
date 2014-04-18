@@ -2148,7 +2148,7 @@ CacheProcessor::mark_storage_offline( CacheDisk* d ///< Target disk
     Warning("All storage devices offline, cache disabled");
     CacheProcessor::cache_ready = 0;
   } else { // check cache types specifically
-    if (theCache && !theCache->hosttable->gen_host_rec.vol_hash_table) {
+    if (theCache && !theCache->getHosttable(__func__)->gen_host_rec.vol_hash_table) {
       unsigned int caches_ready = 0;
       caches_ready = caches_ready | (1 << CACHE_FRAG_TYPE_HTTP);
       caches_ready = caches_ready | (1 << CACHE_FRAG_TYPE_NONE);
@@ -2156,7 +2156,7 @@ CacheProcessor::mark_storage_offline( CacheDisk* d ///< Target disk
       CacheProcessor::cache_ready &= caches_ready;
       Warning("all volumes for http cache are corrupt, http cache disabled");
     }
-    if (theStreamCache && !theStreamCache->hosttable->gen_host_rec.vol_hash_table) {
+    if (theStreamCache && !theStreamCache->getHosttable(__func__)->gen_host_rec.vol_hash_table) {
       unsigned int caches_ready = 0;
       caches_ready = caches_ready | (1 << CACHE_FRAG_TYPE_RTSP);
       caches_ready = ~caches_ready;
@@ -2244,10 +2244,10 @@ Cache::open_done() {
     return 0;
   }
 
-  hosttable = NEW(new CacheHostTable(this, scheme));
-  hosttable->register_config_callback(&hosttable);
+  _hosttable = NEW(new CacheHostTable(this, scheme));
+  _hosttable->register_config_callback(&_hosttable);
 
-  if (hosttable->gen_host_rec.num_cachevols == 0)
+  if (_hosttable->gen_host_rec.num_cachevols == 0)
     ready = CACHE_INIT_FAILED;
   else
     ready = CACHE_INITIALIZED;
@@ -3215,9 +3215,10 @@ create_volume(int volume_number, off_t size_in_blocks, int scheme, CacheVol *cp)
 void
 rebuild_host_table(Cache *cache)
 {
-  build_vol_hash_table(&cache->hosttable->gen_host_rec);
-  if (cache->hosttable->m_numEntries != 0) {
-    CacheHostMatcher *hm = cache->hosttable->getHostMatcher();
+  CacheHostTable* hosttable = cache->getHosttable(__func__);
+  build_vol_hash_table(&hosttable->gen_host_rec);
+  if (hosttable->m_numEntries != 0) {
+    CacheHostMatcher *hm = hosttable->getHostMatcher();
     CacheHostRecord *h_rec = hm->getDataArray();
     int h_rec_len = hm->getNumElements();
     int i;
@@ -3232,8 +3233,9 @@ Vol *
 Cache::key_to_vol(CacheKey *key, char *hostname, int host_len)
 {
   uint32_t h = (key->word(2) >> DIR_TAG_WIDTH) % VOL_HASH_TABLE_SIZE;
+  CacheHostTable* hosttable = getHosttable(__func__);
   unsigned short *hash_table = hosttable->gen_host_rec.vol_hash_table;
-  CacheHostRecord *host_rec = &hosttable->gen_host_rec;
+  CacheHostRecord *host_rec = &(hosttable->gen_host_rec);
 
   if (hosttable->m_numEntries > 0 && host_len) {
     CacheHostResult res;
@@ -3241,21 +3243,13 @@ Cache::key_to_vol(CacheKey *key, char *hostname, int host_len)
     if (res.record) {
       unsigned short *host_hash_table = res.record->vol_hash_table;
       if (host_hash_table) {
-        if (is_debug_tag_set("cache_hosting")) {
-          char format_str[50];
-          snprintf(format_str, sizeof(format_str), "Volume: %%xd for host: %%.%ds", host_len);
-          Debug("cache_hosting", format_str, res.record, hostname);
-        }
+        Debug("cache_hosting", "Volume: %p for host: %.*s", res.record, host_len, hostname);
         return res.record->vols[host_hash_table[h]];
       }
     }
   }
   if (hash_table) {
-    if (is_debug_tag_set("cache_hosting")) {
-      char format_str[50];
-      snprintf(format_str, sizeof(format_str), "Generic volume: %%xd for host: %%.%ds", host_len);
-      Debug("cache_hosting", format_str, host_rec, hostname);
-    }
+    Debug("cache_hosting", "Generic volume: %p for host: %.*s", host_rec, host_len, hostname);
     return host_rec->vols[hash_table[h]];
   } else
     return host_rec->vols[0];

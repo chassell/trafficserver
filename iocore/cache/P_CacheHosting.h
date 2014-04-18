@@ -147,7 +147,8 @@ struct CacheHostTableConfig: public Continuation
     (void) e;
     (void) event;
     CacheHostTable *t = NEW(new CacheHostTable((*ppt)->cache, (*ppt)->type));
-    CacheHostTable *old = (CacheHostTable *) ink_atomic_swap(&t, *ppt);
+    CacheHostTable *old = (CacheHostTable *) ink_atomic_swap(ppt, t);
+    Debug("cache_hosting", "swapped: old=%p, new=%p", old, t);
     new_Deleter(old, CACHE_MEM_FREE_TIMEOUT);
     return EVENT_DONE;
   }
