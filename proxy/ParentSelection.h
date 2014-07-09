@@ -200,6 +200,7 @@ public:
   bool DefaultInit(char *val);
   void UpdateMatch(ParentResult *result, RequestData *rdata);
   void FindParent(bool firstCall, ParentResult *result, RequestData *rdata, ParentConfigParams *config);
+  char* getHashPath(RequestData * rdata, int64_t *path_len);
   void Print();
   pRecord *parents;
   int num_parents;
@@ -211,6 +212,7 @@ public:
   const char *ProcessParents(char *val);
   void buildConsistentHash(void);
   ParentRR_t round_robin;
+  bool ignore_query;
   volatile uint32_t rr_next;
   bool go_direct;
   ATSConsistentHash *chash;

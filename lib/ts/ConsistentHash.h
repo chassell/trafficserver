@@ -52,8 +52,8 @@ struct ATSConsistentHash
 {
     ATSConsistentHash(int r = 1024, ATSHash64 *h = NULL);
     void insert(ATSConsistentHashNode *node, float weight = 1.0, ATSHash64 *h = NULL);
-    ATSConsistentHashNode *lookup(const char *url = NULL, ATSConsistentHashIter *i = NULL, bool *w = NULL, ATSHash64 *h = NULL);
-    ATSConsistentHashNode *lookup_available(const char *url = NULL, ATSConsistentHashIter *i = NULL, bool *w = NULL, ATSHash64 *h = NULL);
+    ATSConsistentHashNode *lookup(const char *url = NULL, int64_t url_len=0, ATSConsistentHashIter *i = NULL, bool *w = NULL, ATSHash64 *h = NULL);
+    ATSConsistentHashNode *lookup_available(const char *url = NULL, int64_t url_len=0, ATSConsistentHashIter *i = NULL, bool *w = NULL, ATSHash64 *h = NULL);
     ~ATSConsistentHash();
 
 private:
