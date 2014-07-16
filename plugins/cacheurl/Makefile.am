@@ -16,6 +16,15 @@
 
 include $(top_srcdir)/build/plugins.mk
 
+if BUILD_HAVE_BOOST
+
+AM_CPPFLAGS += $(BOOST_CPPFLAGS)
+
 pkglib_LTLIBRARIES = cacheurl.la
-cacheurl_la_SOURCES = cacheurl.cc
-cacheurl_la_LDFLAGS = $(TS_PLUGIN_LDFLAGS)
+cacheurl_la_SOURCES = \
+  pluginconfig.cc \
+  cacheurl.cc
+
+cacheurl_la_LDFLAGS = $(BOOST_LDFLAGS) $(TS_PLUGIN_LDFLAGS)
+
+endif
