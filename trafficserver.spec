@@ -1,19 +1,14 @@
 %global install_prefix "/opt"
 Name:		trafficserver
-Version:	4.2.1
-Release:	6%{?dist}
+Version:	%{tag}
+Release:	%{distance}_%{commit}
 Summary:	Apache Traffic Server
-Packager:	Jeffrey_Elsloo at Cable dot Comcast dot com
-Vendor:		Comcast NETO
+#Packager:	Jeffrey_Elsloo at Cable dot Comcast dot com
+Vendor:		IPCDN
 Group:		Applications/Communications
 License:	Apache License, Version 2.0
 URL:		https://gitlab.sys.comcast.net/cdneng/apache/tree/master/trafficserver
 Source0:	%{name}-%{version}.tar.bz2
-Patch0:		ats-4.0.1-remove-cache-url.patch
-Patch1:		ats-4.2.1-consistent-parent.patch
-Patch2:		ats-4.0.2-parent-selection-on-top-of-consistent-parent.patch
-Patch3:		4.2.1-fixup-ram-cache.patch
-Patch4:		ats-4.2.1-synthetic-fix.patch
 BuildRoot:	%(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 Requires:	tcl, tcl-devel, boost
 BuildRequires:	autoconf, automake, libtool, gcc-c++, glibc-devel, openssl-devel, expat-devel, pcre, libcap-devel, pcre-devel, perl-ExtUtils-MakeMaker, boost-devel
@@ -22,18 +17,16 @@ BuildRequires:	autoconf, automake, libtool, gcc-c++, glibc-devel, openssl-devel,
 Apache Traffic Server with Comcast modifications and environment specific modifications
 
 %prep
-%setup -q -n %{name}-%{version}
-id ats &>/dev/null || /usr/sbin/useradd -u 176 -r ats -s /sbin/nologin -d /
-
-%patch0 -p1
-%patch1 -p1
-%patch2 -p1
-%patch3 -p1
-%patch4 -p1
+rm -rf %{name}-%{version}-%{release}
+git clone git@gitlab.sys.comcast.net:cdneng/trafficserver.git %{name}-%{version}-%{release}
+%setup -D -n %{name}-%{version}-%{release} -T
+git checkout build-master
+git checkout %{commit} .
+autoreconf -vfi
+#id ats &>/dev/null || /usr/sbin/useradd -u 176 -r ats -s /sbin/nologin -d /
 
 %build
-autoreconf -vi
-./configure --prefix=%{install_prefix}/%{name} --with-user=ats --with-group=ats --disable-hwloc
+./configure --prefix=%{install_prefix}/%{name} --with-user=ats --with-group=ats --disable-hwloc --with-build-number=%{release}
 make %{?_smp_mflags}
 
 %install
