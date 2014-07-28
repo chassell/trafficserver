@@ -25,7 +25,7 @@ autoreconf -vfi
 #id ats &>/dev/null || /usr/sbin/useradd -u 176 -r ats -s /sbin/nologin -d /
 
 %build
-./configure --prefix=%{install_prefix}/%{name} --with-user=ats --with-group=ats --disable-hwloc --with-build-number=%{release}
+./configure --prefix=%{install_prefix}/%{name} --with-user=ats --with-group=ats --disable-hwloc --with-build-number=%{release} --enable-experimental-plugins
 make %{?_smp_mflags}
 
 %install
