@@ -1,7 +1,7 @@
 %global install_prefix "/opt"
 Name:		trafficserver
 Version:	%{tag}
-Release:	%{distance}_%{commit}
+Release:	%{distance}_%{commit}%{?dist}
 Summary:	Apache Traffic Server
 #Packager:	Jeffrey_Elsloo at Cable dot Comcast dot com
 Vendor:		IPCDN
