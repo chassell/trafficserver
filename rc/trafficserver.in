@@ -235,7 +235,7 @@ do_stop()
   #   1 if daemon was already stopped
   #   2 if daemon could not be stopped
   #   other if a failure occurred
-    start-stop-daemon --stop --quiet --retry=QUIT/30/KILL/5 --pidfile $TC_PIDFILE --name $TC_NAME
+    start-stop-daemon --stop --quiet --retry=TERM/30/KILL/5 --pidfile $TC_PIDFILE --name $TC_NAME
     RETVAL="$?"
     test "$RETVAL" != 0 && return $RETVAL
   # Wait for children to finish too if this is a daemon that forks
@@ -244,14 +244,14 @@ do_stop()
   # that waits for the process to drop all resources that could be
   # needed by services started subsequently.  A last resort is to
   # sleep for some time.
-    start-stop-daemon --stop --quiet --oknodo --retry=0/30/KILL/5 --exec $TC_DAEMON
+    start-stop-daemon --stop --quiet --oknodo --retry=TERM/30/KILL/5 --exec $TC_DAEMON
     RETVAL="$?"
     test "$RETVAL" != 0 && return $RETVAL
   # Need to stop the TM and TS also
-    start-stop-daemon --stop --quiet --oknodo --retry=QUIT/30/KILL/5 --pidfile $TM_PIDFILE --name $TM_NAME
+    start-stop-daemon --stop --quiet --oknodo --retry=TERM/30/KILL/5 --pidfile $TM_PIDFILE --name $TM_NAME
     RETVAL="$?"
     test "$RETVAL" != 0 && return $RETVAL
-    start-stop-daemon --stop --quiet --oknodo --retry=QUIT/30/KILL/5 --pidfile $TS_PIDFILE --name $TS_NAME
+    start-stop-daemon --stop --quiet --oknodo --retry=TERM/30/KILL/5 --pidfile $TS_PIDFILE --name $TS_NAME
     RETVAL="$?"
     test "$RETVAL" != 0 && return $RETVAL
   # Many daemons don't delete their pidfiles when they exit.
