@@ -8,7 +8,6 @@ Vendor:		IPCDN
 Group:		Applications/Communications
 License:	Apache License, Version 2.0
 URL:		https://gitlab.sys.comcast.net/cdneng/apache/tree/master/trafficserver
-Source0:	%{name}-%{version}.tar.bz2
 BuildRoot:	%(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 Requires:	tcl, tcl-devel, boost
 BuildRequires:	autoconf, automake, libtool, gcc-c++, glibc-devel, openssl-devel, expat-devel, pcre, libcap-devel, pcre-devel, perl-ExtUtils-MakeMaker, boost-devel
@@ -17,9 +16,9 @@ BuildRequires:	autoconf, automake, libtool, gcc-c++, glibc-devel, openssl-devel,
 Apache Traffic Server with Comcast modifications and environment specific modifications
 
 %prep
-rm -rf %{name}-%{version}-%{release}
-git clone git@gitlab.sys.comcast.net:cdneng/trafficserver.git %{name}-%{version}-%{release}
-%setup -D -n %{name}-%{version}-%{release} -T
+rm -rf %{name}
+git clone git@gitlab.sys.comcast.net:cdneng/trafficserver.git %{name}
+%setup -D -n %{name} -T
 git checkout build-master
 git checkout %{commit} .
 autoreconf -vfi
@@ -35,33 +34,22 @@ make DESTDIR=$RPM_BUILD_ROOT install
 # Totally ghetto, but ATS build scripts aren't RPM (DESTDIR=$RPM_BUILD_ROOT, etc) compliant
 # ..so why haven't we fixed them? VSSCDNENG-767
 
-# added to make this hack actually work if you need to build more than once.. -jse
-#if [ -d "$RPM_BUILD_ROOT/%{install_prefix}" ]; then
-#	rm -rf $RPM_BUILD_ROOT/%{install_prefix}
-#fi
-
-#mkdir -p $RPM_BUILD_ROOT/%{install_prefix}
-#mv %{install_prefix}/%{name} $RPM_BUILD_ROOT/%{install_prefix}/
-
 mkdir -p $RPM_BUILD_ROOT/etc/init.d
-cp $RPM_BUILD_DIR/%{name}-%{version}/rc/trafficserver $RPM_BUILD_ROOT/etc/init.d/
+cp $RPM_BUILD_DIR/%{name}/rc/trafficserver $RPM_BUILD_ROOT/etc/init.d/
 chmod 755 $RPM_BUILD_ROOT/etc/init.d/trafficserver
 
 %clean
 rm -rf $RPM_BUILD_ROOT
 
-%pre
-#echo "This is the pre install section"
-id ats &>/dev/null || /usr/sbin/useradd -u 176 -r ats -s /sbin/nologin -d /
-
 %post
-chkconfig --add trafficserver
+id ats &>/dev/null || /usr/sbin/useradd -u 176 -r ats -s /sbin/nologin -d /
+chkconfig --add %{name}
 
 %preun
-if [ -e /opt/trafficserver/var/trafficserver/server.lock ] || [ -e /opt/trafficserver/var/trafficserver/cop.lock ] || [ -e /opt/trafficserver/var/trafficserver/manager.lock ]
-then
-  echo "trafficserver still running or lock files exit in /opt/trafficserver/var/trafficserver/. Please stop before uninstalling."
-  exit 1
+# if 0 uninstall, if 1 upgrade
+if [ "$1" = "0" ]; then
+	/etc/init.d/%{name} stop
+	chkconfig --del %{name}
 fi
 
 %postun
@@ -70,7 +58,6 @@ fi
 # if 0 uninstall, if 1 upgrade
 if [ "$1" = "0" ]; then
 	id ats &>/dev/null && /usr/sbin/userdel ats
-	echo "Successfully uninstalled trafficserver..."
 fi
 
 %files
