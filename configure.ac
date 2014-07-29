@@ -1960,6 +1960,7 @@ AC_CONFIG_FILES([
   mgmt/utils/Makefile
   mgmt/web2/Makefile
   plugins/Makefile
+  plugins/cacheurl/Makefile
   plugins/conf_remap/Makefile
   plugins/experimental/Makefile
   plugins/experimental/authproxy/Makefile
