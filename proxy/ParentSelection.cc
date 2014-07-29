@@ -566,14 +566,12 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
         }
         break;
       case P_HASH_URI:
-        url = rdata->get_string();
-        path = strstr(url + 7, "/");
+        path = getHashPath(rdata, &path_len);
         if (path) {
             crc = crc32(0, Z_NULL, 0);
-            crc = crc32(crc, (unsigned char *)path, strlen(path));
+            crc = crc32(crc, (unsigned char *)path, path_len);
             cur_index = crc % num_parents;
         } else {
-            Error("Could not find path in URL: %s",url);
             cur_index = ink_atomic_increment((int32_t *) & rr_next, 1);
             cur_index = cur_index % num_parents;
         }
