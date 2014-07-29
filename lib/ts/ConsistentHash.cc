@@ -65,7 +65,7 @@ ATSConsistentHash::insert(ATSConsistentHashNode *node, float weight, ATSHash64 *
 }
 
 ATSConsistentHashNode*
-ATSConsistentHash::lookup(const char *url, int64_t url_len, ATSConsistentHashIter *i, bool *w, ATSHash64 *h) {
+ATSConsistentHash::lookup(const char *url, size_t url_len, ATSConsistentHashIter *i, bool *w, ATSHash64 *h) {
     uint64_t url_hash;
     ATSConsistentHashIter NodeMapIterUp, *iter;
     ATSHash64 *thash;
@@ -124,7 +124,7 @@ ATSConsistentHash::lookup(const char *url, int64_t url_len, ATSConsistentHashIte
 }
 
 ATSConsistentHashNode*
-ATSConsistentHash::lookup_available(const char *url, int64_t url_len, ATSConsistentHashIter *i, bool *w, ATSHash64 *h) {
+ATSConsistentHash::lookup_available(const char *url, size_t url_len, ATSConsistentHashIter *i, bool *w, ATSHash64 *h) {
     uint64_t url_hash;
     ATSConsistentHashIter NodeMapIterUp, *iter;
     ATSHash64 *thash;
@@ -133,7 +133,7 @@ ATSConsistentHash::lookup_available(const char *url, int64_t url_len, ATSConsist
     if(url_len <= 0) {
         url_len = strlen(url);
     }
-   if (h) {
+    if (h) {
         thash = h;
     } else if (hash) {
         thash = hash;

@@ -479,21 +479,24 @@ ParentConfigParams::nextParent(HttpRequestData * rdata, ParentResult * result)
 //   End API functions
 //
 
-char*
-ParentRecord::getHashPath(RequestData * rdata, int64_t *path_len)
+char *
+ParentRecord::getHashPath(RequestData *rdata, size_t *path_len)
 {
   char *url, *path = NULL;
+
   url = rdata->get_string();
   path = strstr(url + 7, "/");
-  if(!path) {
-      Error("Could not find path in URL: %s",url);
-      return 0;
+  if (!path) {
+    Error("Could not find path in URL: %s", url);
+    *path_len = 0;
+    return NULL;
   }
-  if(ignore_query) {
-      char* qstart = strstr(path, "?");
-      if(qstart) {
-          *path_len = qstart-path;
-      }
+  *path_len = strlen(path);
+  if (ignore_query) {
+    char *qstart = strstr(path, "?");
+    if (qstart) {
+      *path_len = qstart - path;
+    }
   }
   return path;
 }
@@ -507,7 +510,7 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
   bool parentRetry = false;
   bool bypass_ok = (go_direct == true && config->DNS_ParentOnly == 0);
   char *path = NULL;
-  int64_t path_len = 0;
+  size_t path_len = 0;
 
   ATSHash64Sip24 hash;
   pRecord *prtmp = NULL;
@@ -915,7 +918,7 @@ ParentRecord::Init(matcher_line * line_info)
         go_direct = true;
       }
       used = true;
-    } else if(strcasecmp(label, "qstring") == 0) {
+    } else if (strcasecmp(label, "qstring") == 0) {
         // qstring=ignore | consider
         if (strcasecmp(val, "ignore") == 0) {
             this->ignore_query = true;
