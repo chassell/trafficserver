@@ -29,6 +29,8 @@
  */
 
 #include <sys/stat.h>
+#include <time.h>
+#include <stdlib.h>
 
 #include "ink_defs.h"
 #include "ts/ts.h"

@@ -33,8 +33,7 @@ public:
   PluginConfig() {};
   virtual ~PluginConfig() {};
 
-  virtual PluginConfig* load(TSFile fh) {
-    printf("PluginConfig: this should not happen\n");
+  virtual PluginConfig* load(TSFile) {
     return 0;
   }
 
