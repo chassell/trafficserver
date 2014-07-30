@@ -14,27 +14,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-if BUILD_EXPERIMENTAL_PLUGINS
+include $(top_srcdir)/build/plugins.mk
 
-SUBDIRS = \
- authproxy \
- balancer \
- escalate \
- buffer_upload \
- channel_stats \
- custom_redirect \
- esi \
- geoip_acl \
- healthchecks \
- lua \
- hipes \
- metalink \
- remap_stats \
- regex_revalidate \
- rfc5861 \
- spdy \
- tcp_info \
- ts_lua \
- xdebug
-
-endif
+pkglib_LTLIBRARIES = regex_revalidate.la
+regex_revalidate_la_SOURCES = regex_revalidate.c
+regex_revalidate_la_LDFLAGS = $(TS_PLUGIN_LDFLAGS)
