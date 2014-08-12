@@ -56,6 +56,7 @@ The following operators are available::
   set-timeout-out <value>               [operator_flags]
   set-status-reason <value>             [operator_flags]
   set-config overridable-config <value> [operator_flags]
+  set-conn-dscp <value>                 [operator_flags]
   counter counter-name                  [operator_flags]
   no-op                                 [operator_flags]
 
@@ -177,4 +178,3 @@ Examples
   rm-header Set-Cookie
   counter plugin.header_rewrite.x-y-foobar-dc1
   cond %{HEADER:X-Y-Foobar} "Some string" [AND,NC]
-
