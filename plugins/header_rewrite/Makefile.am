@@ -32,6 +32,7 @@ header_rewrite_la_SOURCES = \
   operator.cc \
   operators.cc \
   parser.cc \
+  pluginconfig.cc \
   regex_helper.cc \
   resources.cc \
   ruleset.cc \
