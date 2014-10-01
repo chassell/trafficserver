@@ -552,7 +552,7 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
       case P_CONSISTENT_HASH:
         path = getHashPath(rdata, &path_len);
         if (path) {
-          prtmp = (pRecord *) chash->lookup(path, path_len, &(result->chashIter), NULL, (ATSHash64 *) &hash);
+          prtmp = (pRecord *) chash->lookup(path, path_len, &(result->chashIter), &result->wrap_around, (ATSHash64 *) &hash);
           if (prtmp) {
             cur_index = prtmp->idx;
             result->foundParents[cur_index] = true;
@@ -596,17 +596,19 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
       }
 
       do {
-        Debug("parent_select", "calling chash->lookup");
-        Debug("parent_select", "\t %d %p", (int)path_len, path);
-        Debug("parent_select", "\t path: %.*s", (int)path_len, path);
-        prtmp = (pRecord *) chash->lookup(path, path_len, &(result->chashIter), NULL, (ATSHash64 *) &hash);
-//        path = NULL;
-//        ink_assert(false);
+        prtmp = (pRecord *) chash->lookup(path, path_len, &(result->chashIter), &result->wrap_around, (ATSHash64 *) &hash);
+        path = NULL;
       } while (prtmp && result->foundParents[prtmp->idx]);
 
-      cur_index = prtmp->idx;
-      result->foundParents[cur_index] = true;
-      result->start_parent++;
+      if (prtmp) {
+         cur_index = prtmp->idx;
+         result->foundParents[cur_index] = true;
+         result->start_parent++;
+       } else {
+         Error("Consistent Hash loopup returned NULL");
+         cur_index = ink_atomic_increment((int32_t *) & rr_next, 1);
+         cur_index = cur_index % num_parents;
+       }
     } else {
       // Move to next parent due to failure
       cur_index = (result->last_parent + 1) % num_parents;
@@ -669,7 +671,7 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
       }
 
       do {
-        prtmp = (pRecord *) chash->lookup(path, path_len, &(result->chashIter), NULL, (ATSHash64 *) &hash);
+        prtmp = (pRecord *) chash->lookup(path, path_len, &(result->chashIter), &result->wrap_around, (ATSHash64 *) &hash);
         path = NULL;
       } while (prtmp && result->foundParents[prtmp->idx]);
 
