@@ -587,6 +587,7 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
     }
   } else {
     if (round_robin == P_CONSISTENT_HASH) {
+      Debug("parent_select", "result->start_parent=%d, num_parents=%d", result->start_parent, num_parents);
       if (result->start_parent == (unsigned int) num_parents) {
         result->wrap_around = true;
         result->start_parent = 0;
@@ -595,9 +596,13 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
       }
 
       do {
+        Debug("parent_select", "calling chash->lookup");
+        Debug("parent_select", "\t %d %p", (int)path_len, path);
+        Debug("parent_select", "\t path: %.*s", (int)path_len, path);
         prtmp = (pRecord *) chash->lookup(path, path_len, &(result->chashIter), NULL, (ATSHash64 *) &hash);
-        path = NULL;
-      } while (result->foundParents[prtmp->idx]);
+//        path = NULL;
+//        ink_assert(false);
+      } while (prtmp && result->foundParents[prtmp->idx]);
 
       cur_index = prtmp->idx;
       result->foundParents[cur_index] = true;
@@ -638,7 +643,6 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
         parentUp = true;
         parentRetry = true;
         Debug("parent_select", "Parent marked for retry %s:%d", parents[cur_index].hostname, parents[cur_index].port);
-
       } else {
         parentUp = false;
       }
@@ -667,7 +671,7 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
       do {
         prtmp = (pRecord *) chash->lookup(path, path_len, &(result->chashIter), NULL, (ATSHash64 *) &hash);
         path = NULL;
-      } while (result->foundParents[prtmp->idx]);
+      } while (prtmp && result->foundParents[prtmp->idx]);
 
       cur_index = prtmp->idx;
       result->foundParents[cur_index] = true;

@@ -71,8 +71,10 @@ ATSConsistentHash::lookup(const char *url, size_t url_len, ATSConsistentHashIter
     ATSHash64 *thash;
     bool *wptr, wrapped = false;
 
-    if(url_len <= 0) {
+    if(url_len <= 0 && url) {
         url_len = strlen(url);
+    } else {
+        url_len = 0;
     }
     if (h) {
         thash = h;
