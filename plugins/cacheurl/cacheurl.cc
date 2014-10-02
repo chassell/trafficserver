@@ -405,7 +405,7 @@ TSPluginInit(int argc, const char *argv[])
   main_cont = TSContCreate((TSEventFunc) handle_hook, NULL);
   /* Store the pattern replacement list in the continuation */
   TSContDataSet(main_cont, config_holder);
-  TSHttpHookAdd(TS_HTTP_POST_REMAP_HOOK, main_cont);
+  TSHttpHookAdd(TS_HTTP_READ_REQUEST_HDR_HOOK, main_cont);
   // TODO make configurable TS_HTTP_POST_REMAP_HOOK / TS_HTTP_READ_REQUEST_HDR_HOOK
 
   config_holder->addUpdateRegister();
