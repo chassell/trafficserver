@@ -82,7 +82,9 @@ public:
       delete _rules[i];
     }
 
-    TSContDestroy(_cont);
+    if(default_hook == TS_REMAP_PSEUDO_HOOK) {
+      TSContDestroy(_cont);
+    }
   }
 
   TSCont continuation() const { return _cont; }
