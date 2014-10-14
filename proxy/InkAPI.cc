@@ -7620,6 +7620,10 @@ _conf_to_memberp(TSOverridableConfigKey conf, HttpSM* sm, OverridableDataType *t
     typ = OVERRIDABLE_TYPE_INT;
     ret = &sm->t_state.txn_conf->max_cache_open_read_retries;
     break;
+  case TS_CONFIG_HTTP_TRANSACTION_ACTIVE_TIMEOUT_IN:
+    typ = OVERRIDABLE_TYPE_INT;
+    ret = &sm->t_state.txn_conf->transaction_active_timeout_in;
+    break;
 
     // This helps avoiding compiler warnings, yet detect unhandled enum members.
   case TS_CONFIG_NULL:
@@ -7840,10 +7844,6 @@ TSHttpTxnConfigFind(const char* name, int length, TSOverridableConfigKey *conf, 
         cnf = TS_CONFIG_NET_SOCK_PACKET_TOS_OUT;
       break;
     }
-    break;
-  case TS_CONFIG_HTTP_TRANSACTION_ACTIVE_TIMEOUT_IN:
-    typ = OVERRIDABLE_TYPE_INT;
-    ret = &overridableHttpConfig->transaction_active_timeout_in;
     break;
 
   case 37:
