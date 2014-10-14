@@ -33,6 +33,7 @@ const char PLUGIN_NAME[] = "header_rewrite";
 const char PLUGIN_NAME_DBG[] = "dbg_header_rewrite";
 
 const char* HOOK_NAMES[] = {
+  "TS_HTTP_TXN_START_HOOK",
   "TS_HTTP_READ_REQUEST_HDR_HOOK",
   "TS_HTTP_OS_DNS_HOOK",
   "TS_HTTP_SEND_REQUEST_HDR_HOOK",
@@ -50,6 +51,7 @@ const char* HOOK_NAMES[] = {
   "TS_HTTP_PRE_REMAP_HOOK",
   "TS_HTTP_POST_REMAP_HOOK",
   "TS_HTTP_RESPONSE_CLIENT_HOOK",
+  "TS_HTTP_TXN_CLOSE_HOOK",
   "TS_HTTP_LAST_HOOK"
 };
 
@@ -78,7 +80,7 @@ public:
 
   ~RulesConfig()
   {
-    for (int i=TS_HTTP_READ_REQUEST_HDR_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
+    for (int i=TS_HTTP_TXN_START_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
       delete _rules[i];
     }
 
@@ -207,7 +209,10 @@ RulesConfig::parse_config(const std::string fname)
 
       // Special case for specifying the HOOK this rule applies to.
       // These can only be at the beginning of a rule, and have an implicit [AND].
-      if (p.cond_op_is("READ_RESPONSE_HDR_HOOK")) {
+      if (p.cond_op_is("TXN_START_HOOK")) {
+        rule->set_hook(TS_HTTP_TXN_START_HOOK);
+        continue;
+      } else if (p.cond_op_is("READ_RESPONSE_HDR_HOOK")) {
         rule->set_hook(TS_HTTP_READ_RESPONSE_HDR_HOOK);
         continue;
       } else if (p.cond_op_is("READ_REQUEST_HDR_HOOK")) {
@@ -225,6 +230,9 @@ RulesConfig::parse_config(const std::string fname)
       } else if (p.cond_op_is("REMAP_PSEUDO_HOOK")) {
         rule->set_hook(TS_REMAP_PSEUDO_HOOK);
         continue;
+      } else if (p.cond_op_is("TXN_CLOSE_HOOK")) {
+        rule->set_hook(TS_HTTP_TXN_CLOSE_HOOK);
+        continue;
       }
     }
 
@@ -239,7 +247,7 @@ RulesConfig::parse_config(const std::string fname)
   add_rule(rule);
 
   // Collect all resource IDs that we need
-  for (int i=TS_HTTP_READ_REQUEST_HDR_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
+  for (int i=TS_HTTP_TXN_START_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
     if (_rules[i]) {
       _resids[i] = _rules[i]->get_all_resource_ids();
       if(default_hook == TS_HTTP_READ_RESPONSE_HDR_HOOK) {
@@ -263,6 +271,9 @@ RulesConfig::rewrite_headers(TSEvent event, TSHttpTxn txnp )
   TSHttpHookID hook = TS_HTTP_LAST_HOOK;
 
   switch (event) {
+  case TS_EVENT_HTTP_TXN_START:
+    hook = TS_HTTP_TXN_START_HOOK;
+    break;
   case TS_EVENT_HTTP_READ_RESPONSE_HDR:
     hook = TS_HTTP_READ_RESPONSE_HDR_HOOK;
     break;
@@ -277,6 +288,9 @@ RulesConfig::rewrite_headers(TSEvent event, TSHttpTxn txnp )
     break;
   case TS_EVENT_HTTP_SEND_RESPONSE_HDR:
     hook = TS_HTTP_SEND_RESPONSE_HDR_HOOK;
+    break;
+  case TS_EVENT_HTTP_TXN_CLOSE:
+    hook = TS_HTTP_TXN_CLOSE_HOOK;
     break;
   default:
     TSError("%s: unknown event for this plugin", PLUGIN_NAME);
@@ -423,7 +437,7 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char * /* errbuf ATS_UNUSE
 
   // For debugging only
   if (TSIsDebugTagSet(PLUGIN_NAME)) {
-    for (int i=TS_HTTP_READ_REQUEST_HDR_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
+    for (int i=TS_HTTP_TXN_START_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
       if (conf->rule(i)) {
         TSDebug(PLUGIN_NAME, "Adding remap ruleset to hook=%s", HOOK_NAMES[i]);
       }
@@ -460,7 +474,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn rh, TSRemapRequestInfo *rri)
   RulesConfig* conf = static_cast<RulesConfig*>(ih);
 
   // Go through all hooks we support, and setup the txn hook(s) as necessary
-  for (int i=TS_HTTP_READ_REQUEST_HDR_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
+  for (int i=TS_HTTP_TXN_START_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
     if (conf->rule(i)) {
       TSHttpTxnHookAdd(rh, static_cast<TSHttpHookID>(i), conf->continuation());
       TSDebug(PLUGIN_NAME, "Added remapped TXN hook=%s", HOOK_NAMES[i]);
