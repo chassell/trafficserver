@@ -100,6 +100,7 @@ The following configurations (from ``records.config``) are overridable: ::
     proxy.config.http.keep_alive_no_activity_timeout_out
     proxy.config.http.transaction_no_activity_timeout_in
     proxy.config.http.transaction_no_activity_timeout_out
+    proxy.config.http.transaction_active_timeout_in
     proxy.config.http.transaction_active_timeout_out
     proxy.config.http.origin_max_connections
     proxy.config.http.connect_attempts_max_retries
@@ -133,7 +134,6 @@ The following configurations (from ``records.config``) are overridable: ::
     proxy.config.http.negative_revalidating_enabled
     proxy.config.http.negative_revalidating_lifetime
     proxy.config.http.accept_encoding_filter_enabled
-
 
 Examples
 ========

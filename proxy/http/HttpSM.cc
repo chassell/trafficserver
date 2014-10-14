@@ -630,7 +630,6 @@ HttpSM::attach_client_session(HttpClientSession * client_vc, IOBufferReader * bu
   // set up timeouts     //
   /////////////////////////
   client_vc->get_netvc()->set_inactivity_timeout(HRTIME_SECONDS(HttpConfig::m_master.accept_no_activity_timeout));
-  client_vc->get_netvc()->set_active_timeout(HRTIME_SECONDS(HttpConfig::m_master.transaction_active_timeout_in));
 
   ++reentrancy_count;
   // Add our state sm to the sm list
@@ -651,6 +650,11 @@ void
 HttpSM::setup_client_read_request_header()
 {
   ink_assert(ua_entry->vc_handler == &HttpSM::state_read_client_request_header);
+
+  /////////////////////////
+  // set up timeouts     //
+  /////////////////////////
+  ua_session->get_netvc()->set_active_timeout(HRTIME_SECONDS(t_state.txn_conf->transaction_active_timeout_in));
 
   ua_entry->read_vio = ua_session->do_io_read(this, INT64_MAX, ua_buffer_reader->mbuf);
   // The header may already be in the buffer if this

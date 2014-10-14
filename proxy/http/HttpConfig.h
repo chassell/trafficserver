@@ -422,7 +422,7 @@ struct OverridableHttpConfigParams {
       cache_guaranteed_min_lifetime(0), cache_guaranteed_max_lifetime(31536000), cache_max_stale_age(604800),
       keep_alive_no_activity_timeout_in(115), keep_alive_no_activity_timeout_out(120),
       transaction_no_activity_timeout_in(30), transaction_no_activity_timeout_out(30),
-      transaction_active_timeout_out(0), origin_max_connections(0),
+      transaction_active_timeout_in(900), transaction_active_timeout_out(0), origin_max_connections(0),
       connect_attempts_max_retries(0), connect_attempts_max_retries_dead_server(3),
       connect_attempts_rr_retries(3), connect_attempts_timeout(30),
       post_connect_attempts_timeout(1800), down_server_timeout(300), client_abort_threshold(10),
@@ -562,6 +562,7 @@ struct OverridableHttpConfigParams {
   MgmtInt keep_alive_no_activity_timeout_out;
   MgmtInt transaction_no_activity_timeout_in;
   MgmtInt transaction_no_activity_timeout_out;
+  MgmtInt transaction_active_timeout_in;
   MgmtInt transaction_active_timeout_out;
   MgmtInt origin_max_connections;
 
@@ -672,7 +673,6 @@ public:
   // connection variables. timeouts are in seconds //
   ///////////////////////////////////////////////////
   MgmtByte session_auth_cache_keep_alive_enabled;
-  MgmtInt transaction_active_timeout_in;
   MgmtInt accept_no_activity_timeout;
 
   ////////////////////////////////////
@@ -902,7 +902,6 @@ HttpConfigParams::HttpConfigParams()
     url_expansions(NULL),
     num_url_expansions(0),
     session_auth_cache_keep_alive_enabled(1),
-    transaction_active_timeout_in(900),
     accept_no_activity_timeout(120),
     parent_connect_attempts(4),
     per_parent_connect_attempts(2),

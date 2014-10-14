@@ -5021,7 +5021,6 @@ TSHttpTxnDNSTimeoutSet(TSHttpTxn txnp, int timeout)
   sdk_assert(sdk_sanity_check_txn(txnp) == TS_SUCCESS);
 
   HttpTransact::State *s = &(((HttpSM *) txnp)->t_state);
-
   s->api_txn_dns_timeout_value = timeout;
 }
 
@@ -7842,6 +7841,10 @@ TSHttpTxnConfigFind(const char* name, int length, TSOverridableConfigKey *conf, 
       break;
     }
     break;
+  case TS_CONFIG_HTTP_TRANSACTION_ACTIVE_TIMEOUT_IN:
+    typ = OVERRIDABLE_TYPE_INT;
+    ret = &overridableHttpConfig->transaction_active_timeout_in;
+    break;
 
   case 37:
     switch (name[length-1]) {
@@ -8091,6 +8094,10 @@ TSHttpTxnConfigFind(const char* name, int length, TSOverridableConfigKey *conf, 
         cnf = TS_CONFIG_HTTP_CACHE_GUARANTEED_MIN_LIFETIME;
       else if (!strncmp(name, "proxy.config.http.cache.guaranteed_max_lifetime", length))
         cnf = TS_CONFIG_HTTP_CACHE_GUARANTEED_MAX_LIFETIME;
+      break;
+    case 'n':
+      if (!strncmp(name, "proxy.config.http.transaction_active_timeout_in", length))
+        cnf = TS_CONFIG_HTTP_TRANSACTION_ACTIVE_TIMEOUT_IN;
       break;
     case 't':
       if (!strncmp(name, "proxy.config.http.post_connect_attempts_timeout", length))
