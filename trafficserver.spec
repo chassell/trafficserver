@@ -1,4 +1,9 @@
+%define tag %(git describe --long | cut -d '-' -f 1)
+%define distance %(git describe --long | cut -d '-' -f 2)
+%define commit %(git describe --long | cut -d '-' -f 3 | sed 's/g//')
+
 %global install_prefix "/opt"
+
 Name:		trafficserver
 Version:	%{tag}
 Release:	%{distance}.%{commit}%{?dist}
