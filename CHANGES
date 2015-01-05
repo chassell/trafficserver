@@ -1,5 +1,11 @@
                                                          -*- coding: utf-8 -*-
+Changes with Apache Traffic Server 4.2.3
+
+  *) [TS-2959] Fix compiler issue for MultiCache.
+
 Changes with Apache Traffic Server 4.2.2
+
+  *) [TS-2055] limit access to synthetic healthcheck
 
   *) [TS-2931] Plugin metrics fail after a crash.
 
@@ -14,6 +20,8 @@ Changes with Apache Traffic Server 4.2.2
    handling issues.
 
   *) [TS-2822] Crash in LogBufferIterator::next
+
+  *) [TS-2784] Make header_rewrite plugins compile on FBSD.
 
   *) [TS-2778] Websockets remap doesn't properly handle the implicit port for wss.
 
