@@ -70,24 +70,15 @@ extern int default_rcvbuf_size;
 //
 // Functions
 //
-void shutdown_system();
 inline bool
 maintainance_mode()
 {
   return (command_flag ? true : false);
 }
 
-extern const Version version;
 extern AppVersionInfo appVersionInfo;
 
-#define TS_ReadConfigInteger            REC_ReadConfigInteger
-#define TS_ReadConfigFloat              REC_ReadConfigFloat
-#define TS_ReadConfigString             REC_ReadConfigString
-#define TS_EstablishStaticConfigInteger REC_EstablishStaticConfigInteger
-#define TS_RegisterConfigUpdateFunc     REC_RegisterConfigUpdateFunc
-#define TS_ReadConfigStringAlloc        REC_ReadConfigStringAlloc
-#define TS_ConfigReadInteger            REC_ConfigReadInteger
-#define TS_ConfigReadString             REC_ConfigReadString
-
+void crash_logger_init();
+void crash_logger_invoke(int signo, siginfo_t * info, void * ctx);
 
 #endif /* _Main_h_ */

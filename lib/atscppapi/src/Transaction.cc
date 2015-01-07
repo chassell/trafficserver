@@ -26,10 +26,10 @@
 #include <map>
 #include <string>
 #include <ts/ts.h>
+#include <ink_memory.h>
 #include "atscppapi/shared_ptr.h"
 #include "logging_internal.h"
 #include "utils_internal.h"
-#include "InitializableValue.h"
 #include "atscppapi/noncopyable.h"
 
 using std::map;
@@ -114,16 +114,7 @@ void Transaction::error(const std::string &page) {
 
 void Transaction::setErrorBody(const std::string &page) {
   LOG_DEBUG("Transaction tshttptxn=%p setting error body page: %s", state_->txn_, page.c_str());
-  char *res_bdy = static_cast<char*>(TSmalloc(page.length() + 1));
-  strncpy(res_bdy, page.c_str(), page.length());
-  res_bdy[page.length()] = '\0';
-
-  std::string str_content_type = "text/html";
-  char *content_type = static_cast<char*>(TSmalloc(str_content_type.length() + 1));
-  strncpy(content_type, str_content_type.c_str(), str_content_type.length());
-  content_type[str_content_type.length()] = '\0';
-
-  TSHttpTxnErrorBodySet(state_->txn_, res_bdy, page.length(), content_type);
+  TSHttpTxnErrorBodySet(state_->txn_, TSstrdup(page.c_str()), page.length(), NULL); // Default to text/html
 }
 
 bool Transaction::isInternalRequest() const {
@@ -188,8 +179,8 @@ string Transaction::getEffectiveUrl() {
 }
 
 bool Transaction::setCacheUrl(const string &cache_url) {
-	TSReturnCode res = TSCacheUrlSet(state_->txn_, cache_url.c_str(), cache_url.length());
-    return (res == TS_SUCCESS);
+  TSReturnCode res = TSCacheUrlSet(state_->txn_, cache_url.c_str(), cache_url.length());
+  return (res == TS_SUCCESS);
 }
 
 const sockaddr *Transaction::getIncomingAddress() const {
@@ -258,10 +249,16 @@ void Transaction::setTimeout(Transaction::TimeoutType type, int time_ms) {
   }
 }
 
+void Transaction::redirectTo(std::string const& url) {
+  char* s = ats_strdup(url.c_str());
+  // Must re-alloc the string locally because ownership is transferred to the transaction.
+  TSHttpTxnRedirectUrlSet(state_->txn_, s, url.length());
+}
+
 namespace {
 
 /**
- * initializeHandles is a convinience functor that takes a pointer to a TS Function that
+ * initializeHandles is a convenience functor that takes a pointer to a TS Function that
  * will return the TSMBuffer and TSMLoc for a given server request/response or client/request response
  *
  * @param constructor takes a function pointer of type GetterFunction

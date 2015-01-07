@@ -45,10 +45,6 @@
 #include <limits.h>
 #include <sys/mman.h>
 
-#ifndef __STDC_FORMAT_MACROS
-#define __STDC_FORMAT_MACROS 1
-#endif
-
 #include <inttypes.h>
 
 #include <time.h>
@@ -61,6 +57,7 @@
 #include "ParseRules.h"
 #include "ink_time.h"
 #include "ink_args.h"
+#include "I_Version.h"
 
 /*
  FTP - Traffic Server Template
@@ -90,16 +87,6 @@
 #define CLIENT_BUFSIZE             2048
 #define MAX_BUFSIZE                (65536 + 4096)
 
-//#define RETRY_CLIENT_WRITE_ERRORS
-#define VERSION_NUM "$Revision: 1.94 $"
-#if defined(BUILD_PERSON) && defined(BUILD_MACHINE)
-#define JTEST_VERSION ("JTest Version %s - " __DATE__ " " __TIME__ \
-                 " (" BUILD_PERSON "@" BUILD_MACHINE ")\n" )
-#else
-#define JTEST_VERSION ("JTest Version %s - " __DATE__ " " __TIME__ "\n")
-#endif
-// #define PRINT_LOCAL_PORT
-
 //
 // Contants
 //
@@ -113,6 +100,8 @@
 #define MAX_DEFERED_URLS      10000
 #define DEFERED_URLS_BLOCK    2000
 
+static AppVersionInfo appVersionInfo;
+
 static const char * hexdigits = "0123456789ABCDEFabcdef";
 static const char * dontunescapify = "#;/?+=&:@%";
 static const char * dontescapify = "#;/?+=&:@~.-_%";
@@ -125,9 +114,6 @@ enum FTP_MODE {
 
 typedef int (*accept_fn_t)(int);
 typedef int (*poll_cb)(int);
-
-static void jtest_usage(const ArgumentDescription * argument_descriptions,
-                        unsigned n_argument_descriptions, const char * arg);
 
 static int read_request(int sock);
 static int write_request(int sock);
@@ -197,7 +183,6 @@ static int fullpage = 0;
 static int show_before = 0;
 static int show_headers = 0;
 static int server_keepalive = 4;
-static int version = 0;
 static int urls_mode = 0;
 static int pipeline = 1;
 static int hostrequest = 0;
@@ -319,7 +304,6 @@ static const ArgumentDescription argument_descriptions[] = {
    "JTEST_BANDWIDTH_TEST",NULL},
   {"drop_after_CL",'T',"Drop after Content-Length","F",
    &drop_after_CL, "JTEST_DROP",NULL},
-  {"version",'V',"Version","F",&version,"JTEST_VERSION",NULL},
   {"verbose",'v',"Verbose Flag","F",&verbose,"JTEST_VERBOSE",NULL},
   {"verbose_errors",'E',"Verbose Errors Flag","f",&verbose_errors,
    "JTEST_VERBOSE_ERRORS",NULL},
@@ -359,7 +343,8 @@ static const ArgumentDescription argument_descriptions[] = {
   {"evo_rate",'9',"Evolving Hotset Rate (evolutions/hour)","D",
    &evo_rate,"JTEST_EVOLVING_HOTSET_RATE",NULL},
   {"debug",'d',"Debug Flag","F",&debug,"JTEST_DEBUG",NULL},
-  {"help",'h',"Help",NULL,NULL,NULL,jtest_usage}
+  HELP_ARGUMENT_DESCRIPTION(),
+  VERSION_ARGUMENT_DESCRIPTION()
 };
 int n_argument_descriptions = countof(argument_descriptions);
 
@@ -413,7 +398,8 @@ struct FD {
     length = 0;
     if (!urls_mode)
       response = NULL;
-    response_header[0] = 0;
+    if (response_header)
+      response_header[0] = 0;
     response_length = 0;
     response_remaining = 0;
     count = NULL;
@@ -541,21 +527,6 @@ static inline void append_string(char *dest, const char *src, int *offset_ptr,
 
 // End Library functions
 
-static void show_version() {
-  char b[] = VERSION_NUM;
-  char * v = strchr(b,':');
-  v += 2;
-  *strchr(v,'$') = 0;
-  printf(JTEST_VERSION, v);
-}
-
-static void jtest_usage(const ArgumentDescription * argument_descriptions,
-                 unsigned n_argument_descriptions, const char * arg)
-{
-  show_version();
-  usage(argument_descriptions, n_argument_descriptions, arg);
-}
-
 static void panic(const char * s) {
   fputs(s, stderr);
   exit(1);
@@ -632,6 +603,12 @@ static int fast(int sock, int speed, int d) {
   } else
     fd[sock].ready = now;
   return 0;
+}
+
+// Return the number of milliseconds elapsed since the start of the request.
+static ink_hrtime elapsed_from_start(int sock) {
+  ink_hrtime now = ink_get_hrtime_internal();
+  return ink_hrtime_diff_msec(now, fd[sock].start);
 }
 
 static int faster_than(int sock, int speed, int d) {
@@ -1283,7 +1260,6 @@ static int read_ftp_request(int sock) {
         fd[sock].req_pos = 0;
         fd[sock].response_length = strlen(fd[sock].req_header);
         poll_set(sock, NULL, write_ftp_response);
-        buffer = n+1;
         return 0;
     } else {
       if (verbose || verbose_errors) printf("ftp junk : %s\n", buffer);
@@ -1653,14 +1629,14 @@ static void init_client(int sock) {
   poll_set(sock,NULL,write_request);
 }
 
-static unsigned int get_addr(char * host) {
+static unsigned int get_addr(const char * host) {
   unsigned int addr = inet_addr(host);
   struct hostent *host_info = NULL;
 
   if (!addr || (-1 == (int)addr)) {
     host_info = gethostbyname(host);
     if (!host_info) {
-      perror ("gethostbyname");
+      printf("gethostbyname(%s): %s\n", host, hstrerror(h_errno));
       return (unsigned int)-1;
     }
     addr = *((unsigned int*) host_info->h_addr);
@@ -1980,7 +1956,7 @@ static int read_response(int sock) {
 
     strcpy(fd[sock].response_header, fd[sock].req_header);
 
-    b1latency += ((ink_get_hrtime_internal() - fd[sock].start) / HRTIME_MSECOND);
+    b1latency += (int)elapsed_from_start(sock);
     new_cbytes += err;
     new_tbytes += err;
     fd[sock].req_pos += err;
@@ -2011,7 +1987,7 @@ static int read_response(int sock) {
             }
             if (fd[sock].response_length && verbose_errors &&
                 expected_length != cli && !nocheck_length)
-              fprintf(stderr, "bad Content-Length expected %d got %d orig %d",
+              fprintf(stderr, "bad Content-Length expected %d got %d orig %d\n",
                       expected_length, cli, fd[sock].response_length);
             fd[sock].response_length = fd[sock].length = cli;
         }
@@ -2071,8 +2047,8 @@ static int read_response(int sock) {
           if (e) *e = 0;
           else *p = 0;
         }
-        printf("error response %d: '%s':'%s'\n", sock,
-               fd[sock].base_url, fd[sock].req_header);
+        printf("error response %d after %dms: '%s':'%s'\n",
+            sock, (int)elapsed_from_start(sock), fd[sock].base_url, fd[sock].req_header);
       }
       return read_response_error(sock);
     }
@@ -2185,7 +2161,7 @@ Ldone:
   }
   if (verbose) printf("read %d done\n", sock);
   new_ops++;
-  double thislatency =((ink_get_hrtime_internal() - fd[sock].start) / HRTIME_MSECOND);
+  double thislatency = elapsed_from_start(sock);
   latency += (int)thislatency;
   lat_ops++;
   if (fd[sock].keepalive > 0) {
@@ -2320,6 +2296,7 @@ static int make_client (unsigned int addr, int port) {
 
   /* Give the socket a name. */
   struct sockaddr_in name;
+  memset(&name, 0, sizeof(sockaddr_in));
   name.sin_family = AF_INET;
   name.sin_port = htons(port);
   name.sin_addr.s_addr = addr;
@@ -2858,7 +2835,10 @@ static FILE * get_defered_urls(FILE * fp) {
   return fp;
 }
 
-int main(int argc __attribute__((unused)), char *argv[]) {
+int main(int argc __attribute__((unused)), char *argv[])
+{
+  appVersionInfo.setup(PACKAGE_NAME, "jtest", PACKAGE_VERSION, __DATE__, __TIME__, BUILD_MACHINE, BUILD_PERSON, "");
+
   /* for QA -- we want to be able to tail an output file
    * during execution "nohup jtest -P pxy -p prt &"
    */
@@ -2866,11 +2846,8 @@ int main(int argc __attribute__((unused)), char *argv[]) {
 
   fd = (FD*)malloc(MAXFDS * sizeof(FD));
   memset(fd,0,MAXFDS*sizeof(FD));
-  process_args(argument_descriptions, n_argument_descriptions, argv);
-  if (version) {
-    show_version();
-    exit(0);
-  }
+  process_args(&appVersionInfo, argument_descriptions, n_argument_descriptions, argv);
+
   if (!drand_seed)
     srand48((long)time(NULL));
   else
@@ -3416,8 +3393,6 @@ static void ink_web_canonicalize_url(const char *base_url, const char *emb_url, 
 
   dest_url[0] = '\0';
 
-  use_base_sche = 1;
-  use_base_host = 1;
   use_base_path = 0;
   use_base_quer = 0;
   use_base_para = 0;

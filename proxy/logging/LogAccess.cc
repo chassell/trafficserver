@@ -75,6 +75,18 @@ LogAccess::init()
   -------------------------------------------------------------------------*/
 
 int
+LogAccess::marshal_plugin_identity_id(char *buf)
+{
+  DEFAULT_INT_FIELD;
+}
+
+int
+LogAccess::marshal_plugin_identity_tag(char *buf)
+{
+  DEFAULT_STR_FIELD;
+}
+
+int
 LogAccess::marshal_client_host_ip(char *buf)
 {
   DEFAULT_IP_FIELD;
@@ -220,15 +232,6 @@ int
 LogAccess::marshal_client_finish_status_code(char *buf)
 {
   DEFAULT_INT_FIELD;
-}
-
-/*-------------------------------------------------------------------------
-  -------------------------------------------------------------------------*/
-
-int
-LogAccess::marshal_client_accelerator_id(char *buf)
-{
-  DEFAULT_STR_FIELD;
 }
 
 /*-------------------------------------------------------------------------
@@ -445,6 +448,21 @@ LogAccess::marshal_server_resp_http_version(char *buf)
 }
 
 /*-------------------------------------------------------------------------
+-------------------------------------------------------------------------*/
+int
+LogAccess::marshal_server_resp_time_ms(char *buf)
+{
+  DEFAULT_INT_FIELD;
+}
+
+int
+LogAccess::marshal_server_resp_time_s(char *buf)
+{
+  DEFAULT_INT_FIELD;
+}
+
+
+/*-------------------------------------------------------------------------
   -------------------------------------------------------------------------*/
 
 int
@@ -543,6 +561,12 @@ LogAccess::marshal_http_header_field_escapify(LogField::Container /* container A
   DEFAULT_STR_FIELD;
 }
 
+int
+LogAccess::marshal_proxy_host_port(char *buf)
+{
+  DEFAULT_INT_FIELD;
+}
+
 /*-------------------------------------------------------------------------
 
   The following functions have a non-virtual base-class implementation.
@@ -625,8 +649,7 @@ LogAccess::marshal_record(char *record, char *buf)
   }
 
   const char *record_not_found_msg = "RECORD_NOT_FOUND";
-  const unsigned int record_not_found_chars = 17;
-  ink_assert(::strlen(record_not_found_msg) + 1 == record_not_found_chars);
+  const unsigned int record_not_found_chars = ::strlen(record_not_found_msg) + 1;
 
   char ascii_buf[max_chars];
   const char *out_buf;
@@ -642,8 +665,7 @@ LogAccess::marshal_record(char *record, char *buf)
 
   if (RecGetRecordDataType(record, &stype) != REC_ERR_OKAY) {
     out_buf = "INVALID_RECORD";
-    num_chars = 15;
-    ink_assert(::strlen(out_buf) + 1 == num_chars);
+    num_chars = ::strlen(out_buf) + 1;
   } else {
     if (LOG_INTEGER == stype || LOG_COUNTER == stype) {
       // we assume MgmtInt and MgmtIntCounter are int64_t for the
@@ -691,8 +713,7 @@ LogAccess::marshal_record(char *record, char *buf)
         if (num_chars > max_chars) {
           // data does not fit, output asterisks
           out_buf = "***";
-          num_chars = 4;
-          ink_assert(::strlen(out_buf) + 1 == num_chars);
+          num_chars = ::strlen(out_buf) + 1;
         } else {
           out_buf = ascii_buf;
         }
@@ -718,8 +739,7 @@ LogAccess::marshal_record(char *record, char *buf)
           }
         } else {
           out_buf = "NULL";
-          num_chars = 5;
-          ink_assert(::strlen(out_buf) + 1 == num_chars);
+          num_chars = ::strlen(out_buf) + 1;
         }
       } else {
         out_buf = (char *) record_not_found_msg;
@@ -727,9 +747,8 @@ LogAccess::marshal_record(char *record, char *buf)
       }
     } else {
       out_buf = "INVALID_MgmtType";
-      num_chars = 17;
+      num_chars = ::strlen(out_buf) + 1;
       ink_assert(!"invalid MgmtType for requested record");
-      ink_assert(::strlen(out_buf) + 1 == num_chars);
     }
   }
 
@@ -817,7 +836,9 @@ int
 LogAccess::marshal_ip(char* dest, sockaddr const* ip) {
   LogFieldIpStorage data;
   int len = sizeof(data._ip);
-  if (ats_is_ip4(ip)) {
+  if (NULL == ip) {
+    data._ip._family = AF_UNSPEC;
+  } else if (ats_is_ip4(ip)) {
     if (dest) {
       data._ip4._family = AF_INET;
       data._ip4._addr = ats_ip4_addr_cast(ip);
@@ -840,7 +861,7 @@ LogAccess::marshal_ip(char* dest, sockaddr const* ip) {
 inline int
 LogAccess::unmarshal_with_map(int64_t code, char *dest, int len, Ptr<LogFieldAliasMap> map, const char *msg)
 {
-  int codeStrLen;
+  long int codeStrLen = 0;
 
   switch (map->asString(code, dest, len, (size_t *) & codeStrLen)) {
   case LogFieldAliasMap::INVALID_INT:
@@ -1213,9 +1234,18 @@ int
 LogAccess::unmarshal_ip_to_str(char **buf, char *dest, int len)
 {
   IpEndpoint ip;
+  int zret = -1;
 
-  unmarshal_ip(buf, &ip);
-  return ats_ip_ntop(&ip, dest, len) ? static_cast<int>(::strlen(dest)) : -1;
+  if (len > 0) {
+    unmarshal_ip(buf, &ip);
+    if (!ats_is_ip(&ip)) {
+      *dest = '0';
+      zret = 1;
+    } else if (ats_ip_ntop(&ip, dest, len)) {
+      zret = static_cast<int>(::strlen(dest));
+    }
+  }
+  return zret;
 }
 
 /*-------------------------------------------------------------------------
@@ -1229,9 +1259,19 @@ LogAccess::unmarshal_ip_to_str(char **buf, char *dest, int len)
 int
 LogAccess::unmarshal_ip_to_hex(char **buf, char *dest, int len)
 {
+  int zret = -1;
   IpEndpoint ip;
-  unmarshal_ip(buf, &ip);
-  return ats_ip_to_hex(&ip.sa, dest, len);
+
+  if (len > 0) {
+    unmarshal_ip(buf, &ip);
+    if (!ats_is_ip(&ip)) {
+      *dest = '0';
+      zret = 1;
+    } else {
+      zret = ats_ip_to_hex(&ip.sa, dest, len);
+    }
+  }
+  return zret;
 }
 
 /*-------------------------------------------------------------------------
@@ -1368,6 +1408,8 @@ resolve_logfield_string(LogAccess *context, const char *format_str)
   //
   if (!n_fields) {
     Debug("log-resolve", "No fields found; returning copy of format_str");
+    ats_free(printf_str);
+    ats_free(fields_str);
     return ats_strdup(format_str);
   }
 

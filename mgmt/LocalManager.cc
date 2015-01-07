@@ -30,6 +30,9 @@
 #include "LocalManager.h"
 #include "MgmtSocket.h"
 #include "ink_cap.h"
+#include "FileManager.h"
+#include "ClusterCom.h"
+#include "VMap.h"
 
 #if TS_USE_POSIX_CAP
 #include <sys/capability.h>
@@ -51,9 +54,7 @@ LocalManager::mgmtCleanup()
   if (virt_map) {
     virt_map->rl_downAddrs();   // We are bailing done need to worry about table
   }
-#ifdef MGMT_USE_SYSLOG
   closelog();
-#endif /* MGMT_USE_SYSLOG */
   return;
 }
 
@@ -144,7 +145,7 @@ LocalManager::clearStats(const char *name)
   //   that operation works even when the proxy is off
   //
   if (this->proxy_running == 0) {
-    xptr<char> statsPath(RecConfigReadPersistentStatsPath());
+    ats_scoped_str statsPath(RecConfigReadPersistentStatsPath());
     if (unlink(statsPath) < 0) {
       if (errno != ENOENT) {
         mgmt_log(stderr, "[LocalManager::clearStats] Unlink of %s failed : %s\n", (const char *)statsPath, strerror(errno));
@@ -198,14 +199,14 @@ LocalManager::processRunning()
 }
 
 LocalManager::LocalManager(bool proxy_on)
-  : BaseManager(), run_proxy(proxy_on)
+  : BaseManager(), run_proxy(proxy_on), configFiles(NULL)
 {
   bool found;
-  xptr<char> rundir(RecConfigReadRuntimeDir());
+  ats_scoped_str rundir(RecConfigReadRuntimeDir());
+  ats_scoped_str bindir(RecConfigReadBinDir());
+  ats_scoped_str sysconfdir(RecConfigReadConfigDir());
 
-#ifdef MGMT_USE_SYSLOG
   syslog_facility = 0;
-#endif
 
   ccom = NULL;
   proxy_started_at = -1;
@@ -221,8 +222,6 @@ LocalManager::LocalManager(bool proxy_on)
     mgmt_sync_key = MGMT_SEMID_DEFAULT;
   }
 
-  ink_strlcpy(pserver_path, rundir, sizeof(pserver_path));
-
   virt_map = NULL;
 
   RecInt http_enabled = REC_readInteger("proxy.config.http.enabled", &found);
@@ -235,29 +234,26 @@ LocalManager::LocalManager(bool proxy_on)
   // Get the default IP binding values.
   RecHttpLoadIp("proxy.local.incoming_ip_to_bind", m_inbound_ip4, m_inbound_ip6);
 
-  if (access(Layout::get()->sysconfdir, R_OK) == -1) {
-    mgmt_elog(0, "[LocalManager::LocalManager] unable to access() directory '%s': %d, %s\n",
-	Layout::get()->sysconfdir, errno, strerror(errno));
+  if (access(sysconfdir, R_OK) == -1) {
+    mgmt_elog(0, "[LocalManager::LocalManager] unable to access() directory '%s': %d, %s\n", (const char *)sysconfdir, errno, strerror(errno));
     mgmt_fatal(0, "[LocalManager::LocalManager] please set the 'TS_ROOT' environment variable\n");
   }
 
 #if TS_HAS_WCCP
   // Bind the WCCP address if present.
-  xptr<char> wccp_addr_str(REC_readString("proxy.config.wccp.addr", &found));
+  ats_scoped_str wccp_addr_str(REC_readString("proxy.config.wccp.addr", &found));
   if (found && wccp_addr_str && *wccp_addr_str) {
     wccp_cache.setAddr(inet_addr(wccp_addr_str));
     mgmt_log("[LocalManager::LocalManager] WCCP identifying address set to %s.\n", static_cast<char*>(wccp_addr_str));
   }
 
-  xptr<char> wccp_config_str(REC_readString("proxy.config.wccp.services", &found));
-  if (found && wccp_config_str && *wccp_config_str) {
+  ats_scoped_str wccp_config_str(RecConfigReadConfigPath("proxy.config.wccp.services"));
+  if (wccp_config_str && strlen(wccp_config_str) > 0) {
     bool located = true;
-    if (access(wccp_config_str, R_OK) == -1) {
-      wccp_config_str = Layout::relative_to(Layout::get()->sysconfdir, wccp_config_str);
-      if (access(wccp_config_str, R_OK) == -1 ) {
-        located = false;
-      }
+    if (access(wccp_config_str, R_OK) == -1 ) {
+      located = false;
     }
+
     if (located) {
       wccp_cache.loadServicesFromFile(wccp_config_str);
     } else { // not located
@@ -266,30 +262,21 @@ LocalManager::LocalManager(bool proxy_on)
   }
 #endif
 
-  bin_path = REC_readString("proxy.config.bin_path", &found);
   process_server_timeout_secs = REC_readInteger("proxy.config.lm.pserver_timeout_secs", &found);
   process_server_timeout_msecs = REC_readInteger("proxy.config.lm.pserver_timeout_msecs", &found);
   proxy_name = REC_readString("proxy.config.proxy_name", &found);
   proxy_binary = REC_readString("proxy.config.proxy_binary", &found);
   proxy_options = REC_readString("proxy.config.proxy_binary_opts", &found);
   env_prep = REC_readString("proxy.config.env_prep", &found);
-  // Calculate configured bin_path from the prefix
-  char *absolute_bin_path = Layout::get()->relative(bin_path);
-  ats_free(bin_path);
-  bin_path = absolute_bin_path;
-  // Calculate proxy_binary from the absolute bin_path
-  absolute_proxy_binary = Layout::relative_to(absolute_bin_path, proxy_binary);
 
+  // Calculate proxy_binary from the absolute bin_path
+  absolute_proxy_binary = Layout::relative_to(bindir, proxy_binary);
+
+  // coverity[fs_check_call]
   if (access(absolute_proxy_binary, R_OK | X_OK) == -1) {
-    // Try 'Layout::bindir' directory
-    ats_free(absolute_proxy_binary);
-    absolute_proxy_binary = Layout::relative_to(Layout::get()->bindir, proxy_binary);
-    // coverity[fs_check_call]
-    if (access(absolute_proxy_binary, R_OK | X_OK) == -1) {
-        mgmt_elog(0, "[LocalManager::LocalManager] Unable to access() '%s': %d, %s\n",
-                absolute_proxy_binary, errno, strerror(errno));
-        mgmt_fatal(0, "[LocalManager::LocalManager] please set bin path 'proxy.config.bin_path' \n");
-    }
+      mgmt_elog(0, "[LocalManager::LocalManager] Unable to access() '%s': %d, %s\n",
+              absolute_proxy_binary, errno, strerror(errno));
+      mgmt_fatal(0, "[LocalManager::LocalManager] please set bin path 'proxy.config.bin_path' \n");
   }
 
   internal_ticker = 0;
@@ -303,6 +290,18 @@ LocalManager::LocalManager(bool proxy_on)
   return;
 }
 
+LocalManager::~LocalManager()
+{
+  delete alarm_keeper;
+  delete virt_map;
+  delete ccom;
+  ats_free(absolute_proxy_binary);
+  ats_free(proxy_name);
+  ats_free(proxy_binary);
+  ats_free(proxy_options);
+  ats_free(env_prep);
+}
+
 void
 LocalManager::initAlarm()
 {
@@ -314,8 +313,9 @@ LocalManager::initAlarm()
  *   Function initializes cluster communication structure held by local manager.
  */
 void
-LocalManager::initCCom(int mcport, char *addr, int rsport)
+LocalManager::initCCom(const AppVersionInfo& version, FileManager * configFiles, int mcport, char *addr, int rsport)
 {
+  ats_scoped_str rundir(RecConfigReadRuntimeDir());
   bool found;
   IpEndpoint cluster_ip;    // ip addr of the cluster interface
   ip_text_buffer clusterAddrStr;         // cluster ip addr as a String
@@ -361,8 +361,14 @@ LocalManager::initCCom(int mcport, char *addr, int rsport)
   ink_strlcat(envBuf, clusterAddrStr, envBuf_size);
   ink_release_assert(putenv(envBuf) == 0);
 
-  ccom = new ClusterCom(ats_ip4_addr_cast(&cluster_ip), hostname, mcport, addr, rsport, pserver_path);
+  ccom = new ClusterCom(ats_ip4_addr_cast(&cluster_ip), hostname, mcport, addr, rsport, rundir);
   virt_map = new VMap(intrName, ats_ip4_addr_cast(&cluster_ip), &lmgmt->ccom->mutex);
+
+  ccom->appVersionInfo = version;
+  ccom->configFiles = configFiles;
+
+  virt_map->appVersionInfo = version;
+
   virt_map->downAddrs();        // Just to be safe
   ccom->establishChannels();
   ats_free(intrName);
@@ -377,7 +383,8 @@ LocalManager::initCCom(int mcport, char *addr, int rsport)
 void
 LocalManager::initMgmtProcessServer()
 {
-  char fpath[1024];
+  ats_scoped_str rundir(RecConfigReadRuntimeDir());
+  char fpath[MAXPATHLEN];
   int servlen, one = 1;
   struct sockaddr_un serv_addr;
 
@@ -387,7 +394,8 @@ LocalManager::initMgmtProcessServer()
   }
 #endif
 
-  snprintf(fpath, sizeof(fpath), "%s/%s", pserver_path, LM_CONNECTION_SERVER);
+  ink_filepath_make(fpath, sizeof(fpath), rundir, LM_CONNECTION_SERVER);
+
   unlink(fpath);
   if ((process_server_sockfd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
     mgmt_fatal(stderr, errno, "[LocalManager::initMgmtProcessServer] Unable to open socket exiting\n");
@@ -532,7 +540,7 @@ LocalManager::pollMgmtProcessServer()
 
           if (lmgmt->run_proxy) {
             mgmt_elog(0, "[Alarms::signalAlarm] Server Process was reset\n");
-            lmgmt->alarm_keeper->signalAlarm(MGMT_ALARM_PROXY_PROCESS_DIED);
+            lmgmt->alarm_keeper->signalAlarm(MGMT_ALARM_PROXY_PROCESS_DIED, NULL);
           } else {
             mgmt_log("[TrafficManager] Server process shutdown\n");
           }
@@ -565,7 +573,7 @@ LocalManager::handleMgmtMsgFromProcesses(MgmtMessageHdr * mh)
   switch (mh->msg_id) {
   case MGMT_SIGNAL_PID:
     watched_process_pid = *((pid_t *) data_raw);
-    lmgmt->alarm_keeper->signalAlarm(MGMT_ALARM_PROXY_PROCESS_BORN);
+    lmgmt->alarm_keeper->signalAlarm(MGMT_ALARM_PROXY_PROCESS_BORN, NULL);
     proxy_running++;
     proxy_launch_pid = -1;
     proxy_launch_outstanding = false;
@@ -661,7 +669,7 @@ LocalManager::handleMgmtMsgFromProcesses(MgmtMessageHdr * mh)
     alarm_keeper->signalAlarm(MGMT_ALARM_PROXY_HTTP_ALLEVIATED_SERVER, data_raw);
     break;
     // Congestion Control - end
-  case INK_MGMT_SIGNAL_SAC_SERVER_DOWN:
+  case MGMT_SIGNAL_SAC_SERVER_DOWN:
     alarm_keeper->signalAlarm(MGMT_ALARM_SAC_SERVER_DOWN, data_raw);
     break;
 
@@ -732,9 +740,8 @@ LocalManager::sendMgmtMsgToProcesses(MgmtMessageHdr * mh)
       mgmt_elog(stderr, 0, "[LocalManager:sendMgmtMsgToProcesses] Unknown file change: '%s'\n", data_raw);
     }
     ink_assert(found);
-    if (!(configFiles->getRollbackObj(fname, &rb)) &&
+    if (!(configFiles && configFiles->getRollbackObj(fname, &rb)) &&
         (strcmp(data_raw, "proxy.config.cluster.cluster_configuration") != 0) &&
-        (strcmp(data_raw, "proxy.config.arm.acl_filename_master") != 0) &&
         (strcmp(data_raw, "proxy.config.body_factory.template_sets_dir") != 0)) {
       mgmt_elog(stderr, 0, "[LocalManager::sendMgmtMsgToProcesses] "
                 "Invalid 'data_raw' for MGMT_EVENT_CONFIG_FILE_UPDATE\n");
@@ -772,7 +779,7 @@ LocalManager::sendMgmtMsgToProcesses(MgmtMessageHdr * mh)
             mgmt_elog(stderr, 0, "[LocalManager::pollMgmtProcessServer] " "Server Process has been terminated\n");
             if (lmgmt->run_proxy) {
               mgmt_elog(0, "[Alarms::signalAlarm] Server Process was reset\n");
-              lmgmt->alarm_keeper->signalAlarm(MGMT_ALARM_PROXY_PROCESS_DIED);
+              lmgmt->alarm_keeper->signalAlarm(MGMT_ALARM_PROXY_PROCESS_DIED, NULL);
             } else {
               mgmt_log("[TrafficManager] Server process shutdown\n");
             }
@@ -927,10 +934,12 @@ LocalManager::startProxy()
       waitpid(pid, &estatus, 0);
     } else {
       int res;
-      char env_prep_bin[1024];
 
-      snprintf(env_prep_bin, sizeof(env_prep_bin), "%s/%s", bin_path, env_prep);
-      res = execl(env_prep_bin, env_prep, (char*)NULL);
+      char env_prep_bin[MAXPATHLEN];
+      ats_scoped_str bindir(RecConfigReadBinDir());
+
+      ink_filepath_make(env_prep_bin, sizeof(env_prep_bin), bindir, env_prep);
+      res = execl(env_prep_bin, env_prep_bin, (char*)NULL);
       _exit(res);
     }
   }
@@ -1003,6 +1012,8 @@ LocalManager::startProxy()
       mgmt_fatal(stderr, 0, "[LocalManager::startProxy] ts options must contain -M");
     }
 
+    EnableDeathSignal(SIGTERM);
+
     res = execv(absolute_proxy_binary, options);
     mgmt_elog(stderr, errno, "[LocalManager::startProxy] Exec of %s failed\n", absolute_proxy_binary);
     _exit(res);
@@ -1065,21 +1076,7 @@ LocalManager::bindProxyPort(HttpProxyPort& port)
 {
   int one = 1;
 
-#if !TS_USE_POSIX_CAP
-  bool privBoost = false;
-  uid_t euid = geteuid();
-  uid_t saved_euid = 0;
-
-  if (port.m_port < 1024 && euid != 0) {
-    if (restoreRootPriv(&saved_euid) == false) {
-      mgmt_elog(stderr, 0, "[bindProxyPort] Unable to get root priviledges to bind port %d. euid is %d.  Exiting\n",
-                port.m_port, euid);
-      _exit(0);
-    } else {
-      privBoost = true;
-    }
-  }
-#endif
+  ElevateAccess access(port.m_port < 1024 && geteuid() != 0);
 
   /* Setup reliable connection, for large config changes */
   if ((port.m_fd = socket(port.m_family, SOCK_STREAM, 0)) < 0) {
@@ -1141,16 +1138,6 @@ LocalManager::bindProxyPort(HttpProxyPort& port)
 
   Debug("lm", "[bindProxyPort] Successfully bound proxy port %d\n", port.m_port);
 
-#if !TS_USE_POSIX_CAP
-  if (port.m_port < 1024 && euid != 0) {
-    if (privBoost == true) {
-      if (removeRootPriv(saved_euid) == false) {
-        mgmt_elog(stderr, 0, "[bindProxyPort] Unable to reset permissions to euid %d.  Exiting...\n", getuid());
-        _exit(1);
-      }
-    }
-  }
-#endif
 }
 
 void

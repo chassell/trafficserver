@@ -25,13 +25,13 @@
 #include "ink_defs.h"
 #include "ink_string.h"
 #include "ink_time.h"
+#include "ink_memory.h"
 
 #include "WebUtils.h"
 #include "WebHttpMessage.h"
 #include "TextBuffer.h"
 #include "MIME.h"
 #include "I_Version.h"
-#include "Main.h"
 
 /****************************************************************************
  *
@@ -333,7 +333,7 @@ httpMessage::getModDate()
     delete[]dateStr;
 
     // Now figure out the content length from if modified
-    if (parser->getNumber() > numDateFields + 1) {
+    if (parser->count() > (unsigned)(numDateFields + 1)) {
       clStr = (*parser)[numDateFields + 1];
       equalTok = new Tokenizer("=\r\n");
       equalTok->Initialize(clStr);
@@ -460,7 +460,7 @@ httpResponse::writeHdr(SocketInfo socketD)
   // Record Server Name
   hdr.copyFrom(serverStr, strlen(serverStr));
   hdr.copyFrom(managerStr, strlen(managerStr));
-  hdr.copyFrom(appVersionInfo.VersionStr, strlen(appVersionInfo.VersionStr));
+  // XXX hdr.copyFrom(appVersionInfo.VersionStr, strlen(appVersionInfo.VersionStr));
   hdr.copyFrom("\r\n", 2);
 
   // Record refresh

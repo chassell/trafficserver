@@ -125,7 +125,7 @@ TSThreadCreate(TSThreadFunc func, void *data)
 {
   INKThreadInternal *thread;
 
-  thread = NEW(new INKThreadInternal);
+  thread = new INKThreadInternal;
 
   ink_assert(thread->event_types == 0);
 
@@ -144,7 +144,7 @@ TSThreadInit()
 {
   INKThreadInternal *thread;
 
-  thread = NEW(new INKThreadInternal);
+  thread = new INKThreadInternal;
 
 #ifdef DEBUG
   if (thread == NULL)
@@ -187,6 +187,14 @@ TSMutexCreate()
   sdk_assert(sdk_sanity_check_mutex((TSMutex)mutexp) == TS_SUCCESS);
 
   return (TSMutex)mutexp;
+}
+
+void
+TSMutexDestroy(TSMutex m) {
+  sdk_assert(sdk_sanity_check_mutex(m) == TS_SUCCESS);
+  ink_release_assert(((ProxyMutex*)m)->refcount() == 0);
+
+  ((ProxyMutex*)m)->free();
 }
 
 /* The following two APIs are for Into work, actually, APIs of Mutex
@@ -354,14 +362,14 @@ INKBasedTimeGet()
 
 TSAction
 INKUDPBind(TSCont contp, unsigned int ip, int port)
-{  
+{
   sdk_assert(sdk_sanity_check_continuation(contp) == TS_SUCCESS);
-    
+
   FORCE_PLUGIN_MUTEX(contp);
 
   struct sockaddr_in addr;
   ats_ip4_set(&addr, ip, htons(port));
-  
+
   return reinterpret_cast<TSAction>(udpNet.UDPBind((Continuation *)contp, ats_ip_sa_cast(&addr), INK_ETHERNET_MTU_SIZE, INK_ETHERNET_MTU_SIZE));
 }
 
@@ -477,7 +485,7 @@ INKUDPPacketGet(INKUDPacketQueue queuep)
 
     packet = qp->pop();
     return (packet);
-  } 
+  }
 
   return NULL;
 }

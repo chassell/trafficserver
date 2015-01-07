@@ -96,7 +96,7 @@ TSListDestroy(TSList l)
   return;
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSListEnqueue(TSList l, void *data)
 {
   int ret;
@@ -202,7 +202,7 @@ TSIpAddrListDestroy(TSIpAddrList ip_addrl)
   return;
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSIpAddrListEnqueue(TSIpAddrList ip_addrl, TSIpAddrEle * ip_addr)
 {
   int ret;
@@ -306,7 +306,7 @@ TSPortListDestroy(TSPortList portl)
   return;
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSPortListEnqueue(TSPortList portl, TSPortEle * port)
 {
   int ret;
@@ -407,7 +407,7 @@ TSDomainListDestroy(TSDomainList domainl)
   delete_queue((LLQ *) domainl);
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSDomainListEnqueue(TSDomainList domainl, TSDomain * domain)
 {
   int ret;
@@ -505,7 +505,7 @@ TSStringListDestroy(TSStringList strl)
   delete_queue((LLQ *) strl);
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSStringListEnqueue(TSStringList strl, char *str)
 {
   int ret;
@@ -598,7 +598,7 @@ TSIntListDestroy(TSIntList intl)
   return;
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSIntListEnqueue(TSIntList intl, int *elem)
 {
   int ret;
@@ -685,10 +685,10 @@ init_pdss_format(TSPdSsFormat * info)
 }
 
 /*--- allocate/deallocate operations --------------------------------------*/
-tsapi TSEvent *
+tsapi TSMgmtEvent *
 TSEventCreate(void)
 {
-  TSEvent *event = (TSEvent *)ats_malloc(sizeof(TSEvent));
+  TSMgmtEvent *event = (TSMgmtEvent *)ats_malloc(sizeof(TSMgmtEvent));
 
   event->id = -1;
   event->name = NULL;
@@ -699,7 +699,7 @@ TSEventCreate(void)
 }
 
 tsapi void
-TSEventDestroy(TSEvent * event)
+TSEventDestroy(TSMgmtEvent * event)
 {
   if (event) {
     ats_free(event->name);
@@ -725,8 +725,8 @@ TSRecordEleDestroy(TSRecordEle * ele)
 {
   if (ele) {
     ats_free(ele->rec_name);
-    if (ele->rec_type == TS_REC_STRING && ele->string_val)
-      ats_free(ele->string_val);
+    if (ele->rec_type == TS_REC_STRING && ele->valueT.string_val)
+      ats_free(ele->valueT.string_val);
     ats_free(ele);
   }
   return;
@@ -1443,7 +1443,7 @@ TSVirtIpAddrEleDestroy(TSVirtIpAddrEle * ele)
  ***************************************************************************/
 
 /*--- statistics operations ----------------------------------------------- */
-tsapi TSError
+tsapi TSMgmtError
 TSStatsReset(bool cluster, const char *name)
 {
   return StatsReset(cluster, name);
@@ -1452,72 +1452,72 @@ TSStatsReset(bool cluster, const char *name)
 /*--- variable operations ------------------------------------------------- */
 /* Call the CfgFileIO variable operations */
 
-tsapi TSError
+tsapi TSMgmtError
 TSRecordGet(char *rec_name, TSRecordEle * rec_val)
 {
   return MgmtRecordGet(rec_name, rec_val);
 }
 
-TSError
+TSMgmtError
 TSRecordGetInt(const char *rec_name, TSInt * int_val)
 {
-  TSError ret = TS_ERR_OKAY;
+  TSMgmtError ret = TS_ERR_OKAY;
 
   TSRecordEle *ele = TSRecordEleCreate();
   ret = MgmtRecordGet(rec_name, ele);
   if (ret != TS_ERR_OKAY)
     goto END;
 
-  *int_val = ele->int_val;
+  *int_val = ele->valueT.int_val;
 
 END:
   TSRecordEleDestroy(ele);
   return ret;
 }
 
-TSError
+TSMgmtError
 TSRecordGetCounter(const char *rec_name, TSCounter * counter_val)
 {
-  TSError ret;
+  TSMgmtError ret;
 
   TSRecordEle *ele = TSRecordEleCreate();
   ret = MgmtRecordGet(rec_name, ele);
   if (ret != TS_ERR_OKAY)
     goto END;
-  *counter_val = ele->counter_val;
+  *counter_val = ele->valueT.counter_val;
 
 END:
   TSRecordEleDestroy(ele);
   return ret;
 }
 
-TSError
+TSMgmtError
 TSRecordGetFloat(const char *rec_name, TSFloat * float_val)
 {
-  TSError ret;
+  TSMgmtError ret;
 
   TSRecordEle *ele = TSRecordEleCreate();
   ret = MgmtRecordGet(rec_name, ele);
   if (ret != TS_ERR_OKAY)
     goto END;
-  *float_val = ele->float_val;
+  *float_val = ele->valueT.float_val;
 
 END:
   TSRecordEleDestroy(ele);
   return ret;
 }
 
-TSError
+TSMgmtError
 TSRecordGetString(const char *rec_name, TSString *string_val)
 {
-  TSError ret;
+  TSMgmtError ret;
 
   TSRecordEle *ele = TSRecordEleCreate();
   ret = MgmtRecordGet(rec_name, ele);
   if (ret != TS_ERR_OKAY)
     goto END;
 
-  *string_val = ats_strdup(ele->string_val);
+  *string_val = ats_strdup(ele->valueT.string_val);
 
 END:
   TSRecordEleDestroy(ele);
@@ -1543,13 +1543,13 @@ END:
  * a file while retrieving all the requested records!
  */
 
-tsapi TSError
+tsapi TSMgmtError
 TSRecordGetMlt(TSStringList rec_names, TSList rec_vals)
 {
   TSRecordEle *ele;
   char *rec_name;
   int num_recs, i, j;
-  TSError ret;
+  TSMgmtError ret;
 
   if (!rec_names || !rec_vals)
     return TS_ERR_PARAMS;
@@ -1581,33 +1581,42 @@ TSRecordGetMlt(TSStringList rec_names, TSList rec_vals)
   return TS_ERR_OKAY;
 }
 
+tsapi TSMgmtError
+TSRecordGetMatchMlt(const char * regex, TSList rec_vals)
+{
+  if (!regex || !rec_vals) {
+    return TS_ERR_PARAMS;
+  }
 
-tsapi TSError
+  return MgmtRecordGetMatching(regex, rec_vals);
+}
+
+tsapi TSMgmtError
 TSRecordSet(const char *rec_name, const char *val, TSActionNeedT * action_need)
 {
   return MgmtRecordSet(rec_name, val, action_need);
 }
 
 
-tsapi TSError
+tsapi TSMgmtError
 TSRecordSetInt(const char *rec_name, TSInt int_val, TSActionNeedT * action_need)
 {
   return MgmtRecordSetInt(rec_name, int_val, action_need);
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSRecordSetCounter(const char *rec_name, TSCounter counter_val, TSActionNeedT * action_need)
 {
   return MgmtRecordSetCounter(rec_name, counter_val, action_need);
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSRecordSetFloat(const char *rec_name, TSFloat float_val, TSActionNeedT * action_need)
 {
   return MgmtRecordSetFloat(rec_name, float_val, action_need);
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSRecordSetString(const char *rec_name, const char *str_val, TSActionNeedT * action_need)
 {
   return MgmtRecordSetString(rec_name, str_val, action_need);
@@ -1630,12 +1639,12 @@ TSRecordSetString(const char *rec_name, const char *str_val, TSActionNeedT * act
  * records; action_need will be set to the most severe action needed of
  * all the "Set" calls
  */
-tsapi TSError
+tsapi TSMgmtError
 TSRecordSetMlt(TSList rec_list, TSActionNeedT * action_need)
 {
   int num_recs, ret, i;
   TSRecordEle *ele;
-  TSError status = TS_ERR_OKAY;
+  TSMgmtError status = TS_ERR_OKAY;
   TSActionNeedT top_action_req = TS_ACTION_UNDEFINED;
 
   if (!rec_list || !action_need)
@@ -1648,16 +1657,16 @@ TSRecordSetMlt(TSList rec_list, TSActionNeedT * action_need)
     if (ele) {
       switch (ele->rec_type) {
       case TS_REC_INT:
-        ret = MgmtRecordSetInt(ele->rec_name, ele->int_val, action_need);
+        ret = MgmtRecordSetInt(ele->rec_name, ele->valueT.int_val, action_need);
         break;
       case TS_REC_COUNTER:
-        ret = MgmtRecordSetCounter(ele->rec_name, ele->counter_val, action_need);
+        ret = MgmtRecordSetCounter(ele->rec_name, ele->valueT.counter_val, action_need);
         break;
       case TS_REC_FLOAT:
-        ret = MgmtRecordSetFloat(ele->rec_name, ele->float_val, action_need);
+        ret = MgmtRecordSetFloat(ele->rec_name, ele->valueT.float_val, action_need);
         break;
       case TS_REC_STRING:
-        ret = MgmtRecordSetString(ele->rec_name, ele->string_val, action_need);
+        ret = MgmtRecordSetString(ele->rec_name, ele->valueT.string_val, action_need);
         break;
       default:
         ret = TS_ERR_FAIL;
@@ -1682,13 +1691,13 @@ TSRecordSetMlt(TSList rec_list, TSActionNeedT * action_need)
 }
 
 /*--- api initialization and shutdown -------------------------------------*/
-tsapi TSError
+tsapi TSMgmtError
 TSInit(const char *socket_path, TSInitOptionT options)
 {
   return Init(socket_path, options);
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSTerminate()
 {
   return Terminate();
@@ -1701,22 +1710,22 @@ TSPluginInit(int /* argc ATS_UNUSED */, const char */* argv ATS_UNUSED */[])
 }
 
 /*--- network operations --------------------------------------------------*/
-tsapi TSError
+tsapi TSMgmtError
 TSConnect(TSIpAddr /* ip_addr ATS_UNUSED */, int /* port ATS_UNUSED */)
 {
   return TS_ERR_OKAY;
 }
-tsapi TSError
+tsapi TSMgmtError
 TSDisconnectCbRegister(TSDisconnectFunc * /* func ATS_UNUSED */, void * /* data ATS_UNUSED */)
 {
   return TS_ERR_OKAY;
 }
-tsapi TSError
+tsapi TSMgmtError
 TSDisconnectRetrySet(int /* retries ATS_UNUSED */, int /* retry_sleep_msec ATS_UNUSED */)
 {
   return TS_ERR_OKAY;
 }
-tsapi TSError
+tsapi TSMgmtError
 TSDisconnect()
 {
   return TS_ERR_OKAY;
@@ -1739,19 +1748,33 @@ TSProxyStateGet()
  * Input:  proxy_state - set to on/off
  *         clear - start TS with cache clearing option,
  *                 when stopping TS should always be TS_CACHE_CLEAR_OFF
- * Output: TSError
+ * Output: TSMgmtError
  */
-tsapi TSError
+tsapi TSMgmtError
 TSProxyStateSet(TSProxyStateT proxy_state, TSCacheClearT clear)
 {
   return ProxyStateSet(proxy_state, clear);
 }
 
+tsapi TSMgmtError
+TSProxyBacktraceGet(unsigned options, TSString * trace)
+{
+  if (options != 0) {
+    return TS_ERR_PARAMS;
+  }
+
+  if (trace == NULL) {
+    return TS_ERR_PARAMS;
+  }
+
+  return ServerBacktrace(options, trace);
+}
+
 /* TSReconfigure: tell traffic_server to re-read its configuration files
  * Input:  <none>
- * Output: TSError
+ * Output: TSMgmtError
  */
-tsapi TSError
+tsapi TSMgmtError
 TSReconfigure()
 {
   return Reconfigure();
@@ -1759,40 +1782,24 @@ TSReconfigure()
 
 /* TSRestart: restarts Traffic Server
  * Input:  cluster - local or cluster-wide
- * Output: TSError
+ * Output: TSMgmtError
  */
-tsapi TSError
+tsapi TSMgmtError
 TSRestart(bool cluster)
 {
   return Restart(cluster);
 }
 
-/* TSHardRestart: a traffic_cop restart (restarts TM and TS),
- * essentially does a "start_traffic_server"/"stop_traffic_server" sequence
- * Input:  <none>
- * Output: TSError
- * Note: only for remote API clients
- */
-/* CAN ONLY BE IMPLEMENTED ON THE REMOTE SIDE !!! */
-tsapi TSError
-TSHardRestart()
-{
-  return HardRestart();         // should return TS_ERR_FAIL
-}
-
 /* TSActionDo: based on TSActionNeedT, will take appropriate action
  * Input: action - action that needs to be taken
- * Output: TSError
+ * Output: TSMgmtError
  */
-tsapi TSError
+tsapi TSMgmtError
 TSActionDo(TSActionNeedT action)
 {
-  TSError ret;
+  TSMgmtError ret;
 
   switch (action) {
-  case TS_ACTION_SHUTDOWN:
-    ret = HardRestart();
-    break;
   case TS_ACTION_RESTART:
     ret = Restart(true);        // cluster wide by default?
     break;
@@ -1802,6 +1809,7 @@ TSActionDo(TSActionNeedT action)
   case TS_ACTION_DYNAMIC:
     /* do nothing - change takes effect immediately */
     return TS_ERR_OKAY;
+  case TS_ACTION_SHUTDOWN:
   default:
     return TS_ERR_FAIL;
   }
@@ -1811,15 +1819,15 @@ TSActionDo(TSActionNeedT action)
 
 /* TSBouncer: restarts the traffic_server process(es)
  * Input:  cluster - local or cluster-wide
- * Output: TSError
+ * Output: TSMgmtError
  */
-tsapi TSError
+tsapi TSMgmtError
 TSBounce(bool cluster)
 {
   return Bounce(cluster);
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSStorageDeviceCmdOffline(char const* dev)
 {
   return StorageDeviceCmdOffline(dev);
@@ -1842,7 +1850,7 @@ TSDiags(TSDiagsT mode, const char *fmt, ...)
 
 /* NOTE: user must deallocate the memory for the string returned */
 char *
-TSGetErrorMessage(TSError err_id)
+TSGetErrorMessage(TSMgmtError err_id)
 {
   char msg[1024];               // need to define a MAX_ERR_MSG_SIZE???
   char *err_msg = NULL;
@@ -1887,6 +1895,9 @@ TSGetErrorMessage(TSError err_id)
   case TS_ERR_FAIL:
     snprintf(msg, sizeof(msg), "[%d] Generic Fail message (ie. CoreAPI call).", err_id);
     break;
+  case TS_ERR_NOT_SUPPORTED:
+    snprintf(msg, sizeof(msg), "[%d] Operation not supported on this platform.", err_id);
+    break;
 
   default:
     snprintf(msg, sizeof(msg), "[%d] Invalid error type.", err_id);
@@ -1899,7 +1910,7 @@ TSGetErrorMessage(TSError err_id)
 
 
 /*--- password operations -------------------------------------------------*/
-tsapi TSError
+tsapi TSMgmtError
 TSEncryptPassword(char *passwd, char **e_passwd)
 {
   INK_DIGEST_CTX md5_context;
@@ -1926,13 +1937,13 @@ TSEncryptPassword(char *passwd, char **e_passwd)
 }
 
 /*--- direct file operations ----------------------------------------------*/
-tsapi TSError
+tsapi TSMgmtError
 TSConfigFileRead(TSFileNameT file, char **text, int *size, int *version)
 {
   return ReadFile(file, text, size, version);
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSConfigFileWrite(TSFileNameT file, char *text, int size, int version)
 {
   return WriteFile(file, text, size, version);
@@ -1945,8 +1956,8 @@ TSConfigFileWrite(TSFileNameT file, char *text, int size, int version)
  *         headerSize - the size of the header buffer is returned
  *         body       - a buffer is allocated on the body char* pointer
  *         bodySize   - the size of the body buffer is returned
- * Output: TSError   - TS_ERR_OKAY if succeed, TS_ERR_FAIL otherwise
- * Obsolete:  tsapi TSError TSReadFromUrl (char *url, char **text, int *size);
+ * Output: TSMgmtError   - TS_ERR_OKAY if succeed, TS_ERR_FAIL otherwise
+ * Obsolete:  tsapi TSMgmtError TSReadFromUrl (char *url, char **text, int *size);
  * NOTE: The URL can be expressed in the following forms:
  *       - http://www.example.com:80/products/network/index.html
  *       - http://www.example.com/products/network/index.html
@@ -1956,7 +1967,7 @@ TSConfigFileWrite(TSFileNameT file, char *text, int size, int version)
  *       - www.example.com
  * NOTE: header and headerSize can be NULL
  */
-tsapi TSError
+tsapi TSMgmtError
 TSReadFromUrl(char *url, char **header, int *headerSize, char **body, int *bodySize)
 {
   //return ReadFromUrl(url, header, headerSize, body, bodySize);
@@ -1964,7 +1975,7 @@ TSReadFromUrl(char *url, char **header, int *headerSize, char **body, int *bodyS
 
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSReadFromUrlEx(const char *url, char **header, int *headerSize, char **body, int *bodySize, int timeout)
 {
   int hFD = -1;
@@ -1976,7 +1987,7 @@ TSReadFromUrlEx(const char *url, char **header, int *headerSize, char **body, in
   char request[BUFSIZE];
   char *hdr_temp;
   char *bdy_temp;
-  TSError status = TS_ERR_OKAY;
+  TSMgmtError status = TS_ERR_OKAY;
 
   // Sanity check
   if (!url)
@@ -2046,10 +2057,10 @@ END:
 
 /*--- cache inspector operations -------------------------------------------*/
 
-tsapi TSError
+tsapi TSMgmtError
 TSLookupFromCacheUrl(TSString url, TSString * info)
 {
-  TSError err = TS_ERR_OKAY;
+  TSMgmtError err = TS_ERR_OKAY;
   int fd;
   char request[BUFSIZE];
   char response[URL_BUFSIZE];
@@ -2084,10 +2095,10 @@ END:
   return err;
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSLookupFromCacheUrlRegex(TSString url_regex, TSString * list)
 {
-  TSError err = TS_ERR_OKAY;
+  TSMgmtError err = TS_ERR_OKAY;
   int fd = -1;
   char request[BUFSIZE];
   char response[URL_BUFSIZE];
@@ -2121,10 +2132,10 @@ END:
   return err;
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSDeleteFromCacheUrl(TSString url, TSString * info)
 {
-  TSError err = TS_ERR_OKAY;
+  TSMgmtError err = TS_ERR_OKAY;
   int fd = -1;
   char request[BUFSIZE];
   char response[URL_BUFSIZE];
@@ -2159,10 +2170,10 @@ END:
   return err;
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSDeleteFromCacheUrlRegex(TSString url_regex, TSString * list)
 {
-  TSError err = TS_ERR_OKAY;
+  TSMgmtError err = TS_ERR_OKAY;
   int fd = -1;
   char request[BUFSIZE];
   char response[URL_BUFSIZE];
@@ -2196,10 +2207,10 @@ END:
   return err;
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSInvalidateFromCacheUrlRegex(TSString url_regex, TSString * list)
 {
-  TSError err = TS_ERR_OKAY;
+  TSMgmtError err = TS_ERR_OKAY;
   int fd = -1;
   char request[BUFSIZE];
   char response[URL_BUFSIZE];
@@ -2234,36 +2245,36 @@ END:
 }
 
 /*--- snapshot operations -------------------------------------------------*/
-tsapi TSError
+tsapi TSMgmtError
 TSSnapshotTake(char *snapshot_name)
 {
   return SnapshotTake(snapshot_name);
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSSnapshotRestore(char *snapshot_name)
 {
   return SnapshotRestore(snapshot_name);
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSSnapshotRemove(char *snapshot_name)
 {
   return SnapshotRemove(snapshot_name);
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSSnapshotGetMlt(TSStringList snapshots)
 {
   return SnapshotGetMlt((LLQ *) snapshots);
 }
 
 /*--- events --------------------------------------------------------------*/
-tsapi TSError
+tsapi TSMgmtError
 TSEventSignal(char *event_name, ...)
 {
   va_list ap;
-  TSError ret;
+  TSMgmtError ret;
 
   va_start(ap, event_name);     // initialize the argument pointer ap
   ret = EventSignal(event_name, ap);
@@ -2271,31 +2282,31 @@ TSEventSignal(char *event_name, ...)
   return ret;
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSEventResolve(char *event_name)
 {
   return EventResolve(event_name);
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSActiveEventGetMlt(TSList active_events)
 {
   return ActiveEventGetMlt((LLQ *) active_events);
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSEventIsActive(char *event_name, bool * is_current)
 {
   return EventIsActive(event_name, is_current);
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSEventSignalCbRegister(char *event_name, TSEventSignalFunc func, void *data)
 {
   return EventSignalCbRegister(event_name, func, data);
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSEventSignalCbUnregister(char *event_name, TSEventSignalFunc func)
 {
   return EventSignalCbUnregister(event_name, func);
@@ -2315,19 +2326,19 @@ TSCfgContextCreate(TSFileNameT file)
 }
 
 /* calls the CfgContext class destructor */
-tsapi TSError
+tsapi TSMgmtError
 TSCfgContextDestroy(TSCfgContext ctx)
 {
   return (CfgContextDestroy((CfgContext *) ctx));
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSCfgContextCommit(TSCfgContext ctx, TSActionNeedT * /* action_need ATS_UNUSED */, TSIntList errRules)
 {
   return (CfgContextCommit((CfgContext *) ctx, (LLQ *) errRules));
 }
 
-tsapi TSError
+tsapi TSMgmtError
 TSCfgContextGet(TSCfgContext ctx)
 {
   return (CfgContextGet((CfgContext *) ctx));
@@ -2361,38 +2372,38 @@ TSCfgContextGetNext(TSCfgContext ctx, TSCfgIterState * state)
   return CfgContextGetNext((CfgContext *) ctx, state);
 }
 
-TSError
+TSMgmtError
 TSCfgContextMoveEleUp(TSCfgContext ctx, int index)
 {
   return CfgContextMoveEleUp((CfgContext *) ctx, index);
 }
 
-TSError
+TSMgmtError
 TSCfgContextMoveEleDown(TSCfgContext ctx, int index)
 {
   return CfgContextMoveEleDown((CfgContext *) ctx, index);
 }
 
 
-TSError
+TSMgmtError
 TSCfgContextAppendEle(TSCfgContext ctx, TSCfgEle * ele)
 {
   return CfgContextAppendEle((CfgContext *) ctx, ele);
 }
 
-TSError
+TSMgmtError
 TSCfgContextInsertEleAt(TSCfgContext ctx, TSCfgEle * ele, int index)
 {
   return CfgContextInsertEleAt((CfgContext *) ctx, ele, index);
 }
 
-TSError
+TSMgmtError
 TSCfgContextRemoveEleAt(TSCfgContext ctx, int index)
 {
   return CfgContextRemoveEleAt((CfgContext *) ctx, index);
 }
 
-TSError
+TSMgmtError
 TSCfgContextRemoveAll(TSCfgContext ctx)
 {
   return CfgContextRemoveAll((CfgContext *) ctx);
@@ -2409,81 +2420,4 @@ TSIsValid(TSCfgEle * ele)
 
   ele_obj = create_ele_obj_from_ele(ele);
   return (ele_obj->isValid());
-}
-
-/* Network conifguration functions */
-
-// close all file descriptors belong to process specified by pid
-void
-closeAllFds()
-{
-  const int BUFFLEN = 200;
-  char command[BUFFLEN];
-  char buffer[BUFFLEN];         // this is assumption.. so would break if some one try to hack this.
-  int num;
-
-  // WARNING:  this part of code doesn't work yet.  for some strange reason, we can not upgrade
-  //           to root
-  if (getuid() != 0) {          // if not super user, need to upgrade to root
-    //printf("before upgrade:current uid%d, euid %d\n", getuid(), geteuid()); fflush(stdout);
-    if(seteuid(0) != 0 || setreuid(0, 0) != 0)
-      perror("[closeAllFds] unable to restore root privilege.");
-    //printf("after upgrade:current uid %d, euid %d\n", getuid(), geteuid()); fflush(stdout);
-  }
-
-  if (getuid() == 0 || geteuid() == 0) {        // only if it's successful
-    snprintf(command, sizeof(command), "/bin/ls -1 /proc/%" PRId64 "/fd", (int64_t)getpid());
-    FILE *fd = popen(command, "r");
-    if (fd) {
-      while (!feof(fd)) {
-        ATS_UNUSED_RETURN(fgets(buffer, BUFFLEN, fd));
-        num = atoi(buffer);
-        if (num != fileno(fd) && num != 0 && num != 1 && num != 2) {   // for out put
-          //printf("closing fd (%d)\n", num); fflush(stdout);
-          close(num);
-        }
-      }
-      pclose(fd);
-    }
-  }
-}
-
-tsapi TSError rm_start_proxy()
-{
-
-#if defined(linux)
-  static time_t rm_last_stop = 0;
-
-  time_t time_diff = time(NULL) - rm_last_stop;
-
-  if (time_diff > 60 || time_diff < 0) {        // wrap around??  shall never happen
-    pid_t pid;
-    const char *argv[3];
-    argv[0] = "net_config";
-    argv[1] = "7";
-    argv[2] = NULL;
-    char command_path[PATH_NAME_MAX + 1];
-    Layout::relative_to(command_path, sizeof(command_path),
-                        Layout::get()->bindir, "net_config");
-
-    rm_last_stop = time(NULL);
-
-    if ((pid = fork()) < 0) {
-      exit(1);
-    } else if (pid > 0) {
-      // do not wait
-    } else {
-      closeAllFds();
-      close(1);                 // close STDOUT
-      close(2);                 // close STDERR
-
-      int res = execv(command_path, (char* const*)argv);
-      if (res != 0) {
-        perror("[rm_start_proxy] net_config stop_proxy failed! ");
-      }
-      _exit(res);
-    }
-  }                             // else already try to stop within 60s Window, skip
-#endif
-  return TS_ERR_OKAY;
 }

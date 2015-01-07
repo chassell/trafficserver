@@ -50,7 +50,6 @@ class HttpBodyFactory;
 extern int fds_limit;
 extern int cluster_port_number;
 
-int diags_init = 0;
 int command_flag = 0;
 int http_accept_port_number = 0;
 int http_accept_file_descriptor = 0;
@@ -72,12 +71,20 @@ AppVersionInfo appVersionInfo;
   init_system
   -------------------------------------------------------------------------*/
 
+// Handle fatal signals by logging and core dumping ...
+static void
+logging_crash_handler(int signo, siginfo_t * info, void * ptr)
+{
+  signal_format_siginfo(signo, info, appVersionInfo.AppStr);
+  signal_crash_handler(signo, info, ptr);
+}
+
 static void
 init_system(bool notify_syslog)
 {
   fds_limit = ink_max_out_rlimit(RLIMIT_NOFILE, true, false);
 
-  init_signals();
+  signal_register_crash_handler(logging_crash_handler);
   if (notify_syslog) {
     syslog(LOG_NOTICE, "NOTE: --- %s Starting ---", appVersionInfo.AppStr);
     syslog(LOG_NOTICE, "NOTE: %s Version: %s", appVersionInfo.AppStr, appVersionInfo.FullVersionInfoStr);
@@ -102,15 +109,10 @@ initialize_process_manager()
   ink_assert(diags);
 
   RecProcessInit(remote_management_flag ? RECM_CLIENT : RECM_STAND_ALONE, diags);
+  LibRecordsConfigInit();
 
-  if (!remote_management_flag) {
-    LibRecordsConfigInit();
-    RecordsConfigOverrideFromEnvironment();
-  }
-
-  //
   // Start up manager
-  pmgmt = NEW(new ProcessManager(remote_management_flag));
+  pmgmt = new ProcessManager(remote_management_flag);
 
   pmgmt->start();
 
@@ -132,15 +134,6 @@ initialize_process_manager()
 //                         "proxy.process.version.server.build_compile_flags",
 //                         appVersionInfo.BldCompileFlagsStr,
 //                         RECP_NON_PERSISTENT);
-}
-
-/*-------------------------------------------------------------------------
-  shutdown_system
-  -------------------------------------------------------------------------*/
-
-void
-shutdown_system()
-{
 }
 
 
@@ -216,9 +209,8 @@ init_log_standalone(const char *pgm_name, bool one_copy)
 
   init_system(true);
   initialize_process_manager();
-  diagsConfig = NEW(new DiagsConfig(logfile, error_tags, action_tags));
+  diagsConfig = new DiagsConfig(logfile, error_tags, action_tags);
   diags = diagsConfig->diags;
-  diags_init = 1;
 }
 
 /*-------------------------------------------------------------------------
@@ -245,12 +237,11 @@ init_log_standalone_basic(const char *pgm_name)
 
   init_system(false);
   const bool use_records = false;
-  diagsConfig = NEW(new DiagsConfig(logfile, error_tags, action_tags, use_records));
+  diagsConfig = new DiagsConfig(logfile, error_tags, action_tags, use_records);
   diags = diagsConfig->diags;
   // set stdin/stdout to be unbuffered
   //
   setbuf(stdin, NULL);
   setbuf(stdout, NULL);
 
-  diags_init = 1;
 }

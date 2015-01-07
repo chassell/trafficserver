@@ -170,7 +170,7 @@ void RegressionSM::run()
   // TODO: Why introduce another scope here?
   {
     MUTEX_TRY_LOCK(l, mutex, this_ethread());
-    if (!l || nwaiting > 1)
+    if (!l.is_locked() || nwaiting > 1)
       goto Lretry;
     RegressionSM *x = 0;
     while (ichild < n) {
@@ -240,10 +240,11 @@ struct ReRegressionSM: public RegressionSM
 
 REGRESSION_TEST(RegressionSM)(RegressionTest *t, int /* atype ATS_UNUSED */, int *pstatus)
 {
-  r_sequential(t, r_parallel(t, new ReRegressionSM(t), new ReRegressionSM(t), NULL_PTR),
+  RegressionSM *top_sm = r_sequential(t, r_parallel(t, new ReRegressionSM(t), new ReRegressionSM(t), NULL_PTR),
                r_sequential(t, new ReRegressionSM(t), new ReRegressionSM(t), NULL_PTR),
                r_parallel(t, 3, new ReRegressionSM(t)), r_sequential(t, 3, new ReRegressionSM(t)),
                r_parallel(t, r_sequential(t, 2, new ReRegressionSM(t)),
                           r_parallel(t, 2, new ReRegressionSM(t)), NULL_PTR),
-               NULL_PTR)->run(pstatus);
+               NULL_PTR);
+  top_sm->run(pstatus);
 }

@@ -141,7 +141,7 @@ ClusterControl::free_data()
       ink_release_assert(*(((uint8_t *) data) - DATA_HDR + 1) == (uint8_t) ALLOC_DATA_MAGIC);
       *(((uint8_t *) data) - DATA_HDR + 1) = (uint8_t) ~ ALLOC_DATA_MAGIC;
 
-      ink_release_assert(*(((char *) data) - DATA_HDR) == size_index);         
+      ink_release_assert(*(((char *) data) - DATA_HDR) == size_index);
     } else {
       // malloc'ed memory, not alloced via real_alloc_data().
       // Data will be ats_free()'ed when IOBufferBlock is freed
@@ -260,10 +260,6 @@ n_byte_bank(0), byte_bank_size(0), missed(0), missed_msg(false), read_state_t(RE
   iob_iov = new_IOBufferData(BUFFER_SIZE_FOR_XMALLOC(size));
   char *addr = (char *) align_pointer_forward(iob_iov->data(), pagesize);
 
-#if defined(__sparc)
-  if (mprotect(addr, pagesize, PROT_NONE))
-    perror("ClusterState mprotect0 failed");
-#endif
   iov = (IOVec *) (addr + pagesize);
 
   ///////////////////////////////////////////////////
@@ -276,10 +272,6 @@ n_byte_bank(0), byte_bank_size(0), missed(0), missed_msg(false), read_state_t(RE
 
   addr = (char *) align_pointer_forward(msg.iob_descriptor_block->data->data(), pagesize);
 
-#if defined(__sparc)
-  if (mprotect(addr, pagesize, PROT_NONE))
-    perror("ClusterState mprotect failed");
-#endif
   addr = addr + pagesize;
   memset(addr, 0, size - (2 * pagesize));
   msg.descriptor = (Descriptor *) (addr + sizeof(ClusterMsgHeader));
@@ -290,24 +282,11 @@ n_byte_bank(0), byte_bank_size(0), missed(0), missed_msg(false), read_state_t(RE
 ClusterState::~ClusterState()
 {
   mutex = 0;
-#if defined(__sparc)
-  int pagesize = ats_pagesize();
-#endif
   if (iov) {
-#if defined(__sparc)
-    iov = (IOVec *) ((char *) iov - pagesize);
-    if (mprotect((char *) iov, pagesize, (PROT_READ | PROT_WRITE)))
-      perror("~ClusterState mprotect0 failed");
-#endif
     iob_iov = 0;                // Free memory
   }
 
   if (msg.descriptor) {
-#if defined(__sparc)
-    char *a = (char *) msg.descriptor - (sizeof(ClusterMsgHeader) + pagesize);
-    if (mprotect(a, pagesize, (PROT_READ | PROT_WRITE)))
-      perror("~ClusterState mprotect failed");
-#endif
     msg.iob_descriptor_block = 0;       // Free memory
   }
   // Deallocate IO Core structures
@@ -380,7 +359,7 @@ ClusterState::doIO()
   ink_release_assert(io_complete);
 #if !defined(CLUSTER_IMMEDIATE_NETIO)
   MUTEX_TRY_LOCK(lock, this->mutex, this_ethread());
-  if (!lock) {
+  if (!lock.is_locked()) {
     return 0;                   // unable to initiate operation
   }
 #endif
@@ -579,7 +558,7 @@ ClusterState::IOComplete()
 
   if (do_iodone_event && !ch->mutex->thread_holding) {
     MUTEX_TRY_LOCK(lock, ch->mutex, this_ethread());
-    if (lock) {
+    if (lock.is_locked()) {
       ch->handleEvent(EVENT_IMMEDIATE, (void *) 0);
     } else {
       eventProcessor.schedule_imm_signal(ch, ET_CLUSTER);
@@ -756,7 +735,7 @@ ClusterHandler::machine_down()
 #endif
   machine_offline_APIcallout(ip);
   snprintf(textbuf, sizeof(textbuf), "%hhu.%hhu.%hhu.%hhu:%d", DOT_SEPARATED(ip), port);
-  REC_SignalManager(REC_SIGNAL_MACHINE_DOWN, textbuf);
+  RecSignalManager(REC_SIGNAL_MACHINE_DOWN, textbuf);
   if (net_vc) {
     net_vc->do_io(VIO::CLOSE);
     net_vc = 0;
@@ -818,7 +797,7 @@ ClusterHandler::connectClusterEvent(int event, Event * e)
     //
     MachineList *cc = the_cluster_config();
     if (!machine)
-      machine = NEW(new ClusterMachine(hostname, ip, port));
+      machine = new ClusterMachine(hostname, ip, port);
 #ifdef LOCAL_CLUSTER_TEST_MODE
     if (!(cc && cc->find(ip, port))) {
 #else
@@ -1034,17 +1013,17 @@ ClusterHandler::startClusterEvent(int event, Event * e)
         if (net_vc->thread == thread) {
           cluster_connect_state = CLCON_CONN_BIND_OK;
           break;
-        } else { 
+        } else {
           cluster_connect_state = ClusterHandler::CLCON_CONN_BIND_CLEAR;
         }
       }
 
     case ClusterHandler::CLCON_CONN_BIND_CLEAR:
       {
-        UnixNetVConnection *vc = (UnixNetVConnection *)net_vc; 
+        UnixNetVConnection *vc = (UnixNetVConnection *)net_vc;
         MUTEX_TRY_LOCK(lock, vc->nh->mutex, e->ethread);
         MUTEX_TRY_LOCK(lock1, vc->mutex, e->ethread);
-        if (lock && lock1) {
+        if (lock.is_locked() && lock1.is_locked()) {
           vc->ep.stop();
           vc->nh->open_list.remove(vc);
           vc->thread = NULL;
@@ -1070,12 +1049,12 @@ ClusterHandler::startClusterEvent(int event, Event * e)
 
     case ClusterHandler::CLCON_CONN_BIND:
       {
-        // 
+        //
         NetHandler *nh = get_NetHandler(e->ethread);
-        UnixNetVConnection *vc = (UnixNetVConnection *)net_vc; 
+        UnixNetVConnection *vc = (UnixNetVConnection *)net_vc;
         MUTEX_TRY_LOCK(lock, nh->mutex, e->ethread);
         MUTEX_TRY_LOCK(lock1, vc->mutex, e->ethread);
-        if (lock && lock1) {
+        if (lock.is_locked() && lock1.is_locked()) {
           if (vc->read.in_enabled_list)
             nh->read_enable_list.push(vc);
           if (vc->write.in_enabled_list)
@@ -1107,7 +1086,7 @@ ClusterHandler::startClusterEvent(int event, Event * e)
         if (cc && cc->find(ip, port)) {
           ClusterConfiguration *c = this_cluster()->current_configuration();
           ClusterMachine *m = c->find(ip, port);
-          
+
           if (!m) { // this first connection
             ClusterConfiguration *cconf = configuration_add_machine(c, machine);
             CLUSTER_INCREMENT_DYN_STAT(CLUSTER_NODES_STAT);
@@ -1147,7 +1126,7 @@ failed:
 
         // Signal the manager
         snprintf(textbuf, sizeof(textbuf), "%hhu.%hhu.%hhu.%hhu:%d", DOT_SEPARATED(ip), port);
-        REC_SignalManager(REC_SIGNAL_MACHINE_UP, textbuf);
+        RecSignalManager(REC_SIGNAL_MACHINE_UP, textbuf);
 #ifdef LOCAL_CLUSTER_TEST_MODE
         Note("machine up %hhu.%hhu.%hhu.%hhu:%d, protocol version=%d.%d",
              DOT_SEPARATED(ip), port, clusteringVersion._major, clusteringVersion._minor);
@@ -1156,8 +1135,8 @@ failed:
              DOT_SEPARATED(ip), id, clusteringVersion._major, clusteringVersion._minor);
 #endif
 
-        read_vcs = NEW((new Queue<ClusterVConnectionBase, ClusterVConnectionBase::Link_read_link>[CLUSTER_BUCKETS]));
-        write_vcs = NEW((new Queue<ClusterVConnectionBase, ClusterVConnectionBase::Link_write_link>[CLUSTER_BUCKETS]));
+        read_vcs = new Queue<ClusterVConnectionBase, ClusterVConnectionBase::Link_read_link>[CLUSTER_BUCKETS];
+        write_vcs = new Queue<ClusterVConnectionBase, ClusterVConnectionBase::Link_write_link>[CLUSTER_BUCKETS];
         SET_HANDLER((ClusterContHandler) & ClusterHandler::beginClusterEvent);
 
         // enable schedule_imm() on i/o completion (optimization)
@@ -1172,7 +1151,7 @@ failed:
         int procs_online = ink_number_of_processors();
         int total_callbacks = min(procs_online, MAX_COMPLETION_CALLBACK_EVENTS);
         for (int n = 0; n < total_callbacks; ++n) {
-          callout_cont[n] = NEW(new ClusterCalloutContinuation(this));
+          callout_cont[n] = new ClusterCalloutContinuation(this);
           callout_events[n] = eventProcessor.schedule_every(callout_cont[n], COMPLETION_CALLBACK_PERIOD, ET_NET);
         }
 
@@ -1296,7 +1275,7 @@ ClusterHandler::protoZombieEvent(int /* event ATS_UNUSED */, Event * e)
     if (VALID_CHANNEL(vc)) {
       if (!vc->closed && vc->read.vio.op == VIO::READ) {
         MUTEX_TRY_LOCK(lock, vc->read.vio.mutex, t);
-        if (lock) {
+        if (lock.is_locked()) {
           cluster_signal_error_and_update(vc, &vc->read, 0);
         } else {
           failed = true;
@@ -1306,7 +1285,7 @@ ClusterHandler::protoZombieEvent(int /* event ATS_UNUSED */, Event * e)
       if (VALID_CHANNEL(vc)
           && !vc->closed && vc->write.vio.op == VIO::WRITE) {
         MUTEX_TRY_LOCK(lock, vc->write.vio.mutex, t);
-        if (lock) {
+        if (lock.is_locked()) {
           cluster_signal_error_and_update(vc, &vc->write, 0);
         } else {
           failed = true;
@@ -1337,7 +1316,7 @@ ClusterHandler::protoZombieEvent(int /* event ATS_UNUSED */, Event * e)
     for (int n = 0; n < MAX_COMPLETION_CALLBACK_EVENTS; ++n) {
       if (callout_cont[n]) {
         MUTEX_TRY_LOCK(lock, callout_cont[n]->mutex, t);
-        if (lock) {
+        if (lock.is_locked()) {
           callout_events[n]->cancel(callout_cont[n]);
           callout_events[n] = 0;
           delete callout_cont[n];

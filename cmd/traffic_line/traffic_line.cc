@@ -28,10 +28,11 @@
 #include "Tokenizer.h"
 #include "TextBuffer.h"
 #include "mgmtapi.h"
-
-static const char *programName;
+#include <stdio.h>
+#include <string.h>
 
 static char ReadVar[1024];
+static char MatchVar[1024];
 static char SetVar[1024];
 static char VarValue[1024];
 static int ReRead;
@@ -49,10 +50,10 @@ static char ZeroNode[1024];
 static char StorageCmdOffline[1024];
 static int ShowAlarms;
 static int ShowStatus;
+static int ShowBacktrace;
 static char ClearAlarms[1024];
-static int VersionFlag;
 
-static TSError
+static TSMgmtError
 handleArgInvocation()
 {
   if (ReRead == 1) {
@@ -70,16 +71,16 @@ handleArgInvocation()
   } else if (Startup == 1) {
     return TSProxyStateSet(TS_PROXY_ON, TS_CACHE_CLEAR_OFF);
   } else if (ClearCluster == 1) {
-    return TSStatsReset(true);
+    return TSStatsReset(true, NULL);
   } else if (ClearNode == 1) {
-    return TSStatsReset(false);
+    return TSStatsReset(false, NULL);
   } else if (*ZeroNode != '\0' || *ZeroCluster != '\0') {
-    TSError err;
+    TSMgmtError err;
     TSRecordEle *rec_ele = TSRecordEleCreate();
     char *name = *ZeroNode ? ZeroNode : ZeroCluster;
 
     if ((err = TSRecordGet(name, rec_ele)) != TS_ERR_OKAY) {
-      fprintf(stderr, "%s: %s\n", programName, TSGetErrorMessage(err));
+      fprintf(stderr, "%s: %s\n", program_name, TSGetErrorMessage(err));
       TSRecordEleDestroy(rec_ele);
       return err;
     }
@@ -172,32 +173,43 @@ handleArgInvocation()
       break;
     }
     return TS_ERR_OKAY;
+  } else if (ShowBacktrace == 1) {
+    TSString trace = NULL;
+    TSMgmtError err;
+
+    err = TSProxyBacktraceGet(0, &trace);
+    if (err == TS_ERR_OKAY) {
+      printf("%s\n", trace);
+      TSfree(trace);
+    }
+
+    return err;
   } else if (*ReadVar != '\0') {        // Handle a value read
     if (*SetVar != '\0' || *VarValue != '\0') {
-      fprintf(stderr, "%s: Invalid Argument Combination: Can not read and set values at the same time\n", programName);
+      fprintf(stderr, "%s: Invalid Argument Combination: Can not read and set values at the same time\n", program_name);
       return TS_ERR_FAIL;
     } else {
-      TSError err;
+      TSMgmtError err;
       TSRecordEle *rec_ele = TSRecordEleCreate();
 
       if ((err = TSRecordGet(ReadVar, rec_ele)) != TS_ERR_OKAY) {
-        fprintf(stderr, "%s: %s\n", programName, TSGetErrorMessage(err));
+        fprintf(stderr, "%s: %s\n", program_name, TSGetErrorMessage(err));
       } else {
         switch (rec_ele->rec_type) {
         case TS_REC_INT:
-          printf("%" PRId64 "\n", rec_ele->int_val);
+          printf("%" PRId64 "\n", rec_ele->valueT.int_val);
           break;
         case TS_REC_COUNTER:
-          printf("%" PRId64 "\n", rec_ele->counter_val);
+          printf("%" PRId64 "\n", rec_ele->valueT.counter_val);
           break;
         case TS_REC_FLOAT:
-          printf("%f\n", rec_ele->float_val);
+          printf("%f\n", rec_ele->valueT.float_val);
           break;
         case TS_REC_STRING:
-          printf("%s\n", rec_ele->string_val);
+          printf("%s\n", rec_ele->valueT.string_val);
           break;
         default:
-          fprintf(stderr, "%s: unknown record type (%d)\n", programName, rec_ele->rec_type);
+          fprintf(stderr, "%s: unknown record type (%d)\n", program_name, rec_ele->rec_type);
           err = TS_ERR_FAIL;
           break;
         }
@@ -205,24 +217,85 @@ handleArgInvocation()
       TSRecordEleDestroy(rec_ele);
       return err;
     }
-  } else if (*SetVar != '\0') { // Setting a variable
-    if (*VarValue == '\0') {
-      fprintf(stderr, "%s: Set requires a -v argument\n", programName);
+  } else if (*MatchVar != '\0') {        // Handle a value read
+    if (*SetVar != '\0' || *VarValue != '\0') {
+      fprintf(stderr, "%s: Invalid Argument Combination: Can not read and set values at the same time\n", program_name);
       return TS_ERR_FAIL;
     } else {
-      TSError err;
+      TSMgmtError err;
+      TSList list = TSListCreate();
+
+      if ((err = TSRecordGetMatchMlt(MatchVar, list)) != TS_ERR_OKAY) {
+        char* msg = TSGetErrorMessage(err);
+        fprintf(stderr, "%s: %s\n", program_name, msg);
+        ats_free(msg);
+      }
+
+      // If the RPC call failed, the list will be empty, so we won't print anything. Otherwise,
+      // print all the results, freeing them as we go.
+      for (TSRecordEle * rec_ele = (TSRecordEle *) TSListDequeue(list); rec_ele;
+          rec_ele = (TSRecordEle *) TSListDequeue(list)) {
+        switch (rec_ele->rec_type) {
+        case TS_REC_INT:
+          printf("%s %" PRId64 "\n", rec_ele->rec_name, rec_ele->valueT.int_val);
+          break;
+        case TS_REC_COUNTER:
+          printf("%s %" PRId64 "\n", rec_ele->rec_name, rec_ele->valueT.counter_val);
+          break;
+        case TS_REC_FLOAT:
+          printf("%s %f\n", rec_ele->rec_name, rec_ele->valueT.float_val);
+          break;
+        case TS_REC_STRING:
+          printf("%s %s\n", rec_ele->rec_name, rec_ele->valueT.string_val);
+          break;
+        default:
+          // just skip it ...
+          break;
+        }
+
+        TSRecordEleDestroy(rec_ele);
+      }
+
+      TSListDestroy(list);
+      return err;
+    }
+  } else if (*SetVar != '\0') { // Setting a variable
+    if (*VarValue == '\0') {
+      fprintf(stderr, "%s: Set requires a -v argument\n", program_name);
+      return TS_ERR_FAIL;
+    } else {
+      TSMgmtError err;
       TSActionNeedT action;
 
-      if ((err = TSRecordSet(SetVar, VarValue, &action)) != TS_ERR_OKAY)
-        fprintf(stderr, "%s: Please correct your variable name and|or value\n", programName);
+      if ((err = TSRecordSet(SetVar, VarValue, &action)) != TS_ERR_OKAY) {
+        fprintf(stderr, "%s: Please correct your variable name and|or value\n", program_name);
+        return err;
+      }
+
+      switch (action) {
+      case TS_ACTION_SHUTDOWN:
+        printf("Set %s, full shutdown required\n", SetVar);
+        break;
+      case TS_ACTION_RESTART:
+        printf("Set %s, restart required\n", SetVar);
+        break;
+      case TS_ACTION_RECONFIGURE:
+        // printf("Set %s, reconfiguration required\n", SetVar);
+        break;
+      case TS_ACTION_DYNAMIC:
+      default:
+        printf("Set %s\n", SetVar);
+        break;
+      }
+
       return err;
     }
   } else if (*VarValue != '\0') {       // We have a value but no variable to set
-    fprintf(stderr, "%s: Must specify variable to set with -s when using -v\n", programName);
+    fprintf(stderr, "%s: Must specify variable to set with -s when using -v\n", program_name);
     return TS_ERR_FAIL;
   }
 
-  fprintf(stderr, "%s: No arguments specified\n", programName);
+  fprintf(stderr, "%s: No arguments specified\n", program_name);
   return TS_ERR_FAIL;
 }
 
@@ -230,11 +303,15 @@ int
 main(int /* argc ATS_UNUSED */, char **argv)
 {
   AppVersionInfo appVersionInfo;
-  TSError status;
+  TSMgmtError status;
 
-  programName = argv[0];
+  // build the application information structure
+  appVersionInfo.setup(PACKAGE_NAME, "traffic_line", PACKAGE_VERSION, __DATE__, __TIME__, BUILD_MACHINE, BUILD_PERSON, "");
+
+  program_name = appVersionInfo.AppStr;
 
   ReadVar[0] = '\0';
+  MatchVar[0] = '\0';
   SetVar[0] = '\0';
   VarValue[0] = '\0';
   ReRead = 0;
@@ -249,23 +326,19 @@ main(int /* argc ATS_UNUSED */, char **argv)
   ClearNode = 0;
   ZeroCluster[0] = '\0';
   ZeroNode[0] = '\0';
-  VersionFlag = 0;
   *StorageCmdOffline = 0;
   ShowAlarms = 0;
   ShowStatus = 0;
   ClearAlarms[0] = '\0';
-
-  // build the application information structure
-  appVersionInfo.setup(PACKAGE_NAME,"traffic_line", PACKAGE_VERSION, __DATE__, __TIME__, BUILD_MACHINE, BUILD_PERSON, "");
 
 /* Argument description table used to describe how to parse command line args, */
 /* see 'ink_args.h' for meanings of the various fields */
   ArgumentDescription argument_descriptions[] = {
     {"query_deadhosts", 'q', "Query congested sites", "F", &QueryDeadhosts, NULL, NULL},
     {"read_var", 'r', "Read Variable", "S1024", &ReadVar, NULL, NULL},
+    {"match_var", 'm', "Match Variable", "S1024", &MatchVar, NULL, NULL},
     {"set_var", 's', "Set Variable (requires -v option)", "S1024", &SetVar, NULL, NULL},
     {"value", 'v', "Set Value (used with -s option)", "S1024", &VarValue, NULL, NULL},
-    {"help", 'h', "Help", NULL, NULL, NULL, usage},
     {"reread_config", 'x', "Reread Config Files", "F", &ReRead, NULL, NULL},
     {"restart_cluster", 'M', "Restart traffic_manager (cluster wide)", "F", &ShutdownMgmtCluster, NULL, NULL},
     {"restart_local", 'L', "Restart traffic_manager (local node)", "F", &ShutdownMgmtLocal, NULL, NULL},
@@ -281,24 +354,20 @@ main(int /* argc ATS_UNUSED */, char **argv)
     {"alarms", '-', "Show all alarms", "F", &ShowAlarms, NULL, NULL},
     {"clear_alarms", '-', "Clear specified, or all,  alarms", "S1024", &ClearAlarms, NULL, NULL},
     {"status", '-', "Show proxy server status", "F", &ShowStatus, NULL, NULL},
-    {"version", 'V', "Print Version Id", "T", &VersionFlag, NULL, NULL},
+    {"backtrace", '-', "Show proxy stack backtrace", "F", &ShowBacktrace, NULL, NULL},
+    HELP_ARGUMENT_DESCRIPTION(),
+    VERSION_ARGUMENT_DESCRIPTION()
   };
 
   // Process command line arguments and dump into variables
-  process_args(argument_descriptions, countof(argument_descriptions), argv);
-
-  // check for the version number request
-  if (VersionFlag) {
-    ink_fputln(stderr, appVersionInfo.FullVersionInfoStr);
-    exit(0);
-  }
+  process_args(&appVersionInfo, argument_descriptions, countof(argument_descriptions), argv);
 
   // Connect to Local Manager and do it.
   if (TS_ERR_OKAY != TSInit(NULL, static_cast<TSInitOptionT>(TS_MGMT_OPT_NO_EVENTS | TS_MGMT_OPT_NO_SOCK_TESTS))) {
     fprintf(stderr, "error: could not connect to management port, make sure traffic_manager is running\n");
     exit(1);
   }
-    
+
   status = handleArgInvocation();
 
   // Done with the mgmt API.

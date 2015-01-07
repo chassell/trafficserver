@@ -175,7 +175,8 @@ HostDBMD5::refresh() {
     memset(buff, 0, 2);
     memcpy(buff+2, ip._addr._byte, n);
     memset(buff + 2 + n , 0, 2);
-    hash.encodeBuffer(buff, n+4);
+    MD5Context().hash_immediate(hash, buff, n+4);
+//    hash.encodeBuffer(buff, n+4);
   }
 }
 
@@ -386,7 +387,7 @@ HostDBCache::start(int flags)
   // If proxy.config.hostdb.storage_path is not set, use the local state dir. If it is set to
   // a relative path, make it relative to the prefix.
   if (storage_path[0] == '\0') {
-    xptr<char> rundir(RecConfigReadRuntimeDir());
+    ats_scoped_str rundir(RecConfigReadRuntimeDir());
     ink_strlcpy(storage_path, rundir, sizeof(storage_path));
   } else if (storage_path[0] != '/') {
     Layout::relative_to(storage_path, sizeof(storage_path), Layout::get()->prefix, storage_path);
@@ -399,15 +400,15 @@ HostDBCache::start(int flags)
     Warning("Please set 'proxy.config.hostdb.storage_path' or 'proxy.config.local_state_dir'");
   }
 
-  hostDBStore = NEW(new Store);
-  hostDBSpan = NEW(new Span);
+  hostDBStore = new Store;
+  hostDBSpan = new Span;
   hostDBSpan->init(storage_path, storage_size);
   hostDBStore->add(hostDBSpan);
 
   Debug("hostdb", "Opening %s, size=%d", hostdb_filename, hostdb_size);
   if (open(hostDBStore, "hostdb.config", hostdb_filename, hostdb_size, reconfigure, fix, false /* slient */ ) < 0) {
-    xptr<char> rundir(RecConfigReadRuntimeDir());
-    xptr<char> config(Layout::relative_to(rundir, "hostdb.config"));
+    ats_scoped_str rundir(RecConfigReadRuntimeDir());
+    ats_scoped_str config(Layout::relative_to(rundir, "hostdb.config"));
 
     Note("reconfiguring host database");
 
@@ -415,8 +416,8 @@ HostDBCache::start(int flags)
       Debug("hostdb", "unable to unlink %s", (const char *)config);
 
     delete hostDBStore;
-    hostDBStore = NEW(new Store);
-    hostDBSpan = NEW(new Span);
+    hostDBStore = new Store;
+    hostDBSpan = new Span;
     hostDBSpan->init(storage_path, storage_size);
     hostDBStore->add(hostDBSpan);
 
@@ -486,7 +487,7 @@ HostDBProcessor::start(int, size_t)
   // Sync HostDB, if we've asked for it.
   //
   if (hostdb_sync_frequency > 0)
-    eventProcessor.schedule_imm(NEW(new HostDBSyncer));
+    eventProcessor.schedule_imm(new HostDBSyncer);
   return 0;
 }
 
@@ -546,48 +547,45 @@ make_md5(INK_MD5 & md5, const char *hostname, int len, int port, char const* pDN
 }
 
 static bool
-reply_to_cont(Continuation * cont, HostDBInfo * ar, bool is_srv = false)
+reply_to_cont(Continuation * cont, HostDBInfo * r, bool is_srv = false)
 {
-  const char *reason = "none";
-  HostDBInfo *r = ar;
-
   if (r == NULL || r->is_srv != is_srv || r->failed()) {
     cont->handleEvent(is_srv ? EVENT_SRV_LOOKUP : EVENT_HOST_DB_LOOKUP, NULL);
     return false;
   }
 
-  {
-    if (r->reverse_dns) {
-      if (!r->hostname()) {
-        reason = "missing hostname";
-        ink_assert(!"missing hostname");
-        goto Lerror;
-      }
-      Debug("hostdb", "hostname = %s", r->hostname());
+  if (r->reverse_dns) {
+    if (!r->hostname()) {
+      ink_assert(!"missing hostname");
+      cont->handleEvent(is_srv ? EVENT_SRV_LOOKUP : EVENT_HOST_DB_LOOKUP, NULL);
+      Warning("bogus entry deleted from HostDB: missing hostname");
+      hostDB.delete_block(r);
+      return false;
     }
-
-    if (!r->is_srv && r->round_robin) {
-      if (!r->rr()) {
-        reason = "missing round-robin";
-        ink_assert(!"missing round-robin");
-        goto Lerror;
-      }
-      ip_text_buffer ipb;
-      Debug("hostdb", "RR of %d with %d good, 1st IP = %s", r->rr()->rrcount, r->rr()->good, ats_ip_ntop(r->ip(), ipb, sizeof ipb));
-    }
-
-    cont->handleEvent(is_srv ? EVENT_SRV_LOOKUP : EVENT_HOST_DB_LOOKUP, r);
-
-    if (!r->full)
-      goto Ldelete;
-    return true;
+    Debug("hostdb", "hostname = %s", r->hostname());
   }
-Lerror:
-  cont->handleEvent(is_srv ? EVENT_SRV_LOOKUP : EVENT_HOST_DB_LOOKUP, NULL);
-Ldelete:
-  Warning("bogus entry deleted from HostDB: %s", reason);
-  hostDB.delete_block(ar);
-  return false;
+
+  if (!r->is_srv && r->round_robin) {
+    if (!r->rr()) {
+      ink_assert(!"missing round-robin");
+      cont->handleEvent(is_srv ? EVENT_SRV_LOOKUP : EVENT_HOST_DB_LOOKUP, NULL);
+      Warning("bogus entry deleted from HostDB: missing round-robin");
+      hostDB.delete_block(r);
+      return false;
+    }
+    ip_text_buffer ipb;
+    Debug("hostdb", "RR of %d with %d good, 1st IP = %s", r->rr()->rrcount, r->rr()->good, ats_ip_ntop(r->ip(), ipb, sizeof ipb));
+  }
+
+  cont->handleEvent(is_srv ? EVENT_SRV_LOOKUP : EVENT_HOST_DB_LOOKUP, r);
+
+  if (!r->full) {
+    Warning("bogus entry deleted from HostDB: none");
+    hostDB.delete_block(r);
+    return false;
+  }
+
+  return true;
 }
 
 inline HostResStyle
@@ -727,7 +725,7 @@ HostDBProcessor::getby(Continuation * cont,
 
   if ((!hostdb_enable || (hostname && !*hostname)) || (hostdb_disable_reverse_lookup && ip)) {
     MUTEX_TRY_LOCK(lock, cont->mutex, thread);
-    if (!lock)
+    if (!lock.is_locked())
       goto Lretry;
     cont->handleEvent(EVENT_HOST_DB_LOOKUP, NULL);
     return ACTION_RESULT_DONE;
@@ -767,7 +765,7 @@ HostDBProcessor::getby(Continuation * cont,
       MUTEX_TRY_LOCK(lock, bmutex, thread);
       MUTEX_TRY_LOCK(lock2, cont->mutex, thread);
 
-      if (lock && lock2) {
+      if (lock.is_locked() && lock2.is_locked()) {
         // If we can get the lock and a level 1 probe succeeds, return
         HostDBInfo *r = probe(bmutex, md5, aforce_dns);
         if (r) {
@@ -880,7 +878,7 @@ HostDBProcessor::getSRVbyname_imm(Continuation * cont, process_srv_info_pfn proc
     MUTEX_TRY_LOCK(lock, bucket_mutex, thread);
 
     // If we can get the lock and a level 1 probe succeeds, return
-    if (lock) {
+    if (lock.is_locked()) {
       HostDBInfo *r = probe(bucket_mutex, md5, false);
       if (r) {
         Debug("hostdb", "immediate SRV answer for %s from hostdb", hostname);
@@ -966,22 +964,19 @@ HostDBProcessor::getbyname_imm(Continuation * cont, process_hostdb_info_pfn proc
       // find the partition lock
       ProxyMutex *bucket_mutex = hostDB.lock_for_bucket((int) (fold_md5(md5.hash) % hostDB.buckets));
       MUTEX_LOCK(lock, bucket_mutex, thread);
-
-      if (lock) {
-        // If we can get the lock do a level 1 probe for immediate result.
-        HostDBInfo *r = probe(bucket_mutex, md5, false);
-        if (r) {
-          if (r->failed()) // fail, see if we should retry with alternate
-            loop = check_for_retry(md5.db_mark, opt.host_res_style);
-          if (!loop) {
-            // No retry -> final result. Return it.
-            Debug("hostdb", "immediate answer for %.*s", md5.host_len, md5.host_name);
-            HOSTDB_INCREMENT_DYN_STAT(hostdb_total_hits_stat);
-            (cont->*process_hostdb_info) (r);
-            return ACTION_RESULT_DONE;
-          }
-          md5.refresh(); // Update for retry.
+      // do a level 1 probe for immediate result.
+      HostDBInfo *r = probe(bucket_mutex, md5, false);
+      if (r) {
+        if (r->failed()) // fail, see if we should retry with alternate
+          loop = check_for_retry(md5.db_mark, opt.host_res_style);
+        if (!loop) {
+          // No retry -> final result. Return it.
+          Debug("hostdb", "immediate answer for %.*s", md5.host_len, md5.host_name);
+          HOSTDB_INCREMENT_DYN_STAT(hostdb_total_hits_stat);
+          (cont->*process_hostdb_info) (r);
+          return ACTION_RESULT_DONE;
         }
+        md5.refresh(); // Update for retry.
       }
     } while (loop);
   }
@@ -1062,7 +1057,7 @@ HostDBProcessor::setby(const char *hostname, int len, sockaddr const* ip, HostDB
   EThread *thread = this_ethread();
   MUTEX_TRY_LOCK(lock, mutex, thread);
 
-  if (lock) {
+  if (lock.is_locked()) {
     HostDBInfo *r = probe(mutex, md5, false);
     if (r)
       do_setby(r, app, hostname, md5.ip);
@@ -1095,7 +1090,7 @@ HostDBProcessor::setby_srv(const char *hostname, int len, const char *target, Ho
 
   HostDBContinuation *c = hostDBContAllocator.alloc();
   c->init(md5);
-  strncpy(c->srv_target_name, target, MAXDNAME);
+  ink_strlcpy(c->srv_target_name, target, MAXDNAME);
   c->app.allotment.application1 = app->allotment.application1;
   c->app.allotment.application2 = app->allotment.application2;
   SET_CONTINUATION_HANDLER(c,
@@ -1209,7 +1204,7 @@ HostDBContinuation::removeEvent(int /* event ATS_UNUSED */, Event * e)
   Continuation *cont = action.continuation;
 
   MUTEX_TRY_LOCK(lock, cont ? (ProxyMutex *) cont->mutex : (ProxyMutex *) NULL, e->ethread);
-  if (!lock) {
+  if (!lock.is_locked()) {
     e->schedule_in(HOST_DB_RETRY_PERIOD);
     return EVENT_CONT;
   }
@@ -1335,7 +1330,7 @@ HostDBContinuation::dnsPendingEvent(int event, Event * e)
   if (event == EVENT_INTERVAL) {
     // we timed out, return a failure to the user
     MUTEX_TRY_LOCK_FOR(lock, action.mutex, ((Event *) e)->ethread, action.continuation);
-    if (!lock) {
+    if (!lock.is_locked()) {
       timeout = eventProcessor.schedule_in(this, HOST_DB_RETRY_PERIOD);
       return EVENT_CONT;
     }
@@ -1387,7 +1382,7 @@ HostDBContinuation::dnsEvent(int event, HostEnt * e)
       return EVENT_DONE;
     }
     MUTEX_TRY_LOCK_FOR(lock, action.mutex, thread, action.continuation);
-    if (!lock) {
+    if (!lock.is_locked()) {
       timeout = thread->schedule_in(this, HOST_DB_RETRY_PERIOD);
       return EVENT_CONT;
     }
@@ -1484,7 +1479,8 @@ HostDBContinuation::dnsEvent(int event, HostEnt * e)
       r = lookup_done(md5.ip, e->ent.h_name, false, ttl_seconds, &e->srv_hosts);
     }
 
-    ink_assert(!r || (r->app.allotment.application1 == 0 && r->app.allotment.application2 == 0));
+    // @c lookup_done should always return a valid value so @a r should be null @c NULL.
+    ink_assert(r && r->app.allotment.application1 == 0 && r->app.allotment.application2 == 0);
 
     if (rr) {
       const int rrsize = HostDBRoundRobin::size(n, e->srv_hosts.srv_hosts_length);
@@ -1611,7 +1607,7 @@ HostDBContinuation::dnsEvent(int event, HostEnt * e)
       }
 
       MUTEX_TRY_LOCK_FOR(lock, action.mutex, thread, action.continuation);
-      if (!lock) {
+      if (!lock.is_locked()) {
         remove_trigger_pending_dns();
         SET_HANDLER((HostDBContHandler) & HostDBContinuation::probeEvent);
         thread->schedule_in(this, HOST_DB_RETRY_PERIOD);
@@ -1794,7 +1790,7 @@ HostDBContinuation::probeEvent(int /* event ATS_UNUSED */, Event * e)
   EThread *t = e ? e->ethread : this_ethread();
 
   MUTEX_TRY_LOCK_FOR(lock, action.mutex, t, action.continuation);
-  if (!lock) {
+  if (!lock.is_locked()) {
     mutex->thread_holding->schedule_in(this, HOST_DB_RETRY_PERIOD);
     return EVENT_CONT;
   }
@@ -1952,7 +1948,7 @@ HostDBContinuation::clusterResponseEvent(int/*  event ATS_UNUSED */, Event * e)
       from_cont = 0;
       MUTEX_TRY_LOCK(lock, c->mutex, e->ethread);
       MUTEX_TRY_LOCK(lock2, c->action.mutex, e->ethread);
-      if (!lock || !lock2) {
+      if (!lock.is_locked() || !lock2.is_locked()) {
         e->schedule_in(HOST_DB_RETRY_PERIOD);
         return EVENT_CONT;
       }
@@ -2022,7 +2018,7 @@ HostDBContinuation::clusterEvent(int event, Event * e)
     //
   case EVENT_INTERVAL:{
       MUTEX_TRY_LOCK_FOR(lock, action.mutex, e->ethread, action.continuation);
-      if (!lock) {
+      if (!lock.is_locked()) {
         e->schedule_in(HOST_DB_RETRY_PERIOD);
         return EVENT_CONT;
       }

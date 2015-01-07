@@ -69,9 +69,6 @@ ClusterProcessor::internal_invoke_remote(ClusterHandler *ch, int cluster_fn,
 
   if (!ch || (!malloced && !((unsigned int) cluster_fn < (uint32_t) SIZE_clusterFunction))) {
     // Invalid message or node is down, free message data
-    if (malloced) {
-      ats_free(data);
-    }
     if (cmsg) {
       invoke_remote_data_args *args = (invoke_remote_data_args *)
         (((OutgoingControl *) cmsg)->data + sizeof(int32_t));
@@ -83,6 +80,9 @@ ClusterProcessor::internal_invoke_remote(ClusterHandler *ch, int cluster_fn,
     if (data_in_ocntl) {
       c = *((OutgoingControl **) ((char *) data - sizeof(OutgoingControl *)));
       c->freeall();
+    }
+    if (malloced) {
+      ats_free(data);
     }
     return -1;
   }
@@ -133,7 +133,7 @@ ClusterProcessor::internal_invoke_remote(ClusterHandler *ch, int cluster_fn,
       ink_atomiclist_push(&ch->outgoing_control_al[q], (void *) c);
 
       MUTEX_TRY_LOCK(lock, ch->mutex, tt);
-      if (!lock) {
+      if (!lock.is_locked()) {
 		if(ch->thread && ch->thread->signal_hook)
 		  ch->thread->signal_hook(ch->thread);
 		return 1;
@@ -258,7 +258,7 @@ ClusterProcessor::open_local(Continuation * cont, ClusterMachine */* m ATS_UNUSE
   CLUSTER_INCREMENT_DYN_STAT(CLUSTER_CONNECTIONS_OPENNED_STAT);
   CLUSTER_INCREMENT_DYN_STAT(CLUSTER_CONNECTIONS_OPEN_STAT);
   MUTEX_TRY_LOCK(lock, ch->mutex, thread);
-  if (!lock) {
+  if (!lock.is_locked()) {
 #endif
     if (immediate) {
       clusterVCAllocator_free(vc);
@@ -327,7 +327,7 @@ ClusterProcessor::connect_local(Continuation * cont, ClusterVCToken * token, int
   CLUSTER_INCREMENT_DYN_STAT(CLUSTER_CONNECTIONS_OPENNED_STAT);
   CLUSTER_INCREMENT_DYN_STAT(CLUSTER_CONNECTIONS_OPEN_STAT);
   MUTEX_TRY_LOCK(lock, ch->mutex, thread);
-  if (!lock) {
+  if (!lock.is_locked()) {
 #endif
     if (immediate) {
       clusterVCAllocator_free(vc);
@@ -702,11 +702,11 @@ ClusterProcessor::init()
   // Cluster API Initializations
   clusterAPI_init();
   // Start global Cluster periodic event
-  PeriodicClusterEvent = NEW(new GlobalClusterPeriodicEvent);
+  PeriodicClusterEvent = new GlobalClusterPeriodicEvent;
   PeriodicClusterEvent->init();
 
-  this_cluster = NEW(new Cluster);
-  ClusterConfiguration *cc = NEW(new ClusterConfiguration);
+  this_cluster = new Cluster;
+  ClusterConfiguration *cc = new ClusterConfiguration;
   this_cluster->configurations.push(cc);
   cc->n_machines = 1;
   cc->machines[0] = this_cluster_machine();
@@ -755,7 +755,7 @@ ClusterProcessor::start()
     do_machine_config_change((void *) MACHINE_CONFIG, "proxy.config.cluster.machine_configuration");
 #endif
 
-    accept_handler = NEW(new ClusterAccept(&cluster_port, cluster_receive_buffer_size, cluster_send_buffer_size));
+    accept_handler = new ClusterAccept(&cluster_port, cluster_receive_buffer_size, cluster_send_buffer_size);
     accept_handler->Init();
   }
   return 0;
@@ -767,7 +767,7 @@ ClusterProcessor::connect(char *hostname, int16_t id)
   //
   // Construct a cluster link to the given machine
   //
-  ClusterHandler *ch = NEW(new ClusterHandler);
+  ClusterHandler *ch = new ClusterHandler;
   SET_CONTINUATION_HANDLER(ch, (ClusterContHandler) & ClusterHandler::connectClusterEvent);
   ch->hostname = ats_strdup(hostname);
   ch->connector = true;
@@ -781,7 +781,7 @@ ClusterProcessor::connect(unsigned int ip, int port, int16_t id, bool delay)
   //
   // Construct a cluster link to the given machine
   //
-  ClusterHandler *ch = NEW(new ClusterHandler);
+  ClusterHandler *ch = new ClusterHandler;
   SET_CONTINUATION_HANDLER(ch, (ClusterContHandler) & ClusterHandler::connectClusterEvent);
   ch->ip = ip;
   ch->port = port;

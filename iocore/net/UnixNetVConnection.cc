@@ -31,7 +31,6 @@
 #define enable_read(_vc) (_vc)->read.enabled = 1
 #define enable_write(_vc) (_vc)->write.enabled = 1
 
-typedef struct iovec IOVec;
 #ifndef UIO_MAXIOV
 #define NET_MAX_IOV 16          // UIO_MAXIOV shall be at least 16 1003.1g (5.4.1.1)
 #else
@@ -135,7 +134,9 @@ static inline int
 read_signal_and_update(int event, UnixNetVConnection *vc)
 {
   vc->recursion++;
-  vc->read.vio._cont->handleEvent(event, &vc->read.vio);
+  if (vc->read.vio._cont) {
+    vc->read.vio._cont->handleEvent(event, &vc->read.vio);
+  }
   if (!--vc->recursion && vc->closed) {
     /* BZ  31932 */
     ink_assert(vc->thread == this_ethread());
@@ -208,12 +209,11 @@ read_from_net(NetHandler *nh, UnixNetVConnection *vc, EThread *thread)
 {
   NetState *s = &vc->read;
   ProxyMutex *mutex = thread->mutex;
-  MIOBufferAccessor & buf = s->vio.buffer;
   int64_t r = 0;
 
   MUTEX_TRY_LOCK_FOR(lock, s->vio.mutex, thread, s->vio._cont);
 
-  if (!lock || lock.m.m_ptr != s->vio.mutex.m_ptr) {
+  if (!lock.is_locked() || lock.get_mutex() != s->vio.mutex.m_ptr) {
     read_reschedule(nh, vc);
     return;
   }
@@ -223,6 +223,7 @@ read_from_net(NetHandler *nh, UnixNetVConnection *vc, EThread *thread)
     return;
   }
 
+  MIOBufferAccessor & buf = s->vio.buffer;
   ink_assert(buf.writer());
 
   // if there is nothing to do, disable connection
@@ -259,6 +260,7 @@ read_from_net(NetHandler *nh, UnixNetVConnection *vc, EThread *thread)
         }
         b = b->next;
       }
+
       if (niov == 1) {
         r = socketManager.read(vc->con.fd, tiovec[0].iov_base, tiovec[0].iov_len);
       } else {
@@ -266,7 +268,7 @@ read_from_net(NetHandler *nh, UnixNetVConnection *vc, EThread *thread)
       }
       NET_DEBUG_COUNT_DYN_STAT(net_calls_to_read_stat, 1);
       total_read += rattempted;
-    } while (r == rattempted && total_read < toread);
+    } while (rattempted && r == rattempted && total_read < toread);
 
     // if we have already moved some bytes successfully, summarize in r
     if (total_read != rattempted) {
@@ -320,7 +322,7 @@ read_from_net(NetHandler *nh, UnixNetVConnection *vc, EThread *thread)
       if (read_signal_and_update(VC_EVENT_READ_READY, vc) != EVENT_CONT)
         return;
       // change of lock... don't look at shared variables!
-      if (lock.m.m_ptr != s->vio.mutex.m_ptr) {
+      if (lock.get_mutex() != s->vio.mutex.m_ptr) {
         read_reschedule(nh, vc);
         return;
       }
@@ -360,7 +362,7 @@ write_to_net_io(NetHandler *nh, UnixNetVConnection *vc, EThread *thread)
 
   MUTEX_TRY_LOCK_FOR(lock, s->vio.mutex, thread, s->vio._cont);
 
-  if (!lock || lock.m.m_ptr != s->vio.mutex.m_ptr) {
+  if (!lock.is_locked() || lock.get_mutex() != s->vio.mutex.m_ptr) {
     write_reschedule(nh, vc);
     return;
   }
@@ -440,16 +442,16 @@ write_to_net_io(NetHandler *nh, UnixNetVConnection *vc, EThread *thread)
     return;
   }
 
-  int64_t total_wrote = 0, wattempted = 0;
+  int64_t total_written = 0, wattempted = 0;
   int needs = 0;
-  int64_t r = vc->load_buffer_and_write(towrite, wattempted, total_wrote, buf, needs);
+  int64_t r = vc->load_buffer_and_write(towrite, wattempted, total_written, buf, needs);
 
   // if we have already moved some bytes successfully, summarize in r
-  if (total_wrote != wattempted) {
+  if (total_written != wattempted) {
     if (r <= 0)
-      r = total_wrote - wattempted;
+      r = total_written - wattempted;
     else
-      r = total_wrote - wattempted + r;
+      r = total_written - wattempted + r;
   }
   // check for errors
   if (r <= 0) {                 // if the socket was not ready,add to WaitList
@@ -476,6 +478,8 @@ write_to_net_io(NetHandler *nh, UnixNetVConnection *vc, EThread *thread)
     write_signal_error(nh, vc, (int)-r);
     return;
   } else {
+    int wbe_event = vc->write_buffer_empty_event; // save so we can clear if needed.
+
     NET_SUM_DYN_STAT(net_write_bytes_stat, r);
 
     // Remove data from the buffer and signal continuation.
@@ -484,18 +488,27 @@ write_to_net_io(NetHandler *nh, UnixNetVConnection *vc, EThread *thread)
     ink_assert(buf.reader()->read_avail() >= 0);
     s->vio.ndone += r;
 
+    // If the empty write buffer trap is set, clear it.
+    if (!(buf.reader()->is_read_avail_more_than(0)))
+      vc->write_buffer_empty_event = 0;
+
     net_activity(vc, thread);
     // If there are no more bytes to write, signal write complete,
     ink_assert(ntodo >= 0);
     if (s->vio.ntodo() <= 0) {
       write_signal_done(VC_EVENT_WRITE_COMPLETE, nh, vc);
       return;
+    } else if (signalled && (wbe_event != vc->write_buffer_empty_event)) {
+      // @a signalled means we won't send an event, and the event values differing means we
+      // had a write buffer trap and cleared it, so we need to send it now.
+      if (write_signal_and_update(wbe_event, vc) != EVENT_CONT)
+        return;
     } else if (!signalled) {
       if (write_signal_and_update(VC_EVENT_WRITE_READY, vc) != EVENT_CONT) {
         return;
       }
       // change of lock... don't look at shared variables!
-      if (lock.m.m_ptr != s->vio.mutex.m_ptr) {
+      if (lock.get_mutex() != s->vio.mutex.m_ptr) {
         write_reschedule(nh, vc);
         return;
       }
@@ -541,8 +554,9 @@ VIO *
 UnixNetVConnection::do_io_read(Continuation *c, int64_t nbytes, MIOBuffer *buf)
 {
   ink_assert(!closed);
+  ink_assert(c || 0 == nbytes);
   read.vio.op = VIO::READ;
-  read.vio.mutex = c->mutex;
+  read.vio.mutex = c ? c->mutex : this->mutex;
   read.vio._cont = c;
   read.vio.nbytes = nbytes;
   read.vio.ndone = 0;
@@ -682,7 +696,7 @@ UnixNetVConnection::send_OOB(Continuation *cont, char *buf, int len)
     return ACTION_RESULT_DONE;
   }
   if (written > 0 && written < len) {
-    u->oob_ptr = NEW(new OOB_callback(mutex, this, cont, buf + written, len - written));
+    u->oob_ptr = new OOB_callback(mutex, this, cont, buf + written, len - written);
     u->oob_ptr->trigger = mutex->thread_holding->schedule_in_local(u->oob_ptr, HRTIME_MSECONDS(10));
     return u->oob_ptr->trigger;
   } else {
@@ -690,7 +704,7 @@ UnixNetVConnection::send_OOB(Continuation *cont, char *buf, int len)
     // expensive for this
     written = -errno;
     ink_assert(written == -EAGAIN || written == -ENOTCONN);
-    u->oob_ptr = NEW(new OOB_callback(mutex, this, cont, buf, len));
+    u->oob_ptr = new OOB_callback(mutex, this, cont, buf, len);
     u->oob_ptr->trigger = mutex->thread_holding->schedule_in_local(u->oob_ptr, HRTIME_MSECONDS(10));
     return u->oob_ptr->trigger;
   }
@@ -729,7 +743,7 @@ UnixNetVConnection::reenable(VIO *vio)
     }
   } else {
     MUTEX_TRY_LOCK(lock, nh->mutex, t);
-    if (!lock) {
+    if (!lock.is_locked()) {
       if (vio == &read.vio) {
         if (!read.in_enabled_list) {
           read.in_enabled_list = 1;
@@ -840,7 +854,7 @@ UnixNetVConnection::net_read_io(NetHandler *nh, EThread *lthread)
 // (SSL read does not support overlapped i/o)
 // without duplicating all the code in write_to_net.
 int64_t
-UnixNetVConnection::load_buffer_and_write(int64_t towrite, int64_t &wattempted, int64_t &total_wrote, MIOBufferAccessor & buf, int &needs)
+UnixNetVConnection::load_buffer_and_write(int64_t towrite, int64_t &wattempted, int64_t &total_written, MIOBufferAccessor & buf, int &needs)
 {
   int64_t r = 0;
 
@@ -851,7 +865,7 @@ UnixNetVConnection::load_buffer_and_write(int64_t towrite, int64_t &wattempted, 
   do {
     IOVec tiovec[NET_MAX_IOV];
     int niov = 0;
-    int64_t total_wrote_last = total_wrote;
+    int64_t total_written_last = total_written;
     while (b && niov < NET_MAX_IOV) {
       // check if we have done this block
       int64_t l = b->read_avail();
@@ -862,12 +876,12 @@ UnixNetVConnection::load_buffer_and_write(int64_t towrite, int64_t &wattempted, 
         continue;
       }
       // check if to amount to write exceeds that in this buffer
-      int64_t wavail = towrite - total_wrote;
+      int64_t wavail = towrite - total_written;
       if (l > wavail)
         l = wavail;
       if (!l)
         break;
-      total_wrote += l;
+      total_written += l;
       // build an iov entry
       tiovec[niov].iov_len = l;
       tiovec[niov].iov_base = b->start() + offset;
@@ -876,14 +890,14 @@ UnixNetVConnection::load_buffer_and_write(int64_t towrite, int64_t &wattempted, 
       offset = 0;
       b = b->next;
     }
-    wattempted = total_wrote - total_wrote_last;
+    wattempted = total_written - total_written_last;
     if (niov == 1)
       r = socketManager.write(con.fd, tiovec[0].iov_base, tiovec[0].iov_len);
     else
       r = socketManager.writev(con.fd, &tiovec[0], niov);
     ProxyMutex *mutex = thread->mutex;
     NET_DEBUG_COUNT_DYN_STAT(net_calls_to_write_stat, 1);
-  } while (r == wattempted && total_wrote < towrite);
+  } while (r == wattempted && total_written < towrite);
 
   needs |= EVENTIO_WRITE;
 
@@ -940,12 +954,12 @@ int
 UnixNetVConnection::startEvent(int /* event ATS_UNUSED */, Event *e)
 {
   MUTEX_TRY_LOCK(lock, get_NetHandler(e->ethread)->mutex, e->ethread);
-  if (!lock) {
+  if (!lock.is_locked()) {
     e->schedule_in(NET_RETRY_DELAY);
     return EVENT_CONT;
   }
   if (!action_.cancelled)
-    connectUp(e->ethread);
+    connectUp(e->ethread, NO_FD);
   else
     free(e->ethread);
   return EVENT_DONE;
@@ -957,7 +971,7 @@ UnixNetVConnection::acceptEvent(int event, Event *e)
   thread = e->ethread;
 
   MUTEX_TRY_LOCK(lock, get_NetHandler(thread)->mutex, e->ethread);
-  if (!lock) {
+  if (!lock.is_locked()) {
     if (event == EVENT_NONE) {
       thread->schedule_in(this, NET_RETRY_DELAY);
       return EVENT_DONE;
@@ -984,10 +998,14 @@ UnixNetVConnection::acceptEvent(int event, Event *e)
 
   nh->open_list.enqueue(this);
 
-  if (inactivity_timeout_in)
+  if (inactivity_timeout_in) {
     UnixNetVConnection::set_inactivity_timeout(inactivity_timeout_in);
-  if (active_timeout_in)
+  }
+
+  if (active_timeout_in) {
     UnixNetVConnection::set_active_timeout(active_timeout_in);
+  }
+
   action_.continuation->handleEvent(NET_EVENT_ACCEPT, this);
   return EVENT_DONE;
 }
@@ -1007,9 +1025,9 @@ UnixNetVConnection::mainEvent(int event, Event *e)
   MUTEX_TRY_LOCK(rlock, read.vio.mutex ? (ProxyMutex *) read.vio.mutex : (ProxyMutex *) e->ethread->mutex, e->ethread);
   MUTEX_TRY_LOCK(wlock, write.vio.mutex ? (ProxyMutex *) write.vio.mutex :
                  (ProxyMutex *) e->ethread->mutex, e->ethread);
-  if (!hlock || !rlock || !wlock ||
-      (read.vio.mutex.m_ptr && rlock.m.m_ptr != read.vio.mutex.m_ptr) ||
-      (write.vio.mutex.m_ptr && wlock.m.m_ptr != write.vio.mutex.m_ptr)) {
+  if (!hlock.is_locked() || !rlock.is_locked() || !wlock.is_locked() ||
+      (read.vio.mutex.m_ptr && rlock.get_mutex() != read.vio.mutex.m_ptr) ||
+      (write.vio.mutex.m_ptr && wlock.get_mutex() != write.vio.mutex.m_ptr)) {
 #ifndef INACTIVITY_TIMEOUT
     if (e == active_timeout)
 #endif
@@ -1075,8 +1093,10 @@ UnixNetVConnection::mainEvent(int event, Event *e)
 
 
 int
-UnixNetVConnection::connectUp(EThread *t)
+UnixNetVConnection::connectUp(EThread *t, int fd)
 {
+  int res;
+
   thread = t;
   if (check_net_throttle(CONNECT, submit_time)) {
     check_throttle_warning();
@@ -1087,7 +1107,7 @@ UnixNetVConnection::connectUp(EThread *t)
 
   // Force family to agree with remote (server) address.
   options.ip_family = server_addr.sa.sa_family;
-  
+
   //
   // Initialize this UnixNetVConnection
   //
@@ -1102,36 +1122,49 @@ UnixNetVConnection::connectUp(EThread *t)
     );
   }
 
-
-  int res = con.open(options);
-  if (0 == res) {
-    // Must connect after EventIO::Start() to avoid a race condition
-    // when edge triggering is used.
-    if (ep.start(get_PollDescriptor(t), this, EVENTIO_READ|EVENTIO_WRITE) < 0) {
-      lerrno = errno;
-      Debug("iocore_net", "connectUp : Failed to add to epoll list\n");
-      action_.continuation->handleEvent(NET_EVENT_OPEN_FAILED, (void *)0); // 0 == res
-      free(t);
-      return CONNECT_FAILURE;
+  // If this is getting called from the TS API, then we are wiring up a file descriptor
+  // provided by the caller. In that case, we know that the socket is already connected.
+  if (fd == NO_FD) {
+    res = con.open(options);
+    if (res != 0) {
+      goto fail;
     }
-    res = con.connect(&server_addr.sa, options);
+  } else {
+    int len = sizeof(con.sock_type);
+
+    res = safe_getsockopt(fd, SOL_SOCKET, SO_TYPE, (char *)&con.sock_type, &len);
+    if (res != 0) {
+      goto fail;
+    }
+
+    safe_nonblocking(fd);
+    con.fd = fd;
+    con.is_connected = true;
+    con.is_bound = true;
   }
 
-  if (res) {
+  // Must connect after EventIO::Start() to avoid a race condition
+  // when edge triggering is used.
+  if (ep.start(get_PollDescriptor(t), this, EVENTIO_READ|EVENTIO_WRITE) < 0) {
     lerrno = errno;
-    action_.continuation->handleEvent(NET_EVENT_OPEN_FAILED, (void *)(intptr_t)res);
+    Debug("iocore_net", "connectUp : Failed to add to epoll list\n");
+    action_.continuation->handleEvent(NET_EVENT_OPEN_FAILED, (void *)0); // 0 == res
     free(t);
     return CONNECT_FAILURE;
   }
+
+  if (fd == NO_FD) {
+    res = con.connect(&server_addr.sa, options);
+    if (res != 0) {
+      goto fail;
+    }
+  }
+
   check_emergency_throttle(con);
 
   // start up next round immediately
 
   SET_HANDLER(&UnixNetVConnection::mainEvent);
-  // This function is empty for regular UnixNetVConnection, it has code
-  // in it for the inherited SSLUnixNetVConnection.  Allows the connectUp
-  // function code not to be duplicated in the inherited SSL class.
-  //  sslStartHandShake (SSL_EVENT_CLIENT, err);
 
   nh = get_NetHandler(t);
   nh->open_list.enqueue(this);
@@ -1140,6 +1173,12 @@ UnixNetVConnection::connectUp(EThread *t)
   ink_assert(!active_timeout_in);
   action_.continuation->handleEvent(NET_EVENT_OPEN, this);
   return CONNECT_SUCCESS;
+
+fail:
+  lerrno = errno;
+  action_.continuation->handleEvent(NET_EVENT_OPEN_FAILED, (void *)(intptr_t)res);
+  free(t);
+  return CONNECT_FAILURE;
 }
 
 
@@ -1152,6 +1191,7 @@ UnixNetVConnection::free(EThread *t)
   action_.mutex.clear();
   got_remote_addr = 0;
   got_local_addr = 0;
+  attributes = 0;
   read.vio.mutex.clear();
   write.vio.mutex.clear();
   flags = 0;
@@ -1171,7 +1211,7 @@ UnixNetVConnection::free(EThread *t)
   ink_assert(t == this_ethread());
 
   if (from_accept_thread) {
-    netVCAllocator.free(this);  
+    netVCAllocator.free(this);
   } else {
     THREAD_FREE(this, netVCAllocator, t);
   }

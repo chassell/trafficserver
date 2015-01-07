@@ -16,8 +16,12 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+library_includedir=$(includedir)/ts
+
+library_include_HEADERS = apidefs.h
+
 noinst_PROGRAMS = mkdfa CompileParseRules
-check_PROGRAMS = test_atomic test_freelist test_arena test_List test_Map test_Vec
+check_PROGRAMS = test_arena test_atomic test_freelist test_geometry test_List test_Map test_Regex test_Vec
 TESTS = $(check_PROGRAMS)
 
 AM_CPPFLAGS = -I$(top_srcdir)/lib
@@ -26,7 +30,7 @@ lib_LTLIBRARIES = libtsutil.la
 
 libtsutil_la_LDFLAGS = -no-undefined -version-info @TS_LIBTOOL_VERSION@
 libtsutil_la_LIBADD = \
-  @hwloc_LIBS@ \
+  @HWLOC_LIBS@ \
   @LIBOBJS@ \
   @LIBPCRE@ \
   @OPENSSL_LIBS@ \
@@ -44,6 +48,7 @@ libtsutil_la_SOURCES = \
   Compatability.h \
   ConsistentHash.cc \
   ConsistentHash.h \
+  Cryptohash.h \
   Diags.cc \
   Diags.h \
   DynArray.h \
@@ -71,6 +76,8 @@ libtsutil_la_SOURCES = \
   IpMapConf.h \
   Layout.cc \
   List.h \
+  MMH.cc \
+  MMH.h \
   Map.h \
   MatcherUtils.cc \
   MatcherUtils.h \
@@ -81,12 +88,12 @@ libtsutil_la_SOURCES = \
   Ptr.h \
   RawHashTable.cc \
   RawHashTable.h \
+  RbTree.cc \
+  RbTree.h \
   Regex.cc \
   Regex.h \
   Regression.cc \
   Regression.h \
-  Resource.cc \
-  Resource.h \
   SimpleTokenizer.h \
   TestBox.h \
   TextBuffer.cc \
@@ -172,8 +179,9 @@ libtsutil_la_SOURCES = \
   ink_time.h \
   libts.h \
   llqueue.cc \
-  lockfile.cc
-
+  lockfile.cc \
+  signals.cc \
+  signals.h
 
 #test_UNUSED_SOURCES = \
 #  load_http_hdr.cc \
@@ -208,9 +216,17 @@ test_Map_SOURCES = test_Map.cc
 test_Map_LDADD = libtsutil.la @LIBTCL@ @LIBPCRE@
 test_Map_LDFLAGS = @EXTRA_CXX_LDFLAGS@ @LIBTOOL_LINK_FLAGS@
 
+test_Regex_SOURCES = test_Regex.cc
+test_Regex_LDADD = libtsutil.la @LIBTCL@ @LIBPCRE@
+test_Regex_LDFLAGS = @EXTRA_CXX_LDFLAGS@ @LIBTOOL_LINK_FLAGS@
+
 test_Vec_SOURCES = test_Vec.cc
 test_Vec_LDADD = libtsutil.la @LIBTCL@ @LIBPCRE@
 test_Vec_LDFLAGS = @EXTRA_CXX_LDFLAGS@ @LIBTOOL_LINK_FLAGS@
+
+test_geometry_SOURCES = test_geometry.cc
+test_geometry_LDADD = libtsutil.la @LIBTCL@ @LIBPCRE@
+test_geometry_LDFLAGS = @EXTRA_CXX_LDFLAGS@ @LIBTOOL_LINK_FLAGS@
 
 CompileParseRules_SOURCES = CompileParseRules.cc
 

@@ -53,7 +53,7 @@ NetVCOptions::reset()
   f_blocking_connect = false;
   socks_support = NORMAL_SOCKS;
   socks_version = SOCKS_DEFAULT_VERSION;
-  socket_recv_bufsize = 
+  socket_recv_bufsize =
 #if defined(RECV_BUF_SIZE)
     RECV_BUF_SIZE;
 #else
@@ -65,6 +65,8 @@ NetVCOptions::reset()
   packet_tos = 0;
 
   etype = ET_NET;
+
+  sni_servername = NULL;
 }
 
 TS_INLINE void
@@ -182,7 +184,7 @@ public:
     (void) state;
   }
   virtual void net_read_io(NetHandler *nh, EThread *lthread);
-  virtual int64_t load_buffer_and_write(int64_t towrite, int64_t &wattempted, int64_t &total_wrote, MIOBufferAccessor & buf, int &needs);
+  virtual int64_t load_buffer_and_write(int64_t towrite, int64_t &wattempted, int64_t &total_written, MIOBufferAccessor & buf, int &needs);
   void readDisable(NetHandler *nh);
   void readSignalError(NetHandler *nh, int err);
   int readSignalDone(int event, NetHandler *nh);
@@ -237,7 +239,7 @@ public:
   int startEvent(int event, Event *e);
   int acceptEvent(int event, Event *e);
   int mainEvent(int event, Event *e);
-  virtual int connectUp(EThread *t);
+  virtual int connectUp(EThread *t, int fd);
   virtual void free(EThread *t);
 
   virtual ink_hrtime get_inactivity_timeout();
@@ -247,6 +249,8 @@ public:
   virtual void set_remote_addr();
   virtual int set_tcp_init_cwnd(int init_cwnd);
   virtual void apply_options();
+
+  friend void write_to_net_io(NetHandler*, UnixNetVConnection*, EThread*);
 };
 
 extern ClassAllocator<UnixNetVConnection> netVCAllocator;

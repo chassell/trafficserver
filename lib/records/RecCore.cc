@@ -36,8 +36,6 @@ InkHashTable *g_records_ht = NULL;
 ink_rwlock g_records_rwlock;
 int g_num_records = 0;
 
-int g_num_update[RECT_MAX];
-
 RecTree *g_records_tree = NULL;
 
 //-------------------------------------------------------------------------
@@ -79,7 +77,7 @@ register_record(RecT rec_type, const char *name, RecDataT data_type, RecData dat
 // link_XXX
 //-------------------------------------------------------------------------
 static int
-link_int(const char *name, RecDataT data_type, RecData data, void *cookie)
+link_int(const char * /* name */, RecDataT /* data_type */, RecData data, void *cookie)
 {
   RecInt *rec_int = (RecInt *) cookie;
   ink_atomic_swap(rec_int, data.rec_int);
@@ -87,28 +85,28 @@ link_int(const char *name, RecDataT data_type, RecData data, void *cookie)
 }
 
 static int
-link_int32(const char *name, RecDataT data_type, RecData data, void *cookie)
+link_int32(const char * /* name */, RecDataT /* data_type */, RecData data, void *cookie)
 {
   *((int32_t *) cookie) = (int32_t) data.rec_int;
   return REC_ERR_OKAY;
 }
 
 static int
-link_uint32(const char *name, RecDataT data_type, RecData data, void *cookie)
+link_uint32(const char * /* name */, RecDataT /* data_type */, RecData data, void *cookie)
 {
   *((uint32_t *) cookie) = (uint32_t) data.rec_int;
   return REC_ERR_OKAY;
 }
 
 static int
-link_float(const char *name, RecDataT data_type, RecData data, void *cookie)
+link_float(const char * /* name */, RecDataT /* data_type */, RecData data, void *cookie)
 {
   *((RecFloat *) cookie) = data.rec_float;
   return REC_ERR_OKAY;
 }
 
 static int
-link_counter(const char *name, RecDataT data_type, RecData data, void *cookie)
+link_counter(const char * /* name */, RecDataT /* data_type */, RecData data, void *cookie)
 {
   RecCounter *rec_counter = (RecCounter *) cookie;
   ink_atomic_swap(rec_counter, data.rec_counter);
@@ -118,7 +116,7 @@ link_counter(const char *name, RecDataT data_type, RecData data, void *cookie)
 // This is a convenience wrapper, to allow us to treat the RecInt's as a
 // 1-byte entity internally.
 static int
-link_byte(const char *name, RecDataT data_type, RecData data, void *cookie)
+link_byte(const char * /* name */, RecDataT /* data_type */, RecData data, void *cookie)
 {
   RecByte *rec_byte = (RecByte *) cookie;
   RecByte byte = static_cast<RecByte>(data.rec_int);
@@ -131,7 +129,7 @@ link_byte(const char *name, RecDataT data_type, RecData data, void *cookie)
 // cookie e.g. is the DEFAULT_xxx_str value which this functiion keeps up to date with
 // the latest default applied during a config update from records.config
 static int
-link_string_alloc(const char *name, RecDataT data_type, RecData data, void *cookie)
+link_string_alloc(const char * /* name */, RecDataT /* data_type */, RecData data, void *cookie)
 {
   RecString _ss = data.rec_string;
   RecString _new_value = NULL;
@@ -190,10 +188,10 @@ RecCoreInit(RecModeT mode_type, Diags *_diags)
     // ./etc/trafficserver/records.config
     // ./records.config
     bool file_exists = true;
-    g_rec_config_fpath = Layout::relative_to(Layout::get()->sysconfdir, REC_CONFIG_FILE REC_SHADOW_EXT);
+    g_rec_config_fpath = RecConfigReadConfigPath(NULL, REC_CONFIG_FILE REC_SHADOW_EXT);
     if (RecFileExists(g_rec_config_fpath) == REC_ERR_FAIL) {
       ats_free((char *)g_rec_config_fpath);
-      g_rec_config_fpath = Layout::relative_to(Layout::get()->sysconfdir, REC_CONFIG_FILE);
+      g_rec_config_fpath = RecConfigReadConfigPath(NULL, REC_CONFIG_FILE);
       if (RecFileExists(g_rec_config_fpath) == REC_ERR_FAIL) {
         RecLog(DL_Warning, "Could not find '%s', system will run with defaults\n", REC_CONFIG_FILE);
         file_exists = false;
@@ -202,10 +200,6 @@ RecCoreInit(RecModeT mode_type, Diags *_diags)
     if (file_exists) {
       RecReadConfigFile(true);
     }
-  }
-
-  for (int i = 0; i < RECT_MAX; i++) {
-    g_num_update[i] = 0;
   }
 
   g_initialized = true;
@@ -271,6 +265,15 @@ RecLinkConfigByte(const char *name, RecByte * rec_byte)
     return REC_ERR_FAIL;
   }
   return RecRegisterConfigUpdateCb(name, link_byte, (void *) rec_byte);
+}
+
+int
+RecLinkConfigBool(const char *name, RecBool * rec_bool)
+{
+  if (RecGetRecordBool(name, rec_bool) == REC_ERR_FAIL) {
+    return REC_ERR_FAIL;
+  }
+  return RecRegisterConfigUpdateCb(name, link_byte, (void *) rec_bool);
 }
 
 
@@ -410,6 +413,15 @@ RecGetRecordByte(const char *name, RecByte *rec_byte, bool lock)
   return err;
 }
 
+int
+RecGetRecordBool(const char *name, RecBool *rec_bool, bool lock)
+{
+  int err;
+  RecData data;
+  if ((err = RecGetRecord_Xmalloc(name, RECD_INT, &data, lock)) == REC_ERR_OKAY)
+    *rec_bool = 0 != data.rec_int;
+  return err;
+}
 
 //-------------------------------------------------------------------------
 // RecGetRec Attributes
@@ -493,12 +505,6 @@ RecGetRecordPersistenceType(const char *name, RecPersistT * persist_type, bool l
   }
 
   return err;
-}
-
-int
-RecGetRecordUpdateCount(RecT data_type)
-{
-  return g_num_update[data_type];
 }
 
 int
@@ -616,12 +622,15 @@ RecGetRecordCheckExpr(const char *name, char **check_expr, bool lock)
   return err;
 }
 
-
 int
 RecGetRecordDefaultDataString_Xmalloc(char *name, char **buf, bool lock)
 {
   int err;
   RecRecord *r = NULL;
+
+  if (lock) {
+    ink_rwlock_rdlock(&g_records_rwlock);
+  }
 
   if (ink_hash_table_lookup(g_records_ht, name, (void **) &r)) {
     *buf = (char *)ats_malloc(sizeof(char) * 1024);
@@ -654,6 +663,10 @@ RecGetRecordDefaultDataString_Xmalloc(char *name, char **buf, bool lock)
     }
   } else {
     err = REC_ERR_FAIL;
+  }
+
+  if (lock) {
+    ink_rwlock_unlock(&g_records_rwlock);
   }
 
   return err;
@@ -864,7 +877,7 @@ RecForceInsert(RecRecord * record)
 //-------------------------------------------------------------------------
 
 static void
-debug_record_callback(RecT rec_type, void *edata, int registered, const char *name, int data_type, RecData *datum)
+debug_record_callback(RecT /* rec_type */, void * /* edata */, int registered, const char *name, int data_type, RecData *datum)
 {
   switch(data_type) {
   case RECD_INT:
@@ -893,7 +906,7 @@ RecDumpRecords(RecT rec_type, RecDumpEntryCb callback, void *edata)
   num_records = g_num_records;
   for (i = 0; i < num_records; i++) {
     RecRecord *r = &(g_records[i]);
-    if ((rec_type == RECT_NULL) || (rec_type == r->rec_type)) {
+    if ((rec_type == RECT_NULL) || (rec_type & r->rec_type)) {
       rec_mutex_acquire(&(r->lock));
       callback(rec_type, edata, r->registered, r->name, r->data_type, &r->data);
       rec_mutex_release(&(r->lock));
@@ -1079,6 +1092,23 @@ REC_readString(const char *name, bool * found, bool lock)
 }
 
 //-------------------------------------------------------------------------
+// RecConfigReadConfigDir
+//-------------------------------------------------------------------------
+char *
+RecConfigReadConfigDir()
+{
+  char buf[PATH_NAME_MAX + 1];
+
+  buf[0] = '\0';
+  RecGetRecordString("proxy.config.config_dir", buf, PATH_NAME_MAX);
+  if (strlen(buf) > 0) {
+    return Layout::get()->relative(buf);
+  } else {
+    return ats_strdup(Layout::get()->sysconfdir);
+  }
+}
+
+//-------------------------------------------------------------------------
 // RecConfigReadRuntimeDir
 //-------------------------------------------------------------------------
 char *
@@ -1113,20 +1143,29 @@ RecConfigReadLogDir()
 }
 
 //-------------------------------------------------------------------------
+// RecConfigReadBinDir
+//-------------------------------------------------------------------------
+char *
+RecConfigReadBinDir()
+{
+  char buf[PATH_NAME_MAX + 1];
+
+  buf[0] = '\0';
+  RecGetRecordString("proxy.config.bin_path", buf, PATH_NAME_MAX);
+  if (strlen(buf) > 0) {
+    return Layout::get()->relative(buf);
+  } else {
+    return ats_strdup(Layout::get()->bindir);
+  }
+}
+
+//-------------------------------------------------------------------------
 // RecConfigReadSnapshotDir.
 //-------------------------------------------------------------------------
 char *
 RecConfigReadSnapshotDir()
 {
-  char buf[PATH_NAME_MAX + 1];
-
-  buf[0] = '\0';
-  RecGetRecordString("proxy.config.snapshot_dir", buf, PATH_NAME_MAX);
-  if (strlen(buf) > 0) {
-    return Layout::get()->relative_to(Layout::get()->sysconfdir, buf);
-  } else {
-    return Layout::get()->relative_to(Layout::get()->sysconfdir, "snapshots");
-  }
+  return RecConfigReadConfigPath("proxy.config.snapshot_dir", "snapshots");
 }
 
 //-------------------------------------------------------------------------
@@ -1135,16 +1174,47 @@ RecConfigReadSnapshotDir()
 char *
 RecConfigReadConfigPath(const char * file_variable, const char * default_value)
 {
-  char buf[PATH_NAME_MAX + 1];
+  ats_scoped_str sysconfdir(RecConfigReadConfigDir());
 
-  buf[0] = '\0';
-  RecGetRecordString(file_variable, buf, PATH_NAME_MAX);
-  if (strlen(buf) > 0) {
-    return Layout::get()->relative_to(Layout::get()->sysconfdir, buf);
+  // If the file name is in a configuration variable, look it up first ...
+  if (file_variable) {
+    char buf[PATH_NAME_MAX + 1];
+
+    buf[0] = '\0';
+    RecGetRecordString(file_variable, buf, PATH_NAME_MAX);
+    if (strlen(buf) > 0) {
+      return Layout::get()->relative_to(sysconfdir, buf);
+    }
   }
 
+  // Otherwise take the default ...
   if (default_value) {
-    return Layout::get()->relative_to(Layout::get()->sysconfdir, default_value);
+    return Layout::get()->relative_to(sysconfdir, default_value);
+  }
+
+  return NULL;
+}
+
+//-------------------------------------------------------------------------
+// RecConfigReadPrefixPath
+//-------------------------------------------------------------------------
+char *
+RecConfigReadPrefixPath(const char * file_variable, const char * default_value)
+{
+  char buf[PATH_NAME_MAX + 1];
+
+  // If the file name is in a configuration variable, look it up first ...
+  if (file_variable) {
+    buf[0] = '\0';
+    RecGetRecordString(file_variable, buf, PATH_NAME_MAX);
+    if (strlen(buf) > 0) {
+      return Layout::get()->relative_to(Layout::get()->prefix, buf);
+    }
+  }
+
+  // Otherwise take the default ...
+  if (default_value) {
+    return Layout::get()->relative_to(Layout::get()->prefix, default_value);
   }
 
   return NULL;
@@ -1156,61 +1226,22 @@ RecConfigReadConfigPath(const char * file_variable, const char * default_value)
 char *
 RecConfigReadPersistentStatsPath()
 {
-  xptr<char> rundir(RecConfigReadRuntimeDir());
+  ats_scoped_str rundir(RecConfigReadRuntimeDir());
   return Layout::relative_to(rundir, REC_RAW_STATS_FILE);
 }
 
-//-------------------------------------------------------------------------
-// REC_SignalManager (TS)
-//-------------------------------------------------------------------------
-#if defined (REC_BUILD_MGMT)
-
-#if defined(LOCAL_MANAGER)
-
-#include "LocalManager.h"
-
 void
-RecSignalManager(int /* id ATS_UNUSED */, const char */* msg ATS_UNUSED */)
+RecSignalWarning(int sig, const char * fmt, ...)
 {
+  char msg[1024];
+  va_list args;
+
+  va_start(args, fmt);
+  WarningV(fmt, args);
+  va_end(args);
+
+  va_start(args, fmt);
+  vsnprintf(msg, sizeof(msg), fmt, args);
+  RecSignalManager(sig, msg);
+  va_end(args);
 }
-
-int
-RecRegisterManagerCb(int _signal, RecManagerCb _fn, void *_data)
-{
-  return lmgmt->registerMgmtCallback(_signal, _fn, _data);
-}
-
-#elif defined(PROCESS_MANAGER)
-
-#include "ProcessManager.h"
-
-void
-RecSignalManager(int id, const char *msg)
-{
-  ink_assert(pmgmt);
-  pmgmt->signalManager(id, msg);
-}
-
-int
-RecRegisterManagerCb(int _signal, RecManagerCb _fn, void *_data)
-{
-  return pmgmt->registerMgmtCallback(_signal, _fn, _data);
-}
-
-#endif // LOCAL_MANAGER
-
-#else
-
-void
-RecSignalManager(int /* id ATS_UNUSED */, const char *msg)
-{
-  RecLog(DL_Warning, msg);
-}
-
-int
-RecRegisterManagerCb(int _signal, RecManagerCb _fn, void *_data)
-{
-  return -1;
-}
-
-#endif // REC_BUILD_MGMT

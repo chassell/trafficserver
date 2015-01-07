@@ -24,7 +24,6 @@
 #ifndef __HTTP_H__
 #define __HTTP_H__
 
-
 #include <assert.h>
 #include "Arena.h"
 #include "INK_MD5.h"
@@ -37,6 +36,7 @@
 #define HTTP_MINOR(v)      ((v) & 0xFFFF)
 #define HTTP_MAJOR(v)      (((v) >> 16) & 0xFFFF)
 
+class Http2HeaderTable;
 
 enum HTTPStatus
 {
@@ -267,6 +267,7 @@ struct HTTPHdrImpl:public HdrHeapObjImpl
   int marshal(MarshalXlate *ptr_xlate, int num_ptr, MarshalXlate *str_xlate, int num_str);
   void unmarshal(intptr_t offset);
   void move_strings(HdrStrHeap *new_heap);
+  size_t strings_length();
 
   // Sanity Check Functions
   void check_strings(HeapCheck *heaps, int num_heaps);
@@ -402,6 +403,7 @@ extern const char *HTTP_VALUE_PROXY_REVALIDATE;
 extern const char *HTTP_VALUE_PUBLIC;
 extern const char *HTTP_VALUE_S_MAXAGE;
 extern const char *HTTP_VALUE_NEED_REVALIDATE_ONCE;
+extern const char *HTTP_VALUE_100_CONTINUE;
 
 extern int HTTP_LEN_BYTES;
 extern int HTTP_LEN_CHUNKED;
@@ -425,6 +427,7 @@ extern int HTTP_LEN_PROXY_REVALIDATE;
 extern int HTTP_LEN_PUBLIC;
 extern int HTTP_LEN_S_MAXAGE;
 extern int HTTP_LEN_NEED_REVALIDATE_ONCE;
+extern int HTTP_LEN_100_CONTINUE;
 
 /* Private */
 void http_hdr_adjust(HTTPHdrImpl *hdrp, int32_t offset, int32_t length, int32_t delta);
@@ -467,6 +470,8 @@ MIMEParseResult http_parser_parse_req(HTTPParser *parser, HdrHeap *heap,
 MIMEParseResult http_parser_parse_resp(HTTPParser *parser, HdrHeap *heap,
                                        HTTPHdrImpl *hh, const char **start,
                                        const char *end, bool must_copy_strings, bool eof);
+
+
 HTTPStatus http_parse_status(const char *start, const char *end);
 int32_t http_parse_version(const char *start, const char *end);
 
@@ -487,19 +492,19 @@ class HTTPVersion
 {
 public:
   HTTPVersion();
-  HTTPVersion(int32_t version);
+  explicit HTTPVersion(int32_t version);
   HTTPVersion(int ver_major, int ver_minor);
 
   void set(HTTPVersion ver);
   void set(int ver_major, int ver_minor);
 
   HTTPVersion & operator =(const HTTPVersion & hv);
-  int operator ==(const HTTPVersion & hv);
-  int operator !=(const HTTPVersion & hv);
-  int operator >(const HTTPVersion & hv);
-  int operator <(const HTTPVersion & hv);
-  int operator >=(const HTTPVersion & hv);
-  int operator <=(const HTTPVersion & hv);
+  int operator ==(const HTTPVersion & hv) const;
+  int operator !=(const HTTPVersion & hv) const;
+  int operator >(const HTTPVersion & hv) const;
+  int operator <(const HTTPVersion & hv) const;
+  int operator >=(const HTTPVersion & hv) const;
+  int operator <=(const HTTPVersion & hv) const;
 
 public:
     int32_t m_version;
@@ -738,7 +743,7 @@ HTTPVersion::operator =(const HTTPVersion & hv)
   -------------------------------------------------------------------------*/
 
 inline int
-HTTPVersion::operator ==(const HTTPVersion & hv)
+HTTPVersion::operator ==(const HTTPVersion & hv) const
 {
   return (m_version == hv.m_version);
 }
@@ -747,7 +752,7 @@ HTTPVersion::operator ==(const HTTPVersion & hv)
   -------------------------------------------------------------------------*/
 
 inline int
-HTTPVersion::operator !=(const HTTPVersion & hv)
+HTTPVersion::operator !=(const HTTPVersion & hv) const
 {
   return (m_version != hv.m_version);
 }
@@ -756,7 +761,7 @@ HTTPVersion::operator !=(const HTTPVersion & hv)
   -------------------------------------------------------------------------*/
 
 inline int
-HTTPVersion::operator >(const HTTPVersion & hv)
+HTTPVersion::operator >(const HTTPVersion & hv) const
 {
   return (m_version > hv.m_version);
 }
@@ -765,7 +770,7 @@ HTTPVersion::operator >(const HTTPVersion & hv)
   -------------------------------------------------------------------------*/
 
 inline int
-HTTPVersion::operator <(const HTTPVersion & hv)
+HTTPVersion::operator <(const HTTPVersion & hv) const
 {
   return (m_version < hv.m_version);
 }
@@ -774,7 +779,7 @@ HTTPVersion::operator <(const HTTPVersion & hv)
   -------------------------------------------------------------------------*/
 
 inline int
-HTTPVersion::operator >=(const HTTPVersion & hv)
+HTTPVersion::operator >=(const HTTPVersion & hv) const
 {
   return (m_version >= hv.m_version);
 }
@@ -783,7 +788,7 @@ HTTPVersion::operator >=(const HTTPVersion & hv)
   -------------------------------------------------------------------------*/
 
 inline int
-HTTPVersion::operator <=(const HTTPVersion & hv)
+HTTPVersion::operator <=(const HTTPVersion & hv) const
 {
   return (m_version <= hv.m_version);
 }
@@ -1517,6 +1522,5 @@ inline int
 HTTPInfo::get_frag_offset_count() {
   return m_alt ? m_alt->m_frag_offset_count : 0;
 }
-
 
 #endif /* __HTTP_H__ */

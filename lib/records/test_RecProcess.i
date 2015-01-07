@@ -1,6 +1,6 @@
 /** @file
 
-  A small test and sample program for librecprocess.a
+  A small test and sample program for librecords_p.a
 
   @section license License
 
@@ -631,7 +631,7 @@ main(int argc, char **argv)
       log_fp = NULL;
     }
   }
-  diags = NEW(new Diags("rec", NULL, log_fp));
+  diags = new Diags("rec", NULL, log_fp);
   diags->activate_taglist(diags->base_debug_tags, DiagsTagType_Debug);
   diags->print(NULL, DL_Note, NULL, NULL, "Starting '%s'", argv[0]);
 

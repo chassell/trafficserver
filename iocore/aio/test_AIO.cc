@@ -31,7 +31,6 @@ using std::cout;
 using std::endl;
 
 Diags *diags;
-int diags_init = 0;
 #define DIAGS_LOG_FILE "diags.log"
 
 // Necessary for AIO
@@ -118,7 +117,7 @@ init_diags(const char *bdt, const char *bat)
     }
   }
 
-  diags = NEW(new Diags(bdt, bat, diags_log_fp));
+  diags = new Diags(bdt, bat, diags_log_fp);
 
   if (diags_log_fp == NULL) {
     Warning("couldn't open diags log file '%s', " "will not log to this file", diags_logpath);

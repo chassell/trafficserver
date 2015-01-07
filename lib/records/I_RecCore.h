@@ -45,6 +45,10 @@ typedef void (*RecConfigEntryCallback)(RecT rec_type, RecDataT data_type, const 
 void RecConfigFileInit(void);
 int RecConfigFileParse(const char * path, RecConfigEntryCallback handler, bool inc_version);
 
+// Return a copy of the system's configuration directory, taking proxy.config.config_dir into account. The
+// caller MUST release the result with ats_free().
+char * RecConfigReadConfigDir();
+
 // Return a copy of the system's local state directory, taking proxy.config.local_state_dir into account. The
 // caller MUST release the result with ats_free().
 char * RecConfigReadRuntimeDir();
@@ -57,10 +61,17 @@ char * RecConfigReadSnapshotDir();
 // MUST release the result with ats_free().
 char * RecConfigReadLogDir();
 
+// Return a copy of the system's bin directory, taking proxy.config.bin_path into account. The caller MUST
+// release the result with ats_free().
+char * RecConfigReadBinDir();
+
 // Return a copy of a configuration file that is relative to sysconfdir. The relative path to the configuration
 // file is specified in the configuration variable named by "file_variable". If the configuration variable has no
 // value, NULL is returned. The caller MUST release the result with ats_free().
 char * RecConfigReadConfigPath(const char * file_variable, const char * default_value = NULL);
+
+// This is the same as RecConfigReadConfigPath, except it makes the paths relative to $PREFIX.
+char * RecConfigReadPrefixPath(const char * file_variable, const char * default_value = NULL);
 
 // Return a copy of the persistent stats file. This is $RUNTIMEDIR/records.snap.
 // The caller MUST release the result with ats_free().
@@ -116,6 +127,7 @@ int RecLinkConfigFloat(const char *name, RecFloat * rec_float);
 int RecLinkConfigCounter(const char *name, RecCounter * rec_counter);
 int RecLinkConfigString(const char *name, RecString * rec_string);
 int RecLinkConfigByte(const char *name, RecByte * rec_byte);
+int RecLinkConfigBool(const char *name, RecBool * rec_byte);
 
 int RecRegisterConfigUpdateCb(const char *name, RecConfigUpdateCb update_cb, void *cookie);
 int RecRegisterRawStatUpdateFunc(const char *name, RecRawStatBlock * rsb, int id, RecStatUpdateFunc update_func, void *cookie);
@@ -145,6 +157,8 @@ int RecGetRecordString_Xmalloc(const char *name, RecString * rec_string, bool lo
 int RecGetRecordCounter(const char *name, RecCounter * rec_counter, bool lock = true);
 // Convenience to allow us to treat the RecInt as a single byte internally
 int RecGetRecordByte(const char *name, RecByte * rec_byte, bool lock = true);
+// Convenience to allow us to treat the RecInt as a bool internally
+int RecGetRecordBool(const char *name, RecBool * rec_byte, bool lock = true);
 
 //------------------------------------------------------------------------
 // Record Attributes Reading
@@ -152,7 +166,6 @@ int RecGetRecordByte(const char *name, RecByte * rec_byte, bool lock = true);
 int RecGetRecordType(const char *name, RecT * rec_type, bool lock = true);
 int RecGetRecordDataType(const char *name, RecDataT * data_type, bool lock = true);
 int RecGetRecordPersistenceType(const char *name, RecPersistT * persist_type, bool lock = true);
-int RecGetRecordUpdateCount(RecT data_type);
 int RecGetRecordOrderAndId(const char *name, int *order, int *id, bool lock = true);
 
 int RecGetRecordUpdateType(const char *name, RecUpdateT * update_type, bool lock = true);
@@ -171,8 +184,18 @@ int RecGetRecordPrefix_Xmalloc(char *prefix, char **result, int *result_len);
 //------------------------------------------------------------------------
 // Signal and Alarms
 //------------------------------------------------------------------------
-void RecSignalManager(int, const char *);
 
+// RecSignalManager always sends a management signal up to traffic_manager.
+void RecSignalManager(int id, const char * , size_t);
+
+static inline void
+RecSignalManager(int id, const char * str) {
+  RecSignalManager(id, str, strlen(str + 1));
+}
+
+// Format a message, and send it to the manager and to the Warning diagnostic.
+void RecSignalWarning(int sig, const char * fmt, ...)
+  TS_PRINTFLIKE(2, 3);
 
 //-------------------------------------------------------------------------
 // Backwards Compatibility Items (REC_ prefix)
@@ -244,6 +267,13 @@ void RecSignalManager(int, const char *);
     _var = (RecByte)REC_ConfigReadInteger(_config_var_name);    \
   } while (0)
 
+// Allow to treat our "INT" configs as a bool type internally. Note
+// that the bool type is just a wrapper around RECD_INT.
+#define REC_EstablishStaticConfigBool(_var, _config_var_name) do { \
+    RecLinkConfigBool(_config_var_name, &_var); \
+    _var = 0 != REC_ConfigReadInteger(_config_var_name);    \
+  } while (0)
+
 RecInt REC_ConfigReadInteger(const char *name);
 char *REC_ConfigReadString(const char *name);
 RecFloat REC_ConfigReadFloat(const char *name);
@@ -266,20 +296,6 @@ int RecResetStatRecord(RecT type = RECT_NULL, bool all = false);
 // Set RecRecord attributes
 //------------------------------------------------------------------------
 int RecSetSyncRequired(char *name, bool lock = true);
-
-
-//------------------------------------------------------------------------
-// Signal Alarm/Warning/Error
-//------------------------------------------------------------------------
-#define REC_SignalManager        RecSignalManager
-#define REC_SignalWarning(_n,_d) { Warning("%s", _d); RecSignalManager(_n,_d); }
-#define REC_SignalError(_buf, _already)  {                                \
-  if(_already == false)                                                   \
-	REC_SignalManager(REC_SIGNAL_CONFIG_ERROR, _buf);                 \
-  _already = true;                                                        \
-  Warning("%s", _buf);                                                    \
-}
-
 
 //------------------------------------------------------------------------
 // Manager Callback

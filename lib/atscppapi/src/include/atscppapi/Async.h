@@ -46,12 +46,19 @@ public:
    * @return True if the receiver was still alive.
    */
   virtual bool dispatch() = 0;
+
+  /** Renders dispatch unusable to communicate to receiver */
+  virtual void disable() = 0;
+
+  /** Returns true if receiver can be communicated with */
+  virtual bool isEnabled() = 0;
+
   virtual ~AsyncDispatchControllerBase() { }
 };
 
 /**
- * @brief AsyncProvider is the interface that providers of async operations must implement. 
- * The system allows decoupling of the lifetime/scope of provider and receiver objects. The 
+ * @brief AsyncProvider is the interface that providers of async operations must implement.
+ * The system allows decoupling of the lifetime/scope of provider and receiver objects. The
  * receiver object might have expired before the async operation is complete and the system
  * handles this case. Because of this decoupling, it is the responsibility of the provider
  * to manage it's expiration - self-destruct on completion is a good option.
@@ -60,13 +67,31 @@ class AsyncProvider {
 public:
   /**
    * This method is invoked when the async operation is requested. This call should be used
-   * to just start the async operation and *not* block this thread.
-   *
-   * @param dispatch_controller provides a way to dispatch an "async complete" event to the
-   *                            requester.
+   * to just start the async operation and *not* block this thread. On completion,
+   * getDispatchController() can be used to invoke the receiver.
    */
-  virtual void run(shared_ptr<AsyncDispatchControllerBase> dispatch_controller) = 0;
+  virtual void run() = 0;
+
+  /** Base implementation just breaks communication channel with receiver. Implementations
+   * should add business logic here. */
+  virtual void cancel() {
+    if (dispatch_controller_) {
+      dispatch_controller_->disable();
+    }
+  }
+
   virtual ~AsyncProvider() { }
+
+protected:
+  shared_ptr<AsyncDispatchControllerBase> getDispatchController() { return dispatch_controller_; }
+
+private:
+  shared_ptr<AsyncDispatchControllerBase> dispatch_controller_;
+  void doRun(shared_ptr<AsyncDispatchControllerBase> dispatch_controller) {
+    dispatch_controller_ = dispatch_controller;
+    run();
+  }
+  friend class Async;
 };
 
 /**
@@ -86,6 +111,15 @@ public:
       ret = true;
     }
     return ret;
+  }
+
+  void disable() {
+    ScopedSharedMutexLock scopedLock(dispatch_mutex_);
+    event_receiver_ = NULL;
+  }
+
+  bool isEnabled() {
+    return (event_receiver_ != NULL);
   }
 
   /**
@@ -109,7 +143,7 @@ private:
 
 /**
  * @private
- * 
+ *
  * @brief A promise is used to let the dispatch controller know if the receiver is still
  * alive to receive the async complete dispatch. When the receiver dies, this promise is
  * broken and it automatically updates the dispatch controller.
@@ -157,13 +191,13 @@ private:
 class Async : noncopyable {
 public:
   /**
-   * This method sets up the dispatch controller to link the async operation provider and 
-   * receiver and then initiates the operation by invoking the provider. 
+   * This method sets up the dispatch controller to link the async operation provider and
+   * receiver and then initiates the operation by invoking the provider.
    *
    * @param event_receiver The receiver of the async complete dispatch.
    * @param provider The provider of the async operation.
    * @param mutex The mutex that is locked during the dispatch of the async event complete.
-   *              One will be created if nothing is passed in. Transaction plugins should use 
+   *              One will be created if nothing is passed in. Transaction plugins should use
    *              TransactionPlugin::getMutex() here and global plugins can pass an appropriate
    *              or NULL mutex.
    */
@@ -177,7 +211,7 @@ public:
     shared_ptr<AsyncReceiverPromise<AsyncReceiver<AsyncProviderType>, AsyncProviderType > > receiver_promise(
       new AsyncReceiverPromise<AsyncReceiver<AsyncProviderType>, AsyncProviderType >(dispatcher));
     event_receiver->receiver_promises_.push_back(receiver_promise); // now if the event receiver dies, we're safe.
-    provider->run(dispatcher);
+    provider->doRun(dispatcher);
   }
 };
 

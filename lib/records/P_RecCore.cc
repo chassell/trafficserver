@@ -420,7 +420,6 @@ RecSetRecord(RecT rec_type, const char *name, RecDataT data_type, RecData *data,
             break;
           }
         }
-        g_num_update[r1->rec_type]++;
 
         if (RecDataSet(data_type, &(r1->data), data)) {
           r1->sync_required = REC_SYNC_REQUIRED;
@@ -535,7 +534,7 @@ RecReadStatsFile()
   RecMessage *m;
   RecMessageItr itr;
   RecPersistT persist_type = RECP_NULL;
-  xptr<char> snap_fpath(RecConfigReadPersistentStatsPath());
+  ats_scoped_str snap_fpath(RecConfigReadPersistentStatsPath());
 
   // lock our hash table
   ink_rwlock_wrlock(&g_records_rwlock);
@@ -592,7 +591,7 @@ RecSyncStatsFile()
   RecMessage *m;
   int i, num_records;
   bool sync_to_disk;
-  xptr<char> snap_fpath(RecConfigReadPersistentStatsPath());
+  ats_scoped_str snap_fpath(RecConfigReadPersistentStatsPath());
 
   /*
    * g_mode_type should be initialized by
@@ -1002,7 +1001,7 @@ int RecWriteConfigFile(textBuffer *tb)
       break;
     }
 
-    if (nbytes != tb->spaceUsed()) {
+    if (nbytes != (int)tb->spaceUsed()) {
       RecLog(DL_Warning, "write to file: %s fail, disk maybe full", tmp_filename);
       result = REC_ERR_FAIL;
       break;

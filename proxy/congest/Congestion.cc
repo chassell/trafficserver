@@ -363,7 +363,7 @@ initCongestionControl()
 // register the stats variables
   register_congest_stats();
 
-  CongestionControlUpdate = NEW(new ConfigUpdateHandler<CongestionMatcherTable>());
+  CongestionControlUpdate = new ConfigUpdateHandler<CongestionMatcherTable>();
 
 // register config variables
   REC_EstablishStaticConfigInt32(congestionControlEnabled, "proxy.config.http.congestion_control.enabled");
@@ -402,7 +402,7 @@ void
 CongestionMatcherTable::reconfigure()
 {
   Note("congestion control config changed, reloading");
-  CongestionMatcher = NEW(new CongestionMatcherTable("proxy.config.http.congestion_control.filename", congestPrefix, &congest_dest_tags));
+  CongestionMatcher = new CongestionMatcherTable("proxy.config.http.congestion_control.filename", congestPrefix, &congest_dest_tags);
 
 #ifdef DEBUG_CONGESTION_MATCHER
   CongestionMatcher->Print();
@@ -707,7 +707,7 @@ CongestionEntry::failed_at(ink_hrtime t)
   long time = t;
   Debug("congestion_control", "failed_at: %ld", time);
   MUTEX_TRY_LOCK(lock, m_hist_lock, this_ethread());
-  if (lock) {
+  if (lock.is_locked()) {
     m_history.regist_event(time);
     if (!m_congested) {
       int32_t new_congested = compCongested();
@@ -733,5 +733,3 @@ CongestionEntry::go_alive()
 
 #define SERVER_CONGESTED_SIG  REC_SIGNAL_HTTP_CONGESTED_SERVER
 #define SERVER_ALLEVIATED_SIG REC_SIGNAL_HTTP_ALLEVIATED_SERVER
-#define CC_SignalWarning(sig, msg) \
-     REC_SignalWarning(sig, msg)

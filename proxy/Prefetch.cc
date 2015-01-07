@@ -341,7 +341,7 @@ PrefetchConfigCont::conf_update_handler(int /* event ATS_UNUSED */, void * /* ed
 {
   Debug("Prefetch", "Handling Prefetch config change");
 
-  PrefetchConfiguration *new_prefetch_config = NEW(new PrefetchConfiguration);
+  PrefetchConfiguration *new_prefetch_config = new PrefetchConfiguration;
   if (new_prefetch_config->readConfiguration() == 0) {
     // switch the prefetch_config
     eventProcessor.schedule_in(new PrefetchConfigFreerCont(prefetch_config), PREFETCH_CONFIG_UPDATE_TIMEOUT, ET_TASK);
@@ -362,7 +362,7 @@ prefetch_config_cb(const char * /* name ATS_UNUSED */, RecDataT /* data_type ATS
 {
   INK_MEMORY_BARRIER;
 
-  eventProcessor.schedule_in(NEW(new PrefetchConfigCont(prefetch_reconfig_mutex)), HRTIME_SECONDS(1), ET_TASK);
+  eventProcessor.schedule_in(new PrefetchConfigCont(prefetch_reconfig_mutex), HRTIME_SECONDS(1), ET_TASK);
   return 0;
 }
 
@@ -483,7 +483,7 @@ PrefetchTransform::handle_event(int event, void *edata)
         ink_assert(m_output_vc != NULL);
 
         MUTEX_TRY_LOCK(trylock, m_write_vio.mutex, this_ethread());
-        if (!trylock) {
+        if (!trylock.is_locked()) {
           retry(10);
           return 0;
         }
@@ -547,28 +547,25 @@ PrefetchTransform::redirect(HTTPHdr *resp)
    */
   if ((resp != NULL) && (resp->valid())) {
     response_status = resp->status_get();
+
+    /* OK, so we got the response. Now if the response is a redirect we have to check if we also
+       got a Location: header. This indicates the new location where our object is located.
+       If refirect_url was not found, letz falter back to just a recursion. Since
+       we might find the url in the body.
+     */
+    if (resp->presence(MIME_PRESENCE_LOCATION)) {
+      int redirect_url_len = 0;
+      const char *tmp_url = resp->value_get(MIME_FIELD_LOCATION, MIME_LEN_LOCATION, &redirect_url_len);
+
+      redirect_url = (char *)alloca(redirect_url_len + 1);
+      ink_strlcpy(redirect_url, tmp_url, redirect_url_len + 1);
+      Debug("PrefetchTransform", "redirect_url = %s\n", redirect_url);
+    } else {
+      response_status = -1;
+    }
   } else {
     response_status = -1;
   }
-
-  /* OK, so we got the response. Now if the response is a redirect we have to check if we also
-     got a Location: header. This indicates the new location where our object is located.
-     If refirect_url was not found, letz falter back to just a recursion. Since
-     we might find the url in the body.
-   */
-  if (resp->presence(MIME_PRESENCE_LOCATION)) {
-    int redirect_url_len = 0;
-    const char *tmp_url = resp->value_get(MIME_FIELD_LOCATION, MIME_LEN_LOCATION, &redirect_url_len);
-
-    redirect_url = (char *)alloca(redirect_url_len + 1);
-    ink_strlcpy(redirect_url, tmp_url, redirect_url_len + 1);
-    Debug("PrefetchTransform", "redirect_url = %s\n", redirect_url);
-  } else {
-    response_status = -1;
-  }
-
-
-
 
   if (IS_STATUS_REDIRECT(response_status)) {
     if (redirect_url) {
@@ -639,9 +636,9 @@ PrefetchTransform::hash_add(char *s)
     Debug("PrefetchParserURLs", "Normalized URL: %s\n", s);
 
 
-  INK_MD5 md5;
-  md5.encodeBuffer(s, str_len);
-  index = md5.word(1) % HASH_TABLE_LENGTH;
+  INK_MD5 hash;
+  MD5Context().hash_immediate(hash, s, str_len);
+  index = hash.slice32(1) % HASH_TABLE_LENGTH;
 
   PrefetchUrlEntry **e = &hash_table[index];
   for (; *e; e = &(*e)->hash_link)
@@ -649,7 +646,7 @@ PrefetchTransform::hash_add(char *s)
       return NULL;
 
   *e = prefetchUrlEntryAllocator.alloc();
-  (*e)->init(ats_strdup(s), md5);
+  (*e)->init(ats_strdup(s), hash);
 
   return *e;
 }
@@ -740,7 +737,7 @@ check_n_attach_prefetch_transform(HttpSM *sm, HTTPHdr *resp, bool from_cache)
       return;
   }
   //now insert the parser
-  prefetch_trans = NEW(new PrefetchTransform(sm, resp));
+  prefetch_trans = new PrefetchTransform(sm, resp);
 
   if (prefetch_trans) {
     Debug("PrefetchParser", "Adding Prefetch Parser 0x%p\n", prefetch_trans);
@@ -804,7 +801,7 @@ PrefetchProcessor::start()
   // we need to create the config and register all config callbacks
   // first.
   prefetch_reconfig_mutex = new_ProxyMutex();
-  prefetch_config = NEW(new PrefetchConfiguration);
+  prefetch_config = new PrefetchConfiguration;
   RecRegisterConfigUpdateCb("proxy.config.prefetch.prefetch_enabled", prefetch_config_cb, NULL);
   RecRegisterConfigUpdateCb("proxy.config.http.server_port", prefetch_config_cb, NULL);
   RecRegisterConfigUpdateCb("proxy.config.prefetch.child_port", prefetch_config_cb, NULL);
@@ -827,7 +824,7 @@ PrefetchProcessor::start()
     PREFETCH_FIELD_LEN_RECURSION = strlen(PREFETCH_FIELD_RECURSION);
     //hdrtoken_wks_to_length(PREFETCH_FIELD_RECURSION);
 
-    g_conn_table = NEW(new KeepAliveConnTable);
+    g_conn_table = new KeepAliveConnTable;
     g_conn_table->init();
 
     udp_seq_no = this_ethread()->generator.random();
@@ -1014,7 +1011,7 @@ PrefetchBlaster::init(PrefetchUrlEntry *entry, HTTPHdr *req_hdr, PrefetchTransfo
   //int host_pos=-1, path_pos=-1;
   int url_len = strlen(entry->url);
 
-  request = NEW(new HTTPHdr);
+  request = new HTTPHdr;
   request->copy(req_hdr);
   url_clear(request->url_get()->m_url_impl);    /* BugID: INKqa11148 */
   //request->url_get()->clear();
@@ -1267,7 +1264,6 @@ PrefetchBlaster::handleCookieHeaders(HTTPHdr *req_hdr,
     for (; s_cookie; s_cookie = s_cookie->m_next_dup) {
       a_raw = s_cookie->value_get(&a_raw_len);
       MIMEField *new_cookie = NULL;
-      bool new_cookie_attached = false;
       StrList a_param_list;
       Str *a_param;
       bool first_move;
@@ -1390,10 +1386,8 @@ PrefetchBlaster::handleCookieHeaders(HTTPHdr *req_hdr,
       if (domain_match == false)
         goto Lnotmatch;
 
-      if (new_cookie && !new_cookie_attached) {
-        new_cookie_attached = true;
-        if (add_cookies == false)
-          add_cookies = true;
+      if (new_cookie) {
+        add_cookies = true;
         new_cookie->name_set(request->m_heap, request->m_mime, MIME_FIELD_COOKIE, MIME_LEN_COOKIE);
         request->field_attach(new_cookie);
       }
@@ -1401,10 +1395,8 @@ PrefetchBlaster::handleCookieHeaders(HTTPHdr *req_hdr,
 
     Lnotmatch:
       if (new_cookie) {
-        if (!new_cookie_attached) {
-          new_cookie->name_set(request->m_heap, request->m_mime, MIME_FIELD_COOKIE, MIME_LEN_COOKIE);
-          request->field_attach(new_cookie);
-        }
+        new_cookie->name_set(request->m_heap, request->m_mime, MIME_FIELD_COOKIE, MIME_LEN_COOKIE);
+        request->field_attach(new_cookie);
         request->field_delete(new_cookie);
         new_cookie = NULL;
       }
@@ -1493,7 +1485,7 @@ PrefetchBlaster::handleEvent(int event, void *data)
 
       if (url_list) {
         MUTEX_TRY_LOCK(trylock, url_list->mutex, this_ethread());
-        if (!trylock) {
+        if (!trylock.is_locked()) {
           this_ethread()->schedule_in(this, HRTIME_MSECONDS(10));
           break;
         }
@@ -1652,10 +1644,10 @@ PrefetchBlaster::bufferObject(int event, void * /* data ATS_UNUSED */)
       buf->fill(PRELOAD_HEADER_LEN);
 
       int64_t ntoread = INT64_MAX;
-      int len = copy_header(buf, request, NULL);
+      copy_header(buf, request, NULL);
 
       if (cache_http_info) {
-        len += copy_header(buf, cache_http_info->response_get(), NULL);
+        copy_header(buf, cache_http_info->response_get(), NULL);
         ntoread = cache_http_info->object_size_get();
       }
       serverVC->do_io_read(this, ntoread, buf);
@@ -1865,7 +1857,7 @@ PrefetchBlaster::initCacheLookupConfig()
   //The look up parameters are intialized in the same as it is done
   //in HttpSM::init(). Any changes there should come in here.
   HttpConfigParams *http_config_params = HttpConfig::acquire();
-  cache_lookup_config.cache_global_user_agent_header = http_config_params->global_user_agent_header ? true : false;
+  cache_lookup_config.cache_global_user_agent_header = http_config_params->oride.global_user_agent_header ? true : false;
   cache_lookup_config.cache_enable_default_vary_headers =
     http_config_params->cache_enable_default_vary_headers ? true : false;
   cache_lookup_config.cache_vary_default_text = http_config_params->cache_vary_default_text;
@@ -1905,37 +1897,37 @@ config_read_proto(TSPrefetchBlastData &blast, const char *str)
 int
 PrefetchConfiguration::readConfiguration()
 {
-  xptr<char> conf_path;
+  ats_scoped_str conf_path;
   int fd = -1;
 
   local_http_server_port = stuffer_port = 0;
-  prefetch_enabled = TS_ConfigReadInteger("proxy.config.prefetch.prefetch_enabled");
+  prefetch_enabled = REC_ConfigReadInteger("proxy.config.prefetch.prefetch_enabled");
   if (prefetch_enabled <= 0) {
     prefetch_enabled = 0;
     return 0;
   }
 
   local_http_server_port = HttpProxyPort::findHttp(AF_INET)->m_port;
-  TS_ReadConfigInteger(stuffer_port, "proxy.config.prefetch.child_port");
-  TS_ReadConfigInteger(url_buffer_size, "proxy.config.prefetch.url_buffer_size");
-  TS_ReadConfigInteger(url_buffer_timeout, "proxy.config.prefetch.url_buffer_timeout");
-  TS_ReadConfigInteger(keepalive_timeout, "proxy.config.prefetch.keepalive_timeout");
+  REC_ReadConfigInteger(stuffer_port, "proxy.config.prefetch.child_port");
+  REC_ReadConfigInteger(url_buffer_size, "proxy.config.prefetch.url_buffer_size");
+  REC_ReadConfigInteger(url_buffer_timeout, "proxy.config.prefetch.url_buffer_timeout");
+  REC_ReadConfigInteger(keepalive_timeout, "proxy.config.prefetch.keepalive_timeout");
   if (keepalive_timeout <= 0)
     keepalive_timeout = 3600;
 
-  TS_ReadConfigInteger(push_cached_objects, "proxy.config.prefetch.push_cached_objects");
+  REC_ReadConfigInteger(push_cached_objects, "proxy.config.prefetch.push_cached_objects");
 
-  TS_ReadConfigInteger(max_object_size, "proxy.config.prefetch.max_object_size");
+  REC_ReadConfigInteger(max_object_size, "proxy.config.prefetch.max_object_size");
 
-  TS_ReadConfigInteger(max_recursion, "proxy.config.prefetch.max_recursion");
+  REC_ReadConfigInteger(max_recursion, "proxy.config.prefetch.max_recursion");
 
-  TS_ReadConfigInteger(redirection, "proxy.config.prefetch.redirection");
+  REC_ReadConfigInteger(redirection, "proxy.config.prefetch.redirection");
 
-  char *tstr = TS_ConfigReadString("proxy.config.prefetch.default_url_proto");
+  char *tstr = REC_ConfigReadString("proxy.config.prefetch.default_url_proto");
   if (config_read_proto(default_url_blast, tstr))
     goto Lerror;
 
-  tstr = TS_ConfigReadString("proxy.config.prefetch.default_data_proto");
+  tstr = REC_ConfigReadString("proxy.config.prefetch.default_data_proto");
   if (config_read_proto(default_data_blast, tstr))
     goto Lerror;
 
@@ -2067,7 +2059,7 @@ KeepAliveConn::append(IOBufferReader *rdr)
 int
 KeepAliveConnTable::init()
 {
-  arr = NEW(new conn_elem[CONN_ARR_SIZE]);
+  arr = new conn_elem[CONN_ARR_SIZE];
 
   for (int i = 0; i < CONN_ARR_SIZE; i++) {
     arr[i].conn = 0;
@@ -2095,7 +2087,7 @@ KeepAliveConnTable::append(IpEndpoint const& ip, MIOBuffer *buf, IOBufferReader 
   int index = ip_hash(ip);
 
   MUTEX_TRY_LOCK(trylock, arr[index].mutex, this_ethread());
-  if (!trylock) {
+  if (!trylock.is_locked()) {
     /* This lock fails quite often. This can be expected because,
        multiple threads try to append their buffer all the the same
        time to the same connection. Other thread holds it for a long
@@ -2117,7 +2109,7 @@ KeepAliveConnTable::append(IpEndpoint const& ip, MIOBuffer *buf, IOBufferReader 
     (*conn)->append(reader);
     free_MIOBuffer(buf);
   } else {
-    *conn = NEW(new KeepAliveConn);     //change to fast allocator?
+    *conn = new KeepAliveConn;     //change to fast allocator?
     (*conn)->init(ip, buf, reader);
   }
 

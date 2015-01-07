@@ -58,18 +58,16 @@ UrlRewrite::UrlRewrite()
    http_default_redirect_url(NULL), num_rules_forward(0), num_rules_reverse(0), num_rules_redirect_permanent(0),
    num_rules_redirect_temporary(0), num_rules_forward_with_recv_port(0), _valid(false)
 {
+  ats_scoped_str config_file_path;
 
   forward_mappings.hash_lookup = reverse_mappings.hash_lookup =
     permanent_redirects.hash_lookup = temporary_redirects.hash_lookup =
     forward_mappings_with_recv_port.hash_lookup = NULL;
 
-  char * config_file = NULL;
-  char * config_file_path = NULL;
-
-  REC_ReadConfigStringAlloc(config_file, "proxy.config.url_remap.filename");
-  if (config_file == NULL) {
+  config_file_path = RecConfigReadConfigPath("proxy.config.url_remap.filename", "remap.config");
+  if (!config_file_path) {
     pmgmt->signalManager(MGMT_SIGNAL_CONFIG_ERROR, "Unable to find proxy.config.url_remap.filename");
-    Warning("%s Unable to locate remap.config.  No remappings in effect", modulePrefix);
+    Warning("%s Unable to locate remap.config. No remappings in effect", modulePrefix);
     return;
   }
 
@@ -96,8 +94,6 @@ UrlRewrite::UrlRewrite()
   REC_ReadConfigInteger(url_remap_mode, "proxy.config.url_remap.url_remap_mode");
   REC_ReadConfigInteger(backdoor_enabled, "proxy.config.url_remap.handle_backdoor_urls");
 
-  config_file_path = Layout::relative_to(Layout::get()->sysconfdir, config_file);
-
   if (0 == this->BuildTable(config_file_path)) {
     _valid = true;
     if (is_debug_tag_set("url_rewrite")) {
@@ -106,9 +102,6 @@ UrlRewrite::UrlRewrite()
   } else {
     Warning("something failed during BuildTable() -- check your remap plugins!");
   }
-
-  ats_free(config_file_path);
-  ats_free(config_file);
 }
 
 UrlRewrite::~UrlRewrite()
@@ -284,77 +277,82 @@ UrlRewrite::_tableLookup(InkHashTable *h_table, URL *request_url,
 // This is only used for redirects and reverse rules, and the homepageredirect flag
 // can never be set. The end result is that request_url is modified per remap container.
 void
-url_rewrite_remap_request(const UrlMappingContainer& mapping_container, URL *request_url)
+url_rewrite_remap_request(const UrlMappingContainer& mapping_container, URL *request_url, int method)
 {
-  const char *requestPath;
-  int requestPathLen;
-  int fromPathLen;
-
   URL *map_to = mapping_container.getToURL();
   URL *map_from = mapping_container.getFromURL();
   const char *toHost;
-  const char *toPath;
-  const char *toScheme;
-  int toPathLen;
   int toHostLen;
-  int toSchemeLen;
-
-  requestPath = request_url->path_get(&requestPathLen);
-  map_from->path_get(&fromPathLen);
 
   toHost = map_to->host_get(&toHostLen);
-  toPath = map_to->path_get(&toPathLen);
-  toScheme = map_to->scheme_get(&toSchemeLen);
 
   Debug("url_rewrite", "%s: Remapping rule id: %d matched", __func__, mapping_container.getMapping()->map_id);
 
   request_url->host_set(toHost, toHostLen);
   request_url->port_set(map_to->port_get_raw());
-  request_url->scheme_set(toScheme, toSchemeLen);
 
-  // Should be +3, little extra padding won't hurt. Use the stack allocation
-  // for better performance (bummer that arrays of variable length is not supported
-  // on Solaris CC.
-  char *newPath = static_cast<char*>(alloca(sizeof(char*)*((requestPathLen - fromPathLen) + toPathLen + 8)));
-  int newPathLen = 0;
+  // With the CONNECT method, we have to avoid messing with the scheme and path, because it's not part of
+  // the CONNECT request (only host and port is).
+  if (HTTP_WKSIDX_CONNECT != method) {
+    const char *toScheme;
+    int toSchemeLen;
+    const char *requestPath;
+    int requestPathLen = 0;
+    int fromPathLen = 0;
+    const char *toPath;
+    int toPathLen;
 
-  *newPath = 0;
-  if (toPath) {
-    memcpy(newPath, toPath, toPathLen);
-    newPathLen += toPathLen;
-  }
+    toScheme = map_to->scheme_get(&toSchemeLen);
+    request_url->scheme_set(toScheme, toSchemeLen);
 
-  // We might need to insert a trailing slash in the new portion of the path
-  // if more will be added and none is present and one will be needed.
-  if (!fromPathLen && requestPathLen && toPathLen && *(newPath + newPathLen - 1) != '/') {
-    *(newPath + newPathLen) = '/';
-    newPathLen++;
-  }
+    map_from->path_get(&fromPathLen);
+    toPath = map_to->path_get(&toPathLen);
+    requestPath = request_url->path_get(&requestPathLen);
 
-  if (requestPath) {
-    //avoid adding another trailing slash if the requestPath already had one and so does the toPath
-    if (requestPathLen < fromPathLen) {
-      if (toPathLen && requestPath[requestPathLen - 1] == '/' && toPath[toPathLen - 1] == '/') {
-        fromPathLen++;
+    // Should be +3, little extra padding won't hurt. Use the stack allocation
+    // for better performance (bummer that arrays of variable length is not supported
+    // on Solaris CC.
+    char *newPath = static_cast<char*>(alloca(sizeof(char*)*((requestPathLen - fromPathLen) + toPathLen + 8)));
+    int newPathLen = 0;
+
+    *newPath = 0;
+    if (toPath) {
+      memcpy(newPath, toPath, toPathLen);
+      newPathLen += toPathLen;
+    }
+
+    // We might need to insert a trailing slash in the new portion of the path
+    // if more will be added and none is present and one will be needed.
+    if (!fromPathLen && requestPathLen && newPathLen && toPathLen && *(newPath + newPathLen - 1) != '/') {
+      *(newPath + newPathLen) = '/';
+      newPathLen++;
+    }
+
+    if (requestPath) {
+      //avoid adding another trailing slash if the requestPath already had one and so does the toPath
+      if (requestPathLen < fromPathLen) {
+        if (toPathLen && requestPath[requestPathLen - 1] == '/' && toPath[toPathLen - 1] == '/') {
+          fromPathLen++;
+        }
+      } else {
+        if (toPathLen && requestPath[fromPathLen] == '/' && toPath[toPathLen - 1] == '/') {
+          fromPathLen++;
+        }
       }
+
+      // copy the end of the path past what has been mapped
+      if ((requestPathLen - fromPathLen) > 0) {
+        memcpy(newPath + newPathLen, requestPath + fromPathLen, requestPathLen - fromPathLen);
+        newPathLen += (requestPathLen - fromPathLen);
+      }
+    }
+
+    // Skip any leading / in the path when setting the new URL path
+    if (*newPath == '/') {
+      request_url->path_set(newPath + 1, newPathLen - 1);
     } else {
-      if (toPathLen && requestPath[fromPathLen] == '/' && toPath[toPathLen - 1] == '/') {
-        fromPathLen++;
-      }
+      request_url->path_set(newPath, newPathLen);
     }
-
-    // copy the end of the path past what has been mapped
-    if ((requestPathLen - fromPathLen) > 0) {
-      memcpy(newPath + newPathLen, requestPath + fromPathLen, requestPathLen - fromPathLen);
-      newPathLen += (requestPathLen - fromPathLen);
-    }
-  }
-
-  // Skip any leading / in the path when setting the new URL path
-  if (*newPath == '/') {
-    request_url->path_set(newPath + 1, newPathLen - 1);
-  } else {
-    request_url->path_set(newPath, newPathLen);
   }
 }
 
@@ -424,45 +422,50 @@ UrlRewrite::PerformACLFiltering(HttpTransact::State *s, url_mapping *map)
   s->acl_filtering_performed = true;    // small protection against reverse mapping
 
   if (map->filter) {
-    int i, res, method;
-    i = (method = s->hdr_info.client_request.method_get_wksidx()) - HTTP_WKSIDX_CONNECT;
-    if (likely(i >= 0 && i < ACL_FILTER_MAX_METHODS)) {
-      bool client_enabled_flag = true;
-      ink_release_assert(ats_is_ip(&s->client_info.addr));
-      for (acl_filter_rule * rp = map->filter; rp; rp = rp->next) {
-        bool match = true;
-        if (rp->method_valid) {
-          if (rp->method_idx[i] != method)
-            match = false;
+    int res;
+    int method = s->hdr_info.client_request.method_get_wksidx();
+    int method_wksidx = (method != -1) ? (method - HTTP_WKSIDX_CONNECT) : -1;
+    bool client_enabled_flag = true;
+    ink_release_assert(ats_is_ip(&s->client_info.addr));
+    for (acl_filter_rule * rp = map->filter; rp; rp = rp->next) {
+      bool match = true;
+      if (rp->method_restriction_enabled) {
+        if (method_wksidx != -1) {
+          match = rp->standard_method_lookup[method_wksidx];
         }
-        if (match && rp->src_ip_valid) {
-          match = false;
-          for (int j = 0; j < rp->src_ip_cnt && !match; j++) {
-            res = rp->src_ip_array[j].contains(s->client_info.addr) ? 1 : 0;
-            if (rp->src_ip_array[j].invert) {
-              if (res != 1)
-                match = true;
-            } else {
-              if (res == 1)
-                match = true;
-            }
-          }
+        else if (!rp->nonstandard_methods.empty()) {
+          int method_str_len;
+          const char *method_str = s->hdr_info.client_request.method_get(&method_str_len);
+          match = rp->nonstandard_methods.count(std::string(method_str, method_str_len));
         }
-        if (match && client_enabled_flag) {     //make sure that a previous filter did not DENY
-          Debug("url_rewrite", "matched ACL filter rule, %s request", rp->allow_flag ? "allowing" : "denying");
-          client_enabled_flag = rp->allow_flag ? true : false;
-        } else {
-          if (!client_enabled_flag) {
-            Debug("url_rewrite", "Previous ACL filter rule denied request, continuing to deny it");
+      }
+      if (match && rp->src_ip_valid) {
+        match = false;
+        for (int j = 0; j < rp->src_ip_cnt && !match; j++) {
+          res = rp->src_ip_array[j].contains(s->client_info.addr) ? 1 : 0;
+          if (rp->src_ip_array[j].invert) {
+            if (res != 1)
+              match = true;
           } else {
-            Debug("url_rewrite", "did NOT match ACL filter rule, %s request", rp->allow_flag ? "denying" : "allowing");
-              client_enabled_flag = rp->allow_flag ? false : true;
+            if (res == 1)
+              match = true;
           }
         }
+      }
+      if (match && client_enabled_flag) {     //make sure that a previous filter did not DENY
+        Debug("url_rewrite", "matched ACL filter rule, %s request", rp->allow_flag ? "allowing" : "denying");
+        client_enabled_flag = rp->allow_flag ? true : false;
+      } else {
+        if (!client_enabled_flag) {
+          Debug("url_rewrite", "Previous ACL filter rule denied request, continuing to deny it");
+        } else {
+          Debug("url_rewrite", "did NOT match ACL filter rule, %s request", rp->allow_flag ? "denying" : "allowing");
+          client_enabled_flag = rp->allow_flag ? false : true;
+        }
+      }
 
-      }                         /* end of for(rp = map->filter;rp;rp = rp->next) */
-      s->client_connection_enabled = client_enabled_flag;
-    }
+    }                         /* end of for(rp = map->filter;rp;rp = rp->next) */
+    s->client_connection_enabled = client_enabled_flag;
   }
 }
 
@@ -572,6 +575,8 @@ UrlRewrite::_addToStore(MappingsStore &store, url_mapping *new_mapping, RegexMap
                         const char * src_host, bool is_cur_mapping_regex, int &count)
 {
   bool retval;
+
+  new_mapping->setRank(count); // Use the mapping rules number count for rank
   if (is_cur_mapping_regex) {
     store.regex_list.enqueue(reg_map);
     retval = true;

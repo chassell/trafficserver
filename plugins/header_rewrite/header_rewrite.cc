@@ -17,7 +17,6 @@
 */
 #include <fstream>
 #include <string>
-#include <boost/algorithm/string.hpp>
 
 #include "ts/ts.h"
 #include "ts/remap.h"
@@ -135,8 +134,6 @@ RulesConfig::add_rule(RuleSet* rule)
   return false;
 }
 
-
-
 ///////////////////////////////////////////////////////////////////////////////
 // Config parser, use to parse both the global, and per-remap, configurations.
 //
@@ -178,7 +175,14 @@ RulesConfig::parse_config(const std::string fname)
     ++lineno; // ToDo: we should probably use this for error messages ...
     TSDebug(PLUGIN_NAME_DBG, "Reading line: %d: %s", lineno, line.c_str());
 
-    boost::trim(line);
+    while (std::isspace(line[0])) {
+      line.erase(0, 1);
+    }
+
+    while (std::isspace(line[line.length() - 1])) {
+      line.erase(line.length() - 1, 1);
+    }
+
     if (line.empty() || (line[0] == '#')) {
       continue;
     }
@@ -188,7 +192,13 @@ RulesConfig::parse_config(const std::string fname)
     TSDebug(PLUGIN_NAME, "inp: %d: %s", inp, line.c_str());
     if(inp >= 0) {
       std::string path = line.substr(inp+strlen("include "));
-      boost::trim(path);
+      while (std::isspace(path[0])) {
+        path.erase(0, 1);
+      }
+
+      while (std::isspace(path[path.length() - 1])) {
+        path.erase(path.length() - 1, 1);
+      }
       TSDebug(PLUGIN_NAME, "load included config file: %s", path.c_str());
       parse_config(path);
    }
@@ -260,7 +270,6 @@ RulesConfig::parse_config(const std::string fname)
 
   return true;
 }
-
 
 ///////////////////////////////////////////////////////////////////////////////
 // Continuation
@@ -343,6 +352,7 @@ cont_rewrite_headers(TSCont contp, TSEvent event, void *edata)
   TSHttpTxnReenable(txnp, TS_EVENT_HTTP_CONTINUE);
   return 0;
 }
+
 ///////////////////////////////////////////////////////////////////////////////
 // Initialize the InkAPI plugin for the global hooks we support.
 //
@@ -385,7 +395,6 @@ TSPluginInit(int argc, const char *argv[])
   config_holder->addUpdateRegister();
 }
 
-
 ///////////////////////////////////////////////////////////////////////////////
 // Initialize the plugin as a remap plugin.
 //
@@ -411,7 +420,6 @@ TSRemapInit(TSRemapInterface *api_info, char *errbuf, int errbuf_size)
   TSDebug(PLUGIN_NAME, "Remap plugin is successfully initialized");
   return TS_SUCCESS;
 }
-
 
 TSReturnCode
 TSRemapNewInstance(int argc, char *argv[], void **ih, char * /* errbuf ATS_UNUSED */, int /* errbuf_size ATS_UNUSED */)
@@ -456,7 +464,6 @@ TSRemapDeleteInstance(void *ih)
 
   delete conf;
 }
-
 
 ///////////////////////////////////////////////////////////////////////////////
 // This is the main "entry" point for the plugin, called for every request.
@@ -506,4 +513,3 @@ TSRemapDoRemap(void *ih, TSHttpTxn rh, TSRemapRequestInfo *rri)
   TSDebug(PLUGIN_NAME_DBG, "Returing from TSRemapDoRemap with status: %d", rval);
   return rval;
 }
-

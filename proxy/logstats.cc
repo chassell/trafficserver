@@ -306,7 +306,7 @@ struct UrlStats
   const char *url;
   StatsCounter req;
   ElapsedStats time;
-  int64_t c_000; 
+  int64_t c_000;
   int64_t c_2xx;
   int64_t c_3xx;
   int64_t c_4xx;
@@ -418,7 +418,7 @@ public:
       _dump_url(u, as_object);
     if (as_object)
       std::cout << "  \"_timestamp\" : \"" << static_cast<int>(ink_time_wall_seconds()) << "\"" << std::endl;
-    else 
+    else
       std::cout << "  { \"_timestamp\" : \"" << static_cast<int>(ink_time_wall_seconds()) << "\" }" << std::endl;
   }
 
@@ -582,8 +582,8 @@ private:
       std::cout << "  { \"" << u->url << "\" : { ";
     // Requests
     std::cout << "\"req\" : { \"total\" : \"" << u->req.count <<
-      "\", \"hits\" : \"" <<  u->hits << 
-      "\", \"misses\" : \"" <<  u->misses << 
+      "\", \"hits\" : \"" <<  u->hits <<
+      "\", \"misses\" : \"" <<  u->misses <<
       "\", \"errors\" : \"" <<  u->errors <<
       "\", \"000\" : \"" <<  u->c_000 <<
       "\", \"2xx\" : \"" <<  u->c_2xx <<
@@ -637,12 +637,10 @@ struct CommandLineArgs
   int urls;			// Produce JSON output of URL stats, arg is LRU size
   int show_urls;		// Max URLs to show
   int as_object;		// Show the URL stats as a single JSON object (not array)
-  int version;
-  int help;
 
   CommandLineArgs()
     : max_origins(0), min_hits(0), max_age(0), line_len(DEFAULT_LINE_LEN), incremental(0),
-      tail(0), summary(0), json(0), cgi(0), urls(0), show_urls(0), as_object(0), version(0), help(0)
+      tail(0), summary(0), json(0), cgi(0), urls(0), show_urls(0), as_object(0)
   {
     log_file[0] = '\0';
     origin_file[0] = '\0';
@@ -656,7 +654,6 @@ struct CommandLineArgs
 static CommandLineArgs cl;
 
 static ArgumentDescription argument_descriptions[] = {
-  {"help", 'h', "Give this help", "T", &cl.help, NULL, NULL},
   {"log_file", 'f', "Specific logfile to parse", "S1023", cl.log_file, NULL, NULL},
   {"origin_list", 'o', "Only show stats for listed Origins", "S4095", cl.origin_list, NULL, NULL},
   {"origin_file", 'O', "File listing Origins to show", "S1023", cl.origin_file, NULL, NULL},
@@ -674,7 +671,8 @@ static ArgumentDescription argument_descriptions[] = {
   {"max_age", 'a', "Max age for log entries to be considered", "I", &cl.max_age, NULL, NULL},
   {"line_len", 'l', "Output line length", "I", &cl.line_len, NULL, NULL},
   {"debug_tags", 'T', "Colon-Separated Debug Tags", "S1023", &error_tags, NULL, NULL},
-  {"version", 'V', "Print Version Id", "T", &cl.version, NULL, NULL},
+  HELP_ARGUMENT_DESCRIPTION(),
+  VERSION_ARGUMENT_DESCRIPTION()
 };
 
 static const char *USAGE_LINE =
@@ -684,7 +682,7 @@ void
 CommandLineArgs::parse_arguments(char** argv)
 {
   // process command-line arguments
-  process_args(argument_descriptions, countof(argument_descriptions), argv, USAGE_LINE);
+  process_args(&appVersionInfo, argument_descriptions, countof(argument_descriptions), argv, USAGE_LINE);
 
   // Process as "CGI" ?
   if (strstr(argv[0], ".cgi") || cgi) {
@@ -727,18 +725,6 @@ CommandLineArgs::parse_arguments(char** argv)
         tok = strtok_r(NULL, "&", &sep_ptr);
       }
     }
-  }
-
-  // check for the version number request
-  if (version) {
-    std::cerr << appVersionInfo.FullVersionInfoStr << std::endl;
-    _exit(0);
-  }
-
-  // check for help request
-  if (help) {
-    usage(argument_descriptions, countof(argument_descriptions), USAGE_LINE);
-    _exit(0);
   }
 }
 
@@ -1225,7 +1211,7 @@ parse_log_buff(LogBufferHeader * buf_header, bool summary = false)
   URLScheme scheme;
 
   if (!fieldlist) {
-    fieldlist = NEW(new LogFieldList);
+    fieldlist = new LogFieldList;
     ink_assert(fieldlist != NULL);
     bool agg = false;
     LogFormat::parse_symbol_string(buf_header->fmt_fieldlist(), fieldlist, &agg);
@@ -1372,7 +1358,7 @@ parse_log_buff(LogBufferHeader * buf_header, bool summary = false)
 
             // TODO: If we save state (struct) for a run, we probably need to always
             // update the origin data, no matter what the origin_set is.
-            if (origin_set ? (origin_set->find(tok) != origin_set->end()) : 1) {
+            if (origin_set->empty() || (origin_set->find(tok) != origin_set->end())) {
               o_iter = origins.find(tok);
               if (origins.end() == o_iter) {
                 o_stats = (OriginStats *)ats_malloc(sizeof(OriginStats));
@@ -1572,7 +1558,6 @@ parse_log_buff(LogBufferHeader * buf_header, bool summary = false)
               update_counter(o_stats->content.application.zip, size);
             break;
           case JAVA_AS_INT:
-            tok_len = 22;
             update_counter(totals.content.application.javascript, size);
             if (o_stats != NULL)
               update_counter(o_stats->content.application.javascript, size);
@@ -1749,7 +1734,6 @@ process_file(int in_fd, off_t offset, unsigned max_age)
     const int MAX_READ_TRIES = 5;
     int total_read = 0;
     int read_tries_remaining = MAX_READ_TRIES; // since the data will be old anyway, let's only try a few times.
-    nread = 0;
     do {
       nread = read(in_fd, &buffer[sizeof(LogBufferHeader) + total_read], buffer_bytes - total_read);
       if (EOF == nread || !nread) { // just bail on error
@@ -2208,7 +2192,7 @@ my_exit(const ExitStatus& status)
   }
 
   // Next the totals for all Origins, unless we specified a list of origins to filter.
-  if (!origin_set) {
+  if (origin_set->empty()) {
     first = false;
     if (cl.json) {
       std::cout << "{ \"total\": {" << std::endl;
@@ -2294,7 +2278,7 @@ main(int /* argc ATS_UNUSED */, char *argv[])
   struct flock lck;
 
   // build the application information structure
-  appVersionInfo.setup(PACKAGE_NAME,PROGRAM_NAME, PACKAGE_VERSION, __DATE__, __TIME__,
+  appVersionInfo.setup(PACKAGE_NAME, PROGRAM_NAME, PACKAGE_VERSION, __DATE__, __TIME__,
                        BUILD_MACHINE, BUILD_PERSON, "");
 
   // Before accessing file system initialize Layout engine
@@ -2303,7 +2287,7 @@ main(int /* argc ATS_UNUSED */, char *argv[])
   memset(&totals, 0, sizeof(totals));
   init_elapsed(&totals);
 
-  origin_set = NULL;
+  origin_set = new OriginSet;
   parse_errors = 0;
 
   // Command line parsing
@@ -2328,13 +2312,9 @@ main(int /* argc ATS_UNUSED */, char *argv[])
     char *tok;
     char *sep_ptr;
 
-    if (NULL == origin_set)
-        origin_set = NEW(new OriginSet);
-    if (cl.origin_list) {
-      for (tok = strtok_r(cl.origin_list, ",", &sep_ptr); tok != NULL;) {
-        origin_set->insert(tok);
-        tok = strtok_r(NULL, ",", &sep_ptr);
-      }
+    for (tok = strtok_r(cl.origin_list, ",", &sep_ptr); tok != NULL;) {
+      origin_set->insert(tok);
+      tok = strtok_r(NULL, ",", &sep_ptr);
     }
   }
   // Load origins from an "external" file (\n separated)
@@ -2347,9 +2327,6 @@ main(int /* argc ATS_UNUSED */, char *argv[])
       usage(argument_descriptions, countof(argument_descriptions), USAGE_LINE);
       _exit(0);
     }
-
-    if (NULL == origin_set)
-      origin_set = NEW(new OriginSet);
 
     while (!fs.eof()) {
       std::string line;
@@ -2366,8 +2343,9 @@ main(int /* argc ATS_UNUSED */, char *argv[])
           char *buf;
 
           buf = ats_strdup(line.substr(start, end).c_str());
-          if (buf)
+          if (buf) {
             origin_set->insert(buf);
+          }
         }
       }
     }
@@ -2381,7 +2359,7 @@ main(int /* argc ATS_UNUSED */, char *argv[])
 
   // Should we calculate per URL data;
   if (cl.urls != 0) {
-    urls = NEW(new UrlLru(cl.urls, cl.show_urls));
+    urls = new UrlLru(cl.urls, cl.show_urls);
     if (cl.as_object)
       std::cout << "{" << std::endl;
     else

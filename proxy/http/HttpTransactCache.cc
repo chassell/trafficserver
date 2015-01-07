@@ -879,7 +879,7 @@ HttpTransactCache::calculate_quality_of_accept_encoding_match(MIMEField * accept
     // TODO: Should we check the return value (count) here?
     content_field->value_get_comma_list(&c_values_list);
 
-    c_encoding = content_field->value_get(&c_encoding_len);
+    content_field->value_get(&c_encoding_len);
     if (c_encoding_len == 0) {
       is_identity_encoding = true;
     } else {
@@ -1247,7 +1247,7 @@ HttpTransactCache::CalcVariability(CacheLookupHttpConfig * http_config_params, H
 
       // Disable Vary mismatch checking for Accept-Encoding.  This is only safe to
       // set if you are promising to fix any Accept-Encoding/Content-Encoding mismatches.
-      if (http_config_params->ignore_accept_encoding_mismatch && 
+      if (http_config_params->ignore_accept_encoding_mismatch &&
           !strcasecmp((char *) field->str, "Accept-Encoding"))
         continue;
 

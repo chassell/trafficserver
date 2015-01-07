@@ -25,14 +25,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "ink_config.h"
-
-#ifdef HAVE_PCRE_PCRE_H
-#include <pcre/pcre.h>
-#else
-#include <pcre.h>
-#endif
-
 #include "ts/ts.h"
 #include "ts/remap.h"
 #include "ink_defs.h"
@@ -40,6 +32,12 @@
 #include <vector>
 
 #include "pluginconfig.h"
+
+#ifdef HAVE_PCRE_PCRE_H
+#include <pcre/pcre.h>
+#else
+#include <pcre.h>
+#endif
 
 #define TOKENCOUNT 10
 #define OVECOUNT 30
@@ -54,7 +52,6 @@ struct regex_info
   int *tokens;                  /* Array of $x token values */
   int *tokenoffset;             /* Array of $x token offsets */
 };
-
 
 class pr_list : public PluginConfig
 {
@@ -78,8 +75,6 @@ public:
   virtual pr_list* load(TSFile fh);
 };
 static pr_list* load_pr_list(TSFile fh);
-
-
 
 #define DEFAULT_CONFIG_NAME     "cacheurl.config"
 
@@ -133,7 +128,7 @@ regex_substitute(char **buf, char *str, regex_info * info)
     prev = info->tokenoffset[i] + 2;
 
     memcpy(*buf + offset, str + ovector[info->tokens[i] * 2],
-        ovector[info->tokens[i] * 2 + 1] - ovector[info->tokens[i] * 2]);
+           ovector[info->tokens[i] * 2 + 1] - ovector[info->tokens[i] * 2]);
     offset += (ovector[info->tokens[i] * 2 + 1] - ovector[info->tokens[i] * 2]);
   }
   memcpy(*buf + offset, info->replacement + prev, strlen(info->replacement) - prev);
@@ -175,7 +170,7 @@ regex_compile(regex_info ** buf, char *pattern, char *replacement)
           break;
         } else if (replacement[i + 1] < '0' || replacement[i + 1] > '9') {
           TSError("[%s] Error: Invalid replacement token $%c in %s: should be $0 - $9\n",
-              PLUGIN_NAME, replacement[i + 1], replacement);
+                  PLUGIN_NAME, replacement[i + 1], replacement);
           status = 0;
           break;
         } else {
@@ -217,7 +212,6 @@ load_config_file(const char *config_file)
 {
   std::string path;
   TSFile fh;
-
 
   if (config_file == NULL) {
     /* Default config file of plugins/cacheurl.config */
@@ -351,7 +345,6 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char *errbuf ATS_UNUSED, i
   return TS_SUCCESS;
 }
 
-
 void
 TSRemapDeleteInstance(void *ih)
 {
@@ -411,15 +404,6 @@ TSPluginInit(int argc, const char *argv[])
   config_holder->addUpdateRegister();
 
 }
-
-
-
-
-
-
-
-
-
 static pr_list* load_pr_list(TSFile fh) {
   char buffer[1024];
   /* locations in a config file line, end of line, split start, split end */
@@ -492,7 +476,3 @@ pr_list* pr_list::load(TSFile fh) {
   return load_pr_list(fh);
   //  return 0;
 }
-
-
-
-

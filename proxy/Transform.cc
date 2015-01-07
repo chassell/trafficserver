@@ -92,7 +92,7 @@ VConnection *
 TransformProcessor::open(Continuation *cont, APIHook *hooks)
 {
   if (hooks) {
-    return NEW(new TransformVConnection(cont, hooks));
+    return new TransformVConnection(cont, hooks);
   } else {
     return NULL;
   }
@@ -104,7 +104,7 @@ TransformProcessor::open(Continuation *cont, APIHook *hooks)
 INKVConnInternal *
 TransformProcessor::null_transform(ProxyMutex *mutex)
 {
-  return NEW(new NullTransform(mutex));
+  return new NullTransform(mutex);
 }
 
 
@@ -114,7 +114,7 @@ TransformProcessor::null_transform(ProxyMutex *mutex)
 INKVConnInternal *
 TransformProcessor::range_transform(ProxyMutex *mut, RangeRecord *ranges, int num_fields, HTTPHdr *transform_resp, const char * content_type, int content_type_len, int64_t content_length)
 {
-  RangeTransform *range_transform = NEW(new RangeTransform(mut, ranges, num_fields, transform_resp, content_type, content_type_len, content_length));
+  RangeTransform *range_transform = new RangeTransform(mut, ranges, num_fields, transform_resp, content_type, content_type_len, content_length);
   return range_transform;
 }
 
@@ -176,12 +176,12 @@ TransformTerminus::handle_event(int event, void * /* edata ATS_UNUSED */)
       int64_t towrite;
 
       MUTEX_TRY_LOCK(trylock1, m_write_vio.mutex, this_ethread());
-      if (!trylock1) {
+      if (!trylock1.is_locked()) {
         RETRY();
       }
 
       MUTEX_TRY_LOCK(trylock2, m_read_vio.mutex, this_ethread());
-      if (!trylock2) {
+      if (!trylock2.is_locked()) {
         RETRY();
       }
 
@@ -236,7 +236,7 @@ TransformTerminus::handle_event(int event, void * /* edata ATS_UNUSED */)
     }
   } else {
     MUTEX_TRY_LOCK(trylock2, m_read_vio.mutex, this_ethread());
-    if (!trylock2) {
+    if (!trylock2.is_locked()) {
       RETRY();
     }
 
@@ -250,26 +250,17 @@ TransformTerminus::handle_event(int event, void * /* edata ATS_UNUSED */)
       // the user back instead of the read_vio cont (which won't
       // exist).
       if (m_tvc->m_closed == 0) {
-        if (m_closed == TS_VC_CLOSE_ABORT) {
-          if (m_read_vio.op == VIO::NONE) {
-            if (!m_called_user) {
-              m_called_user = 1;
-              m_tvc->m_cont->handleEvent(VC_EVENT_ERROR, NULL);
-            }
-          } else {
-            m_read_vio._cont->handleEvent(VC_EVENT_ERROR, &m_read_vio);
-          }
+        int ev = (m_closed == TS_VC_CLOSE_ABORT) ? VC_EVENT_ERROR : VC_EVENT_EOS;
+
+        if (!m_called_user) {
+          m_called_user = 1;
+          m_tvc->m_cont->handleEvent(ev, NULL);
         } else {
-          if (m_read_vio.op == VIO::NONE) {
-            if (!m_called_user) {
-              m_called_user = 1;
-              m_tvc->m_cont->handleEvent(VC_EVENT_EOS, NULL);
-            }
-          } else {
-            m_read_vio._cont->handleEvent(VC_EVENT_EOS, &m_read_vio);
-          }
+          ink_assert(m_read_vio._cont != NULL);
+          m_read_vio._cont->handleEvent(ev, &m_read_vio);
         }
       }
+
       return 0;
     }
   }
@@ -570,7 +561,7 @@ TransformControl::handle_event(int event, void * /* edata ATS_UNUSED */)
   case TRANSFORM_READ_READY:
     {
       MIOBuffer *buf = new_empty_MIOBuffer();
-  
+
       m_read_buf = buf->alloc_reader();
       m_tvc->do_io_read(this, INT64_MAX, buf);
       break;
@@ -665,7 +656,7 @@ NullTransform::handle_event(int event, void *edata)
         }
 
         MUTEX_TRY_LOCK(trylock, m_write_vio.mutex, this_ethread());
-        if (!trylock) {
+        if (!trylock.is_locked()) {
           retry(10);
           return 0;
         }
@@ -737,7 +728,7 @@ void
 TransformTest::run()
 {
   if (is_action_tag_set("transform_test")) {
-    eventProcessor.schedule_imm(NEW(new TransformControl()), ET_NET);
+    eventProcessor.schedule_imm(new TransformControl(), ET_NET);
   }
 }
 #endif
@@ -814,7 +805,7 @@ RangeTransform::handle_event(int event, void *edata)
       }
 
       MUTEX_TRY_LOCK(trylock, m_write_vio.mutex, this_ethread());
-      if (!trylock) {
+      if (!trylock.is_locked()) {
         retry(10);
         return 0;
       }
@@ -1007,7 +998,7 @@ RangeTransform::change_response_header()
   MIMEField *field;
   char *reason_phrase;
   HTTPStatus status_code;
-  
+
   ink_release_assert(m_transform_resp);
 
   status_code = HTTP_STATUS_PARTIAL_CONTENT;

@@ -88,7 +88,6 @@ public:
 
   bool require_lm;
   time_t timeout;
-  char pserver_path[1024];
   int mgmt_sync_key;
 
   LLQ *mgmt_signal_queue;
@@ -101,9 +100,6 @@ private:
   ConfigUpdateCbTable * cbtable;
 };                              /* End class ProcessManager */
 
-#ifndef _PROCESS_MANAGER
-#define _PROCESS_MANAGER
 inkcoreapi extern ProcessManager *pmgmt;
-#endif /* _PROCESS_MANAGER */
 
 #endif /* _PROCESS_MANAGER_H */

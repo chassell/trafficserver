@@ -15,4 +15,11 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-SUBDIRS = traffic_top traffic_cop traffic_line traffic_shell
+SUBDIRS = \
+  traffic_cop \
+  traffic_crashlog \
+  traffic_layout \
+  traffic_line \
+  traffic_manager \
+  traffic_top \
+  traffic_via

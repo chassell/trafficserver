@@ -262,7 +262,7 @@ ink_res_setoptions(ink_res_state statp, const char *options, const char *source 
   }
 }
 
-static u_int
+static unsigned
 ink_res_randomid(void) {
   struct timeval now;
 
@@ -431,7 +431,7 @@ ink_res_init(
     if (pHostListSize > INK_MAXNS) pHostListSize = INK_MAXNS;
     for (
         ; nserv < pHostListSize
-          && ats_is_ip(&pHostList[nserv].sa) 
+          && ats_is_ip(&pHostList[nserv].sa)
         ; ++nserv
     ) {
       ats_ip_copy(&statp->nsaddr_list[nserv].sa, &pHostList[nserv].sa);
@@ -579,7 +579,7 @@ ink_res_init(
 }
 
 void
-parse_host_res_preferences(char const* value, HostResPreferenceOrder order) {
+parse_host_res_preference(char const* value, HostResPreferenceOrder order) {
   Tokenizer tokens(";/|");
   // preference from the config string.
   int np = 0; // index in to @a m_host_res_preference
@@ -621,10 +621,10 @@ parse_host_res_preferences(char const* value, HostResPreferenceOrder order) {
       order[np++] = HOST_RES_PREFER_IPV4;
     if (!found[HOST_RES_PREFER_IPV6])
       order[np++] = HOST_RES_PREFER_IPV6;
-    if (np < N_HOST_RES_PREFERENCE)
-      order[np++] = HOST_RES_PREFER_NONE;
+    if (np < N_HOST_RES_PREFERENCE_ORDER) // was N_HOST_RES_PREFERENCE)
+      order[np] = HOST_RES_PREFER_NONE;
   }
-}      
+}
 
 int
 ts_host_res_order_to_string(HostResPreferenceOrder const& order, char* out, int size)

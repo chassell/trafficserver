@@ -160,7 +160,8 @@ alive() {
 # Start up Traffic Server. Test for all the processes so that we have a better
 # chance of delaying the test until traffic_server is ready.
 startup() {
-  tsexec traffic_cop &
+  local log=$TSQA_ROOT/$(logdir)/cop.log
+  ( tsexec traffic_cop --stdout > $log )&
   for proc in cop manager server; do
     for i in $(seq 10) ; do
       alive $proc && msg $proc is alive && break
@@ -174,6 +175,12 @@ startup() {
 
 # Shut down Traffic Server.
 shutdown() {
+
+  # Quick'n'dirty cleanup of background jobs.
+  jobs -p | while read pid ; do
+    kill $pid
+  done
+
   local pid=$(pidof cop)
   if [[ -z "$pid" ]] ; then
     return
@@ -238,6 +245,7 @@ bootstrap() {
   local prefix=$(tsxs -q PREFIX)
   local sysconfdir=$(tsxs -q SYSCONFDIR | sed -es+$prefix/++)
   local dir
+  local userid=${SUDO_USER:-$(whoami)}
 
   # Create runtime directories in the test root.
   for dir in SYSCONFDIR LOCALSTATEDIR RUNTIMEDIR LOGDIR ; do
@@ -246,7 +254,7 @@ bootstrap() {
   done
 
   # Copy config across
-  cp -r $(tsxs -q SYSCONFDIR)/*.config $TSQA_ROOT/$sysconfdir
+  cp -r $(tsxs -q SYSCONFDIR)/*.{config,xml} $TSQA_ROOT/$sysconfdir
 
   # Delete any config variables we are about to set.
   sed -i.orig \
@@ -257,14 +265,14 @@ bootstrap() {
     -e/proxy.config.diags/d \
     -e/proxy.config.http.server_ports/d \
     -e/proxy.config.config_update_interval_ms/d \
-    $TSQA_ROOT/$sysconfdir/records.config
+    $TSQA_ROOT/$sysconfdir/records.config || fatal failed to initialize records.config
 
   cat >> $TSQA_ROOT/$sysconfdir/records.config <<EOF
 CONFIG proxy.config.bin_path STRING $(tsxs -q BINDIR)
 CONFIG proxy.config.plugin.plugin_dir STRING $(tsxs -q LIBEXECDIR)
 CONFIG proxy.config.body_factory.template_sets_dir STRING $(tsxs -q SYSCONFDIR)/body_factory
 
-CONFIG proxy.config.admin.user_id STRING $(whoami)
+CONFIG proxy.config.admin.user_id STRING $userid
 CONFIG proxy.config.http.server_ports STRING $PORT
 
 # Flush config updates every 0.5s so that we don't have to sleep so long making config changes.
@@ -286,7 +294,10 @@ CONFIG proxy.config.diags.debug.tags STRING NULL
 CONFIG proxy.config.diags.show_location INT 1
 EOF
 
+  chown -R "$userid" $TSQA_ROOT
+
   msg bootstrapped Traffic Server into $TSQA_ROOT
+  tsexec traffic_layout
 }
 
 # vim: set sw=2 ts=2 et :

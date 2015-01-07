@@ -86,8 +86,7 @@ enum TunnelChunkingAction_t
 
 struct ChunkedHandler
 {
-  enum ChunkedState
-  {
+  enum ChunkedState {
     CHUNK_READ_CHUNK = 0,
     CHUNK_READ_SIZE_START,
     CHUNK_READ_SIZE,
@@ -103,6 +102,14 @@ struct ChunkedHandler
   };
 
   static int const DEFAULT_MAX_CHUNK_SIZE = 4096;
+
+  enum Action {
+    ACTION_DOCHUNK = 0,
+    ACTION_DECHUNK,
+    ACTION_PASSTHRU,
+  };
+
+  Action action;
 
   IOBufferReader *chunked_reader;
   MIOBuffer *dechunked_buffer;
@@ -137,7 +144,9 @@ struct ChunkedHandler
   //@}
   ChunkedHandler();
 
-  void init(IOBufferReader * buffer_in, HttpTunnelProducer * p);
+  void init(IOBufferReader *buffer_in, HttpTunnelProducer *p);
+  void init_by_action(IOBufferReader *buffer_in, Action action);
+  void clear();
 
   /// Set the max chunk @a size.
   /// If @a size is zero it is set to @c DEFAULT_MAX_CHUNK_SIZE.
@@ -229,7 +238,7 @@ struct HttpTunnelProducer
       @return The actual backlog or a number at least @a limit.
    */
   uint64_t backlog(
-		   uint64_t limit = INTU64_MAX ///< More than this is irrelevant
+		   uint64_t limit = UINT64_MAX ///< More than this is irrelevant
 		   );
   /// Check if producer is original (to ATS) source of data.
   /// @return @c true if this producer is the source of bytes from outside ATS.
@@ -240,6 +249,9 @@ struct HttpTunnelProducer
   void unthrottle();
   /// Check throttled state.
   bool is_throttled() const;
+
+  /// Update the handler_state member if it is still 0
+  void  update_state_if_not_set(int new_handler_state);
 
   /** Set the flow control source producer for the flow.
       This sets the value for this producer and all downstream producers.
@@ -536,6 +548,14 @@ HttpTunnelProducer::is_source() const
   // If a producer is marked as a client, then it's part of a bidirectional tunnel
   // and so is an actual source of data.
   return HT_HTTP_SERVER == vc_type || HT_CACHE_READ == vc_type || HT_HTTP_CLIENT == vc_type;
+}
+
+inline void
+HttpTunnelProducer::update_state_if_not_set(int new_handler_state)
+{
+  if (this->handler_state == 0) {
+    this->handler_state = new_handler_state;
+  }
 }
 
 inline bool

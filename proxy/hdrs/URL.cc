@@ -22,6 +22,7 @@
  */
 
 #include <assert.h>
+#include <new>
 #include "libts.h"
 #include "URL.h"
 #include "MIME.h"
@@ -96,6 +97,20 @@ int url_hash_method = 0;
 
 /*-------------------------------------------------------------------------
   -------------------------------------------------------------------------*/
+URLHashContext::HashType URLHashContext::Setting = URLHashContext::MMH;
+
+URLHashContext::URLHashContext() {
+  switch (Setting) {
+  case UNSPECIFIED:
+  case MD5:
+    new(_obj) MD5Context;
+    break;
+  case MMH:
+    new(_obj) MMHContext;
+    break;
+  default: ink_assert("Invalid global URL hash context");
+  };
+}
 
 void
 url_init()
@@ -127,29 +142,29 @@ url_init()
     URL_SCHEME_MMS = hdrtoken_string_to_wks("mms");
     URL_SCHEME_MMSU = hdrtoken_string_to_wks("mmsu");
     URL_SCHEME_MMST = hdrtoken_string_to_wks("mmst");
-    
-    ink_assert(URL_SCHEME_FILE && 
+
+    ink_assert(URL_SCHEME_FILE &&
       URL_SCHEME_FTP &&
-      URL_SCHEME_GOPHER && 
-      URL_SCHEME_HTTP && 
-      URL_SCHEME_HTTPS && 
+      URL_SCHEME_GOPHER &&
+      URL_SCHEME_HTTP &&
+      URL_SCHEME_HTTPS &&
       URL_SCHEME_WS &&
       URL_SCHEME_WSS &&
-      URL_SCHEME_MAILTO && 
-      URL_SCHEME_NEWS && 
-      URL_SCHEME_NNTP && 
-      URL_SCHEME_PROSPERO && 
+      URL_SCHEME_MAILTO &&
+      URL_SCHEME_NEWS &&
+      URL_SCHEME_NNTP &&
+      URL_SCHEME_PROSPERO &&
       URL_SCHEME_TELNET &&
       URL_SCHEME_TUNNEL &&
       URL_SCHEME_WAIS &&
       URL_SCHEME_PNM &&
-      URL_SCHEME_RTSP && 
-      URL_SCHEME_RTSPU && 
+      URL_SCHEME_RTSP &&
+      URL_SCHEME_RTSPU &&
       URL_SCHEME_MMS &&
-      URL_SCHEME_MMSU && 
+      URL_SCHEME_MMSU &&
       URL_SCHEME_MMST
     );
-    
+
     URL_WKSIDX_FILE = hdrtoken_wks_to_index(URL_SCHEME_FILE);
     URL_WKSIDX_FTP = hdrtoken_wks_to_index(URL_SCHEME_FTP);
     URL_WKSIDX_GOPHER = hdrtoken_wks_to_index(URL_SCHEME_GOPHER);
@@ -191,6 +206,10 @@ url_init()
     URL_LEN_MMS = hdrtoken_wks_to_length(URL_SCHEME_MMS);
     URL_LEN_MMSU = hdrtoken_wks_to_length(URL_SCHEME_MMSU);
     URL_LEN_MMST = hdrtoken_wks_to_length(URL_SCHEME_MMST);
+
+    ink_assert(URLHashContext::OBJ_SIZE >= sizeof(MD5Context));
+    ink_assert(URLHashContext::OBJ_SIZE >= sizeof(MMHContext));
+
   }
 }
 
@@ -356,7 +375,25 @@ URLImpl::move_strings(HdrStrHeap * new_heap)
   HDR_MOVE_STR(m_ptr_params, m_len_params);
   HDR_MOVE_STR(m_ptr_query, m_len_query);
   HDR_MOVE_STR(m_ptr_fragment, m_len_fragment);
-//    HDR_MOVE_STR(m_ptr_printed_string, m_len_printed_string);
+  HDR_MOVE_STR(m_ptr_printed_string, m_len_printed_string);
+}
+
+size_t
+URLImpl::strings_length()
+{
+  size_t ret = 0;
+
+  ret += m_len_scheme;
+  ret += m_len_user;
+  ret += m_len_password;
+  ret += m_len_host;
+  ret += m_len_port;
+  ret += m_len_path;
+  ret += m_len_params;
+  ret += m_len_query;
+  ret += m_len_fragment;
+  ret += m_len_printed_string;
+  return ret;
 }
 
 void
@@ -1093,7 +1130,7 @@ url_parse_scheme(HdrHeap * heap, URLImpl * url, const char **start, const char *
         ;
       if (cur < end) { // found a colon
         scheme_wks_idx = hdrtoken_tokenize(scheme_start, cur - scheme_start, &scheme_wks);
-    
+
         /*  Distinguish between a scheme only and a username by looking past the colon. If it is missing
             or it's a slash, presume scheme. Otherwise it's a username with a password.
         */
@@ -1149,7 +1186,7 @@ url_parse_internet(HdrHeap* heap, URLImpl* url,
   char const* cur = *start;
   char const* base; // Base for host/port field.
   char const* bracket = 0; // marker for open bracket, if any.
-  ts::ConstBuffer user(0), passw(0), host(0), port(0);
+  ts::ConstBuffer user, passw, host, port;
   static size_t const MAX_COLON = 8; // max # of valid colons.
   size_t n_colon = 0;
   char const* last_colon = 0; // pointer to last colon seen.
@@ -1247,7 +1284,7 @@ url_parse_internet(HdrHeap* heap, URLImpl* url,
   }
   if (host._size)
     url_host_set(heap, url, host._ptr, host._size, copy_strings_p);
-  
+
   if (last_colon) {
     ink_assert(n_colon);
     port.set(last_colon+1, cur);
@@ -1563,13 +1600,10 @@ memcpy_tolower(char *d, const char *s, int n)
 // no buffer overflow, no unescaping needed
 
 static inline void
-url_MD5_get_fast(URLImpl * url, INK_MD5 * md5)
+url_MD5_get_fast(URLImpl * url, CryptoContext& ctx, CryptoHash* hash)
 {
-  INK_DIGEST_CTX md5_ctx;
   char buffer[BUFSIZE];
   char *p;
-
-  ink_code_incr_md5_init(&md5_ctx);
 
   p = buffer;
   memcpy_tolower(p, url->m_ptr_scheme, url->m_len_scheme);
@@ -1596,21 +1630,19 @@ url_MD5_get_fast(URLImpl * url, INK_MD5 * md5)
   *p++ = ((char *) &port)[0];
   *p++ = ((char *) &port)[1];
 
-  ink_code_incr_md5_update(&md5_ctx, buffer, p - buffer);
-  ink_code_incr_md5_final((char *) md5, &md5_ctx);
+  ctx.update(buffer, p - buffer);
+  ctx.finalize(hash);
 }
 
 
 static inline void
-url_MD5_get_general(URLImpl * url, INK_MD5 * md5)
+url_MD5_get_general(URLImpl * url, CryptoContext& ctx, CryptoHash& hash)
 {
-  INK_DIGEST_CTX md5_ctx;
-
   char buffer[BUFSIZE];
   char *p, *e;
   const char *strs[13], *ends[13];
   const char *t;
-  uint16_t port;
+  in_port_t port;
   int i, s;
 
   strs[0] = url->m_ptr_scheme;
@@ -1645,8 +1677,6 @@ url_MD5_get_general(URLImpl * url, INK_MD5 * md5)
   p = buffer;
   e = buffer + BUFSIZE;
 
-  ink_code_incr_md5_init(&md5_ctx);
-
   for (i = 0; i < 13; i++) {
     if (strs[i]) {
       t = strs[i];
@@ -1660,29 +1690,25 @@ url_MD5_get_general(URLImpl * url, INK_MD5 * md5)
         }
 
         if (p == e) {
-	  ink_code_incr_md5_update(&md5_ctx, buffer, BUFSIZE);
+          ctx.update(buffer, BUFSIZE);
           p = buffer;
         }
       }
     }
   }
 
-  if (p != buffer) {
-    ink_code_incr_md5_update(&md5_ctx, buffer, p - buffer);
-  }
+  if (p != buffer) ctx.update(buffer, p-buffer);
 
   port = url_canonicalize_port(url->m_url_type, url->m_port);
 
-  ink_code_incr_md5_update(&md5_ctx, (char *) &port, sizeof(port));
-  ink_code_incr_md5_final((char *) md5, &md5_ctx);
+  ctx.update(&port, sizeof(port));
+  ctx.finalize(hash);
 }
 
-
-
-
 void
-url_MD5_get(URLImpl * url, INK_MD5 * md5)
+url_MD5_get(URLImpl * url, CryptoHash* hash)
 {
+  URLHashContext ctx;
   if ((url_hash_method != 0) &&
       (url->m_url_type == URL_TYPE_HTTP) &&
       ((url->m_len_user + url->m_len_password + url->m_len_params + url->m_len_query) == 0) &&
@@ -1692,15 +1718,14 @@ url_MD5_get(URLImpl * url, INK_MD5 * md5)
        url->m_len_path < BUFSIZE) &&
       (memchr(url->m_ptr_host, '%', url->m_len_host) == NULL) &&
       (memchr(url->m_ptr_path, '%', url->m_len_path) == NULL)) {
-    url_MD5_get_fast(url, md5);
-
+    url_MD5_get_fast(url, ctx, hash);
 #ifdef DEBUG
-    INK_MD5 md5_general;
-    url_MD5_get_general(url, &md5_general);
-    ink_assert(*md5 == md5_general);
+    CryptoHash md5_general;
+    url_MD5_get_general(url, ctx, md5_general);
+    ink_assert(*hash == md5_general);
 #endif
   } else {
-    url_MD5_get_general(url, md5);
+    url_MD5_get_general(url, ctx, *hash);
   }
 }
 
@@ -1712,23 +1737,23 @@ url_MD5_get(URLImpl * url, INK_MD5 * md5)
 void
 url_host_MD5_get(URLImpl * url, INK_MD5 * md5)
 {
-  INK_DIGEST_CTX md5_ctx;
-
-  ink_code_incr_md5_init(&md5_ctx);
+  MD5Context ctx;
 
   if (url->m_ptr_scheme) {
-    ink_code_incr_md5_update(&md5_ctx, url->m_ptr_scheme, url->m_len_scheme);
+    ctx.update(url->m_ptr_scheme, url->m_len_scheme);
   }
 
-  ink_code_incr_md5_update(&md5_ctx, "://", 3);
+  ctx.update("://", 3);
 
   if (url->m_ptr_host) {
-    ink_code_incr_md5_update(&md5_ctx, url->m_ptr_host, url->m_len_host);
+    ctx.update(url->m_ptr_host, url->m_len_host);
   }
 
-  ink_code_incr_md5_update(&md5_ctx, ":", 1);
+  ctx.update(":", 1);
 
+  // [amc] Why is this <int> and not <in_port_t>?
+  // Especially since it's in_port_t for url_MD5_get.
   int port = url_canonicalize_port(url->m_url_type, url->m_port);
-  ink_code_incr_md5_update(&md5_ctx, (char *) &port, sizeof(port));
-  ink_code_incr_md5_final((char *) md5, &md5_ctx);
+  ctx.update(&port, sizeof(port));
+  ctx.finalize(*md5);
 }

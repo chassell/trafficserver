@@ -62,6 +62,8 @@ extern "C"
 {
 #endif                          /* __cplusplus */
 
+  extern int fastmemtotal;
+
   void ink_queue_load_64(void *dst, void *src);
 
 #ifdef __x86_64__
@@ -85,7 +87,7 @@ extern "C"
   // lock, use INK_QUEUE_LD to read safely.
   typedef union
   {
-#if (defined(__i386__) || defined(__arm__)) && (SIZEOF_VOIDP == 4)
+#if (defined(__i386__) || defined(__arm__) || defined(__mips__)) && (SIZEOF_VOIDP == 4)
     struct
     {
       void *pointer;
@@ -124,7 +126,7 @@ extern "C"
 #define TO_PTR(_x) ((void*)(_x))
 #endif
 
-#if (defined(__i386__) || defined(__arm__)) && (SIZEOF_VOIDP == 4)
+#if (defined(__i386__) || defined(__arm__) || defined(__mips__)) && (SIZEOF_VOIDP == 4)
 #define FREELIST_POINTER(_x) (_x).s.pointer
 #define FREELIST_VERSION(_x) (_x).s.version
 #define SET_FREELIST_POINTER_VERSION(_x,_p,_v) \
@@ -134,7 +136,7 @@ extern "C"
 #define FREELIST_VERSION(_x) (_x).s.version
 #define SET_FREELIST_POINTER_VERSION(_x,_p,_v) \
 (_x).s.pointer = _p; (_x).s.version = _v
-#elif defined(__x86_64__) || defined(__ia64__)
+#elif defined(__x86_64__) || defined(__ia64__) || defined(__powerpc64__) || defined(__aarch64__)
 #define FREELIST_POINTER(_x) ((void*)(((((intptr_t)(_x).data)<<16)>>16) | \
  (((~((((intptr_t)(_x).data)<<16>>63)-1))>>48)<<48)))  // sign extend
 #define FREELIST_VERSION(_x) (((intptr_t)(_x).data)>>48)
@@ -184,6 +186,7 @@ extern "C"
                                     uint32_t alignment);
   inkcoreapi void *ink_freelist_new(InkFreeList * f);
   inkcoreapi void ink_freelist_free(InkFreeList * f, void *item);
+  inkcoreapi void ink_freelist_free_bulk(InkFreeList * f, void *head, void *tail, size_t num_item);
   void ink_freelists_dump(FILE * f);
   void ink_freelists_dump_baselinerel(FILE * f);
   void ink_freelists_snap_baseline();

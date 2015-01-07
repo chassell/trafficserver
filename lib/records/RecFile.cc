@@ -34,7 +34,7 @@ RecHandle
 RecFileOpenR(const char *file)
 {
   RecHandle h_file;
-  return ((h_file =::open(file, O_RDONLY)) <= 0) ? REC_HANDLE_INVALID : h_file;
+  return ((h_file =::open(file, O_RDONLY)) < 0) ? REC_HANDLE_INVALID : h_file;
 }
 
 //-------------------------------------------------------------------------
@@ -152,10 +152,8 @@ RecPipeCreate(const char *base_path, const char *name)
   sigaction(SIGPIPE, &act, &oact);
 
   // construct a path/filename for the pipe
-#define SEPERATOR "/"
   char path[PATH_NAME_MAX];
-  snprintf(path, sizeof(path), "%s%s%s", base_path, SEPERATOR, name);
-#undef SEPERATOR
+  snprintf(path, sizeof(path), "%s/%s", base_path, name);
   if (strlen(path) > (sizeof(servaddr.sun_path) - 1)) {
     RecLog(DL_Warning, "[RecPipeCreate] Path name too long; exiting\n");
     return REC_HANDLE_INVALID;
@@ -186,17 +184,20 @@ RecPipeCreate(const char *base_path, const char *name)
   servaddr_len = sizeof(servaddr.sun_family) + strlen(servaddr.sun_path);
   if ((bind(listenfd, (struct sockaddr *) &servaddr, servaddr_len)) < 0) {
     RecLog(DL_Warning, "[RecPipeCreate] bind error\n");
+    close(listenfd);
     return REC_HANDLE_INVALID;
   }
   // listen, backlog of 1 (expecting only one client)
   if ((listen(listenfd, 1)) < 0) {
     RecLog(DL_Warning, "[RecPipeCreate] listen error\n");
+    close(listenfd);
     return REC_HANDLE_INVALID;
   }
   // block until we get a connection from the other side
   cliaddr_len = sizeof(cliaddr);
   if ((acceptfd = accept(listenfd, (struct sockaddr *) &cliaddr,
                          &cliaddr_len)) < 0) {
+    close(listenfd);
     return REC_HANDLE_INVALID;
   }
 
@@ -218,10 +219,8 @@ RecPipeConnect(const char *base_path, const char *name)
   int servaddr_len;
 
   // construct a path/filename for the pipe
-#define SEPERATOR "/"
   char path[PATH_NAME_MAX];
-  snprintf(path, sizeof(path), "%s%s%s", base_path, SEPERATOR, name);
-#undef SEPERATOR
+  snprintf(path, sizeof(path), "%s/%s", base_path, name);
   if (strlen(path) > (sizeof(servaddr.sun_path) - 1)) {
     RecLog(DL_Warning, "[RecPipeConnect] Path name too long\n");
     return REC_HANDLE_INVALID;
@@ -239,11 +238,13 @@ RecPipeConnect(const char *base_path, const char *name)
   // set so that child process doesn't inherit our fd
   if (fcntl(sockfd, F_SETFD, 1) < 0) {
     RecLog(DL_Warning, "[RecPipeConnect] fcntl error\n");
+    close(sockfd);
     return REC_HANDLE_INVALID;
   }
   // blocking connect
   if ((connect(sockfd, (struct sockaddr *) &servaddr, servaddr_len)) < 0) {
     RecLog(DL_Warning, "[RecPipeConnect] connect error\n");
+    close(sockfd);
     return REC_HANDLE_INVALID;
   }
 

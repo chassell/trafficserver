@@ -29,10 +29,10 @@
  *
  ***************************************************************************/
 
-#include "ink_platform.h"
-#include "Main.h"
+#include "libts.h"
 #include "MgmtUtils.h"
 #include "LocalManager.h"
+#include "ClusterCom.h"
 #include "FileManager.h"
 #include "Rollback.h"
 #include "WebMgmtUtils.h"
@@ -46,11 +46,12 @@
 #include "CfgContextUtils.h"
 #include "EventCallback.h"
 #include "I_Layout.h"
-
-extern int diags_init;          // from Main.cc
+#include "ink_cap.h"
 
 // global variable
 CallbackTable *local_event_callbacks;
+
+extern FileManager *configFiles; // global in traffic_manager
 
 /*-------------------------------------------------------------------------
  * Init
@@ -58,7 +59,7 @@ CallbackTable *local_event_callbacks;
  * performs any necesary initializations for the local API client,
  * eg. set up global structures; called by the TSMgmtAPI::TSInit()
  */
-TSError
+TSMgmtError
 Init(const char * /* socket_path ATS_UNUSED */, TSInitOptionT options)
 {
   // socket_path should be null; only applies to remote clients
@@ -79,14 +80,13 @@ Init(const char * /* socket_path ATS_UNUSED */, TSInitOptionT options)
  * performs any necesary cleanup of global structures, etc,
  * for the local API client,
  */
-TSError
+TSMgmtError
 Terminate()
 {
   delete_callback_table(local_event_callbacks);
 
   return TS_ERR_OKAY;
 }
-
 
 /*-------------------------------------------------------------------------
  * Diags
@@ -131,12 +131,11 @@ Diags(TSDiagsT mode, const char *fmt, va_list ap)
     level = DL_Diag;
   }
 
-  if (diags_init) {             // check that diags is initialized
+  if (diags) {             // check that diags is initialized
     diags->print_va("TSMgmtAPI", level, NULL, fmt, ap);
     va_end(ap);
   }
 }
-
 
 /***************************************************************************
  * Control Operations
@@ -164,7 +163,7 @@ ProxyStateGet()
  * tsArgs  - (optional) a string with space delimited options that user
  *            wants to start traffic Server with
  */
-TSError
+TSMgmtError
 ProxyStateSet(TSProxyStateT state, TSCacheClearT clear)
 {
   int i = 0;
@@ -228,12 +227,187 @@ Lerror:
   return TS_ERR_FAIL;          /* failed to set proxy  state */
 }
 
+#if TS_USE_REMOTE_UNWINDING
+
+#include <libunwind.h>
+#include <libunwind-ptrace.h>
+#include <sys/ptrace.h>
+#include <cxxabi.h>
+
+typedef Vec<pid_t> threadlist;
+
+static threadlist
+threads_for_process(pid_t proc)
+{
+  DIR * dir = NULL;
+  struct dirent * entry = NULL;
+
+  char path[64];
+  threadlist threads;
+
+  if (snprintf(path, sizeof(path), "/proc/%ld/task", (long)proc) >= (int)sizeof(path)) {
+    goto done;
+  }
+
+  dir = opendir(path);
+  if (dir == NULL) {
+    goto done;
+  }
+
+  while ((entry = readdir(dir))) {
+    pid_t threadid;
+
+    if (isdot(entry->d_name) || isdotdot(entry->d_name)) {
+      continue;
+    }
+
+    threadid = strtol(entry->d_name, NULL, 10);
+    if (threadid > 0) {
+      threads.push_back(threadid);
+      Debug("backtrace", "found thread %ld", (long)threadid);
+    }
+  }
+
+
+done:
+  if (dir) {
+    closedir(dir);
+  }
+
+  return threads;
+}
+
+static void
+backtrace_for_thread(pid_t threadid, textBuffer& text)
+{
+  int status;
+  unw_addr_space_t addr_space = NULL;
+  unw_cursor_t cursor;
+  void * ap = NULL;
+  pid_t target = -1;
+  unsigned level = 0;
+
+  // First, attach to the child, causing it to stop.
+  status = ptrace(PTRACE_ATTACH, threadid, 0, 0);
+  if (status < 0) {
+    Debug("backtrace", "ptrace(ATTACH, %ld) -> %s (%d)", (long)threadid, strerror(errno), errno);
+    return;
+  }
+
+  // Wait for it to stop (XXX should be a timed wait ...)
+  target = waitpid(threadid, &status, __WALL | WUNTRACED);
+  Debug("backtrace", "waited for target %ld, found PID %ld, %s",  (long)threadid, (long)target,
+      WIFSTOPPED(status) ? "STOPPED" : "???");
+  if (target < 0) {
+    goto done;
+  }
+
+  ap = _UPT_create(threadid);
+  Debug("backtrace", "created UPT %p", ap);
+  if (ap == NULL) {
+    goto done;
+  }
+
+  addr_space = unw_create_addr_space(&_UPT_accessors, 0 /* byteorder */);
+  Debug("backtrace", "created address space %p", addr_space);
+  if (addr_space == NULL) {
+    goto done;
+  }
+
+  status = unw_init_remote(&cursor, addr_space, ap);
+  Debug("backtrace", "unw_init_remote(...) -> %d", status);
+  if (status != 0) {
+    goto done;
+  }
+
+  while (unw_step(&cursor) > 0) {
+    unw_word_t ip;
+    unw_word_t offset;
+    char buf[256];
+
+    unw_get_reg(&cursor, UNW_REG_IP, &ip);
+
+    if (unw_get_proc_name(&cursor, buf, sizeof(buf), &offset) == 0) {
+      int status;
+      char * name = abi::__cxa_demangle(buf, NULL, NULL, &status);
+      text.format("%-4u 0x%016llx %s + %p\n", level, (unsigned long long)ip, name ? name : buf, (void *)offset);
+      free(name);
+    } else {
+      text.format("%-4u 0x%016llx 0x0 + %p\n", level, (unsigned long long)ip, (void *)offset);
+    }
+
+    ++level;
+  }
+
+done:
+  if (addr_space) {
+    unw_destroy_addr_space(addr_space);
+  }
+
+  if (ap) {
+    _UPT_destroy(ap);
+  }
+
+  status = ptrace(PTRACE_DETACH, target, NULL, NULL);
+  Debug("backtrace", "ptrace(DETACH, %ld) -> %d (errno %d)", (long)target, status, errno);
+}
+
+TSMgmtError
+ServerBacktrace(unsigned /* options */, char ** trace)
+{
+  *trace = NULL;
+
+  // Unfortunately, we need to be privileged here. We either need to be root or to be holding
+  // the CAP_SYS_PTRACE capability. Even though we are the parent traffic_manager, it is not
+  // traceable without privilege because the process credentials do not match.
+  ElevateAccess access(true, ElevateAccess::TRACE_PRIVILEGE);
+  threadlist    threads(threads_for_process(lmgmt->watched_process_pid));
+  textBuffer    text(0);
+
+  Debug("backtrace", "tracing %zd threads for traffic_server PID %ld", threads.count(), (long)lmgmt->watched_process_pid);
+  for_Vec(pid_t, threadid, threads) {
+    Debug("backtrace", "tracing thread %zd", (long)threadid);
+    // Get the thread name using /proc/PID/comm
+    ats_scoped_fd fd;
+    char threadname[128];
+
+    snprintf(threadname, sizeof(threadname), "/proc/%ld/comm", (long)threadid);
+    fd = open(threadname, O_RDONLY);
+    if (fd >= 0) {
+      text.format("Thread %ld, ", (long)threadid);
+      text.readFromFD(fd);
+      text.chomp();
+    } else {
+      text.format("Thread %ld", (long)threadid);
+    }
+
+    text.format(":\n");
+
+    backtrace_for_thread(threadid, text);
+    text.format("\n");
+  }
+
+  *trace = text.release();
+  return TS_ERR_OKAY;
+}
+
+#else /* TS_USE_REMOTE_UNWINDING */
+
+TSMgmtError
+ServerBacktrace(unsigned /* options */, char ** trace)
+{
+  *trace = NULL;
+  return TS_ERR_NOT_SUPPORTED;
+}
+
+#endif
+
 /*-------------------------------------------------------------------------
  * Reconfigure
  *-------------------------------------------------------------------------
  * Rereads configuration files
  */
-TSError
+TSMgmtError
 Reconfigure()
 {
   configFiles->rereadConfig();  // TM rereads
@@ -248,7 +422,7 @@ Reconfigure()
  * Restarts Traffic Manager. Traffic Cop must be running in order to
  * restart Traffic Manager!!
  */
-TSError
+TSMgmtError
 Restart(bool cluster)
 {
   if (cluster) {                // Enqueue an event to restart the proxies across the cluster
@@ -262,24 +436,11 @@ Restart(bool cluster)
 }
 
 /*-------------------------------------------------------------------------
- * HardRestart
- *-------------------------------------------------------------------------
- * Cannot be executed locally since it requires a restart of Traffic Cop.
- * So just return TS_ERR_FAIL. Should only be called by remote API clients.
- */
-TSError
-HardRestart()
-{
-  return TS_ERR_FAIL;
-}
-
-
-/*-------------------------------------------------------------------------
  * Bouncer
  *-------------------------------------------------------------------------
  * Bounces traffic_server process(es).
  */
-TSError
+TSMgmtError
 Bounce(bool cluster)
 {
   if (cluster) {
@@ -299,8 +460,8 @@ Bounce(bool cluster)
  * CoreAPI is linked (it must match the remote CoreAPI signature so compiling
  * this source or CoreAPIRemote.cc yields the same set of symbols).
  */
-TSError
-StorageDeviceCmdOffline(char const* dev)
+TSMgmtError
+StorageDeviceCmdOffline(const char * dev)
 {
   lmgmt->signalEvent(MGMT_EVENT_STORAGE_DEVICE_CMD_OFFLINE, dev);
   return TS_ERR_OKAY;
@@ -314,7 +475,7 @@ StorageDeviceCmdOffline(char const* dev)
  * rec_ele has allocated memory already but with all empty fields.
  * The record info associated with rec_name will be returned in rec_ele.
  */
-TSError
+TSMgmtError
 MgmtRecordGet(const char *rec_name, TSRecordEle * rec_ele)
 {
   RecDataT rec_type;
@@ -336,32 +497,32 @@ MgmtRecordGet(const char *rec_name, TSRecordEle * rec_ele)
     rec_ele->rec_type = TS_REC_COUNTER;
     if (!varCounterFromName(rec_name, &(counter_val)))
       return TS_ERR_FAIL;
-    rec_ele->counter_val = (TSCounter) counter_val;
+    rec_ele->valueT.counter_val = (TSCounter) counter_val;
 
-    Debug("RecOp", "[MgmtRecordGet] Get Counter Var %s = %" PRId64"\n", rec_ele->rec_name, rec_ele->counter_val);
+    Debug("RecOp", "[MgmtRecordGet] Get Counter Var %s = %" PRId64"\n", rec_ele->rec_name,
+          rec_ele->valueT.counter_val);
     break;
 
   case RECD_INT:
     rec_ele->rec_type = TS_REC_INT;
     if (!varIntFromName(rec_name, &(int_val)))
       return TS_ERR_FAIL;
-    rec_ele->int_val = (TSInt) int_val;
+    rec_ele->valueT.int_val = (TSInt) int_val;
 
-    Debug("RecOp", "[MgmtRecordGet] Get Int Var %s = %" PRId64"\n", rec_ele->rec_name, rec_ele->int_val);
+    Debug("RecOp", "[MgmtRecordGet] Get Int Var %s = %" PRId64"\n", rec_ele->rec_name, rec_ele->valueT.int_val);
     break;
 
   case RECD_FLOAT:
     rec_ele->rec_type = TS_REC_FLOAT;
-    if (!varFloatFromName(rec_name, &(rec_ele->float_val)))
+    if (!varFloatFromName(rec_name, &(rec_ele->valueT.float_val)))
       return TS_ERR_FAIL;
 
-    Debug("RecOp", "[MgmtRecordGet] Get Float Var %s = %f\n", rec_ele->rec_name, rec_ele->float_val);
+    Debug("RecOp", "[MgmtRecordGet] Get Float Var %s = %f\n", rec_ele->rec_name, rec_ele->valueT.float_val);
     break;
 
   case RECD_STRING:
     if (!varStrFromName(rec_name, rec_val, MAX_BUF_SIZE))
       return TS_ERR_FAIL;
-
 
     if (rec_val[0] != '\0') {   // non-NULL string value
       // allocate memory & duplicate string value
@@ -371,8 +532,8 @@ MgmtRecordGet(const char *rec_name, TSRecordEle * rec_ele)
     }
 
     rec_ele->rec_type = TS_REC_STRING;
-    rec_ele->string_val = str_val;
-    Debug("RecOp", "[MgmtRecordGet] Get String Var %s = %s\n", rec_ele->rec_name, rec_ele->string_val);
+    rec_ele->valueT.string_val = str_val;
+    Debug("RecOp", "[MgmtRecordGet] Get String Var %s = %s\n", rec_ele->rec_name, rec_ele->valueT.string_val);
     break;
 
   default:                     // UNKOWN TYPE
@@ -383,6 +544,15 @@ MgmtRecordGet(const char *rec_name, TSRecordEle * rec_ele)
   return TS_ERR_OKAY;
 }
 
+// This is not implemented in the Core side of the API because we don't want
+// to buffer up all the matching records in memory. We stream the records
+// directory onto the management socket in handle_record_match(). This stub
+// is just here for link time dependencies.
+TSMgmtError
+MgmtRecordGetMatching(const char * /* regex */, TSList /* rec_vals */)
+{
+  return TS_ERR_FAIL;
+}
 
 /*-------------------------------------------------------------------------
  * reads the RecordsConfig info to determine which type of action is needed
@@ -410,16 +580,12 @@ determine_action_need(const char *rec_name)
   case RECU_RESTART_TM:          // requires TM/TS restart
     return TS_ACTION_RESTART;
 
-  case RECU_RESTART_TC:          // requires TC/TM/TS restart
-    return TS_ACTION_SHUTDOWN;
-
   default:                     // shouldn't get here actually
     return TS_ACTION_UNDEFINED;
   }
 
   return TS_ACTION_UNDEFINED;  // ERROR
 }
-
 
 /*-------------------------------------------------------------------------
  * MgmtRecordSet
@@ -433,7 +599,7 @@ determine_action_need(const char *rec_name)
  *  returns true if the variable was successfully set
  *   and false otherwise
  */
-TSError
+TSMgmtError
 MgmtRecordSet(const char *rec_name, const char *val, TSActionNeedT * action_need)
 {
   Debug("RecOp", "[MgmtRecordSet] Start\n");
@@ -451,7 +617,6 @@ MgmtRecordSet(const char *rec_name, const char *val, TSActionNeedT * action_need
   return TS_ERR_FAIL;
 }
 
-
 /*-------------------------------------------------------------------------
  * MgmtRecordSetInt
  *-------------------------------------------------------------------------
@@ -459,7 +624,7 @@ MgmtRecordSet(const char *rec_name, const char *val, TSActionNeedT * action_need
  * Returns TS_ERR_FAIL if the type is not a valid integer.
  * Converts the integer value to a string and call MgmtRecordSet
  */
-TSError
+TSMgmtError
 MgmtRecordSetInt(const char *rec_name, MgmtInt int_val, TSActionNeedT * action_need)
 {
   if (!rec_name || !action_need)
@@ -474,13 +639,12 @@ MgmtRecordSetInt(const char *rec_name, MgmtInt int_val, TSActionNeedT * action_n
   return MgmtRecordSet(rec_name, str_val, action_need);
 }
 
-
 /*-------------------------------------------------------------------------
  * MgmtRecordSetCounter
  *-------------------------------------------------------------------------
  * converts the counter_val to a string and uses MgmtRecordSet
  */
-TSError
+TSMgmtError
 MgmtRecordSetCounter(const char *rec_name, MgmtIntCounter counter_val, TSActionNeedT * action_need)
 {
   if (!rec_name || !action_need)
@@ -495,14 +659,13 @@ MgmtRecordSetCounter(const char *rec_name, MgmtIntCounter counter_val, TSActionN
   return MgmtRecordSet(rec_name, str_val, action_need);
 }
 
-
 /*-------------------------------------------------------------------------
  * MgmtRecordSetFloat
  *-------------------------------------------------------------------------
  * converts the float value to string (to do record validity check)
  * and calls MgmtRecordSet
  */
-TSError
+TSMgmtError
 MgmtRecordSetFloat(const char *rec_name, MgmtFloat float_val, TSActionNeedT * action_need)
 {
   if (!rec_name || !action_need)
@@ -517,18 +680,16 @@ MgmtRecordSetFloat(const char *rec_name, MgmtFloat float_val, TSActionNeedT * ac
   return MgmtRecordSet(rec_name, str_val, action_need);
 }
 
-
 /*-------------------------------------------------------------------------
  * MgmtRecordSetString
  *-------------------------------------------------------------------------
  * The string value is copied so it's okay to free the string later
  */
-TSError
+TSMgmtError
 MgmtRecordSetString(const char *rec_name, const char *string_val, TSActionNeedT * action_need)
 {
   return MgmtRecordSet(rec_name, string_val, action_need);
 }
-
 
 /**************************************************************************
  * FILE OPERATIONS
@@ -544,7 +705,7 @@ MgmtRecordSetString(const char *rec_name, const char *string_val, TSActionNeedT 
  *          ver  - the version number of file being read
  * Note: CALLEE must DEALLOCATE text memory returned
  */
-TSError
+TSMgmtError
 ReadFile(TSFileNameT file, char **text, int *size, int *version)
 {
   const char *fname;
@@ -555,7 +716,6 @@ ReadFile(TSFileNameT file, char **text, int *size, int *version)
   version_t ver;
 
   Debug("FileOp", "[get_lines_from_file] START\n");
-
 
   fname = filename_to_string(file);
   if (!fname)
@@ -594,15 +754,14 @@ ReadFile(TSFileNameT file, char **text, int *size, int *version)
  *        version - the current version level; new file will have the
  *                  version number above this one
  */
-TSError
-WriteFile(TSFileNameT file, char *text, int size, int version)
+TSMgmtError
+WriteFile(TSFileNameT file, const char *text, int size, int version)
 {
   const char *fname;
   Rollback *file_rb;
   textBuffer *file_content;
   int ret;
   version_t ver;
-
 
   fname = filename_to_string(file);
   if (!fname)
@@ -653,8 +812,8 @@ WriteFile(TSFileNameT file, char *text, int size, int version)
  * be careful because this alarm description is used to keep track
  * of alarms in the current alarm processor
  */
-TSError
-EventSignal(char * /* event_name ATS_UNUSED */, va_list /* ap ATS_UNUSED */)
+TSMgmtError
+EventSignal(const char * /* event_name ATS_UNUSED */, va_list /* ap ATS_UNUSED */)
 {
   //char *text;
   //int id;
@@ -673,8 +832,8 @@ EventSignal(char * /* event_name ATS_UNUSED */, va_list /* ap ATS_UNUSED */)
  * unresolved, just return TS_ERR_OKAY.
 
  */
-TSError
-EventResolve(char *event_name)
+TSMgmtError
+EventResolve(const char *event_name)
 {
   alarm_t a;
 
@@ -694,7 +853,7 @@ EventResolve(char *event_name)
  * functions fail for a single event
  * note: returns list of local alarms at that instant of fn call (snapshot)
  */
-TSError
+TSMgmtError
 ActiveEventGetMlt(LLQ * active_events)
 {
   InkHashTable *event_ht;
@@ -735,8 +894,8 @@ ActiveEventGetMlt(LLQ * active_events)
  * Sets *is_current to true if the event named event_name is currently
  * unresolved; otherwise sets *is_current to false.
  */
-TSError
-EventIsActive(char *event_name, bool * is_current)
+TSMgmtError
+EventIsActive(const char *event_name, bool * is_current)
 {
   alarm_t a;
 
@@ -766,8 +925,8 @@ EventIsActive(char *event_name, bool * is_current)
  * event callback functions for each type of event. The functions are also
  * stored in the the hashtable, not in the TM alarm processor model
  */
-TSError
-EventSignalCbRegister(char *event_name, TSEventSignalFunc func, void *data)
+TSMgmtError
+EventSignalCbRegister(const char *event_name, TSEventSignalFunc func, void *data)
 {
   return cb_table_register(local_event_callbacks, event_name, func, data, NULL);
 
@@ -778,8 +937,8 @@ EventSignalCbRegister(char *event_name, TSEventSignalFunc func, void *data)
  *-------------------------------------------------------------------------
  * Removes the callback function from the local side CallbackTable
  */
-TSError
-EventSignalCbUnregister(char *event_name, TSEventSignalFunc func)
+TSMgmtError
+EventSignalCbUnregister(const char *event_name, TSEventSignalFunc func)
 {
   return cb_table_unregister(local_event_callbacks, event_name, func);
 }
@@ -787,80 +946,51 @@ EventSignalCbUnregister(char *event_name, TSEventSignalFunc func)
 /***************************************************************************
  * Snapshots
  ***************************************************************************/
-TSError
-SnapshotTake(char *snapshot_name)
+TSMgmtError
+SnapshotTake(const char * snapshot_name)
 {
-  char *snapDirFromRecordsConf;
-  bool found;
-  char snapDir[PATH_NAME_MAX + 1];
+  ats_scoped_str snapdir;
 
   if (!snapshot_name)
     return TS_ERR_PARAMS;
 
-  int rec_err = RecGetRecordString_Xmalloc("proxy.config.snapshot_dir", &snapDirFromRecordsConf);
-  found = (rec_err == REC_ERR_OKAY);
-  ink_release_assert(found);
-  // XXX: Why was that offset to config dir?
-  //      Any path should be prefix relative thought
-  //
-  Layout::relative_to(snapDir, sizeof(snapDir), Layout::get()->sysconfdir, snapDirFromRecordsConf);
-  ats_free(snapDirFromRecordsConf);
+  snapdir = RecConfigReadSnapshotDir();
 
-  SnapResult result = configFiles->takeSnap(snapshot_name, snapDir);
+  SnapResult result = configFiles->takeSnap(snapshot_name, snapdir);
   if (result != SNAP_OK)
     return TS_ERR_FAIL;
   else
     return TS_ERR_OKAY;
 }
 
-TSError
-SnapshotRestore(char *snapshot_name)
+TSMgmtError
+SnapshotRestore(const char * snapshot_name)
 {
-  char *snapDirFromRecordsConf;
-  bool found;
-  char snapDir[PATH_NAME_MAX + 1];
+  ats_scoped_str snapdir;
 
   if (!snapshot_name)
     return TS_ERR_PARAMS;
 
-  int rec_err = RecGetRecordString_Xmalloc("proxy.config.snapshot_dir", &snapDirFromRecordsConf);
-  found = (rec_err == REC_ERR_OKAY);
-  ink_release_assert(found);
-  // XXX: Why was that offset to config dir?
-  //      Any path should be prefix relative thought
-  //
-  Layout::relative_to(snapDir, sizeof(snapDir), Layout::get()->sysconfdir, snapDirFromRecordsConf);
-  ats_free(snapDirFromRecordsConf);
+  snapdir = RecConfigReadSnapshotDir();
 
-  SnapResult result = configFiles->restoreSnap(snapshot_name, snapDir);
-  ats_free(snapDirFromRecordsConf);
+  SnapResult result = configFiles->restoreSnap(snapshot_name, snapdir);
   if (result != SNAP_OK)
     return TS_ERR_FAIL;
   else
     return TS_ERR_OKAY;
 }
 
-TSError
-SnapshotRemove(char *snapshot_name)
+TSMgmtError
+SnapshotRemove(const char * snapshot_name)
 {
-  char *snapDirFromRecordsConf;
-  bool found;
-  char snapDir[PATH_NAME_MAX + 1];
+  ats_scoped_str snapdir;
 
   if (!snapshot_name)
     return TS_ERR_PARAMS;
 
-  int rec_err = RecGetRecordString_Xmalloc("proxy.config.snapshot_dir", &snapDirFromRecordsConf);
-  found = (rec_err == REC_ERR_OKAY);
-  ink_release_assert(found);
-  // XXX: Why was that offset to config dir?
-  //      Any path should be prefix relative thought
-  //
-  Layout::relative_to(snapDir, sizeof(snapDir), Layout::get()->sysconfdir, snapDirFromRecordsConf);
-  ats_free(snapDirFromRecordsConf);
+  snapdir = RecConfigReadSnapshotDir();
 
-  SnapResult result = configFiles->removeSnap(snapshot_name, snapDir);
-  ats_free(snapDirFromRecordsConf);
+  SnapResult result = configFiles->removeSnap(snapshot_name, snapdir);
   if (result != SNAP_OK)
     return TS_ERR_FAIL;
   else
@@ -868,7 +998,7 @@ SnapshotRemove(char *snapshot_name)
 }
 
 /* based on FileManager.cc::displaySnapOption() */
-TSError
+TSMgmtError
 SnapshotGetMlt(LLQ * snapshots)
 {
   ExpandingArray snap_list(25, true);
@@ -899,7 +1029,7 @@ SnapshotGetMlt(LLQ * snapshots)
  * but will return TS_ERR_FAIL. Only returns TS_ERR_OKAY if all
  * stats are set back to defaults successfully.
  */
-TSError
+TSMgmtError
 StatsReset(bool cluster, const char *name)
 {
   if (cluster)

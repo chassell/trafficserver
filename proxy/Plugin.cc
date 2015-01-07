@@ -22,10 +22,6 @@
  */
 
 #include <stdio.h>
-// XXX: HP-UX ??? Not part of configure supported hosts
-#if defined(hpux)
-#include <dl.h>
-#endif
 #include "ink_platform.h"
 #include "ink_file.h"
 #include "Compatability.h"
@@ -36,16 +32,6 @@
 #include "Main.h"
 #include "Plugin.h"
 #include "ink_cap.h"
-
-// HPUX:
-//   LD_SHAREDCMD=ld -b
-// SGI:
-//   LD_SHAREDCMD=ld -shared
-// OSF:
-//   LD_SHAREDCMD=ld -shared -all -expect_unresolved "*"
-// Solaris:
-//   LD_SHAREDCMD=ld -G
-
 
 static const char *plugin_dir = ".";
 
@@ -69,24 +55,6 @@ PluginRegInfo::PluginRegInfo()
   : plugin_registered(false), plugin_path(NULL), sdk_version(PLUGIN_SDK_VERSION_UNKNOWN),
     plugin_name(NULL), vendor_name(NULL), support_email(NULL)
 { }
-
-static void *
-dll_open(const char *path)
-{
-  return (void *) dlopen(path, RTLD_NOW);
-}
-
-static void *
-dll_findsym(void *dlp, const char *name)
-{
-  return (void *) dlsym(dlp, name);
-}
-
-static char *
-dll_error(void * /* dlp ATS_UNUSED */)
-{
-  return (char *) dlerror();
-}
 
 static void
 plugin_load(int argc, char *argv[])
@@ -114,13 +82,16 @@ plugin_load(int argc, char *argv[])
   // elevate the access to read files as root if compiled with capabilities, if not
   // change the effective user to root
   {
+
+#if TS_USE_POSIX_CAP
     uint32_t elevate_access = 0;
     REC_ReadConfigInteger(elevate_access, "proxy.config.plugin.load_elevated");
     ElevateAccess access(elevate_access != 0);
+#endif /* TS_USE_POSIX_CAP */
 
-    handle = dll_open(path);
+    handle = dlopen(path, RTLD_NOW);
     if (!handle) {
-      Fatal("unable to load '%s': %s", path, dll_error(handle));
+      Fatal("unable to load '%s': %s", path, dlerror());
     }
 
     // Allocate a new registration structure for the
@@ -129,9 +100,10 @@ plugin_load(int argc, char *argv[])
     plugin_reg_current = new PluginRegInfo;
     plugin_reg_current->plugin_path = ats_strdup(path);
 
-    init = (init_func_t) dll_findsym(handle, "TSPluginInit");
+    init = (init_func_t) dlsym(handle, "TSPluginInit");
     if (!init) {
-      Fatal("unable to find TSPluginInit function '%s': %s", path, dll_error(handle));
+      Fatal("unable to find TSPluginInit function in '%s': %s", path, dlerror());
+      return; // this line won't get called since Fatal brings down ATS
     }
 
     init(argc, argv);
@@ -214,7 +186,7 @@ not_found:
 void
 plugin_init(void)
 {
-  char path[PATH_NAME_MAX + 1];
+  ats_scoped_str path;
   char line[1024], *p;
   char *argv[64];
   char *vars[64];
@@ -225,14 +197,15 @@ plugin_init(void)
 
   if (INIT_ONCE) {
     api_init();
+    TSConfigDirGet();
     plugin_dir = TSPluginDirGet();
     INIT_ONCE = false;
   }
 
-  Layout::get()->relative_to(path, sizeof(path), Layout::get()->sysconfdir, "plugin.config");
+  path = RecConfigReadConfigPath(NULL, "plugin.config");
   fd = open(path, O_RDONLY);
   if (fd < 0) {
-    Warning("unable to open plugin config file '%s': %d, %s", path, errno, strerror(errno));
+    Warning("unable to open plugin config file '%s': %d, %s", (const char *)path, errno, strerror(errno));
     return;
   }
 

@@ -71,9 +71,11 @@ handle_response (TSHttpTxn txnp, TSCont /* contp ATS_UNUSED */)
                         redirect_url_str = TSMimeHdrFieldValueStringGet (resp_bufp, resp_loc, redirect_url_loc, -1, &redirect_url_length);
                         if (redirect_url_str) {
                             if (redirect_url_length > 0) {
-                              TSRedirectUrlSet(txnp, redirect_url_str, redirect_url_length);
+                              char* url = (char*)TSmalloc(redirect_url_length+1);
+
+                              TSstrlcpy(url, redirect_url_str, redirect_url_length + 1);
+                              TSHttpTxnRedirectUrlSet(txnp, url, redirect_url_length);
                             }
-                            //TSHandleStringRelease(resp_bufp, redirect_url_loc, redirect_url_str);
                         }
                         TSHandleMLocRelease (resp_bufp, resp_loc, redirect_url_loc);
                     }
@@ -100,11 +102,11 @@ plugin_main_handler (TSCont contp, TSEvent event, void *edata)
             handle_response(txnp, contp);
             break;
         }
-        
-        
+
+
         default:
         {
-            TSDebug( "[custom_redirect]", "default event"); 
+            TSDebug( "[custom_redirect]", "default event");
             break;
         }
     }
@@ -132,14 +134,14 @@ TSPluginInit (int argc, const char *argv[])
     info.plugin_name = (char*)"";
     info.vendor_name = (char*)"Apache Software Foundation";
     info.support_email = (char*)"dev@trafficserver.apache.org";
-*/ 
+*/
     /* This plugin supports following types of url redirect here:
-     * 
-     * 1. User can specify a particular redirect-url header name in the plugin command line, 
+     *
+     * 1. User can specify a particular redirect-url header name in the plugin command line,
      *    in which case plugin will just look for that header in response and redirect to it.
      *
      *OR:
-     * 2. User can also specify a return error code, in which case if the code matches with 
+     * 2. User can also specify a return error code, in which case if the code matches with
      *    the response, plugin will look for the standard "Location" header and redirect to it
      *
      *OR:

@@ -1403,7 +1403,7 @@ ClusterHandler::finish_delayed_reads()
   DLL<ClusterVConnectionBase> l;
   while ((vc = (ClusterVConnection *) delayed_reads.pop())) {
     MUTEX_TRY_LOCK_SPIN(lock, vc->read.vio.mutex, thread, READ_LOCK_SPIN_COUNT);
-    if (lock) {
+    if (lock.is_locked()) {
       if (vc_ok_read(vc)) {
         ink_assert(!vc->read.queue);
         ByteBankDescriptor *d;
@@ -1569,7 +1569,6 @@ ClusterHandler::build_write_descriptors()
     if (VC_CLUSTER_CLOSED == vc->type) {
       vc->type = VC_NULL;
       clusterVCAllocator.free(vc);
-      vc = vc_next;
       continue;
     }
 
@@ -1676,7 +1675,6 @@ ClusterHandler::build_freespace_descriptors()
     if (VC_CLUSTER_CLOSED == vc->type) {
       vc->type = VC_NULL;
       clusterVCAllocator.free(vc);
-      vc = vc_next;
       continue;
     }
 
@@ -1703,7 +1701,6 @@ ClusterHandler::build_freespace_descriptors()
         freespace_descriptors_built++;
       }
     }
-    vc = vc_next;
   }
   return (freespace_descriptors_built);
 }
@@ -2134,7 +2131,7 @@ retry:
   if (vc->was_closed()) {
     if (!vc->write_bytes_in_transit && !vc->schedule_write()) {
       close_ClusterVConnection(vc);
-    } 
+    }
     return 0;
   }
 
@@ -3078,7 +3075,7 @@ ClusterHandler::do_open_local_requests()
 
     while ((cvc = local_incoming_open_local.pop())) {
       MUTEX_TRY_LOCK(lock, cvc->action_.mutex, tt);
-      if (lock) {
+      if (lock.is_locked()) {
         if (cvc->start(tt) < 0) {
           cvc->token.clear();
           if (cvc->action_.continuation) {

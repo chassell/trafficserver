@@ -28,9 +28,9 @@
  *
  ****************************************************************************/
 
-#include "ink_config.h"
-
 #include <sys/types.h>
+
+#include "ink_config.h"
 
 #ifdef HAVE_PCRE_PCRE_H
 #include <pcre/pcre.h>
@@ -125,7 +125,7 @@ int
 cacheControlFile_CB(const char * /* name ATS_UNUSED */, RecDataT /* data_type ATS_UNUSED */,
                     RecData /* data ATS_UNUSED */, void * /* cookie ATS_UNUSED */)
 {
-  eventProcessor.schedule_imm(NEW(new CC_UpdateContinuation(reconfig_mutex)), ET_CACHE);
+  eventProcessor.schedule_imm(new CC_UpdateContinuation(reconfig_mutex), ET_CACHE);
   return 0;
 }
 
@@ -149,7 +149,7 @@ initCacheControl()
 {
   ink_assert(CacheControlTable == NULL);
   reconfig_mutex = new_ProxyMutex();
-  CacheControlTable = NEW(new CC_table("proxy.config.cache.control.filename", modulePrefix, &http_dest_tags));
+  CacheControlTable = new CC_table("proxy.config.cache.control.filename", modulePrefix, &http_dest_tags);
   REC_RegisterConfigUpdateFunc("proxy.config.cache.control.filename", cacheControlFile_CB, NULL);
 }
 
@@ -165,8 +165,8 @@ reloadCacheControl()
   CC_table *newTable;
 
   Debug("cache_control", "cache.config updated, reloading");
-  eventProcessor.schedule_in(NEW(new CC_FreerContinuation(CacheControlTable)), CACHE_CONTROL_TIMEOUT, ET_CACHE);
-  newTable = NEW(new CC_table("proxy.config.cache.control.filename", modulePrefix, &http_dest_tags));
+  eventProcessor.schedule_in(new CC_FreerContinuation(CacheControlTable), CACHE_CONTROL_TIMEOUT, ET_CACHE);
+  newTable = new CC_table("proxy.config.cache.control.filename", modulePrefix, &http_dest_tags);
   ink_atomic_swap(&CacheControlTable, newTable);
 }
 
@@ -193,12 +193,12 @@ getCacheControl(CacheControlResult *result, HttpRequestData *rdata, OverridableH
   }
 }
 
-bool 
+bool
 getClusterCacheLocal(URL *url, char * /* hostname ATS_UNUSED */)
 {
   HttpRequestData rdata;
   CacheControlResult result;
-  HTTPHdr req_hdr;  
+  HTTPHdr req_hdr;
 
   req_hdr.create(HTTP_TYPE_REQUEST, NULL);
   req_hdr.url_set(url);
@@ -495,7 +495,7 @@ CacheControlRecord::UpdateMatch(CacheControlResult * result, RequestData * rdata
                result->cache_responses_to_cookies);
     else
       crtc_debug[0] = 0;
-      
+
     Debug("cache_control", "Matched with for %s at line %d%s", CC_directive_str[this->directive],
           this->line_num, crtc_debug);
   }

@@ -125,7 +125,7 @@ RemapPlugins::run_single_remap()
     // if no plugin has rewritten it already.
     if (_cur == 1) {
       Debug("url_rewrite", "plugin did not change host, port or path, copying from mapping rule");
-      url_rewrite_remap_request(_s->url_map, _request_url);
+      url_rewrite_remap_request(_s->url_map, _request_url, _s->hdr_info.client_request.method_get_wksidx());
     }
   }
 

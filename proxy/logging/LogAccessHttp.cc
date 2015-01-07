@@ -91,7 +91,13 @@ LogAccessHttp::init()
 
   if (hdr->client_request.valid()) {
     m_client_request = &(hdr->client_request);
-    m_client_req_url_str = m_client_request->url_string_get_ref(&m_client_req_url_len);
+
+    // make a copy of the incoming url into the arena
+    const char *url_string_ref = m_client_request->url_string_get_ref(&m_client_req_url_len);
+    m_client_req_url_str = m_arena.str_alloc(m_client_req_url_len + 1);
+    memcpy(m_client_req_url_str, url_string_ref, m_client_req_url_len);
+    m_client_req_url_str[m_client_req_url_len] = '\0';
+
     m_client_req_url_canon_str = LogUtils::escapify_url(&m_arena, m_client_req_url_str, m_client_req_url_len,
                                                         &m_client_req_url_canon_len);
     m_client_req_url_path_str = m_client_request->path_get(&m_client_req_url_path_len);
@@ -128,6 +134,69 @@ LogAccessHttp::init()
 }
 
 /*-------------------------------------------------------------------------
+  The set routines ...
+
+  These routines are used by the WIPE_FIELD_VALUE filter to replace the original req url
+  strings with the WIPED req strings.
+  -------------------------------------------------------------------------*/
+
+void
+LogAccessHttp::set_client_req_url(char *buf, int len)
+{
+  if (buf) {
+    m_client_req_url_len = len;
+    ink_strlcpy(m_client_req_url_str, buf, m_client_req_url_len + 1);
+  }
+}
+
+void
+LogAccessHttp::set_client_req_url_canon(char *buf, int len)
+{
+  if (buf) {
+    m_client_req_url_canon_len = len;
+    ink_strlcpy(m_client_req_url_canon_str, buf, m_client_req_url_canon_len + 1);
+  }
+}
+
+void
+LogAccessHttp::set_client_req_unmapped_url_canon(char *buf, int len)
+{
+  if (buf) {
+    m_client_req_unmapped_url_canon_len = len;
+    ink_strlcpy(m_client_req_unmapped_url_canon_str, buf, m_client_req_unmapped_url_canon_len + 1);
+  }
+}
+
+void
+LogAccessHttp::set_client_req_unmapped_url_path(char *buf, int len)
+{
+  if (buf) {
+    m_client_req_unmapped_url_path_len = len;
+    ink_strlcpy(m_client_req_unmapped_url_path_str, buf, m_client_req_unmapped_url_path_len + 1);
+  }
+}
+
+void
+LogAccessHttp::set_client_req_unmapped_url_host(char *buf, int len)
+{
+  if (buf) {
+    m_client_req_unmapped_url_host_len = len;
+    ink_strlcpy(m_client_req_unmapped_url_host_str, buf, m_client_req_unmapped_url_host_len + 1);
+  }
+}
+
+void
+LogAccessHttp::set_client_req_url_path(char *buf, int len)
+{
+  //?? use m_client_req_unmapped_url_path_str for now..may need to enhance later..
+  if (buf) {
+    m_client_req_url_path_len = len;
+    ink_strlcpy(m_client_req_unmapped_url_path_str, buf, m_client_req_url_path_len + 1);
+  }
+}
+
+
+/*-------------------------------------------------------------------------
   The marshalling routines ...
 
   We know that m_http_sm is a valid pointer (we assert so in the ctor), but
@@ -137,6 +206,26 @@ LogAccessHttp::init()
 
 /*-------------------------------------------------------------------------
   -------------------------------------------------------------------------*/
+int
+LogAccessHttp::marshal_plugin_identity_id(char *buf)
+{
+  if (buf) marshal_int(buf, m_http_sm->plugin_id);
+  return INK_MIN_ALIGN;
+}
+
+int
+LogAccessHttp::marshal_plugin_identity_tag(char *buf)
+{
+  int len = INK_MIN_ALIGN;
+  char const* tag = m_http_sm->plugin_tag;
+
+  if (!tag) tag = "*";
+  else len = LogAccess::strlen(tag);
+
+  if (buf) marshal_str(buf, tag, len);
+
+  return len;
+}
 
 int
 LogAccessHttp::marshal_client_host_ip(char *buf)
@@ -569,10 +658,7 @@ int
 LogAccessHttp::marshal_proxy_resp_header_len(char *buf)
 {
   if (buf) {
-    int64_t val = 0;
-    if (m_proxy_response) {
-      val = m_proxy_response->length_get();
-    }
+    int64_t val = m_http_sm->client_response_hdr_bytes;
     marshal_int(buf, val);
   }
   return INK_MIN_ALIGN;
@@ -606,6 +692,18 @@ LogAccessHttp::marshal_proxy_finish_status_code(char *buf)
     marshal_int(buf, code);
   }
 
+  return INK_MIN_ALIGN;
+}
+
+/*-------------------------------------------------------------------------
+-------------------------------------------------------------------------*/
+int
+LogAccessHttp::marshal_proxy_host_port(char *buf)
+{
+  if (buf) {
+    uint16_t port = m_http_sm->t_state.request_data.incoming_port;
+    marshal_int(buf, port);
+  }
   return INK_MIN_ALIGN;
 }
 
@@ -739,40 +837,6 @@ LogAccessHttp::marshal_server_host_name(char *buf)
   -------------------------------------------------------------------------*/
 
 int
-LogAccessHttp::marshal_client_accelerator_id(char *buf)
-{
-  char *str = NULL;
-  int padded_len = INK_MIN_ALIGN;
-  int actual_len = 0;
-
-  if (Log::config->xuid_logging_enabled) {
-    if (m_client_request) {
-      MIMEField *field = m_client_request->field_find(MIME_FIELD_X_ID, MIME_LEN_X_ID);
-
-      if (field) {
-        str = (char *) field->value_get(&actual_len);
-        /* Ugly subtlety here. marshal_mem, despite the name, adds a
-           terminating nul. It does this at the index actual_len and
-           so requires paddedlen > actual_len (why it can't do the
-           padding calculation escapes me - are there instances where
-           that's different?
-        */
-        padded_len = round_strlen(actual_len+1);
-      }
-    }
-  }
-
-  if (buf) {
-    marshal_mem(buf, str, actual_len, padded_len);
-  }
-  return padded_len;
-}
-
-
-/*-------------------------------------------------------------------------
-  -------------------------------------------------------------------------*/
-
-int
 LogAccessHttp::marshal_server_resp_status_code(char *buf)
 {
   if (buf) {
@@ -833,6 +897,30 @@ LogAccessHttp::marshal_server_resp_http_version(char *buf)
     marshal_int((buf + INK_MIN_ALIGN), minor);
   }
   return (2 * INK_MIN_ALIGN);
+}
+
+/*-------------------------------------------------------------------------
+-------------------------------------------------------------------------*/
+int
+LogAccessHttp::marshal_server_resp_time_ms(char *buf)
+{
+  if (buf) {
+    ink_hrtime elapsed = m_http_sm->milestones.server_close - m_http_sm->milestones.server_connect;
+    int64_t val = (int64_t)ink_hrtime_to_msec(elapsed);
+    marshal_int(buf, val);
+  }
+  return INK_MIN_ALIGN;
+}
+
+int
+LogAccessHttp::marshal_server_resp_time_s(char *buf)
+{
+  if (buf) {
+    ink_hrtime elapsed = m_http_sm->milestones.server_close - m_http_sm->milestones.server_connect;
+    int64_t val = (int64_t)ink_hrtime_to_sec(elapsed);
+    marshal_int(buf, val);
+  }
+  return INK_MIN_ALIGN;
 }
 
 /*-------------------------------------------------------------------------
@@ -980,8 +1068,7 @@ LogAccessHttp::marshal_transfer_time_ms(char *buf)
 {
   if (buf) {
     ink_hrtime elapsed = m_http_sm->milestones.sm_finish - m_http_sm->milestones.sm_start;
-    elapsed /= HRTIME_MSECOND;
-    int64_t val = (int64_t) elapsed;
+    int64_t val = (int64_t)ink_hrtime_to_msec(elapsed);
     marshal_int(buf, val);
   }
   return INK_MIN_ALIGN;
@@ -992,8 +1079,7 @@ LogAccessHttp::marshal_transfer_time_s(char *buf)
 {
   if (buf) {
     ink_hrtime elapsed = m_http_sm->milestones.sm_finish - m_http_sm->milestones.sm_start;
-    elapsed /= HRTIME_SECOND;
-    int64_t val = (int64_t) elapsed;
+    int64_t val = (int64_t)ink_hrtime_to_sec(elapsed);
     marshal_int(buf, val);
   }
   return INK_MIN_ALIGN;

@@ -14,27 +14,35 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-if BUILD_EXPERIMENTAL_PLUGINS
-
 SUBDIRS = \
  authproxy \
+ background_fetch \
  balancer \
- escalate \
  buffer_upload \
  channel_stats \
+ collapsed_connection \
  custom_redirect \
+ epic \
+ escalate \
  esi \
  geoip_acl \
+ header_normalize \
  healthchecks \
- lua \
  hipes \
  metalink \
- remap_stats \
  regex_revalidate \
- rfc5861 \
- spdy \
- tcp_info \
- ts_lua \
+ remap_stats \
+ s3_auth \
+ ssl_cert_loader \
+ sslheaders \
+ stale_while_revalidate \
+ url_sig \
  xdebug
 
+if HAS_MYSQL
+  SUBDIRS += mysql_remap
+endif
+
+if BUILD_LUAJIT
+  SUBDIRS += ts_lua
 endif

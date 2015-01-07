@@ -87,6 +87,13 @@
 #ifndef _CONTROL_MATCHER_H_
 #define _CONTROL_MATCHER_H_
 
+#include "DynArray.h"
+#include <ts/IpMap.h>
+
+#include "ink_defs.h"
+#include "HTTP.h"
+#include "ink_apidefs.h"
+
 #ifdef HAVE_PCRE_PCRE_H
 #include <pcre/pcre.h>
 #else
@@ -96,13 +103,6 @@
 #ifdef HAVE_CTYPE_H
 #include <ctype.h>
 #endif
-
-#include "DynArray.h"
-#include <ts/IpMap.h>
-
-#include "ink_defs.h"
-#include "HTTP.h"
-#include "ink_apidefs.h"
 
 class HostLookup;
 struct _HttpApiInfo;
@@ -145,7 +145,7 @@ public:
 
   HttpRequestData()
     : hdr(NULL), hostname_str(NULL), api_info(NULL), xact_start(0), incoming_port(0), tag(NULL)
-  { 
+  {
     ink_zero(src_ip);
     ink_zero(dest_ip);
   }

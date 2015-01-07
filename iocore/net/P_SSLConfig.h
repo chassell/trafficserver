@@ -32,6 +32,7 @@
 #define __P_SSLCONFIG_H__
 
 #include "ProxyConfig.h"
+#include "SSLSessionCache.h"
 
 struct SSLCertLookup;
 
@@ -44,12 +45,15 @@ struct SSLCertLookup;
 /////////////////////////////////////////////////////////////
 
 
+typedef void (*init_ssl_ctx_func)(void *, bool);
+
 struct SSLConfigParams : public ConfigInfo
 {
   enum SSL_SESSION_CACHE_MODE
   {
     SSL_SESSION_CACHE_MODE_OFF = 0,
-    SSL_SESSION_CACHE_MODE_SERVER = 1
+    SSL_SESSION_CACHE_MODE_SERVER_OPENSSL_IMPL = 1,
+    SSL_SESSION_CACHE_MODE_SERVER_ATS_IMPL = 2
   };
 
   SSLConfigParams();
@@ -61,12 +65,17 @@ struct SSLConfigParams : public ConfigInfo
   char *  serverCACertFilename;
   char *  serverCACertPath;
   char *  configFilePath;
+  char *  dhparamsFile;
   char *  cipherSuite;
+  char *  client_cipherSuite;
   int     clientCertLevel;
   int     verify_depth;
   int     ssl_session_cache; // SSL_SESSION_CACHE_MODE
   int     ssl_session_cache_size;
+  int     ssl_session_cache_num_buckets;
+  int     ssl_session_cache_skip_on_contention;
   int     ssl_session_cache_timeout;
+  int     ssl_session_cache_auto_clear;
 
   char *  clientCertPath;
   char *  clientKeyPath;
@@ -75,9 +84,21 @@ struct SSLConfigParams : public ConfigInfo
   int     clientVerify;
   int     client_verify_depth;
   long    ssl_ctx_options;
+  long    ssl_client_ctx_protocols;
 
   static int ssl_maxrecord;
   static bool ssl_allow_client_renegotiation;
+
+  static bool ssl_ocsp_enabled;
+  static int  ssl_ocsp_cache_timeout;
+  static int  ssl_ocsp_request_timeout;
+  static int  ssl_ocsp_update_period;
+
+  static size_t session_cache_number_buckets;
+  static size_t session_cache_max_bucket_size;
+  static bool session_cache_skip_on_lock_contention;
+
+  static init_ssl_ctx_func init_ssl_ctx_cb;
 
   void initialize();
   void cleanup();
@@ -114,5 +135,7 @@ struct SSLCertificateConfig
 private:
   static int configid;
 };
+
+extern SSLSessionCache *session_cache;
 
 #endif

@@ -74,7 +74,7 @@ init_reverse_proxy()
 {
   ink_assert(rewrite_table == NULL);
   reconfig_mutex = new_ProxyMutex();
-  rewrite_table = NEW(new UrlRewrite());
+  rewrite_table = new UrlRewrite();
 
   if (!rewrite_table->is_valid()) {
     Warning("Can not load the remap table, exiting out!");
@@ -121,7 +121,7 @@ response_url_remap(HTTPHdr *response_header)
 {
   return rewrite_table ? rewrite_table->ReverseMap(response_header) : false;
 }
- 
+
 
 //
 //
@@ -158,7 +158,7 @@ reloadUrlRewrite()
   UrlRewrite *newTable;
 
   Debug("url_rewrite", "remap.config updated, reloading...");
-  newTable = NEW(new UrlRewrite());
+  newTable = new UrlRewrite();
   if (newTable->is_valid()) {
     new_Deleter(rewrite_table, URL_REWRITE_TIMEOUT);
     Debug("url_rewrite", "remap.config done reloading!");
@@ -186,7 +186,7 @@ url_rewrite_CB(const char * /* name ATS_UNUSED */, RecDataT /* data_type ATS_UNU
   case DEFAULT_TO_PAC_PORT_CHANGED:
   case FILE_CHANGED:
   case HTTP_DEFAULT_REDIRECT_CHANGED:
-    eventProcessor.schedule_imm(NEW(new UR_UpdateContinuation(reconfig_mutex)), ET_TASK);
+    eventProcessor.schedule_imm(new UR_UpdateContinuation(reconfig_mutex), ET_TASK);
     break;
 
   case AC_PORT_CHANGED:
