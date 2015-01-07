@@ -1,6 +1,6 @@
-%define tag %(git describe --long | cut -d '-' -f 1)
-%define distance %(git describe --long | cut -d '-' -f 2)
-%define commit %(git describe --long | cut -d '-' -f 3 | sed 's/g//')
+%global tag %(git describe --long |      sed 's/^\\\(.*\\\)-\\\([0-9]\\\+\\\)-g\\\([0-9a-f]\\\+\\\)$/\\\1/' | sed 's/-/_/')
+%global distance %(git describe --long | sed 's/^\\\(.*\\\)-\\\([0-9]\\\+\\\)-g\\\([0-9a-f]\\\+\\\)$/\\\2/')
+%global commit %(git describe --long |   sed 's/^\\\(.*\\\)-\\\([0-9]\\\+\\\)-g\\\([0-9a-f]\\\+\\\)$/\\\3/')
 
 %global install_prefix "/opt"
 
