@@ -178,8 +178,7 @@ enum ParentRR_t
   P_NO_ROUND_ROBIN = 0,
   P_STRICT_ROUND_ROBIN,
   P_HASH_ROUND_ROBIN,
-  P_CONSISTENT_HASH,
-  P_HASH_URI
+  P_CONSISTENT_HASH
 };
 
 // class ParentRecord : public ControlBase

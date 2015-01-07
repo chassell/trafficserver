@@ -29,7 +29,6 @@
 #include "ProxyConfig.h"
 #include "HTTP.h"
 #include "HttpTransact.h"
-#include <zlib.h>
 
 #define PARENT_RegisterConfigUpdateFunc REC_RegisterConfigUpdateFunc
 #define PARENT_ReadConfigInteger REC_ReadConfigInteger
@@ -60,8 +59,7 @@ static const char *ParentRRStr[] = {
   "false",
   "strict",
   "true",
-  "consistent",
-  "hash_uri"
+  "consistent"
 };
 
 //
@@ -516,7 +514,6 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
 
   ATSHash64Sip24 hash;
   pRecord *prtmp = NULL;
-  uLong crc;
 
   HttpRequestData *request_info = (HttpRequestData *) rdata;
 
@@ -565,17 +562,6 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
         } else {
           cur_index = ink_atomic_increment((int32_t *) & rr_next, 1);
           cur_index = cur_index % num_parents;
-        }
-        break;
-      case P_HASH_URI:
-        path = getHashPath(rdata, &path_len);
-        if (path) {
-            crc = crc32(0, Z_NULL, 0);
-            crc = crc32(crc, (unsigned char *)path, path_len);
-            cur_index = crc % num_parents;
-        } else {
-            cur_index = ink_atomic_increment((int32_t *) & rr_next, 1);
-            cur_index = cur_index % num_parents;
         }
         break;
       case P_NO_ROUND_ROBIN:
@@ -902,8 +888,6 @@ ParentRecord::Init(matcher_line * line_info)
         if (this->parents != NULL) {
           buildConsistentHash();
         }
-      } else if (strcasecmp(val, "urlhash") == 0) {
-        round_robin = P_HASH_URI;
       } else {
         round_robin = P_NO_ROUND_ROBIN;
         errPtr = "invalid argument to round_robin directive";
