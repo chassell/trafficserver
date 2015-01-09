@@ -15,8 +15,8 @@ Group:		Applications/Communications
 License:	Apache License, Version 2.0
 URL:		https://gitlab.sys.comcast.net/cdneng/apache/tree/master/trafficserver
 BuildRoot:	%(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
-Requires:	tcl, tcl-devel, boost
-BuildRequires:	autoconf, automake, libtool, gcc-c++, glibc-devel, openssl-devel, expat-devel, pcre, libcap-devel, pcre-devel, perl-ExtUtils-MakeMaker
+Requires:	tcl
+BuildRequires:	autoconf, automake, libtool, gcc-c++, glibc-devel, openssl-devel, expat-devel, pcre, libcap-devel, pcre-devel, perl-ExtUtils-MakeMaker, tcl-devel
 
 %description
 Apache Traffic Server with Comcast modifications and environment specific modifications
