@@ -1017,7 +1017,7 @@ struct Cache
   volatile int total_nvol;
   volatile int ready;
   int64_t cache_size;             //in store block size
-  CacheHostTable *_hosttable;
+  CacheHostTable *hosttable;
   volatile int total_initialized_vol;
   CacheType scheme;
 
@@ -1063,11 +1063,11 @@ struct Cache
 
   Cache()
     : cache_read_done(0), total_good_nvol(0), total_nvol(0), ready(CACHE_INITIALIZING), cache_size(0),  // in store block size
-      _hosttable(NULL), total_initialized_vol(0), scheme(CACHE_NONE_TYPE)
+      hosttable(NULL), total_initialized_vol(0), scheme(CACHE_NONE_TYPE)
     { }
   CacheHostTable* getHosttable(const char* callfunc) {
     Debug("cache_hosting", "getHosttable() from: %s", callfunc);
-    return _hosttable;
+    return hosttable;
   }
 };
 

@@ -2281,10 +2281,10 @@ Cache::open_done() {
     return 0;
   }
 
-  _hosttable = new CacheHostTable(this, scheme);
-  _hosttable->register_config_callback(&_hosttable);
+  hosttable = new CacheHostTable(this, scheme);
+  hosttable->register_config_callback(&hosttable);
 
-  if (_hosttable->gen_host_rec.num_cachevols == 0)
+  if (hosttable->gen_host_rec.num_cachevols == 0)
     ready = CACHE_INIT_FAILED;
   else
     ready = CACHE_INITIALIZED;
