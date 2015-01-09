@@ -1,11 +1,12 @@
 %global tag %(git describe --long |      sed 's/^\\\(.*\\\)-\\\([0-9]\\\+\\\)-g\\\([0-9a-f]\\\+\\\)$/\\\1/' | sed 's/-/_/')
 %global distance %(git describe --long | sed 's/^\\\(.*\\\)-\\\([0-9]\\\+\\\)-g\\\([0-9a-f]\\\+\\\)$/\\\2/')
 %global commit %(git describe --long |   sed 's/^\\\(.*\\\)-\\\([0-9]\\\+\\\)-g\\\([0-9a-f]\\\+\\\)$/\\\3/')
-
+%global git_serial %(git rev-list HEAD | wc -l)
 %global install_prefix "/opt"
 
 Name:		trafficserver
 Version:	%{tag}
+Epoch:		%{git_serial}
 Release:	%{distance}.%{commit}%{?dist}
 Summary:	Apache Traffic Server
 #Packager:	Jeffrey_Elsloo at Cable dot Comcast dot com
@@ -15,7 +16,7 @@ License:	Apache License, Version 2.0
 URL:		https://gitlab.sys.comcast.net/cdneng/apache/tree/master/trafficserver
 BuildRoot:	%(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 Requires:	tcl, tcl-devel, boost
-BuildRequires:	autoconf, automake, libtool, gcc-c++, glibc-devel, openssl-devel, expat-devel, pcre, libcap-devel, pcre-devel, perl-ExtUtils-MakeMaker, boost-devel
+BuildRequires:	autoconf, automake, libtool, gcc-c++, glibc-devel, openssl-devel, expat-devel, pcre, libcap-devel, pcre-devel, perl-ExtUtils-MakeMaker
 
 %description
 Apache Traffic Server with Comcast modifications and environment specific modifications
