@@ -190,7 +190,7 @@ class ParentRecord: public ControlBase
 {
 public:
   ParentRecord()
-    : parents(NULL), num_parents(0), round_robin(P_NO_ROUND_ROBIN), rr_next(0), go_direct(true), chash(NULL)
+    : parents(NULL), num_parents(0), round_robin(P_NO_ROUND_ROBIN), rr_next(0), go_direct(true), chash(NULL), proxy_request(true)
   { }
 
   ~ParentRecord();
@@ -205,6 +205,7 @@ public:
   int num_parents;
 
   bool bypass_ok() const { return go_direct; }
+  bool isProxy_request () const { return proxy_request; }
 
   const char *scheme;
   //private:
@@ -214,6 +215,7 @@ public:
   bool ignore_query;
   volatile uint32_t rr_next;
   bool go_direct;
+  bool proxy_request;
   ATSConsistentHash *chash;
 };
 
