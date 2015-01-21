@@ -252,6 +252,7 @@ find_server_and_update_current_info(HttpTransact::State* s)
   int host_len;
   const char *host = s->hdr_info.client_request.host_get(&host_len);
 
+   DebugTxn("http_trans", "starting find_server_adn_update_current_info()");
   if (ptr_len_cmp(host, host_len, local_host_ip_str, sizeof(local_host_ip_str) - 1) == 0) {
     // Do not forward requests to local_host onto a parent.
     // I just wanted to do this for cop heartbeats, someone else
@@ -274,6 +275,15 @@ find_server_and_update_current_info(HttpTransact::State* s)
     switch (s->parent_result.r) {
     case PARENT_UNDEFINED:
       s->parent_params->findParent(&s->request_data, &s->parent_result);
+      if (s->parent_result.rec != NULL) {
+	if (! s->parent_result.rec->isProxy_request()) {
+		int host_len = strlen (s->parent_result.hostname);
+          	char *buf = (char *)alloca(host_len + 15);
+          	strncpy (buf, s->parent_result.hostname, host_len+1);
+		s->parent_result.r = PARENT_DIRECT;
+		s->hdr_info.client_request.value_set(MIME_FIELD_HOST, MIME_LEN_HOST, buf, host_len);
+	}
+      }
       break;
     case PARENT_SPECIFIED:
       s->parent_params->nextParent(&s->request_data, &s->parent_result);
