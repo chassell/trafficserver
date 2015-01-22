@@ -53,7 +53,7 @@ class ParentRecord;
 enum ParentResultType
 {
   PARENT_UNDEFINED, PARENT_DIRECT,
-  PARENT_SPECIFIED, PARENT_AGENT, PARENT_FAIL
+  PARENT_SPECIFIED, PARENT_AGENT, PARENT_FAIL, PARENT_ORIGIN
 };
 
 typedef ControlMatcher<ParentRecord, ParentResult> P_table;
@@ -190,7 +190,7 @@ class ParentRecord: public ControlBase
 {
 public:
   ParentRecord()
-    : parents(NULL), num_parents(0), round_robin(P_NO_ROUND_ROBIN), rr_next(0), go_direct(true), chash(NULL), proxy_request(true)
+    : parents(NULL), num_parents(0), round_robin(P_NO_ROUND_ROBIN), rr_next(0), go_direct(true), chash(NULL), parent_is_proxy(true)
   { }
 
   ~ParentRecord();
@@ -205,7 +205,7 @@ public:
   int num_parents;
 
   bool bypass_ok() const { return go_direct; }
-  bool isProxy_request () const { return proxy_request; }
+  bool isParentProxy () const { return parent_is_proxy; }
 
   const char *scheme;
   //private:
@@ -215,7 +215,7 @@ public:
   bool ignore_query;
   volatile uint32_t rr_next;
   bool go_direct;
-  bool proxy_request;
+  bool parent_is_proxy;
   ATSConsistentHash *chash;
 };
 

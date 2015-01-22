@@ -815,7 +815,7 @@ ParentRecord::DefaultInit(char *val)
   this->round_robin = P_NO_ROUND_ROBIN;
   this->ignore_query = false;
   this->scheme = NULL;
-  this->proxy_request = true;
+  this->parent_is_proxy = true;
   errPtr = ProcessParents(val);
 
   if (errPtr != NULL) {
@@ -914,11 +914,11 @@ ParentRecord::Init(matcher_line * line_info)
         if (strcasecmp(val, "ignore") == 0) {
             this->ignore_query = true;
         }
-    } else if (strcasecmp (label, "proxy_request") == 0) {
+    } else if (strcasecmp (label, "parent_is_proxy") == 0) {
 	if (strcasecmp(val, "false") == 0) {
-	    proxy_request = false;
+	    parent_is_proxy = false;
 	} else {
-	    proxy_request = true;
+	    parent_is_proxy = true;
 	}
 	used = true;
     }
@@ -996,7 +996,7 @@ ParentRecord::Print()
     printf(" %s:%d ", parents[i].hostname, parents[i].port);
   }
   printf(" rr=%s direct=%s\n", ParentRRStr[round_robin], (go_direct == true) ? "true" : "false");
-  printf(" proxy_request=%s\n", (proxy_request == true) ? "true" : "false");
+  printf(" parent_is_proxy=%s\n", (parent_is_proxy == true) ? "true" : "false");
 }
 
 // ParentRecord* createDefaultParent(char* val)

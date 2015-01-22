@@ -276,7 +276,7 @@ find_server_and_update_current_info(HttpTransact::State* s)
     case PARENT_UNDEFINED:
       s->parent_params->findParent(&s->request_data, &s->parent_result);
       if (s->parent_result.rec != NULL) {
-	if (! s->parent_result.rec->isProxy_request()) {
+	if (! s->parent_result.rec->isParentProxy()) {
 		int host_len = strlen (s->parent_result.hostname);
           	char *buf = (char *)alloca(host_len + 15);
           	strncpy (buf, s->parent_result.hostname, host_len+1);
