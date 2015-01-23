@@ -276,13 +276,9 @@ find_server_and_update_current_info(HttpTransact::State* s)
     case PARENT_UNDEFINED:
       s->parent_params->findParent(&s->request_data, &s->parent_result);
       if (s->parent_result.rec != NULL) {
-	if (! s->parent_result.rec->isParentProxy()) {
-		int host_len = strlen (s->parent_result.hostname);
-          	char *buf = (char *)alloca(host_len + 15);
-          	strncpy (buf, s->parent_result.hostname, host_len+1);
-		s->parent_result.r = PARENT_DIRECT;
-		s->hdr_info.client_request.value_set(MIME_FIELD_HOST, MIME_LEN_HOST, buf, host_len);
-	}
+        if (! s->parent_result.rec->isParentProxy()) {
+		      s->parent_result.r = PARENT_ORIGIN;
+        }
       }
       break;
     case PARENT_SPECIFIED:
@@ -320,6 +316,7 @@ find_server_and_update_current_info(HttpTransact::State* s)
   }
 
   switch (s->parent_result.r) {
+  case PARENT_ORIGIN:
   case PARENT_SPECIFIED:
     s->parent_info.name = s->arena.str_store(s->parent_result.hostname, strlen(s->parent_result.hostname));
     s->parent_info.port = s->parent_result.port;
@@ -327,8 +324,8 @@ find_server_and_update_current_info(HttpTransact::State* s)
     update_dns_info(&s->dns_info, &s->current, 0, &s->arena);
     ink_assert(s->dns_info.looking_up == HttpTransact::PARENT_PROXY);
     s->next_hop_scheme = URL_WKSIDX_HTTP;
-
     return HttpTransact::PARENT_PROXY;
+
   case PARENT_FAIL:
     // No more parents - need to return an error message
     s->current.request_to = HttpTransact::HOST_NONE;
@@ -7688,7 +7685,7 @@ HttpTransact::build_request(State* s, HTTPHdr* base_request, HTTPHdr* outgoing_r
     DebugTxn("http_trans", "[build_request] removing host name from url");
     HttpTransactHeaders::remove_host_name_from_url(outgoing_request);
   }
-
+  
   // If we're going to a parent proxy, make sure we pass host and port
   // in the URL even if we didn't get them (e.g. transparent proxy)
   if (s->current.request_to == PARENT_PROXY &&
@@ -7698,6 +7695,14 @@ HttpTransact::build_request(State* s, HTTPHdr* base_request, HTTPHdr* outgoing_r
     // No worry about HTTP/0.9 because we reject forward proxy requests that
     // don't have a host anywhere.
     outgoing_request->set_url_target_from_host_field();
+  }
+  // In this case, the parent is actually the origin.  We utilized parent selection
+  // to pick a load balanced origin server using round robin, ordered list or consistent hash.
+  else if (s->current.request_to == PARENT_PROXY && ! s->parent_result.rec->isParentProxy() &&
+      outgoing_request->is_target_in_url())
+  {
+    DebugTxn("http_trans", "[build_request] removing target from URL for parent origin");
+    HttpTransactHeaders::remove_host_name_from_url(outgoing_request);
   }
 
   // If the response is most likely not cacheable, eg, request with Authorization,
