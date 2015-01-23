@@ -276,6 +276,7 @@ find_server_and_update_current_info(HttpTransact::State* s)
     case PARENT_UNDEFINED:
       s->parent_params->findParent(&s->request_data, &s->parent_result);
       if (s->parent_result.rec != NULL) {
+        // check to see if the parent is an origin server.
         if (! s->parent_result.rec->isParentProxy()) {
 		      s->parent_result.r = PARENT_ORIGIN;
         }
