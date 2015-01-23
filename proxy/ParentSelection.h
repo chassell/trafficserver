@@ -190,7 +190,7 @@ class ParentRecord: public ControlBase
 {
 public:
   ParentRecord()
-    : parents(NULL), num_parents(0), round_robin(P_NO_ROUND_ROBIN), rr_next(0), go_direct(true), chash(NULL), parent_is_proxy(true)
+    : parents(NULL), num_parents(0), round_robin(P_NO_ROUND_ROBIN), rr_next(0), go_direct(true), parent_is_proxy(true), chash(NULL)
   { }
 
   ~ParentRecord();
