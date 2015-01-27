@@ -570,6 +570,6 @@ void
 OperatorSetConnDSCP::exec(const Resources& res) const
 {
   if (res.txnp) {
-    TSHttpTxnClientPacketTosSet(res.txnp, _ds_value.get_int_value());
+    TSHttpTxnClientPacketTosSet(res.txnp, _ds_value.get_int_value() << 2);
   }
 }
