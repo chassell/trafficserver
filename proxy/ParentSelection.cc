@@ -120,7 +120,7 @@ OrderedList::printAll ()
 {
   for (OrderedList::iterator it = this->begin(); it != this->end(); it++)
   {
-    std::cout << "hostname: " << it->hostname << ", port: " << it->port << ", weight: " << it->weight << std::endl;
+    std::cout << "hostname: " << it->hostname << ", idx: " << it->idx  << ", weight: " << it->weight << ", available: " << it->available << "\n" << std::endl;
   }
 }
 
@@ -610,6 +610,18 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
           cur_index = cur_index % num_parents;
         }
         break;
+      case P_ORDERED_LIST:
+          prtmp = (pRecord *) olist->lookup(&result->wrap_around);
+          if (prtmp) {
+            cur_index = prtmp->idx;
+            result->foundParents[cur_index] = true;
+            result->start_parent++;
+          } else {
+            Error("OrderedList loopup returned NULL");
+            cur_index = ink_atomic_increment((int32_t *) & rr_next, 1);
+            cur_index = cur_index % num_parents;
+          }
+        break;
       case P_NO_ROUND_ROBIN:
         cur_index = result->start_parent = 0;
         break;
@@ -638,6 +650,25 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
          result->start_parent++;
        } else {
          Error("Consistent Hash loopup returned NULL");
+         cur_index = ink_atomic_increment((int32_t *) & rr_next, 1);
+         cur_index = cur_index % num_parents;
+       }
+    } 
+    else if (round_robin == P_ORDERED_LIST) {
+      Debug("parent_select", "result->start_parent=%d, num_parents=%d", result->start_parent, num_parents);
+      if (result->start_parent == (unsigned int) num_parents) {
+        result->wrap_around = true;
+        result->start_parent = 0;
+        memset(result->foundParents, 0, sizeof(result->foundParents));
+        path = getHashPath(rdata, &path_len);
+      }
+      prtmp = (pRecord *) olist->lookup(&result->wrap_around);
+      if (prtmp) {
+         cur_index = prtmp->idx;
+         result->foundParents[cur_index] = true;
+         result->start_parent++;
+       } else {
+         Error("OrderedList lookup returned NULL");
          cur_index = ink_atomic_increment((int32_t *) & rr_next, 1);
          cur_index = cur_index % num_parents;
        }
