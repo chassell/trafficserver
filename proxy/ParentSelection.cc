@@ -81,17 +81,19 @@ ParentRecord *const extApiRecord = (ParentRecord *) 0xeeeeffff;
 pRecord *
 OrderedList::lookup (bool *wrap_around)
 {
+  OrderedList::iterator it;
   pRecord *n = NULL;
 
-  for (OrderedList::iterator it = this->begin(); it != this->end(); it++)
+  for (it = this->begin(); it != this->end(); it++)
   {
       if (it->available) {
         n = &(*it);
         break;
       }
   }
-  *wrap_around = true;
-  n = &(*this->begin());
+  if (n == NULL && it == this->end()) {
+    *wrap_around = true;
+  }
   return n;
 }
 
