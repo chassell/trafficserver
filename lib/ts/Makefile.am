@@ -83,8 +83,6 @@ libtsutil_la_SOURCES = \
   MatcherUtils.h \
   MimeTable.cc \
   MimeTable.h \
-	OrderedList.cc \
-	OrderedList.h \
   ParseRules.cc \
   ParseRules.h \
   Ptr.h \

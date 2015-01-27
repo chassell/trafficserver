@@ -78,6 +78,50 @@ enum ParentCB_t
 //   between HttpTransact & the parent selection code.  The following
 ParentRecord *const extApiRecord = (ParentRecord *) 0xeeeeffff;
 
+pRecord *
+OrderedList::lookup (bool *wrap_around)
+{
+  pRecord *n = NULL;
+
+  for (OrderedList::iterator it = this->begin(); it != this->end(); it++)
+  {
+      if (it->available) {
+        n = &(*it);
+        break;
+      }
+  }
+  *wrap_around = true;
+  n = &(*this->begin());
+  return n;
+}
+
+void
+OrderedList::insert (pRecord &n)
+{
+  bool inserted = false;
+  for (OrderedList::iterator it = this->begin(); it != this->end(); it++)
+  {
+    if (n.weight > it->weight) {
+            std::list<pRecord>::insert (it, n);
+            inserted = true;
+      break;
+    }
+  }
+  if (! inserted) {
+    push_back (n);
+  }
+}
+
+// For debugging.
+void
+OrderedList::printAll ()
+{
+  for (OrderedList::iterator it = this->begin(); it != this->end(); it++)
+  {
+    std::cout << "hostname: " << it->hostname << ", port: " << it->port << ", weight: " << it->weight << std::endl;
+  }
+}
+
 ParentConfigParams::ParentConfigParams()
   : ParentTable(NULL), DefaultParent(NULL), ParentRetryTime(30), ParentEnable(0), FailThreshold(10), DNS_ParentOnly(0)
 { }
@@ -845,6 +889,19 @@ ParentRecord::buildConsistentHash(void) {
   }
 }
 
+void
+ParentRecord::buildOrderedList (void) {
+  if (olist) {
+    return;
+  }
+
+  olist = new OrderedList ();
+
+  for (int i = 0; i < num_parents; i++) {
+    olist->insert (this->parents[i]);
+  }
+}
+
 // char* ParentRecord::Init(matcher_line* line_info)
 //
 //    matcher_line* line_info - contains parsed label/value
@@ -889,6 +946,11 @@ ParentRecord::Init(matcher_line * line_info)
         if (this->parents != NULL) {
           buildConsistentHash();
         }
+      } else if (strcasecmp (val, "ordered_list") == 0) {
+        round_robin = P_ORDERED_LIST;
+        if (this->parents != NULL) {
+          buildOrderedList();
+        }
       } else {
         round_robin = P_NO_ROUND_ROBIN;
         errPtr = "invalid argument to round_robin directive";
@@ -899,6 +961,9 @@ ParentRecord::Init(matcher_line * line_info)
       used = true;
       if (round_robin == P_CONSISTENT_HASH) {
         buildConsistentHash();
+      }
+      if (round_robin == P_ORDERED_LIST) {
+        buildOrderedList();
       }
     } else if (strcasecmp(label, "go_direct") == 0) {
       if (strcasecmp(val, "false") == 0) {
