@@ -283,6 +283,7 @@ find_server_and_update_current_info(HttpTransact::State* s)
       }
       break;
     case PARENT_SPECIFIED:
+    case PARENT_ORIGIN:
       s->parent_params->nextParent(&s->request_data, &s->parent_result);
 
       // Hack!
