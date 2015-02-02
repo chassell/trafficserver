@@ -59,7 +59,8 @@ static const char *ParentRRStr[] = {
   "false",
   "strict",
   "true",
-  "consistent"
+  "consistent",
+  "ordered"
 };
 
 //
@@ -1094,7 +1095,7 @@ ParentRecord::Print()
     printf(" %s:%d ", parents[i].hostname, parents[i].port);
   }
   printf(" rr=%s direct=%s\n", ParentRRStr[round_robin], (go_direct == true) ? "true" : "false");
-  printf(" parent_is_proxy=%s\n", (parent_is_proxy == true) ? "true" : "false");
+  printf(" parent_is_proxy=%s\n", ((parent_is_proxy == true) ? "true" : "false"));
 }
 
 // ParentRecord* createDefaultParent(char* val)
