@@ -482,18 +482,20 @@ ParentConfigParams::nextParent(HttpRequestData * rdata, ParentResult * result)
 char *
 ParentRecord::getHashPath(RequestData *rdata, size_t *path_len)
 {
-  char *url, *path = NULL;
+  HttpRequestData *hrdata = static_cast<HttpRequestData *>(rdata);
+  char *path = NULL;
+  int plen;
 
-  url = rdata->get_string();
-  path = strstr(url + 7, "/");
+  path = const_cast<char *>(hrdata->hdr->path_get(&plen));
   if (!path) {
-    Error("Could not find path in URL: %s", url);
+    Error("Could not find path in URL: %s", rdata->get_string());
     *path_len = 0;
     return NULL;
+  } else {
+    *path_len = plen;
   }
-  *path_len = strlen(path);
   if (ignore_query) {
-    char *qstart = strstr(path, "?");
+    char *qstart = (char *)memmem(path, *path_len, "?", 1);
     if (qstart) {
       *path_len = qstart - path;
     }
