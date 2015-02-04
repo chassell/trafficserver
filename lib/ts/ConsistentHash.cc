@@ -75,11 +75,12 @@ ATSConsistentHash::lookup(const char *url, size_t url_len, ATSConsistentHashIter
   ATSHash64 *thash;
   bool *wptr, wrapped = false;
 
-  if(url_len <= 0 && url) {
+  if (url_len <= 0 && url) {
     url_len = strlen(url);
   } else {
     url_len = 0;
   }
+
   if (h) {
     thash = h;
   } else if (hash) {
@@ -137,11 +138,12 @@ ATSConsistentHash::lookup_available(const char *url, size_t url_len, ATSConsiste
   ATSHash64 *thash;
   bool *wptr, wrapped = false;
 
-  if(url_len <= 0 && url) {
+  if (url_len <= 0 && url) {
     url_len = strlen(url);
   } else {
     url_len = 0;
   }
+
   if (h) {
     thash = h;
   } else if (hash) {
@@ -185,6 +187,34 @@ ATSConsistentHash::lookup_available(const char *url, size_t url_len, ATSConsiste
     } else if (*wptr && *iter == NodeMap.end()) {
       return NULL;
     }
+  }
+
+  return (*iter)->second;
+}
+
+ATSConsistentHashNode *
+ATSConsistentHash::lookup_by_hashval(uint64_t hashval, ATSConsistentHashIter *i, bool *w)
+{
+  ATSConsistentHashIter NodeMapIterUp, *iter;
+  bool *wptr, wrapped = false;
+
+  if (w) {
+    wptr = w;
+  } else {
+    wptr = &wrapped;
+  }
+
+  if (i) {
+    iter = i;
+  } else {
+    iter = &NodeMapIterUp;
+  }
+
+  *iter = NodeMap.lower_bound(hashval);
+
+  if (*iter == NodeMap.end()) {
+    *wptr = true;
+    *iter = NodeMap.begin();
   }
 
   return (*iter)->second;

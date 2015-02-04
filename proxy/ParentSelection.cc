@@ -479,28 +479,31 @@ ParentConfigParams::nextParent(HttpRequestData * rdata, ParentResult * result)
 //   End API functions
 //
 
-char *
-ParentRecord::getHashPath(RequestData *rdata, size_t *path_len)
+uint64_t
+ParentRecord::getPathHash(HttpRequestData *hrdata, ATSHash64 *h)
 {
-  HttpRequestData *hrdata = static_cast<HttpRequestData *>(rdata);
-  char *path = NULL;
-  int plen;
+  const char *tmp = NULL;
+  int len;
+  URL *url = hrdata->hdr->url_get();
 
-  path = const_cast<char *>(hrdata->hdr->path_get(&plen));
-  if (!path) {
-    Error("Could not find path in URL: %s", rdata->get_string());
-    *path_len = 0;
-    return NULL;
+  tmp = url->path_get(&len);
+  if (!len) {
+    return 0;
   } else {
-    *path_len = plen;
+    h->update(tmp, len);
   }
-  if (ignore_query) {
-    char *qstart = (char *)memmem(path, *path_len, "?", 1);
-    if (qstart) {
-      *path_len = qstart - path;
+
+  if (!ignore_query) {
+    tmp = url->query_get(&len);
+    if (tmp) {
+      h->update("?", 1);
+      h->update(tmp, len);
     }
   }
-  return path;
+
+  h->final();
+
+  return h->get();
 }
 
 void
@@ -511,31 +514,23 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
   bool parentUp = false;
   bool parentRetry = false;
   bool bypass_ok = (go_direct == true && config->DNS_ParentOnly == 0);
-  char *path = NULL;
-  size_t path_len = 0;
+  uint64_t path_hash;
 
   ATSHash64Sip24 hash;
   pRecord *prtmp = NULL;
 
-  HttpRequestData *request_info = (HttpRequestData *) rdata;
+  HttpRequestData *request_info = static_cast<HttpRequestData *>(rdata);
 
   ink_assert(num_parents > 0 || go_direct == true);
 
-  if (first_call == true) {
+  if (first_call) {
     if (parents == NULL) {
       // We should only get into this state if
       //   if we are supposed to go direct
       ink_assert(go_direct == true);
       goto NO_PARENTS;
-    } else if (round_robin == true) {
-      cur_index = ink_atomic_increment((int32_t *) & rr_next, 1);
-      cur_index = result->start_parent = cur_index % num_parents;
     } else {
       switch (round_robin) {
-      case P_STRICT_ROUND_ROBIN:
-        cur_index = ink_atomic_increment((int32_t *) & rr_next, 1);
-        cur_index = cur_index % num_parents;
-        break;
       case P_HASH_ROUND_ROBIN:
         // INKqa12817 - make sure to convert to host byte order
         // Why was it important to do host order here?  And does this have any
@@ -549,22 +544,24 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
         }
         break;
       case P_CONSISTENT_HASH:
-        path = getHashPath(rdata, &path_len);
-        if (path) {
-          prtmp = (pRecord *) chash->lookup(path, path_len, &(result->chashIter), &result->wrap_around, (ATSHash64 *) &hash);
+        path_hash = getPathHash(request_info, (ATSHash64 *) &hash);
+        if (path_hash) {
+          prtmp = (pRecord *) chash->lookup_by_hashval(path_hash, &result->chashIter, &result->wrap_around);
           if (prtmp) {
             cur_index = prtmp->idx;
             result->foundParents[cur_index] = true;
             result->start_parent++;
+            break;
           } else {
             Error("Consistent Hash loopup returned NULL");
-            cur_index = ink_atomic_increment((int32_t *) & rr_next, 1);
-            cur_index = cur_index % num_parents;
           }
         } else {
-          cur_index = ink_atomic_increment((int32_t *) & rr_next, 1);
-          cur_index = cur_index % num_parents;
+          Error("Could not find path");
         }
+        // Fall through to round robin
+      case P_STRICT_ROUND_ROBIN:
+        cur_index = ink_atomic_increment((int32_t *) & rr_next, 1);
+        cur_index = cur_index % num_parents;
         break;
       case P_NO_ROUND_ROBIN:
         cur_index = result->start_parent = 0;
@@ -580,12 +577,10 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
         result->wrap_around = true;
         result->start_parent = 0;
         memset(result->foundParents, 0, sizeof(result->foundParents));
-        path = getHashPath(rdata, &path_len);
       }
 
       do {
-        prtmp = (pRecord *) chash->lookup(path, path_len, &(result->chashIter), &result->wrap_around, (ATSHash64 *) &hash);
-        path = NULL;
+        prtmp = (pRecord *) chash->lookup(NULL, 0, &result->chashIter, &result->wrap_around);
       } while (prtmp && result->foundParents[prtmp->idx]);
 
       if (prtmp) {
@@ -655,12 +650,10 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
         result->wrap_around = false;
         result->start_parent = 0;
         memset(result->foundParents, 0, sizeof(result->foundParents));
-        path = getHashPath(rdata, &path_len);
       }
 
       do {
-        prtmp = (pRecord *) chash->lookup(path, path_len, &(result->chashIter), &result->wrap_around, (ATSHash64 *) &hash);
-        path = NULL;
+        prtmp = (pRecord *) chash->lookup(NULL, 0, &(result->chashIter), &result->wrap_around);
       } while (prtmp && result->foundParents[prtmp->idx]);
 
       cur_index = prtmp->idx;
