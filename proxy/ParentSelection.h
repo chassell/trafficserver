@@ -181,6 +181,7 @@ class OrderedList : public std::list<pRecord>
     ~OrderedList () {};
     void insert (pRecord &n);
     pRecord * lookup (bool *);
+    pRecord * nextParent (int, bool *);
     void printAll();
 };
 

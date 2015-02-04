@@ -98,6 +98,26 @@ OrderedList::lookup (bool *wrap_around)
   return n;
 }
 
+pRecord *
+OrderedList::nextParent (int idx, bool *wrap_around)
+{
+  int i;
+  OrderedList::iterator it;
+  pRecord *n = NULL;
+
+  for (it = this->begin(), i = 0; it != this->end(); it++, i++)
+  {
+      if (it->available && i > idx) {
+        n = &(*it);
+        break;
+      }
+  }
+  if (n == NULL && it == this->end()) {
+    *wrap_around = true;
+  }
+  return n;
+}
+
 void
 OrderedList::insert (pRecord &n)
 {
@@ -250,7 +270,7 @@ ParentConfigParams::parentExists(HttpRequestData * rdata)
 
   findParent(rdata, &junk);
 
-  if (junk.r == PARENT_SPECIFIED) {
+  if (junk.r == PARENT_SPECIFIED || junk.r == PARENT_ORIGIN) {
     return true;
   } else {
     return false;
@@ -335,6 +355,9 @@ ParentConfigParams::findParent(HttpRequestData * rdata, ParentResult * result)
     case PARENT_SPECIFIED:
       Debug("cdn", "PARENT_SPECIFIED");
       break;
+    case PARENT_ORIGIN:
+      Debug("cdn", "PARENT_ORIGIN");
+      break;
     default:
       // Handled here:
       // PARENT_AGENT
@@ -349,6 +372,7 @@ ParentConfigParams::findParent(HttpRequestData * rdata, ParentResult * result)
     case PARENT_DIRECT:
       Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
       break;
+    case PARENT_ORIGIN:
     case PARENT_SPECIFIED:
       Debug("parent_select", "sizeof ParentResult = %zu", sizeof(ParentResult));
       Debug("parent_select", "Result for %s was parent %s:%d", host, result->hostname, result->port);
@@ -370,8 +394,8 @@ ParentConfigParams::recordRetrySuccess(ParentResult * result)
   //  Make sure that we are being called back with with a
   //   result structure with a parent that is being retried
   ink_release_assert(result->retry == true);
-  ink_assert(result->r == PARENT_SPECIFIED);
-  if (result->r != PARENT_SPECIFIED) {
+  ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
+  if (result->r != PARENT_SPECIFIED || result->r != PARENT_ORIGIN) {
     return;
   }
   // If we were set through the API we currently have not failover
@@ -493,6 +517,9 @@ ParentConfigParams::nextParent(HttpRequestData * rdata, ParentResult * result)
   case PARENT_DIRECT:
     Debug("cdn", "PARENT_DIRECT");
     break;
+  case PARENT_ORIGIN:
+    Debug("cdn", "PARENT_ORIGIN");
+    break;
   case PARENT_SPECIFIED:
     Debug("cdn", "PARENT_SPECIFIED");
     break;
@@ -511,6 +538,7 @@ ParentConfigParams::nextParent(HttpRequestData * rdata, ParentResult * result)
     case PARENT_DIRECT:
       Debug("parent_select", "Retry result for %s was %s", host, ParentResultStr[result->r]);
       break;
+    case PARENT_ORIGIN:
     case PARENT_SPECIFIED:
       Debug("parent_select", "Retry result for %s was parent %s:%d", host, result->hostname, result->port);
       break;
@@ -663,7 +691,7 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
         memset(result->foundParents, 0, sizeof(result->foundParents));
         path = getHashPath(rdata, &path_len);
       }
-      prtmp = (pRecord *) olist->lookup(&result->wrap_around);
+      prtmp = (pRecord *) olist->nextParent(result->start_parent, &result->wrap_around);
       if (prtmp) {
          cur_index = prtmp->idx;
          result->foundParents[cur_index] = true;
@@ -1521,6 +1549,11 @@ show_result(ParentResult * p)
     break;
   case PARENT_SPECIFIED:
     printf("result is PARENT_SPECIFIED\n");
+    printf("hostname is %s\n", p->hostname);
+    printf("port is %d\n", p->port);
+    break;
+  case PARENT_ORIGIN:
+    printf("result is PARENT_ORIGIN\n");
     printf("hostname is %s\n", p->hostname);
     printf("port is %d\n", p->port);
     break;

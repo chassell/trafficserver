@@ -465,7 +465,7 @@ how_to_open_connection(HttpTransact::State* s)
     break;
   }
 
-  if (s->method == HTTP_WKSIDX_CONNECT && s->parent_result.r != PARENT_SPECIFIED) {
+  if (s->method == HTTP_WKSIDX_CONNECT && (s->parent_result.r != PARENT_SPECIFIED || s->parent_result.r != PARENT_ORIGIN)) {
     s->cdn_saved_next_action = HttpTransact::SM_ACTION_ORIGIN_SERVER_RAW_OPEN;
   } else {
     s->cdn_saved_next_action = HttpTransact::SM_ACTION_ORIGIN_SERVER_OPEN;
