@@ -212,7 +212,7 @@ public:
   bool DefaultInit(char *val);
   void UpdateMatch(ParentResult *result, RequestData *rdata);
   void FindParent(bool firstCall, ParentResult *result, RequestData *rdata, ParentConfigParams *config);
-  char *getHashPath(RequestData *rdata, size_t *path_len);
+  uint64_t getPathHash(HttpRequestData *hrdata, ATSHash64 *h);
   void Print();
   pRecord *parents;
   int num_parents;
