@@ -686,7 +686,6 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
         result->wrap_around = true;
         result->start_parent = 0;
         memset(result->foundParents, 0, sizeof(result->foundParents));
-        path = getHashPath(rdata, &path_len);
       }
       prtmp = (pRecord *) olist->nextParent(result->start_parent, &result->wrap_around);
       if (prtmp) {
