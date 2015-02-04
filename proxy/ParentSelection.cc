@@ -715,7 +715,12 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
     }
 
     if (parentUp == true) {
-      result->r = PARENT_SPECIFIED;
+      if (! this->parent_is_proxy) {
+        result->r = PARENT_ORIGIN;
+      }
+      else {
+        result->r = PARENT_SPECIFIED;
+      }
       result->hostname = parents[cur_index].hostname;
       result->port = parents[cur_index].port;
       result->last_parent = cur_index;
