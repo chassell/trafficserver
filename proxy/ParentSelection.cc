@@ -121,18 +121,7 @@ OrderedList::nextParent (int idx, bool *wrap_around)
 void
 OrderedList::insert (pRecord &n)
 {
-  bool inserted = false;
-  for (OrderedList::iterator it = this->begin(); it != this->end(); it++)
-  {
-    if (n.weight > it->weight) {
-            std::list<pRecord>::insert (it, n);
-            inserted = true;
-      break;
-    }
-  }
-  if (! inserted) {
-    push_back (n);
-  }
+  push_back (n);
 }
 
 // For debugging.
