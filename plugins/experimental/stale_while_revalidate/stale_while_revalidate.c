@@ -293,6 +293,7 @@ consume_resource(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
         case TS_EVENT_VCONN_WRITE_READY:
             // We shouldn't get here because we specify the exact size of the buffer.
             TSDebug(PLUGIN_NAME, "Write Ready");
+            break;
         case TS_EVENT_VCONN_WRITE_COMPLETE:
             TSDebug(PLUGIN_NAME, "Write Complete");
             //TSDebug(PLUGIN_NAME, "TSVConnShutdown()");
@@ -509,6 +510,8 @@ main_plugin(TSCont cont, TSEvent event, void *edata)
     TSHttpStatus http_status;
     config_t *plugin_config;
 
+    TSDebug(PLUGIN_NAME, "main_plugin: %d", event);
+
     switch (event)
     {
         // Is this the proper event?
@@ -651,6 +654,7 @@ main_plugin(TSCont cont, TSEvent event, void *edata)
             TSHttpTxnReenable(txn, TS_EVENT_HTTP_CONTINUE);
             break;
         default:
+            TSDebug(PLUGIN_NAME, "unknown event: %d", event);
             TSHttpTxnReenable(txn, TS_EVENT_HTTP_CONTINUE);
             break;
     }
@@ -674,10 +678,8 @@ TSPluginInit (int argc, const char *argv[])
         TSError("Plugin registration failed.\n");
         return;
     }
-    else
-    {
-        TSDebug(PLUGIN_NAME, "Plugin registration succeeded.\n");
-    }
+
+    TSDebug(PLUGIN_NAME, "Plugin registration succeeded.\n");
 
     plugin_config = TSmalloc(sizeof(config_t));
 
@@ -736,6 +738,7 @@ TSPluginInit (int argc, const char *argv[])
     main_cont = TSContCreate(main_plugin, NULL);
     TSContDataSet(main_cont, (void *) plugin_config);
     TSHttpHookAdd(TS_HTTP_READ_REQUEST_HDR_HOOK, main_cont);
+//    TSHttpHookAdd(TS_HTTP_SELECT_ALT_HOOK, main_cont);
 
     TSDebug(PLUGIN_NAME, "Plugin Init Complete.\n");
 }
