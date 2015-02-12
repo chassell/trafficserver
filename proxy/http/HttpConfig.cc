@@ -1851,15 +1851,15 @@ ResponseCodesMap::ResponseCodesMap (MgmtString str)
 {
   char buf[4096];
   if (str == NULL) return;
-  char *p = strncpy (buf, str, 4096);
+  char *p = strncpy (buf, str, 4095);
 
-  while (*p != '\0') 
+  while (*p != NULL) 
   {
     if (isdigit (*p))
     {
       int i = atoi (p);
       insert (std::pair<int,int> (i,i));
-      if ( (p = strchr (p, ',')) == '\0') break;
+      if ( (p = strchr (p, ',')) == NULL) break;
     }
     p++;
   }
