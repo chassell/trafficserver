@@ -2423,8 +2423,6 @@ HttpSM::state_cache_open_write(int event, void *data)
     // Failed on the write lock and retrying the vector
     //  for reading
     DebugSM("http", "[%" PRId64 "] cache_open_read - " "\n\n fall thru to CACHE_EVENT_OPEN_READ\n\n", sm_id);
-//    t_state.cache_info.write_lock_state = HttpTransact::CACHE_WL_FAIL;
-//    break;
     t_state.hack_force_fresh = true;
     if(!t_state.cache_info.object_read) {
       t_state.cache_info.write_lock_state = HttpTransact::CACHE_WL_FAIL;

@@ -2922,7 +2922,6 @@ HttpTransact::handle_cache_write_lock(State* s)
     // THE FIX, revalidate handled elsewhere, this should be a failure?
     s->cache_info.action = CACHE_DO_NO_ACTION;
     s->cache_info.write_status = CACHE_WRITE_ERROR; // CACHE_WRITE_LOCK_MISS;
-//    build_response(s, &s->hdr_info.client_response, s->client_info.http_version, HTTP_STATUS_BAD_GATEWAY);
     build_error_response(s, HTTP_STATUS_BAD_GATEWAY, "Blah blah", "connect#failed_connect",
                          NULL);
     DebugTxn("http_error", "\n\n\nCACHE_WL_FAIL\n\n\n");
