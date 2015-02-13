@@ -2375,6 +2375,10 @@ HttpTransact::HandleCacheOpenReadHitFreshness(State* s)
     // is the document still fresh enough to be served back to
     // the client without revalidation?
     Freshness_t freshness = what_is_document_freshness(s, &s->hdr_info.client_request, obj->response_get());
+    if(s->hack_force_fresh) {
+      freshness = FRESHNESS_FRESH;
+      DebugTxn("http_trans", "[HandleCacheOpenReadHitFreshness] forcing freshness = FRESHNESS_FRESH");
+    }
     switch (freshness) {
     case FRESHNESS_FRESH:
       DebugTxn("http_seq", "[HttpTransact::HandleCacheOpenReadHitFreshness] " "Fresh copy");
@@ -2533,17 +2537,22 @@ HttpTransact::HandleCacheOpenReadHit(State* s)
   bool server_up = true;
   CacheHTTPInfo *obj;
 
+  DebugTxn("http_seq", "[HttpTransact::HandleCacheOpenReadHit] " "start");
+
   if (s->api_update_cached_object == HttpTransact::UPDATE_CACHED_OBJECT_CONTINUE) {
     obj = &s->cache_info.object_store;
     ink_assert(obj->valid());
   } else
     obj = s->cache_info.object_read;
 
+  DebugTxn("http_seq", "[HttpTransact::HandleCacheOpenReadHit] " "s->api_update_cached_object=%d", s->api_update_cached_object);
+  DebugTxn("http_seq", "[HttpTransact::HandleCacheOpenReadHit] " "s->cache_info.object_read=%p", s->cache_info.object_read);
   // do we have to authenticate with the server before
   // sending back the cached response to the client?
   Authentication_t authentication_needed =
     AuthenticationNeeded(s->txn_conf, &s->hdr_info.client_request, obj->response_get());
 
+  DebugTxn("http_seq", "[HttpTransact::HandleCacheOpenReadHit] " "here 2");
   switch (authentication_needed) {
   case AUTHENTICATION_SUCCESS:
     DebugTxn("http_seq", "[HttpTransact::HandleCacheOpenReadHit] " "Authentication not needed");
@@ -2568,6 +2577,8 @@ HttpTransact::HandleCacheOpenReadHit(State* s)
     break;
   }
 
+  DebugTxn("http_seq", "[HttpTransact::HandleCacheOpenReadHit] " "here 3");
+
   ink_assert(s->cache_lookup_result == CACHE_LOOKUP_HIT_FRESH ||
              s->cache_lookup_result == CACHE_LOOKUP_HIT_WARNING ||
              s->cache_lookup_result == CACHE_LOOKUP_HIT_STALE);
@@ -2577,6 +2588,8 @@ HttpTransact::HandleCacheOpenReadHit(State* s)
     SET_VIA_STRING(VIA_DETAIL_CACHE_LOOKUP, VIA_DETAIL_MISS_EXPIRED);
   } else
     needs_revalidate = false;
+
+  DebugTxn("http_seq", "[HttpTransact::HandleCacheOpenReadHit] " "here 4");
 
   // the response may not be directly returnable to the client. there
   // are several reasons for this: config may force revalidation or
@@ -2593,6 +2606,8 @@ HttpTransact::HandleCacheOpenReadHit(State* s)
   // anyhow, this is an overloaded function and will return false
   // if the origin server still has to be looked up.
   bool response_returnable = is_cache_response_returnable(s);
+
+  DebugTxn("http_seq", "[HttpTransact::HandleCacheOpenReadHit] " "here 5");
 
   // do we need to revalidate. in other words if the response
   // has to be authorized, is stale or can not be returned, do
@@ -2908,11 +2923,18 @@ HttpTransact::handle_cache_write_lock(State* s)
     SET_UNPREPARE_CACHE_ACTION(s->cache_info);
     break;
   case CACHE_WL_FAIL:
-    // No write lock, ignore the cache and proxy only;
+    DebugTxn("http_error", "CACHE_WL_FAIL");
+   // No write lock, ignore the cache and proxy only;
     // FIX: Should just serve from cache if this is a revalidate
+
+
+    // THE FIX, revalidate handled elsewhere, this should be a failure?
     s->cache_info.action = CACHE_DO_NO_ACTION;
-    s->cache_info.write_status = CACHE_WRITE_LOCK_MISS;
-    remove_ims = true;
+    s->cache_info.write_status = CACHE_WRITE_ERROR; // CACHE_WRITE_LOCK_MISS;
+    build_error_response(s, HTTP_STATUS_BAD_GATEWAY, "Blah blah", "connect#failed_connect",
+                         NULL);
+    DebugTxn("http_error", "\n\n\nCACHE_WL_FAIL\n\n\n");
+    TRANSACT_RETURN(SM_ACTION_SEND_ERROR_CACHE_NOOP, NULL);
     break;
   case CACHE_WL_READ_RETRY:
     //  Write failed but retried and got a vector to read
