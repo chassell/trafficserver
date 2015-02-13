@@ -3486,7 +3486,19 @@ HttpTransact::handle_response_from_parent(State* s)
         return;
       }
 
-      if (s->current.attempts < s->http_config_param->parent_connect_attempts) {
+      // try a simple retry if we received a simple retryable response from the parent.
+      if (s->current.retry_type == SIMPLE_RETRY) {
+        if (s->current.simple_retry_attempts >= s->parent_result.rec->num_parents) {
+          DebugTxn("http_trans", "SIMPLE_RETRY: retried all parents, send error to client.\n");
+          next_lookup = HOST_NONE;
+        }
+        else {
+          s->current.simple_retry_attempts++;
+          DebugTxn("http_trans", "SIMPLE_RETRY: try another parent.\n");
+          next_lookup = find_server_and_update_current_info (s);
+        }
+      }
+      else if (s->current.attempts < s->http_config_param->parent_connect_attempts) {
         s->current.attempts++;
 
         // Are we done with this particular parent?
@@ -6338,6 +6350,28 @@ HttpTransact::is_request_retryable(State* s)
 bool
 HttpTransact::is_response_valid(State* s, HTTPHdr* incoming_response)
 {
+  int server_response = 0;
+
+  // is this response is from a load balanced parent.
+  if (s->current.request_to == PARENT_PROXY && s->parent_result.r == PARENT_ORIGIN) {
+    server_response = http_hdr_status_get (s->hdr_info.server_response.m_http);
+    DebugTxn("http_trans", "[is_response_valid] server_response = %d\n", server_response);
+    // is a simple retry required.
+    if (s->txn_conf->simple_retry_enabled && s->http_config_param->simple_retry_response_codes->contains (server_response)) {
+      // initiate a retry if we have not already tried all parents, otherwise the response is sent to the client as is.
+      // see SIMPLE_RETRY in handle_response_from_parent().
+      if (s->current.simple_retry_attempts < s->parent_result.rec->num_parents) {
+        s->current.state = BAD_INCOMING_RESPONSE;
+        s->current.retry_type = SIMPLE_RETRY;
+      }
+    }
+    // is a dead server retry required.
+    else if (s->txn_conf->dead_server_retry_enabled && s->http_config_param->dead_server_retry_response_codes->contains (server_response)) {
+      s->current.state = BAD_INCOMING_RESPONSE;
+      s->current.retry_type = DEAD_SERVER_RETRY;
+    }
+  }
+  
   if (s->current.state != CONNECTION_ALIVE) {
     ink_assert((s->current.state == CONNECTION_ERROR) ||
                       (s->current.state == OPEN_RAW_ERROR) ||
