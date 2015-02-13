@@ -1853,7 +1853,7 @@ ResponseCodesMap::ResponseCodesMap (MgmtString str)
   if (str == NULL) return;
   char *p = strncpy (buf, str, 4095);
 
-  while (*p != NULL) 
+  while (p != NULL) 
   {
     if (isdigit (*p))
     {
