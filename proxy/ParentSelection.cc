@@ -463,6 +463,7 @@ ParentConfigParams::markParentDown(ParentResult * result)
   if (new_fail_count > 0 && new_fail_count == FailThreshold) {
     Note("http parent proxy %s:%d marked down", pRec->hostname, pRec->port);
     pRec->available = false;
+    Debug("parent_select", "Parent marked unavailable, pRec->available=%d", pRec->available);
   }
 }
 

@@ -3510,24 +3510,24 @@ HttpTransact::handle_response_from_parent(State* s)
 
       // try a simple retry if we received a simple retryable response from the parent.
       if (s->current.retry_type == SIMPLE_RETRY || s->current.retry_type == DEAD_SERVER_RETRY) {
+        s->current.simple_retry_attempts++;
         if (s->current.retry_type == SIMPLE_RETRY) {
           if (s->current.simple_retry_attempts >= s->parent_result.rec->num_parents) {
             DebugTxn("http_trans", "SIMPLE_RETRY: retried all parents, send error to client.\n");
             next_lookup = HOST_NONE;
           }
           else {
-            s->current.simple_retry_attempts++;
             DebugTxn("http_trans", "SIMPLE_RETRY: try another parent.\n");
             next_lookup = find_server_and_update_current_info (s);
           }
         }
         else { // DEAD_SERVER_RETRY
+          s->current.dead_server_retry_attempts++;
           if (s->current.dead_server_retry_attempts >= s->parent_result.rec->num_parents) {
             DebugTxn("http_trans", "DEAD_SERVER_RETRY: retried all parents, send error to client.\n");
             next_lookup = HOST_NONE;
           }
           else {
-            s->current.dead_server_retry_attempts++;
             DebugTxn("http_trans", "DEAD_SERVER_RETRY: marking parent down and trying another.\n");
             s->parent_params->markParentDown(&s->parent_result);
             next_lookup = find_server_and_update_current_info(s);
