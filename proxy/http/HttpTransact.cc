@@ -3510,24 +3510,24 @@ HttpTransact::handle_response_from_parent(State* s)
 
       // try a simple retry if we received a simple retryable response from the parent.
       if (s->current.retry_type == SIMPLE_RETRY || s->current.retry_type == DEAD_SERVER_RETRY) {
-        s->current.simple_retry_attempts++;
         if (s->current.retry_type == SIMPLE_RETRY) {
           if (s->current.simple_retry_attempts >= s->parent_result.rec->num_parents) {
             DebugTxn("http_trans", "SIMPLE_RETRY: retried all parents, send error to client.\n");
             next_lookup = HOST_NONE;
           }
           else {
+            s->current.simple_retry_attempts++;
             DebugTxn("http_trans", "SIMPLE_RETRY: try another parent.\n");
             next_lookup = find_server_and_update_current_info (s);
           }
         }
         else { // DEAD_SERVER_RETRY
-          s->current.dead_server_retry_attempts++;
           if (s->current.dead_server_retry_attempts >= s->parent_result.rec->num_parents) {
             DebugTxn("http_trans", "DEAD_SERVER_RETRY: retried all parents, send error to client.\n");
             next_lookup = HOST_NONE;
           }
           else {
+            s->current.dead_server_retry_attempts++;
             DebugTxn("http_trans", "DEAD_SERVER_RETRY: marking parent down and trying another.\n");
             s->parent_params->markParentDown(&s->parent_result);
             next_lookup = find_server_and_update_current_info(s);
@@ -6403,6 +6403,9 @@ HttpTransact::is_response_valid(State* s, HTTPHdr* incoming_response)
         s->current.state = BAD_INCOMING_RESPONSE;
         s->current.retry_type = SIMPLE_RETRY;
       }
+      else {
+        DebugTxn("http_trans", "SIMPLE_RETRY: retried all parents, send error to client.\n");
+      }
     }
     // is a dead server retry required.
     else if (s->txn_conf->dead_server_retry_enabled && s->http_config_param->dead_server_retry_response_codes->contains (server_response)) 
@@ -6413,6 +6416,9 @@ HttpTransact::is_response_valid(State* s, HTTPHdr* incoming_response)
       {
         s->current.state = BAD_INCOMING_RESPONSE;
         s->current.retry_type = DEAD_SERVER_RETRY;
+      }
+      else {
+        DebugTxn("http_trans", "DEAD_SERVER_RETRY: retried all parents, send error to client.\n");
       }
     }
   }
