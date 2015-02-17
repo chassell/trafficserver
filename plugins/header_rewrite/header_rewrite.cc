@@ -79,7 +79,7 @@ public:
 
   ~RulesConfig()
   {
-    for (int i=TS_HTTP_TXN_START_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
+    for (int i=TS_HTTP_READ_REQUEST_HDR_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
       delete _rules[i];
     }
 
@@ -257,7 +257,7 @@ RulesConfig::parse_config(const std::string fname)
   add_rule(rule);
 
   // Collect all resource IDs that we need
-  for (int i=TS_HTTP_TXN_START_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
+  for (int i=TS_HTTP_READ_REQUEST_HDR_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
     if (_rules[i]) {
       _resids[i] = _rules[i]->get_all_resource_ids();
       if(default_hook == TS_HTTP_READ_RESPONSE_HDR_HOOK) {
@@ -445,7 +445,7 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char * /* errbuf ATS_UNUSE
 
   // For debugging only
   if (TSIsDebugTagSet(PLUGIN_NAME)) {
-    for (int i=TS_HTTP_TXN_START_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
+    for (int i=TS_HTTP_READ_REQUEST_HDR_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
       if (conf->rule(i)) {
         TSDebug(PLUGIN_NAME, "Adding remap ruleset to hook=%s", HOOK_NAMES[i]);
       }
@@ -481,7 +481,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn rh, TSRemapRequestInfo *rri)
   RulesConfig* conf = static_cast<RulesConfig*>(ih);
 
   // Go through all hooks we support, and setup the txn hook(s) as necessary
-  for (int i=TS_HTTP_TXN_START_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
+  for (int i=TS_HTTP_READ_REQUEST_HDR_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
     if (conf->rule(i)) {
       TSHttpTxnHookAdd(rh, static_cast<TSHttpHookID>(i), conf->continuation());
       TSDebug(PLUGIN_NAME, "Added remapped TXN hook=%s", HOOK_NAMES[i]);
