@@ -40,9 +40,9 @@ make DESTDIR=$RPM_BUILD_ROOT install
 # Totally ghetto, but ATS build scripts aren't RPM (DESTDIR=$RPM_BUILD_ROOT, etc) compliant
 # ..so why haven't we fixed them? VSSCDNENG-767
 
+mkdir -p $RPM_BUILD_ROOT/opt/trafficserver/etc/trafficserver/snapshots
 mkdir -p $RPM_BUILD_ROOT/etc/init.d
 cp $RPM_BUILD_DIR/%{name}/rc/trafficserver $RPM_BUILD_ROOT/etc/init.d/
-chmod 755 $RPM_BUILD_ROOT/etc/init.d/trafficserver
 
 %clean
 rm -rf $RPM_BUILD_ROOT
@@ -68,19 +68,23 @@ fi
 
 %files
 %defattr(-,root,root)
-/etc/init.d/trafficserver
+%attr(755,-,-) /etc/init.d/trafficserver
 %dir /opt/trafficserver
-%dir /opt/trafficserver/etc
 /opt/trafficserver/bin
 /opt/trafficserver/include
 /opt/trafficserver/lib
 /opt/trafficserver/lib64
 /opt/trafficserver/libexec
 /opt/trafficserver/share
+%dir /opt/trafficserver/var
+%attr(-,ats,ats) /opt/trafficserver/var/trafficserver
+%dir /opt/trafficserver/var/log
+%attr(-,ats,ats) /opt/trafficserver/var/log/trafficserver
+%dir /opt/trafficserver/etc
+%attr(-,ats,ats) %dir /opt/trafficserver/etc/trafficserver
+%attr(-,ats,ats) %dir /opt/trafficserver/etc/trafficserver/snapshots
 /opt/trafficserver/etc/trafficserver/body_factory
 /opt/trafficserver/etc/trafficserver/trafficserver-release
-%attr(-,ats,ats) /opt/trafficserver/var
-%attr(-,ats,ats) %dir /opt/trafficserver/etc/trafficserver
 %config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/cache.config
 %config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/cluster.config
 %config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/congestion.config
