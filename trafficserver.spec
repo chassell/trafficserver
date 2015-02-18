@@ -47,8 +47,10 @@ cp $RPM_BUILD_DIR/%{name}/rc/trafficserver $RPM_BUILD_ROOT/etc/init.d/
 %clean
 rm -rf $RPM_BUILD_ROOT
 
-%post
+%pre
 id ats &>/dev/null || /usr/sbin/useradd -u 176 -r ats -s /sbin/nologin -d /
+
+%post
 chkconfig --add %{name}
 
 %preun
