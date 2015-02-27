@@ -84,8 +84,13 @@ read_config(char* config_file, BgFetchRuleMap* ri)
     snprintf(file_path, sizeof(file_path), "%s/%s", TSInstallDirGet(), config_file);
     file = TSfopen(file_path, "r");
     if (file == NULL) {
-      TSError("%s: invalid config file", PLUGIN_NAME);
-      return false;
+      TSDebug(PLUGIN_NAME, "Failed to open config file %s, trying config path", config_file);
+      snprintf(file_path, sizeof(file_path), "%s/%s", TSConfigDirGet(), config_file);
+      file = TSfopen(file_path, "r");
+      if (file == NULL) {
+        TSError("%s: invalid config file", PLUGIN_NAME);
+        return false;
+      }
     }
   }
 
