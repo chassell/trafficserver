@@ -656,9 +656,11 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
         prtmp = (pRecord *) chash->lookup(NULL, 0, &(result->chashIter), &result->wrap_around);
       } while (prtmp && result->foundParents[prtmp->idx]);
 
-      cur_index = prtmp->idx;
-      result->foundParents[cur_index] = true;
-      result->start_parent++;
+      if (prtmp) {
+        cur_index = prtmp->idx;
+        result->foundParents[cur_index] = true;
+        result->start_parent++;
+      }
     } else {
       cur_index = (cur_index + 1) % num_parents;
     }
