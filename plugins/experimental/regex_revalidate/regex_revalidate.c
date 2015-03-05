@@ -433,6 +433,7 @@ new_config(TSFile fs) {
       if (i->expiry <= i->epoch)
       {
         TSDebug(PLUGIN_TAG, "Rule is already expired!");
+        TSDebug(PLUGIN_TAG, "i->expiry(%ld) <= i->epoch(%ld)", i->expiry, i->epoch);
         free_invalidate_t(i);
       }
       else if (i->regex == NULL)
@@ -578,13 +579,15 @@ init_config_holder(config_holder_t* config_holder, const char* path) {
   config_holder->config_path = 0;
   config_holder->config = 0;
   config_holder->last_load = 0;
+  config_holder->log = 0;
 
   if(!path) path = DEFAULT_CONFIG_NAME;
   if (path[0] != '/')
   {
     path_len = strlen(TSConfigDirGet()) + strlen(path) + 2;
-    config_holder->config_path = alloca(path_len);
+    config_holder->config_path = ts_malloc(path_len);
     snprintf(config_holder->config_path, path_len, "%s/%s", TSConfigDirGet(), path);
+    TSDebug(PLUGIN_TAG, "path: '%s' len=%d", config_holder->config_path, path_len);
   } else
     config_holder->config_path = TSstrdup(path);
 
