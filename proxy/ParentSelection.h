@@ -31,7 +31,6 @@
 #ifndef _PARENT_SELECTION_H_
 #define _PARENT_SELECTION_H_
 
-#include <list>
 #include "Main.h"
 #include "ProxyConfig.h"
 #include "ControlBase.h"
@@ -174,24 +173,12 @@ struct pRecord : ATSConsistentHashNode
   float weight;
 };
 
-class OrderedList : public std::list<pRecord>
-{
-  public:
-    OrderedList () {};
-    ~OrderedList () {};
-    void insert (pRecord &n);
-    pRecord * lookup (bool *);
-    pRecord * nextParent (int, bool *);
-    void printAll();
-};
-
 enum ParentRR_t
 {
   P_NO_ROUND_ROBIN = 0,
   P_STRICT_ROUND_ROBIN,
   P_HASH_ROUND_ROBIN,
-  P_CONSISTENT_HASH,
-  P_ORDERED_LIST
+  P_CONSISTENT_HASH
 };
 
 // class ParentRecord : public ControlBase
@@ -203,7 +190,7 @@ class ParentRecord: public ControlBase
 {
 public:
   ParentRecord()
-    : parents(NULL), num_parents(0), round_robin(P_NO_ROUND_ROBIN), rr_next(0), go_direct(true), parent_is_proxy(true), chash(NULL), olist (NULL)
+    : parents(NULL), num_parents(0), round_robin(P_NO_ROUND_ROBIN), rr_next(0), go_direct(true), parent_is_proxy(true), chash(NULL) 
   { }
 
   ~ParentRecord();
@@ -224,14 +211,12 @@ public:
   //private:
   const char *ProcessParents(char *val);
   void buildConsistentHash(void);
-  void buildOrderedList(void);
   ParentRR_t round_robin;
   bool ignore_query;
   volatile uint32_t rr_next;
   bool go_direct;
   bool parent_is_proxy;
   ATSConsistentHash *chash;
-  OrderedList *olist;
 };
 
 // Helper Functions

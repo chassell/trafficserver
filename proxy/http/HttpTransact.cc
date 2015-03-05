@@ -6388,6 +6388,20 @@ HttpTransact::is_response_valid(State* s, HTTPHdr* incoming_response)
 {
   int server_response = 0;
 
+  if (s->current.state != CONNECTION_ALIVE) {
+    ink_assert((s->current.state == CONNECTION_ERROR) ||
+                      (s->current.state == OPEN_RAW_ERROR) ||
+                      (s->current.state == PARSE_ERROR) ||
+                      (s->current.state == CONNECTION_CLOSED) ||
+                      (s->current.state == INACTIVE_TIMEOUT) ||
+                      (s->current.state == ACTIVE_TIMEOUT) ||
+                      (s->current.state == CONGEST_CONTROL_CONGESTED_ON_M) ||
+                      (s->current.state == CONGEST_CONTROL_CONGESTED_ON_F));
+
+    s->hdr_info.response_error = CONNECTION_OPEN_FAILED;
+    return false;
+  }
+
   // is this response is from a load balanced parent.
   if (s->current.request_to == PARENT_PROXY && s->parent_result.r == PARENT_ORIGIN) 
   {
@@ -6421,20 +6435,6 @@ HttpTransact::is_response_valid(State* s, HTTPHdr* incoming_response)
         DebugTxn("http_trans", "DEAD_SERVER_RETRY: retried all parents, send error to client.\n");
       }
     }
-  }
-  
-  if (s->current.state != CONNECTION_ALIVE) {
-    ink_assert((s->current.state == CONNECTION_ERROR) ||
-                      (s->current.state == OPEN_RAW_ERROR) ||
-                      (s->current.state == PARSE_ERROR) ||
-                      (s->current.state == CONNECTION_CLOSED) ||
-                      (s->current.state == INACTIVE_TIMEOUT) ||
-                      (s->current.state == ACTIVE_TIMEOUT) ||
-                      (s->current.state == CONGEST_CONTROL_CONGESTED_ON_M) ||
-                      (s->current.state == CONGEST_CONTROL_CONGESTED_ON_F));
-
-    s->hdr_info.response_error = CONNECTION_OPEN_FAILED;
-    return false;
   }
 
   s->hdr_info.response_error = check_response_validity(s, incoming_response);
@@ -7784,7 +7784,7 @@ HttpTransact::build_request(State* s, HTTPHdr* base_request, HTTPHdr* outgoing_r
     outgoing_request->set_url_target_from_host_field();
   }
   // In this case, the parent is actually the origin.  We utilized parent selection
-  // to pick a load balanced origin server using round robin, ordered list or consistent hash.
+  // to pick a load balanced origin server using round robin, or consistent hash.
   else if (s->current.request_to == PARENT_PROXY && ! s->parent_result.rec->isParentProxy() &&
       outgoing_request->is_target_in_url())
   {

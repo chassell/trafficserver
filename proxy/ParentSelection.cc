@@ -59,8 +59,7 @@ static const char *ParentRRStr[] = {
   "false",
   "strict",
   "true",
-  "consistent",
-  "ordered"
+  "consistent"
 };
 
 //
@@ -78,61 +77,6 @@ enum ParentCB_t
 //   use and we are only called to preserve clean interface
 //   between HttpTransact & the parent selection code.  The following
 ParentRecord *const extApiRecord = (ParentRecord *) 0xeeeeffff;
-
-pRecord *
-OrderedList::lookup (bool *wrap_around)
-{
-  OrderedList::iterator it;
-  pRecord *n = NULL;
-
-  for (it = this->begin(); it != this->end(); it++)
-  {
-      if (it->available) {
-        n = &(*it);
-        break;
-      }
-  }
-  if (n == NULL && it == this->end()) {
-    *wrap_around = true;
-  }
-  return n;
-}
-
-pRecord *
-OrderedList::nextParent (int idx, bool *wrap_around)
-{
-  int i;
-  OrderedList::iterator it;
-  pRecord *n = NULL;
-
-  for (it = this->begin(), i = 0; it != this->end(); it++, i++)
-  {
-      if (it->available && i > idx) {
-        n = &(*it);
-        break;
-      }
-  }
-  if (n == NULL && it == this->end()) {
-    *wrap_around = true;
-  }
-  return n;
-}
-
-void
-OrderedList::insert (pRecord &n)
-{
-  push_back (n);
-}
-
-// For debugging.
-void
-OrderedList::printAll ()
-{
-  for (OrderedList::iterator it = this->begin(); it != this->end(); it++)
-  {
-    std::cout << "hostname: " << it->hostname << ", idx: " << it->idx  << ", weight: " << it->weight << ", available: " << it->available << "\n" << std::endl;
-  }
-}
 
 ParentConfigParams::ParentConfigParams()
   : ParentTable(NULL), DefaultParent(NULL), ParentRetryTime(30), ParentEnable(0), FailThreshold(10), DNS_ParentOnly(0)
@@ -628,18 +572,6 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
         cur_index = ink_atomic_increment((int32_t *) & rr_next, 1);
         cur_index = cur_index % num_parents;
         break;
-      case P_ORDERED_LIST:
-          prtmp = (pRecord *) olist->lookup(&result->wrap_around);
-          if (prtmp) {
-            cur_index = prtmp->idx;
-            result->foundParents[cur_index] = true;
-            result->start_parent++;
-          } else {
-            Error("OrderedList loopup returned NULL");
-            cur_index = ink_atomic_increment((int32_t *) & rr_next, 1);
-            cur_index = cur_index % num_parents;
-          }
-        break;
       case P_NO_ROUND_ROBIN:
         cur_index = result->start_parent = 0;
         break;
@@ -659,31 +591,13 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
       do {
         prtmp = (pRecord *) chash->lookup(NULL, 0, &result->chashIter, &result->wrap_around);
       } while (prtmp && result->foundParents[prtmp->idx]);
-
+      
       if (prtmp) {
          cur_index = prtmp->idx;
          result->foundParents[cur_index] = true;
          result->start_parent++;
        } else {
          Error("Consistent Hash loopup returned NULL");
-         cur_index = ink_atomic_increment((int32_t *) & rr_next, 1);
-         cur_index = cur_index % num_parents;
-       }
-    } 
-    else if (round_robin == P_ORDERED_LIST) {
-      Debug("parent_select", "result->start_parent=%d, num_parents=%d", result->start_parent, num_parents);
-      if (result->start_parent == (unsigned int) num_parents) {
-        result->wrap_around = true;
-        result->start_parent = 0;
-        memset(result->foundParents, 0, sizeof(result->foundParents));
-      }
-      prtmp = (pRecord *) olist->nextParent(result->start_parent, &result->wrap_around);
-      if (prtmp) {
-         cur_index = prtmp->idx;
-         result->foundParents[cur_index] = true;
-         result->start_parent++;
-       } else {
-         Error("OrderedList lookup returned NULL");
          cur_index = ink_atomic_increment((int32_t *) & rr_next, 1);
          cur_index = cur_index % num_parents;
        }
@@ -756,9 +670,11 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
         prtmp = (pRecord *) chash->lookup(NULL, 0, &(result->chashIter), &result->wrap_around);
       } while (prtmp && result->foundParents[prtmp->idx]);
 
-      cur_index = prtmp->idx;
-      result->foundParents[cur_index] = true;
-      result->start_parent++;
+      if (prtmp) {
+        cur_index = prtmp->idx;
+        result->foundParents[cur_index] = true;
+        result->start_parent++;
+      }
     } else {
       cur_index = (cur_index + 1) % num_parents;
     }
@@ -940,19 +856,6 @@ ParentRecord::buildConsistentHash(void) {
   }
 }
 
-void
-ParentRecord::buildOrderedList (void) {
-  if (olist) {
-    return;
-  }
-
-  olist = new OrderedList ();
-
-  for (int i = 0; i < num_parents; i++) {
-    olist->insert (this->parents[i]);
-  }
-}
-
 // char* ParentRecord::Init(matcher_line* line_info)
 //
 //    matcher_line* line_info - contains parsed label/value
@@ -997,11 +900,6 @@ ParentRecord::Init(matcher_line * line_info)
         if (this->parents != NULL) {
           buildConsistentHash();
         }
-      } else if (strcasecmp (val, "ordered_list") == 0) {
-        round_robin = P_ORDERED_LIST;
-        if (this->parents != NULL) {
-          buildOrderedList();
-        }
       } else {
         round_robin = P_NO_ROUND_ROBIN;
         errPtr = "invalid argument to round_robin directive";
@@ -1012,9 +910,6 @@ ParentRecord::Init(matcher_line * line_info)
       used = true;
       if (round_robin == P_CONSISTENT_HASH) {
         buildConsistentHash();
-      }
-      if (round_robin == P_ORDERED_LIST) {
-        buildOrderedList();
       }
     } else if (strcasecmp(label, "go_direct") == 0) {
       if (strcasecmp(val, "false") == 0) {
