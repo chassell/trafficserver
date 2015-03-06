@@ -495,10 +495,11 @@ ParentRecord::getPathHash(HttpRequestData *hrdata, ATSHash64 *h)
   int len;
   URL *url = hrdata->hdr->url_get();
 
+  // Always hash on '/' because paths returned by ATS are always stripped of it
+  h->update("/", 1);
+
   tmp = url->path_get(&len);
-  if (!len) {
-    return 0;
-  } else {
+  if (tmp) {
     h->update(tmp, len);
   }
 
