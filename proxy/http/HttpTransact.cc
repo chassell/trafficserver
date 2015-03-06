@@ -3534,11 +3534,15 @@ HttpTransact::handle_response_from_parent(State* s)
           }
         }
       }
+      // parent_connect_attempts is set from proxy.config.http.parent_proxy.total_connect_attempts in
+      // records.config. 
       else if (s->current.attempts < s->http_config_param->parent_connect_attempts) {
         s->current.attempts++;
 
-        // Are we done with this particular parent?
-        if ((s->current.attempts) % s->http_config_param->per_parent_connect_attempts != 0) {
+        // Are we done with this particular parent?  
+        // per_parent_connect_attempts should be less than proxy.config.http.parent_proxy.total_connect_attempts
+        // so that a new parent is tried.
+        if ((s->current.attempts - 1) % s->http_config_param->per_parent_connect_attempts != 0) {
           // No we are not done with this parent so retry
           s->next_action = how_to_open_connection(s);
           DebugTxn("http_trans", "%s Retrying parent for attempt %d, max %" PRId64,
