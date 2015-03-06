@@ -3538,7 +3538,7 @@ HttpTransact::handle_response_from_parent(State* s)
         s->current.attempts++;
 
         // Are we done with this particular parent?
-        if ((s->current.attempts - 1) % s->http_config_param->per_parent_connect_attempts != 0) {
+        if ((s->current.attempts) % s->http_config_param->per_parent_connect_attempts != 0) {
           // No we are not done with this parent so retry
           s->next_action = how_to_open_connection(s);
           DebugTxn("http_trans", "%s Retrying parent for attempt %d, max %" PRId64,
