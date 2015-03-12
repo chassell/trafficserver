@@ -57,16 +57,19 @@ public:
   const char* getPluginName() { return pluginName; }
   ConfigHolder* init(const char* path);
   bool addUpdateRegister();
+  bool removeUpdateRegister();
 
   static PluginConfig* get_config(TSCont cont);
 
-private:
   PluginConfig* config;
+
+private:
   TSTextLogObject log;
   char *config_path;
   volatile time_t last_load;
   const char* default_config_name;
-  const char *pluginName;
+  const char* pluginName;
+  TSCont config_cont;
 
   void load_config_file();
 
