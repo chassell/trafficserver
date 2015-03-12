@@ -31,18 +31,24 @@
 #include <limits.h>
 #include <ctype.h>
 
+#ifdef HAVE_PCRE_PCRE_H
+#include <pcre/pcre.h>
+#else
+#include <pcre.h>
+#endif
+
 #include <ts/ts.h>
 #include <ts/remap.h>
 
-static const char *PLUGIN_NAME = "url_sig";
+#define PLUGIN_NAME "url_sig"
 
 struct config
 {
-  char *map_from;
-  char *map_to;
   TSHttpStatus err_status;
   char *err_url;
   char keys[MAX_KEY_NUM][MAX_KEY_LEN];
+  pcre *regex;
+  pcre_extra *regex_extra;
 };
 
 TSReturnCode
@@ -68,15 +74,13 @@ TSReturnCode
 TSRemapNewInstance(int argc, char *argv[], void **ih, char *errbuf, int errbuf_size)
 {
   char config_file[PATH_MAX];
+  int i;
   struct config *cfg;
 
   cfg = TSmalloc(sizeof(struct config));
   *ih = (void *) cfg;
 
-  int i = 0;
-  for (i = 0; i < MAX_KEY_NUM; i++) {
-    cfg->keys[i][0] = '\0';
-  }
+  memset(&cfg, 0, sizeof(struct config));
 
   if (argc != 3) {
     snprintf(errbuf, errbuf_size - 1,
@@ -84,9 +88,8 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char *errbuf, int errbuf_s
              argc);
     return TS_ERROR;
   }
+
   TSDebug(PLUGIN_NAME, "Initializing remap function of %s -> %s with config from %s", argv[0], argv[1], argv[2]);
-  cfg->map_from = TSstrndup(argv[0], strlen(argv[0]));
-  cfg->map_to = TSstrndup(argv[0], strlen(argv[1]));
 
   const char *install_dir = TSInstallDirGet();
   snprintf(config_file, sizeof(config_file), "%s/%s/%s", install_dir, "etc/trafficserver", argv[2]);
@@ -157,6 +160,25 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char *errbuf, int errbuf_s
         cfg->err_url = TSstrndup(value, strlen(value));
       else
         cfg->err_url = NULL;
+    } else if (strncmp(line, "excl_regex", 10) == 0) {
+      // compile and study regex
+      const char *errptr;
+      int erroffset, options = 0;
+
+      if (cfg->regex) {
+        TSDebug(PLUGIN_NAME, "Skipping duplicate excl_regex");
+        continue;
+      }
+
+      cfg->regex = pcre_compile(value, options, &errptr, &erroffset, NULL);
+      if (cfg->regex == NULL) {
+        TSDebug(PLUGIN_NAME, "Regex compilation failed with error (%s) at character %d.", errptr, erroffset);
+      } else {
+#ifdef PCRE_STUDY_JIT_COMPILE
+        options = PCRE_STUDY_JIT_COMPILE;
+#endif
+        cfg->regex_extra = pcre_study(cfg->regex, options, &errptr); // We do not need to check the error here because we can still run without the studying?
+      }
     } else {
       TSError("Error parsing line %d of file %s (%s).", line_no, config_file, line);
     }
@@ -199,13 +221,22 @@ TSRemapDeleteInstance(void *ih)
   cfg = (struct config *) ih;
 
   TSError("Cleaning up...");
-  TSfree(cfg->map_from);
-  TSfree(cfg->map_to);
   TSfree(cfg->err_url);
+
+  if (cfg->regex_extra)
+#ifndef PCRE_STUDY_JIT_COMPILE
+    pcre_free(cfg->regex_extra);
+#else
+    pcre_free_study(cfg->regex_extra);
+#endif
+
+  if (cfg->regex)
+        pcre_free(cfg->regex);
+
   TSfree(cfg);
 }
 
-void
+static void
 err_log(char *url, char *msg)
 {
   if (msg && url) {
@@ -262,6 +293,24 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo * rri)
   TSDebug(PLUGIN_NAME, "%s", url);
 
   query = strstr(url, "?");
+
+  if (cfg->regex) {
+    int offset = 0, options = 0;
+    int ovector[30];
+    int len = url_len;
+    char *anchor = strstr(url, "#");
+    if (query && !anchor) {
+      len -= (query - url);
+    } else if (anchor && !query) {
+      len -= (anchor - url);
+    } else if (anchor && query) {
+      len -= ((query < anchor ? query : anchor) - url);
+    }
+    if (pcre_exec(cfg->regex, cfg->regex_extra, url, len, offset, options, ovector, 30) >= 0) {
+      goto allow;
+    }
+  }
+
   if (query == NULL) {
     err_log(url, "Has no query string.");
     goto deny;
