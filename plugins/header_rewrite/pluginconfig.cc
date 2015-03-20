@@ -39,16 +39,16 @@
 
 #define FREE_TMOUT              300000
 
-
 static int free_handler(TSCont cont, TSEvent event, void *edata);
 
 PluginConfig* ConfigHolder::get_config(TSCont cont) {
   ConfigHolder* configh = (ConfigHolder *) TSContDataGet(cont);
-  if(!configh) {
+  if (!configh) {
       return 0;
   }
   return configh->config;
 }
+
 void ConfigHolder::load_config_file() {
   struct stat s;
 
@@ -72,8 +72,8 @@ void ConfigHolder::load_config_file() {
 
   TSDebug(pluginName, "Calling new_config: %s / %p", config_path, config);
   newconfig = config->clone();
-  if(newconfig) {
-    if(newconfig->parse_config(config_path)) {
+  if (newconfig) {
+    if (newconfig->parse_config(config_path)) {
       TSDebug(pluginName, "after new_config parse: %s", config_path);
       last_load = time(NULL);
       PluginConfig ** confp = &(config);
@@ -94,11 +94,11 @@ void ConfigHolder::load_config_file() {
   TSDebug(pluginName, "load_config_file end");
   return;
 }
+
 ConfigHolder* ConfigHolder::init(const char* path) {
   char default_config_file[1024];
-  //      TSmalloc(32);
-  //
-  if(path) {
+
+  if (path) {
     if (path[0] != '/') {
       sprintf(default_config_file, "%s/%s", TSConfigDirGet(), path);
       config_path = TSstrdup(default_config_file);
@@ -107,7 +107,6 @@ ConfigHolder* ConfigHolder::init(const char* path) {
     }
   } else {
       /* Default config file of plugins/cacheurl.config */
-      //              sprintf(default_config_file, "%s/astats.config", TSPluginDirGet());
       sprintf(default_config_file, "%s/%s", TSConfigDirGet(), default_config_name);
       config_path = TSstrdup(default_config_file);
   }
@@ -115,7 +114,6 @@ ConfigHolder* ConfigHolder::init(const char* path) {
   load_config_file();
   return this;
 }
-
 
 static int free_handler(TSCont cont, TSEvent event, void *edata) {
   (void) event;
@@ -128,6 +126,7 @@ static int free_handler(TSCont cont, TSEvent event, void *edata) {
   TSContDestroy(cont);
   return 0;
 }
+
 int ConfigHolder::config_handler(TSCont cont, TSEvent event, void *edata) {
   (void) event;
   (void) edata;
@@ -140,15 +139,13 @@ int ConfigHolder::config_handler(TSCont cont, TSEvent event, void *edata) {
 }
 
 bool ConfigHolder::addUpdateRegister() {
-
   config_cont = TSContCreate(config_handler, TSMutexCreate());
   TSContDataSet(config_cont, (void *) this);
   TSMgmtUpdateRegister(config_cont, pluginName);
   return true;
 }
-bool ConfigHolder::removeUpdateRegister() {
 
-//  TSContDataSet(config_cont, (void *) this);
+bool ConfigHolder::removeUpdateRegister() {
   TSMgmtUpdateRegister(0, pluginName);
   TSContDestroy(config_cont);
   return true;
