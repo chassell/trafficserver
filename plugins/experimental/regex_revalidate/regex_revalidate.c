@@ -208,9 +208,8 @@ config_pruner(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
   i = configh->config;
 
   prune_config(&i);
-  if(!configh) {
-    configh->config = 0;
-  }
+
+  configh->config = i;
 
   TSContSchedule(cont, PRUNE_TMOUT, TS_THREAD_POOL_TASK);
   return 0;
