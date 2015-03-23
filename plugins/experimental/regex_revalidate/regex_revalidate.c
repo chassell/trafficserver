@@ -203,10 +203,14 @@ config_pruner(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
 {
   invalidate_t *i;
 
-  TSDebug(PLUGIN_TAG, "In config Handler");
-  i = get_config(cont);
+  TSDebug(PLUGIN_TAG, "config_pruner");
+  config_holder_t* configh = (config_holder_t *) TSContDataGet(cont);
+  i = configh->config;
 
   prune_config(&i);
+  if(!configh) {
+    configh->config = 0;
+  }
 
   TSContSchedule(cont, PRUNE_TMOUT, TS_THREAD_POOL_TASK);
   return 0;
