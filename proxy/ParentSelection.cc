@@ -554,7 +554,7 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
             result->start_parent++;
             break;
           } else {
-            Error("Consistent Hash loopup returned NULL");
+            Error("Consistent Hash lookup returned NULL (first lookup)");
           }
         } else {
           Error("Could not find path");
@@ -589,7 +589,7 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
          result->foundParents[cur_index] = true;
          result->start_parent++;
        } else {
-         Error("Consistent Hash loopup returned NULL");
+         Error("Consistent Hash lookup returned NULL (subsequent lookup)");
          cur_index = ink_atomic_increment((int32_t *) & rr_next, 1);
          cur_index = cur_index % num_parents;
        }
