@@ -141,6 +141,7 @@ prune_config(invalidate_t **i)
       if (difftime(iptr->expiry, now) < 0)
       {
         TSDebug(PLUGIN_TAG, "Removing %s expiry: %d now: %d", iptr->regex_text, (int) iptr->expiry, (int) now);
+        TSError(PLUGIN_TAG " - Removing %s expiry: %d now: %d", iptr->regex_text, (int) iptr->expiry, (int) now);
         if (ilast)
         {
           // jlaue: TODO is this right?
@@ -435,8 +436,8 @@ new_config(TSFile fs) {
       i->regex = pcre_compile(i->regex_text, 0, &errptr, &erroffset, NULL);
       if (i->expiry <= i->epoch)
       {
-        TSDebug(PLUGIN_TAG, "Rule is already expired!");
-        TSDebug(PLUGIN_TAG, "i->expiry(%ld) <= i->epoch(%ld)", i->expiry, i->epoch);
+        TSDebug(PLUGIN_TAG, "NOT Loaded, already expired! %s %d %d", i->regex_text, (int) i->epoch, (int) i->expiry);
+        TSError(PLUGIN_TAG " - NOT Loaded, already expired: %s %d %d", i->regex_text, (int) i->epoch, (int) i->expiry);
         free_invalidate_t(i);
       }
       else if (i->regex == NULL)
@@ -451,6 +452,7 @@ new_config(TSFile fs) {
         {
           config = i;
           TSDebug(PLUGIN_TAG, "Created new list and Loaded %s %d %d", i->regex_text, (int) i->epoch, (int) i->expiry);
+          TSError(PLUGIN_TAG " - New Revalidate: %s %d %d", i->regex_text, (int) i->epoch, (int) i->expiry);
         }
         else
         {
@@ -545,6 +547,7 @@ load_config_file(config_holder_t *config_holder) {
 
   TSDebug(PLUGIN_TAG, "Opening config file: %s", config_holder->config_path);
   fh = TSfopen(config_holder->config_path, "r");
+  TSError(PLUGIN_TAG " - Reading config: %s", config_holder->config_path);
 
   if (!fh) {
     TSError("[%s] Unable to open config: %s.\n",
