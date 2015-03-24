@@ -78,9 +78,8 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char *errbuf, int errbuf_s
   struct config *cfg;
 
   cfg = TSmalloc(sizeof(struct config));
+  memset(cfg, 0, sizeof(struct config));
   *ih = (void *) cfg;
-
-  memset(&cfg, 0, sizeof(struct config));
 
   if (argc != 3) {
     snprintf(errbuf, errbuf_size - 1,

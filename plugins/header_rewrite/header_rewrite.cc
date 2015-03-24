@@ -54,9 +54,7 @@ const char* HOOK_NAMES[] = {
   "TS_HTTP_LAST_HOOK"
 };
 
-
 // Forward declaration for the main continuation.
-//static int cont_rewrite_headers(TSCont, TSEvent, void *);
 static int holder_rewrite_headers(TSCont contp, TSEvent event, void *edata);
 
 // Simple wrapper around a configuration file / set. This is useful such that
@@ -71,11 +69,6 @@ public:
 
     this->default_hook = default_hook;
     _cont = 0;
-//    if(default_hook == TS_REMAP_PSEUDO_HOOK) {
-//      _cont = TSContCreate(holder_rewrite_headers, NULL);
-////      _cont = TSContCreate(cont_rewrite_headers, NULL);
-//      TSContDataSet(_cont, static_cast<void*>(this));
-//    }
   }
 
   ~RulesConfig()
@@ -117,7 +110,6 @@ private:
 
 #define DEFAULT_CONFIG_NAME     "header_rewrite.config"
 
-
 // Helper function to add a rule to the rulesets
 bool
 RulesConfig::add_rule(RuleSet* rule)
@@ -153,7 +145,6 @@ RulesConfig::parse_config(const std::string fname)
   if (0 == fname.size()) {
     TSError("%s: no config filename provided", PLUGIN_NAME);
     return false;
-
   }
 
   if (fname[0] != '/') {
@@ -342,17 +333,6 @@ holder_rewrite_headers(TSCont contp, TSEvent event, void *edata)
   TSHttpTxnReenable(txnp, TS_EVENT_HTTP_CONTINUE);
   return 0;
 }
-//static int
-//cont_rewrite_headers(TSCont contp, TSEvent event, void *edata)
-//{
-//  TSHttpTxn txnp = static_cast<TSHttpTxn>(edata);
-//  RulesConfig* conf = static_cast<RulesConfig*>(TSContDataGet(contp));
-//
-//  conf->rewrite_headers(event, txnp);
-//
-//  TSHttpTxnReenable(txnp, TS_EVENT_HTTP_CONTINUE);
-//  return 0;
-//}
 
 ///////////////////////////////////////////////////////////////////////////////
 // Initialize the InkAPI plugin for the global hooks we support.
@@ -383,7 +363,7 @@ TSPluginInit(int argc, const char *argv[])
     TSDebug(PLUGIN_NAME, "Loading global configuration file %s", path);
   }
 
-  if(!path) {
+  if (!path) {
     delete config_holder;
     return;
   }
@@ -440,7 +420,7 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char * /* errbuf ATS_UNUSE
   TSContDataSet(contp, config_holder);
   conf->continuation(contp);
 
-  if(argc < 4) { // jlaue: config reload is only supported with 1 top level config
+  if (argc < 4) { // jlaue: config reload is only supported with 1 top level config
 
     char* path = 0;
     if (argc > 2) {
@@ -449,7 +429,7 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char * /* errbuf ATS_UNUSE
     }
     TSDebug(PLUGIN_NAME, "Loading reloadable configuration file %s", path);
 
-    if(!path) {
+    if (!path) {
       delete config_holder;
       return TS_ERROR;
     }
@@ -481,7 +461,6 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char * /* errbuf ATS_UNUSE
   }
 
   *ih = static_cast<void*>(config_holder);
-//  *ih = static_cast<void*>(conf);
 
   return TS_SUCCESS;
 }
@@ -492,8 +471,6 @@ TSRemapDeleteInstance(void *ih)
   ConfigHolder* config_holder = static_cast<ConfigHolder*>(ih);
   config_holder->removeUpdateRegister();
   delete config_holder;
-//  RulesConfig* conf = static_cast<RulesConfig*>(ih);
-//  delete conf;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -509,7 +486,6 @@ TSRemapDoRemap(void *ih, TSHttpTxn rh, TSRemapRequestInfo *rri)
   }
 
   TSRemapStatus rval = TSREMAP_NO_REMAP;
-//  RulesConfig* conf = static_cast<RulesConfig*>(ih);
   ConfigHolder* config_holder = static_cast<ConfigHolder*>(ih);
   RulesConfig* conf = static_cast<RulesConfig*>(config_holder->config);
 
