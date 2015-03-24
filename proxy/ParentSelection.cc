@@ -581,7 +581,7 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
       }
 
       do {
-        prtmp = (pRecord *) chash->lookup(NULL, 0, &result->chashIter, &result->wrap_around);
+        prtmp = (pRecord *) chash->lookup(NULL, 0, &result->chashIter, &result->wrap_around, &hash);
       } while (prtmp && result->foundParents[prtmp->idx]);
 
       if (prtmp) {
