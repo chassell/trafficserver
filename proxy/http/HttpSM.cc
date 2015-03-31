@@ -4387,29 +4387,23 @@ HttpSM::do_range_setup_if_necessary()
     do_range_parse(field);
 
     if (t_state.range_setup == HttpTransact::RANGE_REQUESTED) {
-	
-	    Debug ("http_range", "t_state.range_in_cache = %d\n", t_state.range_in_cache);
+
       if (!t_state.range_in_cache) {
         Debug("http_range", "range can't be satisifed from cache, force origin request");
         t_state.cache_lookup_result = HttpTransact::CACHE_LOOKUP_MISS;
         return;
       }
-
-      Debug ("http_range", "t_state.num_range_fields = %d, cache_sm.cache_read_vc->is_pread_capable() = %d\n",
-        t_state.num_range_fields, cache_sm.cache_read_vc->is_pread_capable());
-
-      // if only one range entry and pread is capable, no need transform range
-      if (t_state.num_range_fields == 1 && cache_sm.cache_read_vc->is_pread_capable()) {
+      else {
         t_state.range_setup = HttpTransact::RANGE_NOT_TRANSFORM_REQUESTED;
-      } 
-      else { 
-        Debug("http_range", "range can't be satisifed from cache, force origin request");
-        t_state.range_in_cache = 0;
-        t_state.cache_lookup_result = HttpTransact::CACHE_LOOKUP_MISS;
-        return;
+        Debug("http_range", "range is cached\n");
       }
+
 /*
-      else if (api_hooks.get(TS_HTTP_RESPONSE_TRANSFORM_HOOK) == NULL) {
+      // if only one range entry and pread is capable, no need transform range
+      //if (t_state.num_range_fields == 1 && cache_sm.cache_read_vc->is_pread_capable()) {
+      if (t_state.range_in_cache) {
+        t_state.range_setup = HttpTransact::RANGE_NOT_TRANSFORM_REQUESTED;
+      } else if (api_hooks.get(TS_HTTP_RESPONSE_TRANSFORM_HOOK) == NULL) {
         Debug("http_trans", "Unable to accelerate range request, fallback to transform");
         content_type = t_state.cache_info.object_read->response_get()->value_get(MIME_FIELD_CONTENT_TYPE, MIME_LEN_CONTENT_TYPE, &field_content_type_len);
         //create a Range: transform processor for requests of type Range: bytes=1-2,4-5,10-100 (eg. multiple ranges)
