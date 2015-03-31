@@ -1194,6 +1194,7 @@ extern "C"
   /* --------------------------------------------------------------------------
      Management */
   tsapi void TSMgmtUpdateRegister(TSCont contp, const char *plugin_name);
+  tsapi void TSMgmtUnRegister(const char *plugin_name);
   tsapi TSReturnCode TSMgmtIntGet(const char* var_name, TSMgmtInt* result);
   tsapi TSReturnCode TSMgmtCounterGet(const char* var_name, TSMgmtCounter* result);
   tsapi TSReturnCode TSMgmtFloatGet(const char* var_name, TSMgmtFloat* result);

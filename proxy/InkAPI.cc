@@ -1299,6 +1299,15 @@ ConfigUpdateCbTable::insert(INKContInternal *contp, const char *name)
 }
 
 void
+ConfigUpdateCbTable::remove(const char *name)
+{
+  ink_assert(cb_table != NULL);
+
+  if (name)
+    ink_hash_table_delete(cb_table, (InkHashTableKey) name);
+}
+
+void
 ConfigUpdateCbTable::invoke(const char *name)
 {
   ink_assert(cb_table != NULL);
@@ -4186,6 +4195,14 @@ TSMgmtUpdateRegister(TSCont contp, const char *plugin_name)
   sdk_assert(sdk_sanity_check_null_ptr((void*)plugin_name) == TS_SUCCESS);
 
   global_config_cbs->insert((INKContInternal *)contp, plugin_name);
+}
+
+void
+TSMgmtUnRegister(const char *plugin_name)
+{
+  sdk_assert(sdk_sanity_check_null_ptr((void*)plugin_name) == TS_SUCCESS);
+
+  global_config_cbs->remove(plugin_name);
 }
 
 TSReturnCode

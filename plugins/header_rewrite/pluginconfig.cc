@@ -146,6 +146,7 @@ bool ConfigHolder::addUpdateRegister() {
 }
 
 bool ConfigHolder::removeUpdateRegister() {
+  TSMgmtUnRegister(pluginName);
   TSContDestroy(config_cont);
   return true;
 }
