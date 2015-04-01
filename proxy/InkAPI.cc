@@ -1280,37 +1280,49 @@ APIHooks::clear()
 ConfigUpdateCbTable::ConfigUpdateCbTable()
 {
   cb_table = ink_hash_table_create(InkHashTableKeyType_String);
+  mutex = new_ProxyMutex();
 }
 
 ConfigUpdateCbTable::~ConfigUpdateCbTable()
 {
   ink_assert(cb_table != NULL);
+  ink_assert(mutex != NULL);
 
   ink_hash_table_destroy(cb_table);
+  mutex->free();
 }
 
 void
 ConfigUpdateCbTable::insert(INKContInternal *contp, const char *name)
 {
   ink_assert(cb_table != NULL);
+  ink_assert(mutex != NULL);
 
-  if (contp && name)
+  if (contp && name) {
+    MUTEX_TAKE_LOCK(mutex, this_ethread());
     ink_hash_table_insert(cb_table, (InkHashTableKey) name, (InkHashTableValue) contp);
+    MUTEX_UNTAKE_LOCK(mutex, this_ethread());
+  }
 }
 
 void
 ConfigUpdateCbTable::remove(const char *name)
 {
   ink_assert(cb_table != NULL);
+  ink_assert(mutex != NULL);
 
-  if (name)
+  if (name) {
+    MUTEX_TAKE_LOCK(mutex, this_ethread());
     ink_hash_table_delete(cb_table, (InkHashTableKey) name);
+    MUTEX_UNTAKE_LOCK(mutex, this_ethread());
+  }
 }
 
 void
 ConfigUpdateCbTable::invoke(const char *name)
 {
   ink_assert(cb_table != NULL);
+  ink_assert(mutex != NULL);
 
   InkHashTableIteratorState ht_iter;
   InkHashTableEntry *ht_entry;
@@ -1318,6 +1330,7 @@ ConfigUpdateCbTable::invoke(const char *name)
 
   if (name != NULL) {
     if (strcmp(name, "*") == 0) {
+      MUTEX_TAKE_LOCK(mutex, this_ethread());
       ht_entry = ink_hash_table_iterator_first(cb_table, &ht_iter);
       while (ht_entry != NULL) {
         contp = (INKContInternal *)ink_hash_table_entry_value(cb_table, ht_entry);
@@ -1325,13 +1338,16 @@ ConfigUpdateCbTable::invoke(const char *name)
         invoke(contp);
         ht_entry = ink_hash_table_iterator_next(cb_table, &ht_iter);
       }
+      MUTEX_UNTAKE_LOCK(mutex, this_ethread());
     } else {
+      MUTEX_TAKE_LOCK(mutex, this_ethread());
       ht_entry = ink_hash_table_lookup_entry(cb_table, (InkHashTableKey) name);
       if (ht_entry != NULL) {
         contp = (INKContInternal *) ink_hash_table_entry_value(cb_table, ht_entry);
         ink_assert(contp != NULL);
         invoke(contp);
       }
+      MUTEX_UNTAKE_LOCK(mutex, this_ethread());
     }
   }
 }

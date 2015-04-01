@@ -349,7 +349,8 @@ public:
   void invoke(INKContInternal * contp);
 
 private:
-    InkHashTable * cb_table;
+  InkHashTable * cb_table;
+  ProxyMutex *mutex;
 };
 
 void api_init();
