@@ -580,7 +580,7 @@ OperatorSetMethod::initialize(Parser& p)
 {
   OperatorHeaders::initialize(p);
 
-  _method.set_value(p.get_value());
+  _method.set_value(p.get_arg());
 }
 
 void
