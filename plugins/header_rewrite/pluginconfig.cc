@@ -141,12 +141,12 @@ int ConfigHolder::config_handler(TSCont cont, TSEvent event, void *edata) {
 bool ConfigHolder::addUpdateRegister() {
   config_cont = TSContCreate(config_handler, TSMutexCreate());
   TSContDataSet(config_cont, (void *) this);
-  TSMgmtUpdateRegister(config_cont, pluginName);
+  TSMgmtUpdateRegister(config_cont, uniqueID);
   return true;
 }
 
 bool ConfigHolder::removeUpdateRegister() {
-  TSMgmtUnRegister(pluginName);
+  TSMgmtUnRegister(uniqueID);
   TSContDestroy(config_cont);
   return true;
 }
