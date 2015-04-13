@@ -1,6 +1,9 @@
                                                          -*- coding: utf-8 -*-
 Changes with Apache Traffic Server 5.2.0
 
+  *) [TS-3504] Only read "proxy.config.cache.ram_cache.use_seen_filter" once.
+    Do not set up a callback.
+
   *) [TS-3304] Add NULL check to ink_inet_addr() input.
 
   *) [TS-3349] Add DscpSet API's.

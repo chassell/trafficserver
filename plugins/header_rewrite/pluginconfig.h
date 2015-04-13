@@ -28,6 +28,8 @@
  *      Author: jlaue
  */
 
+#define UID_LEN 32
+
 class PluginConfig {
 public:
   PluginConfig() {};
@@ -46,7 +48,9 @@ class ConfigHolder {
 public:
   ConfigHolder(PluginConfig* config, const char* defaultConfigName, const char* pluginName) :
     config(config), log(0), config_path(0), last_load(0),
-    default_config_name(defaultConfigName), pluginName(pluginName) {}
+    default_config_name(defaultConfigName), pluginName(pluginName) {
+    snprintf(uniqueID, UID_LEN, "%p", this);
+  }
   ~ConfigHolder() {
     delete config;
     if (config_path)
@@ -69,6 +73,7 @@ private:
   volatile time_t last_load;
   const char* default_config_name;
   const char* pluginName;
+  char uniqueID[UID_LEN];
   TSCont config_cont;
 
   void load_config_file();

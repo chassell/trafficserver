@@ -573,3 +573,33 @@ OperatorSetConnDSCP::exec(const Resources& res) const
     TSHttpTxnClientPacketDscpSet(res.txnp, _ds_value.get_int_value());
   }
 }
+
+// OperatorSetMethod
+void
+OperatorSetMethod::initialize(Parser& p)
+{
+  OperatorHeaders::initialize(p);
+
+  _method.set_value(p.get_arg());
+}
+
+void
+OperatorSetMethod::initialize_hooks()
+{
+  add_allowed_hook(TS_HTTP_READ_REQUEST_HDR_HOOK);
+  add_allowed_hook(TS_HTTP_SEND_REQUEST_HDR_HOOK);
+  add_allowed_hook(TS_REMAP_PSEUDO_HOOK);
+}
+
+void
+OperatorSetMethod::exec(const Resources& res) const
+{
+  std::string method;
+
+  _method.append_value(method, res);
+
+  if (res.bufp && res.hdr_loc) {
+    TSDebug(PLUGIN_NAME, "OperatorSetMethod::exec() invoked setting METHOD(%s)", method.c_str());
+    TSHttpHdrMethodSet(res.bufp, res.hdr_loc, method.c_str(), method.size());
+  }
+}

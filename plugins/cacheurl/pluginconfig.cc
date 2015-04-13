@@ -142,6 +142,6 @@ bool ConfigHolder::addUpdateRegister() {
   TSCont config_cont;
   config_cont = TSContCreate(config_handler, TSMutexCreate());
   TSContDataSet(config_cont, (void *) this);
-  TSMgmtUpdateRegister(config_cont, pluginName);
+  TSMgmtUpdateRegister(config_cont, uniqueID);
   return true;
 }

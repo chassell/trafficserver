@@ -301,6 +301,8 @@ public:
     }
     TSMutexUnlock(_lock);
 
+    TSDebug (PLUGIN_NAME, "BGFetchConfig.acquire(): ret = %d, url = %s\n", ret, url.c_str());
+
     return ret;
   }
 
@@ -339,14 +341,14 @@ static int cont_bg_fetch(TSCont contp, TSEvent event, void* edata);
 struct BGFetchData
 {
   BGFetchData(BGFetchConfig* cfg=gConfig)
-    : hdr_loc(TS_NULL_MLOC), url_loc(TS_NULL_MLOC), vc(NULL), _bytes(0), _cont(NULL),  _config(cfg)
+    : hdr_loc(TS_NULL_MLOC), url_loc(TS_NULL_MLOC), vc(NULL), _bytes(0), _cont(NULL),  _config(cfg), scheduled (0)
   {
     mbuf = TSMBufferCreate();
   }
 
   ~BGFetchData()
   {
-    release_url();
+    if (scheduled) release_url();
 
     TSHandleMLocRelease(mbuf, TS_NULL_MLOC, hdr_loc);
     TSHandleMLocRelease(mbuf, TS_NULL_MLOC, url_loc);
@@ -396,6 +398,7 @@ private:
   int64_t _bytes;
   TSCont _cont;
   BGFetchConfig* _config;
+  bool scheduled;
 };
 
 
@@ -482,6 +485,7 @@ BGFetchData::schedule()
 
   // Schedule
   TSContSchedule(_cont, 0, TS_THREAD_POOL_NET);
+  scheduled = true;
 }
 
 

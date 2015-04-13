@@ -77,9 +77,9 @@ public:
       delete _rules[i];
     }
 
-    if(default_hook == TS_REMAP_PSEUDO_HOOK) {
-      TSContDestroy(_cont);
-    }
+//    if(default_hook == TS_REMAP_PSEUDO_HOOK) {
+//      TSContDestroy(_cont);
+//    }
   }
 
   TSCont continuation() const { return _cont; }
@@ -469,6 +469,8 @@ void
 TSRemapDeleteInstance(void *ih)
 {
   ConfigHolder* config_holder = static_cast<ConfigHolder*>(ih);
+  RulesConfig* conf = static_cast<RulesConfig*>(config_holder->config);
+  TSContDestroy(conf->continuation());
   config_holder->removeUpdateRegister();
   delete config_holder;
 }
@@ -519,6 +521,6 @@ TSRemapDoRemap(void *ih, TSHttpTxn rh, TSRemapRequestInfo *rri)
     rule = rule->next;
   }
 
-  TSDebug(PLUGIN_NAME_DBG, "Returing from TSRemapDoRemap with status: %d", rval);
+  TSDebug(PLUGIN_NAME_DBG, "Returning from TSRemapDoRemap with status: %d", rval);
   return rval;
 }

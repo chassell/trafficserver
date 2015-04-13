@@ -59,6 +59,8 @@ operator_factory(const std::string& op)
     o = new OperatorCounter();
   } else if (op == "set-conn-dscp") {
     o = new OperatorSetConnDSCP();
+  } else if (op == "set-method") {
+    o = new OperatorSetMethod();
   } else {
     TSError("%s: unknown operator: %s", PLUGIN_NAME, op.c_str());
     return NULL;
@@ -115,6 +117,8 @@ condition_factory(const std::string& cond)
     c = new ConditionClientIp();
   } else if (c_name == "INCOMING-PORT") {
     c = new ConditionIncomingPort();
+  } else if (c_name == "METHOD") {
+    c = new ConditionMethod();
   } else {
     TSError("%s: unknown condition: %s", PLUGIN_NAME, c_name.c_str());
     return NULL;

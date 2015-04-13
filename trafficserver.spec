@@ -54,9 +54,10 @@ id ats &>/dev/null || /usr/sbin/useradd -u 176 -r ats -s /sbin/nologin -d /
 chkconfig --add %{name}
 
 %preun
+/etc/init.d/%{name} stop
+
 # if 0 uninstall, if 1 upgrade
 if [ "$1" = "0" ]; then
-	/etc/init.d/%{name} stop
 	chkconfig --del %{name}
 fi
 
