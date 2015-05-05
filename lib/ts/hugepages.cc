@@ -114,8 +114,9 @@ ats_alloc_hugepage(size_t s ATS_UNUSED)
 
   mem = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
 
-  if (mem == NULL) {
+  if (mem == MAP_FAILED) {
     Debug(DEBUG_TAG, "Could not allocate hugepages size = %zu", size);
+    return NULL;
   }
 
   return mem;
