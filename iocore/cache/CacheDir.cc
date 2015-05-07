@@ -1007,6 +1007,7 @@ sync_cache_dir_on_shutdown(void)
   Debug("cache_dir_sync", "sync started");
   char *buf = NULL;
   size_t buflen = 0;
+  bool buf_huge = false;
 
   EThread *t = (EThread *) 0xdeadbeef;
   for (int i = 0; i < gnvol; i++) {
