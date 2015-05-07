@@ -1074,10 +1074,21 @@ sync_cache_dir_on_shutdown(void)
 #endif
 
     if (buflen < dirlen) {
-      if (buf)
-        ats_memalign_free(buf);
-      buf = (char *)ats_memalign(ats_pagesize(), dirlen);
+      if (buf) {
+        if (buf_huge)
+          ats_free_hugepage(buf, buflen);
+        else
+          ats_memalign_free(buf);
+      }
       buflen = dirlen;
+      if (ats_hugepage_enabled()) {
+        buf = (char *)ats_alloc_hugepage(buflen);
+        buf_huge = true;
+      }
+      if (buf == NULL) {
+        buf = (char *)ats_memalign(ats_pagesize(), buflen);
+        buf_huge = false;
+      }
     }
 
     if (!d->dir_sync_in_progress) {
@@ -1101,8 +1112,15 @@ sync_cache_dir_on_shutdown(void)
     Debug("cache_dir_sync", "done syncing dir for vol %s", d->hash_text.get());
   }
   Debug("cache_dir_sync", "sync done");
-  if (buf)
-    ats_memalign_free(buf);
+  if (buf) {
+    if (buf_huge)
+      ats_free_hugepage(buf, buflen);
+    else
+      ats_memalign_free(buf);
+    buflen = 0;
+    buf = NULL;
+    buf_huge = false;
+  }
 }
 
 
