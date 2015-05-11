@@ -24,6 +24,8 @@
 
 #include "P_Cache.h"
 
+#include "hugepages.h"
+
 // #define LOOP_CHECK_MODE 1
 #ifdef LOOP_CHECK_MODE
 #define DIR_LOOP_THRESHOLD	      1000
@@ -1005,6 +1007,7 @@ sync_cache_dir_on_shutdown(void)
   Debug("cache_dir_sync", "sync started");
   char *buf = NULL;
   size_t buflen = 0;
+  bool buf_huge = false;
 
   EThread *t = (EThread *) 0xdeadbeef;
   for (int i = 0; i < gnvol; i++) {
@@ -1072,10 +1075,21 @@ sync_cache_dir_on_shutdown(void)
 #endif
 
     if (buflen < dirlen) {
-      if (buf)
-        ats_memalign_free(buf);
-      buf = (char *)ats_memalign(ats_pagesize(), dirlen);
+      if (buf) {
+        if (buf_huge)
+          ats_free_hugepage(buf, buflen);
+        else
+          ats_memalign_free(buf);
+      }
       buflen = dirlen;
+      if (ats_hugepage_enabled()) {
+        buf = (char *)ats_alloc_hugepage(buflen);
+        buf_huge = true;
+      }
+      if (buf == NULL) {
+        buf = (char *)ats_memalign(ats_pagesize(), buflen);
+        buf_huge = false;
+      }
     }
 
     if (!d->dir_sync_in_progress) {
@@ -1099,8 +1113,15 @@ sync_cache_dir_on_shutdown(void)
     Debug("cache_dir_sync", "done syncing dir for vol %s", d->hash_text.get());
   }
   Debug("cache_dir_sync", "sync done");
-  if (buf)
-    ats_memalign_free(buf);
+  if (buf) {
+    if (buf_huge)
+      ats_free_hugepage(buf, buflen);
+    else
+      ats_memalign_free(buf);
+    buflen = 0;
+    buf = NULL;
+    buf_huge = false;
+  }
 }
 
 
@@ -1116,11 +1137,6 @@ CacheSync::mainEvent(int event, Event *e)
 Lrestart:
   if (vol >= gnvol) {
     vol = 0;
-    if (buf) {
-      ats_memalign_free(buf);
-      buf = 0;
-      buflen = 0;
-    }
     Debug("cache_dir_sync", "sync done");
     if (event == EVENT_INTERVAL)
       trigger = e->ethread->schedule_in(this, HRTIME_SECONDS(cache_config_dir_sync_frequency));
@@ -1185,10 +1201,21 @@ Lrestart:
       Debug("cache_dir_sync", "pos: %" PRIu64 " Dir %s dirty...syncing to disk", d->header->write_pos, d->hash_text.get());
       d->header->dirty = 0;
       if (buflen < dirlen) {
-        if (buf)
-          ats_memalign_free(buf);
-        buf = (char *)ats_memalign(ats_pagesize(), dirlen);
+        if (buf) {
+          if (buf_huge)
+            ats_free_hugepage(buf, buflen);
+          else
+            ats_memalign_free(buf);
+        }
         buflen = dirlen;
+        if (ats_hugepage_enabled()) {
+          buf = (char *)ats_alloc_hugepage(buflen);
+          buf_huge = true;
+        }
+        if (buf == NULL) {
+          buf = (char *)ats_memalign(ats_pagesize(), buflen);
+          buf_huge = false;
+        }
       }
       d->header->sync_serial++;
       d->footer->sync_serial = d->header->sync_serial;
