@@ -434,7 +434,7 @@ struct OverridableHttpConfigParams {
       max_cache_open_read_retries(-1), cache_open_read_retry_time(10), background_fill_active_timeout(60),
       http_chunking_size(4096), flow_high_water_mark(0), flow_low_water_mark(0),
       default_buffer_size_index(8), default_buffer_water_mark(32768),
-      simple_retry_enabled(0), simple_retry_attempts_max_retries(2), dead_server_retry_enabled(0),
+      simple_retry_enabled(0), dead_server_retry_enabled(0),
 
       // Strings / floats must come last
       proxy_response_server_string(NULL), proxy_response_server_string_len(0),
@@ -613,7 +613,6 @@ struct OverridableHttpConfigParams {
   // parent origin server load balancing variables //
   ///////////////////////////////////////////////////
   MgmtInt simple_retry_enabled;
-  MgmtInt simple_retry_attempts_max_retries;
   MgmtInt dead_server_retry_enabled;
 
   // IMPORTANT: Here comes all strings / floats configs.

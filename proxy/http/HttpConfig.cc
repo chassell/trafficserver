@@ -1474,7 +1474,6 @@ HttpConfig::startup()
 
   // parent origin.
   HttpEstablishStaticConfigLongLong(c.oride.simple_retry_enabled, "proxy.config.http.parent_origin.simple_retry_enabled");
-  HttpEstablishStaticConfigLongLong(c.oride.simple_retry_attempts_max_retries, "proxy.config.http.parent_origin.simple_retry_attempts_max_retries");
   HttpEstablishStaticConfigLongLong(c.oride.dead_server_retry_enabled, "proxy.config.http.parent_origin.dead_server_retry_enabled");
   
   // Cluster time delta gets it own callback since it needs
@@ -1733,7 +1732,6 @@ params->push_method_enabled = INT_TO_BOOL(m_master.push_method_enabled);
   params->autoconf_port = m_master.autoconf_port;
   params->autoconf_localhost_only = m_master.autoconf_localhost_only;
   params->oride.simple_retry_enabled = m_master.oride.simple_retry_enabled;
-  params->oride.simple_retry_attempts_max_retries = m_master.oride.simple_retry_attempts_max_retries;
   params->oride.dead_server_retry_enabled = m_master.oride.dead_server_retry_enabled;
 
   m_id = configProcessor.set(m_id, params);
