@@ -810,6 +810,7 @@ public:
 
   MgmtByte send_100_continue_response;
   MgmtByte send_408_post_timeout_response;
+  MgmtInt cache_open_write_fail_action;
 
   OverridableHttpConfigParams oride;
 
@@ -968,6 +969,7 @@ HttpConfigParams::HttpConfigParams()
     ignore_accept_charset_mismatch(0),
     send_100_continue_response(0),
     send_408_post_timeout_response(0),
+    cache_open_write_fail_action(0),
     autoconf_port(0),
     autoconf_localhost_only(0)
 {

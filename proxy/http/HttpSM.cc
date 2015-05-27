@@ -2422,21 +2422,25 @@ HttpSM::state_cache_open_write(int event, void *data)
   case CACHE_EVENT_OPEN_WRITE_FAILED:
     // Failed on the write lock and retrying the vector
     //  for reading
-    DebugSM("http", "[%" PRId64 "] cache_open_read - " "\n\n fall thru to CACHE_EVENT_OPEN_READ\n\n", sm_id);
-    t_state.hack_force_fresh = true;
-    if(!t_state.cache_info.object_read) {
+    if (t_state.http_config_param->cache_open_write_fail_action ==
+        HttpTransact::CACHE_OPEN_WRITE_FAIL_DEFAULT) {
       t_state.cache_info.write_lock_state = HttpTransact::CACHE_WL_FAIL;
-      DebugSM("http", "[%" PRId64 "] cache_open_read - " "\n\n NO fall thru - nothing read\n\n", sm_id);
       break;
+    } else {
+      t_state.cache_open_write_fail_action = t_state.http_config_param->cache_open_write_fail_action;
+      if (!t_state.cache_info.object_read) {
+        // cache miss, set wl_state to fail
+        t_state.cache_info.write_lock_state = HttpTransact::CACHE_WL_FAIL;
+        break;
+      }
     }
+    // INTENTIONAL FALL THROUGH
+    // Allow for stale object to be served
   case CACHE_EVENT_OPEN_READ:
-    DebugSM("http", "[%" PRId64 "] cache_open_read - " "CACHE_EVENT_OPEN_READ", sm_id);
-   // The write vector was locked and the cache_sm retried
+    // The write vector was locked and the cache_sm retried
     // and got the read vector again.
     cache_sm.cache_read_vc->get_http_info(&t_state.cache_info.object_read);
-    DebugSM("http", "[%" PRId64 "] cache_open_read - " "\n here 1\n", sm_id);
     t_state.cache_info.is_ram_cache_hit = (cache_sm.cache_read_vc)->is_ram_cache_hit();
-    DebugSM("http", "[%" PRId64 "] cache_open_read - " "\n here 1\n", sm_id);
 
     ink_assert(t_state.cache_info.object_read != 0);
     t_state.source = HttpTransact::SOURCE_CACHE;
@@ -2444,7 +2448,6 @@ HttpSM::state_cache_open_write(int event, void *data)
     // hit status
     t_state.cache_lookup_result = HttpTransact::CACHE_LOOKUP_NONE;
     t_state.cache_info.write_lock_state = HttpTransact::CACHE_WL_READ_RETRY;
-    DebugSM("http", "[%" PRId64 "] cache_open_read - " "\n\n exit CACHE_EVENT_OPEN_READ\n\n", sm_id);
     break;
 
   case HTTP_TUNNEL_EVENT_DONE:
@@ -2465,9 +2468,7 @@ HttpSM::state_cache_open_write(int event, void *data)
   }
 
   if (t_state.api_lock_url != HttpTransact::LOCK_URL_FIRST) {
-    DebugSM("http", "[%" PRId64 "] !LOCK_URL_FIRST", sm_id);
     if (event == CACHE_EVENT_OPEN_WRITE || event == CACHE_EVENT_OPEN_WRITE_FAILED) {
-      DebugSM("http", "[%" PRId64 "] cache_open_read - " "CACHE_EVENT_OPEN_WRITE_FAILED", sm_id);
       if (t_state.api_lock_url == HttpTransact::LOCK_URL_SECOND) {
         t_state.api_lock_url = HttpTransact::LOCK_URL_ORIGINAL;
         do_cache_prepare_action(second_cache_sm, t_state.cache_info.second_object_read, true);
@@ -2480,7 +2481,6 @@ HttpSM::state_cache_open_write(int event, void *data)
   }
   // The write either succeeded or failed, notify transact
   call_transact_and_set_next_state(NULL);
-  DebugSM("http", "[%" PRId64 "] state_cache_open_write end", sm_id);
 
   return 0;
 }
