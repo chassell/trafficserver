@@ -203,7 +203,7 @@ ParentConfigParams::parentExists(HttpRequestData * rdata)
 
   findParent(rdata, &junk);
 
-  if (junk.r == PARENT_SPECIFIED) {
+  if (junk.r == PARENT_SPECIFIED || junk.r == PARENT_ORIGIN) {
     return true;
   } else {
     return false;
@@ -288,6 +288,9 @@ ParentConfigParams::findParent(HttpRequestData * rdata, ParentResult * result)
     case PARENT_SPECIFIED:
       Debug("cdn", "PARENT_SPECIFIED");
       break;
+    case PARENT_ORIGIN:
+      Debug("cdn", "PARENT_ORIGIN");
+      break;
     default:
       // Handled here:
       // PARENT_AGENT
@@ -302,6 +305,7 @@ ParentConfigParams::findParent(HttpRequestData * rdata, ParentResult * result)
     case PARENT_DIRECT:
       Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
       break;
+    case PARENT_ORIGIN:
     case PARENT_SPECIFIED:
       Debug("parent_select", "sizeof ParentResult = %zu", sizeof(ParentResult));
       Debug("parent_select", "Result for %s was parent %s:%d", host, result->hostname, result->port);
@@ -323,8 +327,8 @@ ParentConfigParams::recordRetrySuccess(ParentResult * result)
   //  Make sure that we are being called back with with a
   //   result structure with a parent that is being retried
   ink_release_assert(result->retry == true);
-  ink_assert(result->r == PARENT_SPECIFIED);
-  if (result->r != PARENT_SPECIFIED) {
+  ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
+  if (result->r != PARENT_SPECIFIED || result->r != PARENT_ORIGIN) {
     return;
   }
   // If we were set through the API we currently have not failover
@@ -356,8 +360,8 @@ ParentConfigParams::markParentDown(ParentResult * result)
 
   //  Make sure that we are being called back with with a
   //   result structure with a parent
-  ink_assert(result->r == PARENT_SPECIFIED);
-  if (result->r != PARENT_SPECIFIED) {
+  ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
+  if (result->r != PARENT_SPECIFIED && result->r != PARENT_ORIGIN) {
     return;
   }
   // If we were set through the API we currently have not failover
@@ -403,6 +407,7 @@ ParentConfigParams::markParentDown(ParentResult * result)
   if (new_fail_count > 0 && new_fail_count == FailThreshold) {
     Note("http parent proxy %s:%d marked down", pRec->hostname, pRec->port);
     pRec->available = false;
+    Debug("parent_select", "Parent marked unavailable, pRec->available=%d", pRec->available);
   }
 }
 
@@ -413,8 +418,8 @@ ParentConfigParams::nextParent(HttpRequestData * rdata, ParentResult * result)
 
   //  Make sure that we are being called back with a
   //   result structure with a parent
-  ink_assert(result->r == PARENT_SPECIFIED);
-  if (result->r != PARENT_SPECIFIED) {
+  ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
+  if (result->r != PARENT_SPECIFIED && result->r != PARENT_ORIGIN) {
     result->r = PARENT_FAIL;
     return;
   }
@@ -446,6 +451,9 @@ ParentConfigParams::nextParent(HttpRequestData * rdata, ParentResult * result)
   case PARENT_DIRECT:
     Debug("cdn", "PARENT_DIRECT");
     break;
+  case PARENT_ORIGIN:
+    Debug("cdn", "PARENT_ORIGIN");
+    break;
   case PARENT_SPECIFIED:
     Debug("cdn", "PARENT_SPECIFIED");
     break;
@@ -464,6 +472,7 @@ ParentConfigParams::nextParent(HttpRequestData * rdata, ParentResult * result)
     case PARENT_DIRECT:
       Debug("parent_select", "Retry result for %s was %s", host, ParentResultStr[result->r]);
       break;
+    case PARENT_ORIGIN:
     case PARENT_SPECIFIED:
       Debug("parent_select", "Retry result for %s was parent %s:%d", host, result->hostname, result->port);
       break;
@@ -583,7 +592,7 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
       do {
         prtmp = (pRecord *) chash->lookup(NULL, 0, &result->chashIter, &result->wrap_around, &hash);
       } while (prtmp && result->foundParents[prtmp->idx]);
-
+      
       if (prtmp) {
          cur_index = prtmp->idx;
          result->foundParents[cur_index] = true;
@@ -635,7 +644,12 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
     }
 
     if (parentUp == true) {
-      result->r = PARENT_SPECIFIED;
+      if (! this->parent_is_proxy) {
+        result->r = PARENT_ORIGIN;
+      }
+      else {
+        result->r = PARENT_SPECIFIED;
+      }
       result->hostname = parents[cur_index].hostname;
       result->port = parents[cur_index].port;
       result->last_parent = cur_index;
@@ -813,6 +827,7 @@ ParentRecord::DefaultInit(char *val)
   this->round_robin = P_NO_ROUND_ROBIN;
   this->ignore_query = false;
   this->scheme = NULL;
+  this->parent_is_proxy = true;
   errPtr = ProcessParents(val);
 
   if (errPtr != NULL) {
@@ -911,7 +926,13 @@ ParentRecord::Init(matcher_line * line_info)
         if (strcasecmp(val, "ignore") == 0) {
             this->ignore_query = true;
         }
-        used = true;
+    } else if (strcasecmp (label, "parent_is_proxy") == 0) {
+	    if (strcasecmp(val, "false") == 0) {
+	      parent_is_proxy = false;
+	    } else {
+	      parent_is_proxy = true;
+	    }
+      used = true;
     }
     // Report errors generated by ProcessParents();
     if (errPtr != NULL) {
@@ -987,6 +1008,7 @@ ParentRecord::Print()
     printf(" %s:%d ", parents[i].hostname, parents[i].port);
   }
   printf(" rr=%s direct=%s\n", ParentRRStr[round_robin], (go_direct == true) ? "true" : "false");
+  printf(" parent_is_proxy=%s\n", ((parent_is_proxy == true) ? "true" : "false"));
 }
 
 // ParentRecord* createDefaultParent(char* val)
@@ -1407,6 +1429,11 @@ show_result(ParentResult * p)
     break;
   case PARENT_SPECIFIED:
     printf("result is PARENT_SPECIFIED\n");
+    printf("hostname is %s\n", p->hostname);
+    printf("port is %d\n", p->port);
+    break;
+  case PARENT_ORIGIN:
+    printf("result is PARENT_ORIGIN\n");
     printf("hostname is %s\n", p->hostname);
     printf("port is %d\n", p->port);
     break;
