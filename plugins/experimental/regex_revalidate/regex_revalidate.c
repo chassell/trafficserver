@@ -35,9 +35,9 @@
 #include <ts/ts.h>
 
 #ifdef HAVE_PCRE_PCRE_H
-#  include <pcre/pcre.h>
+#include <pcre/pcre.h>
 #else
-#  include <pcre.h>
+#include <pcre.h>
 #endif
 
 typedef struct invalidate_t
@@ -75,7 +75,7 @@ static void schedule_free_invalidate_t(invalidate_t * iptr);
 #define LOG_ROLL_INTERVAL       86400
 #define LOG_ROLL_OFFSET         0
 
-static inline void*
+static inline void *
 ts_malloc(size_t s)
 {
   return TSmalloc(s);
@@ -316,7 +316,7 @@ check_ts_version()
 }
 
 void
-TSPluginInit (int argc, const char *argv[])
+TSPluginInit(int argc, const char *argv[])
 {
   TSPluginRegistrationInfo info;
   TSCont main_cont, config_cont;

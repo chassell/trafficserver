@@ -34,4 +34,19 @@ pcre_exec(const pcre *argument_re, const pcre_extra *extra_data,
 {
   __coverity_panic__();
 }
+
+
+// Indicate that our abort function really is that ...
+static void
+ink_die_die_die()
+{
+  __coverity_panic__();
+}
+
+// Teach Coverity that this aborts in all compilation modes.
+void _TSReleaseAssert(const char* txt, const char* f, int l)
+{
+  __coverity_panic__();
+}
+
 } /* extern "C" */

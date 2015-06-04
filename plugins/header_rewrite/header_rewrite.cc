@@ -31,29 +31,6 @@
 const char PLUGIN_NAME[] = "header_rewrite";
 const char PLUGIN_NAME_DBG[] = "dbg_header_rewrite";
 
-const char* HOOK_NAMES[] = {
-  "TS_HTTP_TXN_START_HOOK",
-  "TS_HTTP_READ_REQUEST_HDR_HOOK",
-  "TS_HTTP_OS_DNS_HOOK",
-  "TS_HTTP_SEND_REQUEST_HDR_HOOK",
-  "TS_HTTP_READ_CACHE_HDR_HOOK",
-  "TS_HTTP_READ_RESPONSE_HDR_HOOK",
-  "TS_HTTP_SEND_RESPONSE_HDR_HOOK",
-  "TS_HTTP_REQUEST_TRANSFORM_HOOK",
-  "TS_HTTP_RESPONSE_TRANSFORM_HOOK",
-  "TS_HTTP_SELECT_ALT_HOOK",
-  "TS_HTTP_TXN_START_HOOK",
-  "TS_HTTP_TXN_CLOSE_HOOK",
-  "TS_HTTP_SSN_START_HOOK",
-  "TS_HTTP_SSN_CLOSE_HOOK",
-  "TS_HTTP_CACHE_LOOKUP_COMPLETE_HOOK",
-  "TS_HTTP_PRE_REMAP_HOOK",
-  "TS_HTTP_POST_REMAP_HOOK",
-  "TS_HTTP_RESPONSE_CLIENT_HOOK",
-  "TS_HTTP_TXN_CLOSE_HOOK",
-  "TS_HTTP_LAST_HOOK"
-};
-
 // Forward declaration for the main continuation.
 static int holder_rewrite_headers(TSCont contp, TSEvent event, void *edata);
 
@@ -73,20 +50,28 @@ public:
 
   ~RulesConfig()
   {
-    for (int i=TS_HTTP_READ_REQUEST_HDR_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
+    for (int i = TS_HTTP_READ_REQUEST_HDR_HOOK; i < TS_HTTP_LAST_HOOK; ++i) {
       delete _rules[i];
     }
-
-//    if(default_hook == TS_REMAP_PSEUDO_HOOK) {
-//      TSContDestroy(_cont);
-//    }
   }
 
-  TSCont continuation() const { return _cont; }
+  TSCont
+  continuation() const
+  {
+    return _cont;
+  }
   void continuation(TSCont c) { _cont = c; }
 
-  ResourceIDs resid(int hook) const { return _resids[hook]; }
-  RuleSet* rule(int hook) const { return _rules[hook]; }
+  ResourceIDs
+  resid(int hook) const
+  {
+    return _resids[hook];
+  }
+  RuleSet *
+  rule(int hook) const
+  {
+    return _rules[hook];
+  }
 
   virtual bool parse_config(const std::string fname);
 
@@ -100,11 +85,11 @@ public:
   int rewrite_headers(TSEvent event, TSHttpTxn txnp );
 
 private:
-  bool add_rule(RuleSet* rule);
+  bool add_rule(RuleSet *rule);
 
   TSCont _cont;
-  RuleSet* _rules[TS_HTTP_LAST_HOOK+1];
-  ResourceIDs _resids[TS_HTTP_LAST_HOOK+1];
+  RuleSet *_rules[TS_HTTP_LAST_HOOK + 1];
+  ResourceIDs _resids[TS_HTTP_LAST_HOOK + 1];
   TSHttpHookID default_hook;
 };
 
@@ -112,10 +97,10 @@ private:
 
 // Helper function to add a rule to the rulesets
 bool
-RulesConfig::add_rule(RuleSet* rule)
+RulesConfig::add_rule(RuleSet *rule)
 {
   if (rule && rule->has_operator()) {
-    TSDebug(PLUGIN_NAME_DBG, "   Adding rule to hook=%s\n", HOOK_NAMES[rule->get_hook()]);
+    TSDebug(PLUGIN_NAME_DBG, "   Adding rule to hook=%s\n", TSHttpHookNameLookup(rule->get_hook()));
     if (NULL == _rules[rule->get_hook()]) {
       _rules[rule->get_hook()] = rule;
     } else {
@@ -136,7 +121,7 @@ RulesConfig::add_rule(RuleSet* rule)
 bool
 RulesConfig::parse_config(const std::string fname)
 {
-  RuleSet* rule = NULL;
+  RuleSet *rule = NULL;
   std::string filename;
   std::ifstream f;
   int lineno = 0;
@@ -195,7 +180,7 @@ RulesConfig::parse_config(const std::string fname)
       parse_config(path);
    }
 
-    Parser p(line);  // Tokenize and parse this line
+    Parser p(line); // Tokenize and parse this line
     if (p.empty()) {
       continue;
     }
@@ -249,12 +234,12 @@ RulesConfig::parse_config(const std::string fname)
   add_rule(rule);
 
   // Collect all resource IDs that we need
-  for (int i=TS_HTTP_READ_REQUEST_HDR_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
+  for (int i = TS_HTTP_READ_REQUEST_HDR_HOOK; i < TS_HTTP_LAST_HOOK; ++i) {
     if (_rules[i]) {
       _resids[i] = _rules[i]->get_all_resource_ids();
       if(default_hook == TS_HTTP_READ_RESPONSE_HDR_HOOK) {
         // TODO jlaue do not re-register
-        TSDebug(PLUGIN_NAME, "Adding global ruleset to hook=%s", HOOK_NAMES[i]);
+        TSDebug(PLUGIN_NAME, "Adding global ruleset to hook=%s", TSHttpHookNameLookup((TSHttpHookID)i));
         TSHttpHookAdd(static_cast<TSHttpHookID>(i), this->_cont);
       }
     }
@@ -344,11 +329,11 @@ TSPluginInit(int argc, const char *argv[])
   TSPluginRegistrationInfo info;
   const char* path = NULL;
 
-  info.plugin_name = (char*)PLUGIN_NAME;
-  info.vendor_name = (char*)"Apache Software Foundation";
-  info.support_email = (char*)"dev@trafficserver.apache.org";
+  info.plugin_name = (char *)PLUGIN_NAME;
+  info.vendor_name = (char *)"Apache Software Foundation";
+  info.support_email = (char *)"dev@trafficserver.apache.org";
 
-  if (TS_SUCCESS != TSPluginRegister(TS_SDK_VERSION_3_0 , &info)) {
+  if (TS_SUCCESS != TSPluginRegister(TS_SDK_VERSION_3_0, &info)) {
     TSError("%s: plugin registration failed.\n", PLUGIN_NAME);
   }
 
@@ -393,8 +378,8 @@ TSRemapInit(TSRemapInterface *api_info, char *errbuf, int errbuf_size)
   }
 
   if (api_info->tsremap_version < TSREMAP_VERSION) {
-    snprintf(errbuf, errbuf_size - 1, "[TSRemapInit] - Incorrect API version %ld.%ld",
-             api_info->tsremap_version >> 16, (api_info->tsremap_version & 0xffff));
+    snprintf(errbuf, errbuf_size - 1, "[TSRemapInit] - Incorrect API version %ld.%ld", api_info->tsremap_version >> 16,
+             (api_info->tsremap_version & 0xffff));
     return TS_ERROR;
   }
 
@@ -453,7 +438,7 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char * /* errbuf ATS_UNUSE
     if (TSIsDebugTagSet(PLUGIN_NAME)) {
       for (int i=TS_HTTP_READ_REQUEST_HDR_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
         if (conf->rule(i)) {
-          TSDebug(PLUGIN_NAME, "Adding remap ruleset to hook=%s", HOOK_NAMES[i]);
+          TSDebug(PLUGIN_NAME, "Adding remap ruleset to hook=%s", TSHttpHookNameLookup((TSHttpHookID)i));
         }
       }
     }
@@ -492,17 +477,17 @@ TSRemapDoRemap(void *ih, TSHttpTxn rh, TSRemapRequestInfo *rri)
   RulesConfig* conf = static_cast<RulesConfig*>(config_holder->config);
 
   // Go through all hooks we support, and setup the txn hook(s) as necessary
-  for (int i=TS_HTTP_READ_REQUEST_HDR_HOOK; i<TS_HTTP_LAST_HOOK; ++i) {
+  for (int i = TS_HTTP_READ_REQUEST_HDR_HOOK; i < TS_HTTP_LAST_HOOK; ++i) {
     if (conf->rule(i)) {
       TSHttpTxnHookAdd(rh, static_cast<TSHttpHookID>(i), conf->continuation());
-      TSDebug(PLUGIN_NAME, "Added remapped TXN hook=%s", HOOK_NAMES[i]);
+      TSDebug(PLUGIN_NAME, "Added remapped TXN hook=%s", TSHttpHookNameLookup((TSHttpHookID)i));
     }
   }
 
   // Now handle the remap specific rules for the "remap hook" (which is not a real hook).
   // This is sufficiently different than the normal cont_rewrite_headers() callback, and
   // we can't (shouldn't) schedule this as a TXN hook.
-  RuleSet* rule = conf->rule(TS_REMAP_PSEUDO_HOOK);
+  RuleSet *rule = conf->rule(TS_REMAP_PSEUDO_HOOK);
   Resources res(rh, rri);
 
   res.gather(RSRC_CLIENT_REQUEST_HEADERS, TS_REMAP_PSEUDO_HOOK);

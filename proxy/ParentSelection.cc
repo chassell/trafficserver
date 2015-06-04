@@ -38,7 +38,7 @@ typedef ControlMatcher<ParentRecord, ParentResult> P_table;
 
 // Global Vars for Parent Selection
 static const char modulePrefix[] = "[ParentSelection]";
-static ConfigUpdateHandler<ParentConfig> * parentConfigUpdate = NULL;
+static ConfigUpdateHandler<ParentConfig> *parentConfigUpdate = NULL;
 
 // Config var names
 static const char *file_var = "proxy.config.http.parent_proxy.file";
@@ -48,39 +48,32 @@ static const char *enable_var = "proxy.config.http.parent_proxy_routing_enable";
 static const char *threshold_var = "proxy.config.http.parent_proxy.fail_threshold";
 static const char *dns_parent_only_var = "proxy.config.http.no_dns_just_forward_to_parent";
 
-static const char *ParentResultStr[] = {
-  "Parent_Undefined",
-  "Parent_Direct",
-  "Parent_Specified",
-  "Parent_Failed"
-};
+static const char *ParentResultStr[] = {"Parent_Undefined", "Parent_Direct", "Parent_Specified", "Parent_Failed"};
 
-static const char *ParentRRStr[] = {
-  "false",
-  "strict",
-  "true",
-  "consistent"
-};
+static const char *ParentRRStr[] = {"false", "strict", "true", "consistent"};
 
 //
 //  Config Callback Prototypes
 //
-enum ParentCB_t
-{
-  PARENT_FILE_CB, PARENT_DEFAULT_CB,
-  PARENT_RETRY_CB, PARENT_ENABLE_CB,
-  PARENT_THRESHOLD_CB, PARENT_DNS_ONLY_CB
+enum ParentCB_t {
+  PARENT_FILE_CB,
+  PARENT_DEFAULT_CB,
+  PARENT_RETRY_CB,
+  PARENT_ENABLE_CB,
+  PARENT_THRESHOLD_CB,
+  PARENT_DNS_ONLY_CB,
 };
 
 // If the parent was set by the external customer api,
 //   our HttpRequestData structure told us what parent to
 //   use and we are only called to preserve clean interface
 //   between HttpTransact & the parent selection code.  The following
-ParentRecord *const extApiRecord = (ParentRecord *) 0xeeeeffff;
+ParentRecord *const extApiRecord = (ParentRecord *)0xeeeeffff;
 
 ParentConfigParams::ParentConfigParams()
   : ParentTable(NULL), DefaultParent(NULL), ParentRetryTime(30), ParentEnable(0), FailThreshold(10), DNS_ParentOnly(0)
-{ }
+{
+}
 
 ParentConfigParams::~ParentConfigParams()
 {
@@ -176,8 +169,7 @@ ParentConfig::print()
   ParentConfigParams *params = ParentConfig::acquire();
 
   printf("Parent Selection Config\n");
-  printf("\tEnabled %d\tRetryTime %d\tParent DNS Only %d\n",
-         params->ParentEnable, params->ParentRetryTime, params->DNS_ParentOnly);
+  printf("\tEnabled %d\tRetryTime %d\tParent DNS Only %d\n", params->ParentEnable, params->ParentRetryTime, params->DNS_ParentOnly);
   if (params->DefaultParent == NULL) {
     printf("\tNo Default Parent\n");
   } else {
@@ -191,13 +183,13 @@ ParentConfig::print()
 }
 
 bool
-ParentConfigParams::apiParentExists(HttpRequestData * rdata)
+ParentConfigParams::apiParentExists(HttpRequestData *rdata)
 {
   return (rdata->api_info && rdata->api_info->parent_proxy_name != NULL && rdata->api_info->parent_proxy_port > 0);
 }
 
 bool
-ParentConfigParams::parentExists(HttpRequestData * rdata)
+ParentConfigParams::parentExists(HttpRequestData *rdata)
 {
   ParentResult junk;
 
@@ -211,7 +203,7 @@ ParentConfigParams::parentExists(HttpRequestData * rdata)
 }
 
 void
-ParentConfigParams::findParent(HttpRequestData * rdata, ParentResult * result)
+ParentConfigParams::findParent(HttpRequestData *rdata, ParentResult *result)
 {
   P_table *tablePtr = ParentTable;
   ParentRecord *defaultPtr = DefaultParent;
@@ -307,7 +299,6 @@ ParentConfigParams::findParent(HttpRequestData * rdata, ParentResult * result)
       break;
     case PARENT_ORIGIN:
     case PARENT_SPECIFIED:
-      Debug("parent_select", "sizeof ParentResult = %zu", sizeof(ParentResult));
       Debug("parent_select", "Result for %s was parent %s:%d", host, result->hostname, result->port);
       break;
     default:
@@ -320,7 +311,7 @@ ParentConfigParams::findParent(HttpRequestData * rdata, ParentResult * result)
 
 
 void
-ParentConfigParams::recordRetrySuccess(ParentResult * result)
+ParentConfigParams::recordRetrySuccess(ParentResult *result)
 {
   pRecord *pRec;
 
@@ -338,7 +329,7 @@ ParentConfigParams::recordRetrySuccess(ParentResult * result)
     return;
   }
 
-  ink_assert((int) (result->last_parent) < result->rec->num_parents);
+  ink_assert((int)(result->last_parent) < result->rec->num_parents);
   pRec = result->rec->parents + result->last_parent;
 
   pRec->available = true;
@@ -352,7 +343,7 @@ ParentConfigParams::recordRetrySuccess(ParentResult * result)
 }
 
 void
-ParentConfigParams::markParentDown(ParentResult * result)
+ParentConfigParams::markParentDown(ParentResult *result)
 {
   time_t now;
   pRecord *pRec;
@@ -370,7 +361,7 @@ ParentConfigParams::markParentDown(ParentResult * result)
     return;
   }
 
-  ink_assert((int) (result->last_parent) < result->rec->num_parents);
+  ink_assert((int)(result->last_parent) < result->rec->num_parents);
   pRec = result->rec->parents + result->last_parent;
 
   // If the parent has already been marked down, just increment
@@ -412,7 +403,7 @@ ParentConfigParams::markParentDown(ParentResult * result)
 }
 
 void
-ParentConfigParams::nextParent(HttpRequestData * rdata, ParentResult * result)
+ParentConfigParams::nextParent(HttpRequestData *rdata, ParentResult *result)
 {
   P_table *tablePtr = ParentTable;
 
@@ -517,7 +508,7 @@ ParentRecord::getPathHash(HttpRequestData *hrdata, ATSHash64 *h)
 }
 
 void
-ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * rdata, ParentConfigParams * config)
+ParentRecord::FindParent(bool first_call, ParentResult *result, RequestData *rdata, ParentConfigParams *config)
 {
   Debug("cdn", "Entering FindParent (the inner loop)");
   int cur_index = 0;
@@ -548,9 +539,9 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
         // preserved for now anyway as ats_ip_hash returns the 32-bit address in
         // that case.
         if (rdata->get_client_ip() != NULL) {
-            cur_index = ntohl(ats_ip_hash(rdata->get_client_ip())) % num_parents;
+          cur_index = ntohl(ats_ip_hash(rdata->get_client_ip())) % num_parents;
         } else {
-            cur_index = 0;
+          cur_index = 0;
         }
         break;
       case P_CONSISTENT_HASH:
@@ -592,7 +583,7 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
       do {
         prtmp = (pRecord *) chash->lookup(NULL, 0, &result->chashIter, &result->wrap_around, &hash);
       } while (prtmp && result->foundParents[prtmp->idx]);
-      
+
       if (prtmp) {
          cur_index = prtmp->idx;
          result->foundParents[cur_index] = true;
@@ -607,13 +598,13 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
       cur_index = (result->last_parent + 1) % num_parents;
 
       // Check to see if we have wrapped around
-      if ((unsigned int) cur_index == result->start_parent) {
+      if ((unsigned int)cur_index == result->start_parent) {
         // We've wrapped around so bypass if we can
         if (bypass_ok == true) {
           goto NO_PARENTS;
         } else {
-          // Bypass disabled so keep trying, ignoring whether we think
-          //   a parent is down or not
+        // Bypass disabled so keep trying, ignoring whether we think
+        //   a parent is down or not
         FORCE_WRAP_AROUND:
           result->wrap_around = true;
         }
@@ -628,12 +619,14 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
     if ((parents[cur_index].failedAt == 0) || (parents[cur_index].failCount < config->FailThreshold)) {
       Debug("parent_select", "config->FailThreshold = %d", config->FailThreshold);
       Debug("parent_select", "Selecting a down parent due to little failCount"
-            "(faileAt: %u failCount: %d)", (unsigned)parents[cur_index].failedAt, parents[cur_index].failCount);
+                             "(faileAt: %u failCount: %d)",
+            (unsigned)parents[cur_index].failedAt, parents[cur_index].failCount);
       parentUp = true;
     } else {
       if ((result->wrap_around) || ((parents[cur_index].failedAt + config->ParentRetryTime) < request_info->xact_start)) {
         Debug("parent_select", "Parent[%d].failedAt = %u, retry = %u,xact_start = %" PRId64 " but wrap = %d", cur_index,
-              (unsigned)parents[cur_index].failedAt, config->ParentRetryTime, (int64_t)request_info->xact_start, result->wrap_around);
+              (unsigned)parents[cur_index].failedAt, config->ParentRetryTime, (int64_t)request_info->xact_start,
+              result->wrap_around);
         // Reuse the parent
         parentUp = true;
         parentRetry = true;
@@ -661,7 +654,7 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
     }
 
     if (round_robin == P_CONSISTENT_HASH) {
-      if (result->start_parent == (unsigned int) num_parents) {
+      if (result->start_parent == (unsigned int)num_parents) {
         result->wrap_around = false;
         result->start_parent = 0;
         memset(result->foundParents, 0, sizeof(result->foundParents));
@@ -680,7 +673,7 @@ ParentRecord::FindParent(bool first_call, ParentResult * result, RequestData * r
       cur_index = (cur_index + 1) % num_parents;
     }
 
-  } while ((round_robin == P_CONSISTENT_HASH ? result->wrap_around : ((unsigned int) cur_index != result->start_parent)));
+  } while ((round_robin == P_CONSISTENT_HASH ? result->wrap_around : ((unsigned int)cur_index != result->start_parent)));
 
   // We can't bypass so retry, taking any parent that we can
   if (bypass_ok == false) {
@@ -738,21 +731,21 @@ ParentRecord::ProcessParents(char *val)
     current = pTok[i];
 
     // Find the parent port
-    tmp = (char *) strchr(current, ':');
+    tmp = (char *)strchr(current, ':');
 
     if (tmp == NULL) {
       errPtr = "No parent port specified";
       goto MERROR;
     }
     // Read the parent port
-    //coverity[secure_coding]
+    // coverity[secure_coding]
     if (sscanf(tmp + 1, "%d", &port) != 1) {
       errPtr = "Malformed parent port";
       goto MERROR;
     }
 
     // See if there is an optional parent weight
-    tmp2 = (char *) strchr(current, '|');
+    tmp2 = (char *)strchr(current, '|');
 
     if (tmp2) {
       if (sscanf(tmp2 + 1, "%f", &weight) != 1) {
@@ -769,8 +762,10 @@ ParentRecord::ProcessParents(char *val)
     } else {
       scan = tmp + 1;
     }
-    for (; *scan != '\0' && (ParseRules::is_digit(*scan) || *scan == '.'); scan++);
-    for (; *scan != '\0' && ParseRules::is_wslfcr(*scan); scan++);
+    for (; *scan != '\0' && (ParseRules::is_digit(*scan) || *scan == '.'); scan++)
+      ;
+    for (; *scan != '\0' && ParseRules::is_wslfcr(*scan); scan++)
+      ;
     if (*scan != '\0') {
       errPtr = "Garbage trailing entry or invalid separator";
       goto MERROR;
@@ -842,7 +837,8 @@ ParentRecord::DefaultInit(char *val)
 }
 
 void
-ParentRecord::buildConsistentHash(void) {
+ParentRecord::buildConsistentHash(void)
+{
   ATSHash64Sip24 hash;
   int i;
 
@@ -853,11 +849,11 @@ ParentRecord::buildConsistentHash(void) {
   chash = new ATSConsistentHash();
 
   for (i = 0; i < num_parents; i++) {
-    chash->insert(&(this->parents[i]), this->parents[i].weight, (ATSHash64 *) &hash);
+    chash->insert(&(this->parents[i]), this->parents[i].weight, (ATSHash64 *)&hash);
   }
 }
 
-// char* ParentRecord::Init(matcher_line* line_info)
+// config_parse_error ParentRecord::Init(matcher_line* line_info)
 //
 //    matcher_line* line_info - contains parsed label/value
 //      pairs of the current cache.config line
@@ -866,12 +862,10 @@ ParentRecord::buildConsistentHash(void) {
 //      Otherwise, returns an error string that the caller MUST
 //        DEALLOCATE with ats_free()
 //
-char *
-ParentRecord::Init(matcher_line * line_info)
+config_parse_error
+ParentRecord::Init(matcher_line *line_info)
 {
   const char *errPtr = NULL;
-  char *errBuf;
-  const int errBufLen = 1024;
   const char *tmp;
   char *label;
   char *val;
@@ -936,9 +930,7 @@ ParentRecord::Init(matcher_line * line_info)
     }
     // Report errors generated by ProcessParents();
     if (errPtr != NULL) {
-      errBuf = (char *)ats_malloc(errBufLen * sizeof(char));
-      snprintf(errBuf, errBufLen, "%s %s at line %d", modulePrefix, errPtr, line_num);
-      return errBuf;
+      return config_parse_error("%s %s at line %d", modulePrefix, errPtr, line_num);
     }
 
     if (used == true) {
@@ -949,18 +941,14 @@ ParentRecord::Init(matcher_line * line_info)
   }
 
   if (this->parents == NULL && go_direct == false) {
-    errBuf = (char *)ats_malloc(errBufLen * sizeof(char));
-    snprintf(errBuf, errBufLen, "%s No parent specified in parent.config at line %d", modulePrefix, line_num);
-    return errBuf;
+    return config_parse_error("%s No parent specified in parent.config at line %d", modulePrefix, line_num);
   }
   // Process any modifiers to the directive, if they exist
   if (line_info->num_el > 0) {
     tmp = ProcessModifiers(line_info);
 
     if (tmp != NULL) {
-      errBuf = (char *)ats_malloc(errBufLen * sizeof(char));
-      snprintf(errBuf, errBufLen, "%s %s at line %d in parent.config", modulePrefix, tmp, line_num);
-      return errBuf;
+      return config_parse_error("%s %s at line %d in parent.config", modulePrefix, tmp, line_num);
     }
     // record SCHEME modifier if present.
     // NULL if not present
@@ -973,7 +961,7 @@ ParentRecord::Init(matcher_line * line_info)
     }
   }
 
-  return NULL;
+  return config_parse_error::ok();
 }
 
 // void ParentRecord::UpdateMatch(ParentResult* result, RequestData* rdata);
@@ -982,9 +970,9 @@ ParentRecord::Init(matcher_line * line_info)
 //     appears later in the file
 //
 void
-ParentRecord::UpdateMatch(ParentResult * result, RequestData * rdata)
+ParentRecord::UpdateMatch(ParentResult *result, RequestData *rdata)
 {
-  if (this->CheckForMatch((HttpRequestData *) rdata, result->line_number) == true) {
+  if (this->CheckForMatch((HttpRequestData *)rdata, result->line_number) == true) {
     result->rec = this;
     result->line_number = this->line_num;
 
@@ -1038,7 +1026,7 @@ createDefaultParent(char *val)
 }
 
 //
-//ParentConfig equivalent functions for SocksServerConfig
+// ParentConfig equivalent functions for SocksServerConfig
 //
 
 int SocksServerConfig::m_id = 0;
@@ -1055,7 +1043,7 @@ SocksServerConfig::startup()
 }
 
 static int
-setup_socks_servers(ParentRecord * rec_arr, int len)
+setup_socks_servers(ParentRecord *rec_arr, int len)
 {
   /* This changes hostnames into ip addresses and sets go_direct to false */
   for (int j = 0; j < len; j++) {
@@ -1067,11 +1055,13 @@ setup_socks_servers(ParentRecord * rec_arr, int len)
     for (int i = 0; i < n_parents; i++) {
       IpEndpoint ip4, ip6;
       if (0 == ats_ip_getbestaddrinfo(pr[i].hostname, &ip4, &ip6)) {
-        IpEndpoint* ip = ats_is_ip6(&ip6) ? &ip6 : &ip4;
-        ats_ip_ntop(ip, pr[i].hostname, MAXDNAME+1);
+        IpEndpoint *ip = ats_is_ip6(&ip6) ? &ip6 : &ip4;
+        ats_ip_ntop(ip, pr[i].hostname, MAXDNAME + 1);
       } else {
-        Warning("Could not resolve socks server name \"%s\". " "Please correct it", pr[i].hostname);
-        snprintf(pr[i].hostname, MAXDNAME+1, "255.255.255.255");
+        Warning("Could not resolve socks server name \"%s\". "
+                "Please correct it",
+                pr[i].hostname);
+        snprintf(pr[i].hostname, MAXDNAME + 1, "255.255.255.255");
       }
     }
   }
@@ -1091,8 +1081,7 @@ SocksServerConfig::reconfigure()
   params = new ParentConfigParams;
 
   // Allocate parent table
-  params->ParentTable = new P_table("proxy.config.socks.socks_config_file", "[Socks Server Selection]",
-                                    &socks_server_tags);
+  params->ParentTable = new P_table("proxy.config.socks.socks_config_file", "[Socks Server Selection]", &socks_server_tags);
 
   // Handle default parent
   PARENT_ReadConfigStringAlloc(default_val, "proxy.config.socks.default_servers");
@@ -1117,7 +1106,7 @@ SocksServerConfig::reconfigure()
   params->FailThreshold = fail_threshold;
 
   // Handle dns parent only
-  //PARENT_ReadConfigInteger(dns_parent_only, dns_parent_only_var);
+  // PARENT_ReadConfigInteger(dns_parent_only, dns_parent_only_var);
   params->DNS_ParentOnly = 0;
 
   m_id = configProcessor.set(m_id, params);
@@ -1133,8 +1122,7 @@ SocksServerConfig::print()
   ParentConfigParams *params = SocksServerConfig::acquire();
 
   printf("Parent Selection Config for Socks Server\n");
-  printf("\tEnabled %d\tRetryTime %d\tParent DNS Only %d\n",
-         params->ParentEnable, params->ParentRetryTime, params->DNS_ParentOnly);
+  printf("\tEnabled %d\tRetryTime %d\tParent DNS Only %d\n", params->ParentEnable, params->ParentRetryTime, params->DNS_ParentOnly);
   if (params->DefaultParent == NULL) {
     printf("\tNo Default Parent\n");
   } else {
@@ -1147,13 +1135,14 @@ SocksServerConfig::print()
   SocksServerConfig::release(params);
 }
 
-#define TEST_FAIL(str) { \
-  printf("%d: %s\n", test_id,str);\
-  err= REGRESSION_TEST_FAILED;\
-}
+#define TEST_FAIL(str)                \
+  {                                   \
+    printf("%d: %s\n", test_id, str); \
+    err = REGRESSION_TEST_FAILED;     \
+  }
 
 void
-request_to_data(HttpRequestData * req, sockaddr const* srcip, sockaddr const* dstip, const char *str)
+request_to_data(HttpRequestData *req, sockaddr const *srcip, sockaddr const *dstip, const char *str)
 {
   HTTPParser parser;
 
@@ -1176,8 +1165,7 @@ static int passes;
 static int fails;
 
 // Parenting Tests
-EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION) (RegressionTest * /* t ATS_UNUSED */,
-                                            int /* intensity_level ATS_UNUSED */, int *pstatus)
+EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, int /* intensity_level ATS_UNUSED */, int *pstatus)
 {
   // first, set everything up
   *pstatus = REGRESSION_TEST_INPROGRESS;
@@ -1189,19 +1177,37 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION) (RegressionTest * /* t ATS_UNUSED */,
   config.startup();
   params->ParentEnable = true;
   char tbl[2048];
-#define T(x) ink_strlcat(tbl,x, sizeof(tbl));
-#define REBUILD params->ParentTable = new P_table("", "ParentSelection Unit Test Table", &http_dest_tags, ALLOW_HOST_TABLE | ALLOW_REGEX_TABLE | ALLOW_URL_TABLE | ALLOW_IP_TABLE | DONT_BUILD_TABLE); params->ParentTable->BuildTableFromString(tbl);
+#define T(x) ink_strlcat(tbl, x, sizeof(tbl));
+#define REBUILD                                                                                                                  \
+  params->ParentTable = new P_table("", "ParentSelection Unit Test Table", &http_dest_tags,                                      \
+                                    ALLOW_HOST_TABLE | ALLOW_REGEX_TABLE | ALLOW_URL_TABLE | ALLOW_IP_TABLE | DONT_BUILD_TABLE); \
+  params->ParentTable->BuildTableFromString(tbl);
   HttpRequestData *request = NULL;
   ParentResult *result = NULL;
-#define REINIT delete request; delete result; request = new HttpRequestData(); result = new ParentResult(); if (!result || !request) { (void)printf("Allocation failed\n"); return; }
-#define ST(x) printf ("*** TEST %d *** STARTING ***\n", x);
-#define RE(x,y) if (x) { printf("*** TEST %d *** PASSED ***\n", y); passes ++; } else { printf("*** TEST %d *** FAILED *** FAILED *** FAILED ***\n", y); fails++; }
+#define REINIT                            \
+  delete request;                         \
+  delete result;                          \
+  request = new HttpRequestData();        \
+  result = new ParentResult();            \
+  if (!result || !request) {              \
+    (void) printf("Allocation failed\n"); \
+    return;                               \
+  }
+#define ST(x) printf("*** TEST %d *** STARTING ***\n", x);
+#define RE(x, y)                                                     \
+  if (x) {                                                           \
+    printf("*** TEST %d *** PASSED ***\n", y);                       \
+    passes++;                                                        \
+  } else {                                                           \
+    printf("*** TEST %d *** FAILED *** FAILED *** FAILED ***\n", y); \
+    fails++;                                                         \
+  }
 #define FP params->findParent(request, result);
 
   // Test 1
   tbl[0] = '\0';
   ST(1)
-    T("dest_domain=. parent=red:37412,orange:37412,yellow:37412 round_robin=strict\n")
+  T("dest_domain=. parent=red:37412,orange:37412,yellow:37412 round_robin=strict\n")
   REBUILD int c, red = 0, orange = 0, yellow = 0;
   for (c = 0; c < 21; c++) {
     REINIT br(request, "fruit_basket.net");
@@ -1210,9 +1216,9 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION) (RegressionTest * /* t ATS_UNUSED */,
     yellow += verify(result, PARENT_SPECIFIED, "yellow", 37412);
   }
   RE(((red == 7) && (orange == 7) && (yellow == 7)), 1)
-    // Test 2
-    ST(2)
-    tbl[0] = '\0';
+  // Test 2
+  ST(2)
+  tbl[0] = '\0';
   T("dest_domain=. parent=green:4325,blue:4325,indigo:4325,violet:4325 round_robin=false\n")
   REBUILD int g = 0, b = 0, i = 0, v = 0;
   for (c = 0; c < 17; c++) {
@@ -1223,36 +1229,37 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION) (RegressionTest * /* t ATS_UNUSED */,
     v += verify(result, PARENT_SPECIFIED, "violet", 4325);
   }
   RE((((g == 17) && !b && !i && !v) || (!g && (b == 17) && !i && !v) || (!g && !b && (i == 17) && !v) ||
-      (!g && !b && !i && (v == 17))), 2)
-    // Test 3 - 6 Parenting Table
-    tbl[0] = '\0';
-# define TEST_IP4_ADDR "209.131.62.14"
-# define TEST_IP6_ADDR "BEEF:DEAD:ABBA:CAFE:1337:1E1F:5EED:C0FF"
-  T("dest_ip=" TEST_IP4_ADDR " parent=cat:37,dog:24 round_robin=strict\n")  /* L1 */
-  T("dest_ip=" TEST_IP6_ADDR " parent=zwoop:37,jMCg:24 round_robin=strict\n")  /* L1 */
-    T("dest_host=www.pilot.net parent=pilot_net:80\n")  /* L2 */
-    T("url_regex=snoopy parent=odie:80,garfield:80 round_robin=true\n") /* L3 */
-    T("dest_domain=i.am parent=amy:80,katie:80,carissa:771 round_robin=false\n")        /* L4 */
-    T("dest_domain=microsoft.net time=03:00-22:10 parent=zoo.net:341\n")        /* L5 */
-    T("dest_domain=microsoft.net time=0:00-02:59 parent=zoo.net:347\n") /* L6 */
-    T("dest_domain=microsoft.net time=22:11-23:59 parent=zoo.edu:111\n")        /* L7 */
-    T("dest_domain=imac.net port=819 parent=genie:80 round_robin=strict\n")     /* L8 */
-    T("dest_ip=172.34.61.211 port=3142 parent=orangina:80 go_direct=false\n")   /* L9 */
-    T("url_regex=miffy prefix=furry/rabbit parent=nintje:80 go_direct=false\n") /* L10 */
-    T("url_regex=kitty suffix=tif parent=hello:80 round_robin=strict go_direct=false\n")        /* L11 */
-    T("url_regex=cyclops method=get parent=turkey:80\n")        /* L12 */
-    T("url_regex=cyclops method=post parent=club:80\n") /* L13 */
-    T("url_regex=cyclops method=put parent=sandwich:80\n")      /* L14 */
-    T("url_regex=cyclops method=trace parent=mayo:80\n")        /* L15 */
-    T("dest_host=pluto scheme=HTTP parent=strategy:80\n")       /* L16 */
-    REBUILD
-    // Test 3
-    IpEndpoint ip;
-    ats_ip_pton(TEST_IP4_ADDR, &ip.sa);
-    ST(3) REINIT br(request, "numeric_host", &ip.sa);
+      (!g && !b && !i && (v == 17))),
+     2)
+  // Test 3 - 6 Parenting Table
+  tbl[0] = '\0';
+#define TEST_IP4_ADDR "209.131.62.14"
+#define TEST_IP6_ADDR "BEEF:DEAD:ABBA:CAFE:1337:1E1F:5EED:C0FF"
+  T("dest_ip=" TEST_IP4_ADDR " parent=cat:37,dog:24 round_robin=strict\n")             /* L1 */
+  T("dest_ip=" TEST_IP6_ADDR " parent=zwoop:37,jMCg:24 round_robin=strict\n")          /* L1 */
+  T("dest_host=www.pilot.net parent=pilot_net:80\n")                                   /* L2 */
+  T("url_regex=snoopy parent=odie:80,garfield:80 round_robin=true\n")                  /* L3 */
+  T("dest_domain=i.am parent=amy:80,katie:80,carissa:771 round_robin=false\n")         /* L4 */
+  T("dest_domain=microsoft.net time=03:00-22:10 parent=zoo.net:341\n")                 /* L5 */
+  T("dest_domain=microsoft.net time=0:00-02:59 parent=zoo.net:347\n")                  /* L6 */
+  T("dest_domain=microsoft.net time=22:11-23:59 parent=zoo.edu:111\n")                 /* L7 */
+  T("dest_domain=imac.net port=819 parent=genie:80 round_robin=strict\n")              /* L8 */
+  T("dest_ip=172.34.61.211 port=3142 parent=orangina:80 go_direct=false\n")            /* L9 */
+  T("url_regex=miffy prefix=furry/rabbit parent=nintje:80 go_direct=false\n")          /* L10 */
+  T("url_regex=kitty suffix=tif parent=hello:80 round_robin=strict go_direct=false\n") /* L11 */
+  T("url_regex=cyclops method=get parent=turkey:80\n")                                 /* L12 */
+  T("url_regex=cyclops method=post parent=club:80\n")                                  /* L13 */
+  T("url_regex=cyclops method=put parent=sandwich:80\n")                               /* L14 */
+  T("url_regex=cyclops method=trace parent=mayo:80\n")                                 /* L15 */
+  T("dest_host=pluto scheme=HTTP parent=strategy:80\n")                                /* L16 */
+  REBUILD
+  // Test 3
+  IpEndpoint ip;
+  ats_ip_pton(TEST_IP4_ADDR, &ip.sa);
+  ST(3) REINIT br(request, "numeric_host", &ip.sa);
   FP RE(verify(result, PARENT_SPECIFIED, "cat", 37) + verify(result, PARENT_SPECIFIED, "dog", 24), 3)
     ats_ip_pton(TEST_IP6_ADDR, &ip.sa);
-    ST(4) REINIT br(request, "numeric_host", &ip.sa);
+  ST(4) REINIT br(request, "numeric_host", &ip.sa);
   FP RE(verify(result, PARENT_SPECIFIED, "zwoop", 37) + verify(result, PARENT_SPECIFIED, "jMCg", 24), 4)
     // Test 5
     ST(5) REINIT br(request, "www.pilot.net");
@@ -1264,38 +1271,38 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION) (RegressionTest * /* t ATS_UNUSED */,
   FP RE(verify(result, PARENT_SPECIFIED, "odie", 80) + verify(result, PARENT_SPECIFIED, "garfield", 80), 5)
     // Test 7
     ST(7) REINIT br(request, "a.rabbit.i.am");
-  FP RE(verify(result, PARENT_SPECIFIED, "amy", 80) +
-        verify(result, PARENT_SPECIFIED, "katie", 80) + verify(result, PARENT_SPECIFIED, "carissa", 771), 6)
+  FP RE(verify(result, PARENT_SPECIFIED, "amy", 80) + verify(result, PARENT_SPECIFIED, "katie", 80) +
+          verify(result, PARENT_SPECIFIED, "carissa", 771),
+        6)
     // Test 6+ BUGBUG needs to be fixed
-//   ST(7) REINIT
-//   br(request, "www.microsoft.net");
-//   FP RE( verify(result,PARENT_SPECIFIED,"zoo.net",341) +
-//       verify(result,PARENT_SPECIFIED,"zoo.net",347) +
-//       verify(result,PARENT_SPECIFIED,"zoo.edu",111) ,7)
+    //   ST(7) REINIT
+    //   br(request, "www.microsoft.net");
+    //   FP RE( verify(result,PARENT_SPECIFIED,"zoo.net",341) +
+    //       verify(result,PARENT_SPECIFIED,"zoo.net",347) +
+    //       verify(result,PARENT_SPECIFIED,"zoo.edu",111) ,7)
     // Test 6++ BUGBUG needs to be fixed
-//   ST(7) REINIT
-//   br(request, "snow.imac.net:2020");
-//   FP RE(verify(result,PARENT_DIRECT,0,0),7)
+    //   ST(7) REINIT
+    //   br(request, "snow.imac.net:2020");
+    //   FP RE(verify(result,PARENT_DIRECT,0,0),7)
     // Test 6+++ BUGBUG needs to be fixed
-//   ST(8) REINIT
-//   br(request, "snow.imac.net:819");
-//   URL* u = new URL();
-//   char* r = "http://snow.imac.net:819/";
-//   u->create(0);
-//   u->parse(r,strlen(r));
-//   u->port_set(819);
-//   request->hdr->url_set(u);
-//   ink_assert(request->hdr->url_get()->port_get() == 819);
-//   printf("url: %s\n",request->hdr->url_get()->string_get(0));
-//   FP RE(verify(result,PARENT_SPECIFIED,"genie",80),8)
+    //   ST(8) REINIT
+    //   br(request, "snow.imac.net:819");
+    //   URL* u = new URL();
+    //   char* r = "http://snow.imac.net:819/";
+    //   u->create(0);
+    //   u->parse(r,strlen(r));
+    //   u->port_set(819);
+    //   request->hdr->url_set(u);
+    //   ink_assert(request->hdr->url_get()->port_get() == 819);
+    //   printf("url: %s\n",request->hdr->url_get()->string_get(0));
+    //   FP RE(verify(result,PARENT_SPECIFIED,"genie",80),8)
     // Test 7 - N Parent Table
     tbl[0] = '\0';
   T("dest_domain=rabbit.net parent=fuzzy:80,fluffy:80,furry:80,frisky:80 round_robin=strict go_direct=true\n")
-    REBUILD
-    // Test 8
-    ST(8) REINIT br(request, "i.am.rabbit.net");
-  FP RE(verify(result, PARENT_SPECIFIED, "fuzzy", 80), 7)
-    params->markParentDown(result);
+  REBUILD
+  // Test 8
+  ST(8) REINIT br(request, "i.am.rabbit.net");
+  FP RE(verify(result, PARENT_SPECIFIED, "fuzzy", 80), 7) params->markParentDown(result);
 
   // Test 9
   ST(9) REINIT br(request, "i.am.rabbit.net");
@@ -1318,8 +1325,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION) (RegressionTest * /* t ATS_UNUSED */,
   FP RE(verify(result, PARENT_SPECIFIED, "furry", 80), 13)
     // Test 15
     ST(15) REINIT br(request, "i.am.rabbit.net");
-  FP RE(verify(result, PARENT_SPECIFIED, "frisky", 80), 14)
-    params->markParentDown(result);
+  FP RE(verify(result, PARENT_SPECIFIED, "frisky", 80), 14) params->markParentDown(result);
 
   // restart the loop
 
@@ -1344,8 +1350,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION) (RegressionTest * /* t ATS_UNUSED */,
   FP RE(verify(result, PARENT_SPECIFIED, "fluffy", 80), 20)
     // Test 22
     ST(22) REINIT br(request, "i.am.rabbit.net");
-  FP RE(verify(result, PARENT_SPECIFIED, "furry", 80), 21)
-    params->markParentDown(result);
+  FP RE(verify(result, PARENT_SPECIFIED, "furry", 80), 21) params->markParentDown(result);
 
   // Test 23 - 32
   for (i = 23; i < 33; i++) {
@@ -1353,7 +1358,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION) (RegressionTest * /* t ATS_UNUSED */,
     FP RE(verify(result, PARENT_SPECIFIED, "fluffy", 80), i)
   }
 
-  params->markParentDown(result);       // now they're all down
+  params->markParentDown(result); // now they're all down
 
   // Test 33 - 132
   for (i = 33; i < 133; i++) {
@@ -1394,7 +1399,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION) (RegressionTest * /* t ATS_UNUSED */,
 
 // verify returns 1 iff the test passes
 int
-verify(ParentResult * r, ParentResultType e, const char *h, int p)
+verify(ParentResult *r, ParentResultType e, const char *h, int p)
 {
   if (is_debug_tag_set("parent_select"))
     show_result(r);
@@ -1403,7 +1408,7 @@ verify(ParentResult * r, ParentResultType e, const char *h, int p)
 
 // br creates an HttpRequestData object
 void
-br(HttpRequestData * h, const char *os_hostname, sockaddr const* dest_ip)
+br(HttpRequestData *h, const char *os_hostname, sockaddr const *dest_ip)
 {
   h->hdr = new HTTPHdr();
   h->hdr->create(HTTP_TYPE_REQUEST);
@@ -1413,12 +1418,12 @@ br(HttpRequestData * h, const char *os_hostname, sockaddr const* dest_ip)
   ink_zero(h->dest_ip);
   ats_ip_copy(&h->dest_ip.sa, dest_ip);
   h->incoming_port = 80;
-  h->api_info = new _HttpApiInfo();
+  h->api_info = new HttpApiInfo();
 }
 
 // show_result prints out the ParentResult information
 void
-show_result(ParentResult * p)
+show_result(ParentResult *p)
 {
   switch (p->r) {
   case PARENT_UNDEFINED:

@@ -17,7 +17,5 @@
 include $(top_srcdir)/build/plugins.mk
 
 pkglib_LTLIBRARIES = cacheurl.la
-cacheurl_la_SOURCES = \
-  pluginconfig.cc \
-  cacheurl.cc
+cacheurl_la_SOURCES = cacheurl.cc
 cacheurl_la_LDFLAGS = $(TS_PLUGIN_LDFLAGS)
