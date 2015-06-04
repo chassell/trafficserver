@@ -2391,8 +2391,7 @@ HttpSM::state_cache_open_write(int event, void *data)
   case CACHE_EVENT_OPEN_WRITE_FAILED:
     // Failed on the write lock and retrying the vector
     //  for reading
-    if (t_state.http_config_param->cache_open_write_fail_action ==
-        HttpTransact::CACHE_OPEN_WRITE_FAIL_DEFAULT) {
+    if (t_state.http_config_param->cache_open_write_fail_action == HttpTransact::CACHE_OPEN_WRITE_FAIL_DEFAULT) {
       t_state.cache_info.write_lock_state = HttpTransact::CACHE_WL_FAIL;
       break;
     } else {
@@ -2403,8 +2402,8 @@ HttpSM::state_cache_open_write(int event, void *data)
         break;
       }
     }
-    // INTENTIONAL FALL THROUGH
-    // Allow for stale object to be served
+  // INTENTIONAL FALL THROUGH
+  // Allow for stale object to be served
   case CACHE_EVENT_OPEN_READ:
     // The write vector was locked and the cache_sm retried
     // and got the read vector again.

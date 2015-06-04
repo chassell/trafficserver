@@ -1294,8 +1294,8 @@ Vol::init(char *s, off_t blocks, off_t dir_skip, bool clear)
   evacuate = (DLL<EvacuationBlock> *)ats_malloc(evac_len);
   memset(evacuate, 0, evac_len);
 
-  Debug("cache_init", "allocating %zu directory bytes for a %lld byte volume (%lf%%)",
-    vol_dirlen(this), (long long)this->len, (double)vol_dirlen(this) / (double)this->len * 100.0);
+  Debug("cache_init", "allocating %zu directory bytes for a %lld byte volume (%lf%%)", vol_dirlen(this), (long long)this->len,
+        (double)vol_dirlen(this) / (double)this->len * 100.0);
 
   raw_dir = NULL;
   if (ats_hugepage_enabled())
@@ -1303,9 +1303,9 @@ Vol::init(char *s, off_t blocks, off_t dir_skip, bool clear)
   if (raw_dir == NULL)
     raw_dir = (char *)ats_memalign(ats_pagesize(), vol_dirlen(this));
 
-  dir = (Dir *) (raw_dir + vol_headerlen(this));
-  header = (VolHeaderFooter *) raw_dir;
-  footer = (VolHeaderFooter *) (raw_dir + vol_dirlen(this) - ROUND_TO_STORE_BLOCK(sizeof(VolHeaderFooter)));
+  dir = (Dir *)(raw_dir + vol_headerlen(this));
+  header = (VolHeaderFooter *)raw_dir;
+  footer = (VolHeaderFooter *)(raw_dir + vol_dirlen(this) - ROUND_TO_STORE_BLOCK(sizeof(VolHeaderFooter)));
 
 #if TS_USE_INTERIM_CACHE == 1
   num_interim_vols = good_interim_disks;
@@ -3373,7 +3373,7 @@ create_volume(int volume_number, off_t size_in_blocks, int scheme, CacheVol *cp)
 void
 rebuild_host_table(Cache *cache)
 {
-  CacheHostTable* hosttable = cache->getHosttable(__func__);
+  CacheHostTable *hosttable = cache->getHosttable(__func__);
   build_vol_hash_table(&hosttable->gen_host_rec);
   if (hosttable->m_numEntries != 0) {
     CacheHostMatcher *hm = hosttable->getHostMatcher();
@@ -3391,7 +3391,7 @@ Vol *
 Cache::key_to_vol(CacheKey *key, char const *hostname, int host_len)
 {
   uint32_t h = (key->slice32(2) >> DIR_TAG_WIDTH) % VOL_HASH_TABLE_SIZE;
-  CacheHostTable* hosttable = getHosttable(__func__);
+  CacheHostTable *hosttable = getHosttable(__func__);
   unsigned short *hash_table = hosttable->gen_host_rec.vol_hash_table;
   CacheHostRecord *host_rec = &(hosttable->gen_host_rec);
 

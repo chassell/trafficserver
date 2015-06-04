@@ -64,7 +64,7 @@ free_cfg(struct config *cfg)
 #endif
 
   if (cfg->regex)
-        pcre_free(cfg->regex);
+    pcre_free(cfg->regex);
 
   TSfree(cfg);
 }
@@ -189,7 +189,8 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char *errbuf, int errbuf_s
 #ifdef PCRE_STUDY_JIT_COMPILE
         options = PCRE_STUDY_JIT_COMPILE;
 #endif
-        cfg->regex_extra = pcre_study(cfg->regex, options, &errptr); // We do not need to check the error here because we can still run without the studying?
+        cfg->regex_extra = pcre_study(
+          cfg->regex, options, &errptr); // We do not need to check the error here because we can still run without the studying?
       }
     } else {
       TSError("Error parsing line %d of file %s (%s).", line_no, config_file, line);

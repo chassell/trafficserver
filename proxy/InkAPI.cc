@@ -1294,7 +1294,7 @@ ConfigUpdateCbTable::insert(INKContInternal *contp, const char *name)
 
   if (contp && name) {
     MUTEX_TAKE_LOCK(mutex, this_ethread());
-    ink_hash_table_insert(cb_table, (InkHashTableKey) name, (InkHashTableValue) contp);
+    ink_hash_table_insert(cb_table, (InkHashTableKey)name, (InkHashTableValue)contp);
     MUTEX_UNTAKE_LOCK(mutex, this_ethread());
   }
 }
@@ -1307,7 +1307,7 @@ ConfigUpdateCbTable::remove(const char *name)
 
   if (name) {
     MUTEX_TAKE_LOCK(mutex, this_ethread());
-    ink_hash_table_delete(cb_table, (InkHashTableKey) name);
+    ink_hash_table_delete(cb_table, (InkHashTableKey)name);
     MUTEX_UNTAKE_LOCK(mutex, this_ethread());
   }
 }
@@ -1335,7 +1335,7 @@ ConfigUpdateCbTable::invoke(const char *name)
       MUTEX_UNTAKE_LOCK(mutex, this_ethread());
     } else {
       MUTEX_TAKE_LOCK(mutex, this_ethread());
-      ht_entry = ink_hash_table_lookup_entry(cb_table, (InkHashTableKey) name);
+      ht_entry = ink_hash_table_lookup_entry(cb_table, (InkHashTableKey)name);
       if (ht_entry != NULL) {
         contp = (INKContInternal *)ink_hash_table_entry_value(cb_table, ht_entry);
         ink_assert(contp != NULL);
@@ -4187,7 +4187,7 @@ TSMgmtUpdateRegister(TSCont contp, const char *plugin_name)
 void
 TSMgmtUnRegister(const char *plugin_name)
 {
-  sdk_assert(sdk_sanity_check_null_ptr((void*)plugin_name) == TS_SUCCESS);
+  sdk_assert(sdk_sanity_check_null_ptr((void *)plugin_name) == TS_SUCCESS);
 
   global_config_cbs->remove(plugin_name);
 }

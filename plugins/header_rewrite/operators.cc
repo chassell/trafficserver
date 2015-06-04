@@ -598,7 +598,7 @@ OperatorSetConnDSCP::exec(const Resources &res) const
 
 // OperatorSetMethod
 void
-OperatorSetMethod::initialize(Parser& p)
+OperatorSetMethod::initialize(Parser &p)
 {
   OperatorHeaders::initialize(p);
 
@@ -614,7 +614,7 @@ OperatorSetMethod::initialize_hooks()
 }
 
 void
-OperatorSetMethod::exec(const Resources& res) const
+OperatorSetMethod::exec(const Resources &res) const
 {
   std::string method;
 

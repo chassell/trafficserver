@@ -336,13 +336,13 @@ public:
   ConfigUpdateCbTable();
   ~ConfigUpdateCbTable();
 
-  void insert(INKContInternal * contp, const char *name);
+  void insert(INKContInternal *contp, const char *name);
   void remove(const char *name);
   void invoke(const char *name);
   void invoke(INKContInternal *contp);
 
 private:
-  InkHashTable * cb_table;
+  InkHashTable *cb_table;
   ProxyMutex *mutex;
 };
 

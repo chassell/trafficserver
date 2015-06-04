@@ -1064,8 +1064,10 @@ HttpConfig::startup()
   HttpEstablishStaticConfigByte(c.oride.cache_range_write, "proxy.config.http.cache.range.write");
 
   HttpEstablishStaticConfigStringAlloc(c.connect_ports_string, "proxy.config.http.connect_ports");
-  HttpEstablishStaticConfigStringAlloc(c.simple_retry_response_codes_string, "proxy.config.http.parent_origin.simple_retry_response_codes");
-  HttpEstablishStaticConfigStringAlloc(c.dead_server_retry_response_codes_string, "proxy.config.http.parent_origin.dead_server_retry_response_codes");
+  HttpEstablishStaticConfigStringAlloc(c.simple_retry_response_codes_string,
+                                       "proxy.config.http.parent_origin.simple_retry_response_codes");
+  HttpEstablishStaticConfigStringAlloc(c.dead_server_retry_response_codes_string,
+                                       "proxy.config.http.parent_origin.dead_server_retry_response_codes");
 
   HttpEstablishStaticConfigLongLong(c.oride.request_hdr_max_size, "proxy.config.http.request_header_max_size");
   HttpEstablishStaticConfigLongLong(c.oride.response_hdr_max_size, "proxy.config.http.response_header_max_size");
@@ -1128,7 +1130,7 @@ HttpConfig::startup()
   // parent origin.
   HttpEstablishStaticConfigLongLong(c.oride.simple_retry_enabled, "proxy.config.http.parent_origin.simple_retry_enabled");
   HttpEstablishStaticConfigLongLong(c.oride.dead_server_retry_enabled, "proxy.config.http.parent_origin.dead_server_retry_enabled");
-  
+
   // Cluster time delta gets it own callback since it needs
   //  to use ink_atomic_swap
   c.cluster_time_delta = 0;
@@ -1333,9 +1335,9 @@ HttpConfig::reconfigure()
   params->connect_ports_string = ats_strdup(m_master.connect_ports_string);
   params->connect_ports = parse_ports_list(params->connect_ports_string);
   params->simple_retry_response_codes_string = ats_strdup(m_master.simple_retry_response_codes_string);
-  params->simple_retry_response_codes = new ResponseCodesMap (params->simple_retry_response_codes_string);
+  params->simple_retry_response_codes = new ResponseCodesMap(params->simple_retry_response_codes_string);
   params->dead_server_retry_response_codes_string = ats_strdup(m_master.dead_server_retry_response_codes_string);
-  params->dead_server_retry_response_codes = new ResponseCodesMap (params->dead_server_retry_response_codes_string);
+  params->dead_server_retry_response_codes = new ResponseCodesMap(params->dead_server_retry_response_codes_string);
 
   params->oride.request_hdr_max_size = m_master.oride.request_hdr_max_size;
   params->oride.response_hdr_max_size = m_master.oride.response_hdr_max_size;
@@ -1502,33 +1504,35 @@ HttpConfig::parse_ports_list(char *ports_string)
 ///////////////////////////////////////////////////////
 // ResponseCodesMap implementation.
 // ///////////////////////////////////////////////////
-ResponseCodesMap::ResponseCodesMap (MgmtString str)
+ResponseCodesMap::ResponseCodesMap(MgmtString str)
 {
   char buf[4096];
-  if (str == NULL) return;
-  char *p = strncpy (buf, str, 4095);
+  if (str == NULL)
+    return;
+  char *p = strncpy(buf, str, 4095);
 
-  while (p != NULL) 
-  {
-    if (isdigit (*p))
-    {
-      int i = atoi (p);
-      insert (std::pair<int,int> (i,i));
-      if ( (p = strchr (p, ',')) == NULL) break;
+  while (p != NULL) {
+    if (isdigit(*p)) {
+      int i = atoi(p);
+      insert(std::pair<int, int>(i, i));
+      if ((p = strchr(p, ',')) == NULL)
+        break;
     }
     p++;
   }
 }
 
 bool
-ResponseCodesMap::contains (int i)
+ResponseCodesMap::contains(int i)
 {
   ResponseCodesMap::iterator it;
 
-  if (empty()) return false;
+  if (empty())
+    return false;
 
-  it = find (i);
-  if (it != end() && it->second == i) return true;
+  it = find(i);
+  if (it != end() && it->second == i)
+    return true;
 
   return false;
 }

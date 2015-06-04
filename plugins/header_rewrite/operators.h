@@ -260,15 +260,12 @@ private:
 class OperatorSetMethod : public OperatorHeaders
 {
 public:
-  OperatorSetMethod()
-  {
-    TSDebug(PLUGIN_NAME_DBG, "Calling CTOR for OperatorSetMethod");
-  }
-  void initialize(Parser& p);
+  OperatorSetMethod() { TSDebug(PLUGIN_NAME_DBG, "Calling CTOR for OperatorSetMethod"); }
+  void initialize(Parser &p);
 
 protected:
   void initialize_hooks();
-  void exec(const Resources& res) const;
+  void exec(const Resources &res) const;
 
 private:
   DISALLOW_COPY_AND_ASSIGN(OperatorSetMethod);

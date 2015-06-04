@@ -57,7 +57,7 @@ CacheVC::scanVol(int /* event ATS_UNUSED */, Event * /* e ATS_UNUSED */)
   Debug("cache_scan_truss", "inside %p:scanVol", this);
   if (_action.cancelled)
     return free_CacheVC(this);
-  CacheHostTable* hosttable = theCache->getHosttable(__func__);
+  CacheHostTable *hosttable = theCache->getHosttable(__func__);
   CacheHostRecord *rec = &hosttable->gen_host_rec;
   if (host_len) {
     CacheHostResult res;

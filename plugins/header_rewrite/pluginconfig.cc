@@ -37,19 +37,23 @@
 #include "ts/ts.h"
 #include "pluginconfig.h"
 
-#define FREE_TMOUT              300000
+#define FREE_TMOUT 300000
 
 static int free_handler(TSCont cont, TSEvent event, void *edata);
 
-PluginConfig* ConfigHolder::get_config(TSCont cont) {
-  ConfigHolder* configh = (ConfigHolder *) TSContDataGet(cont);
+PluginConfig *
+ConfigHolder::get_config(TSCont cont)
+{
+  ConfigHolder *configh = (ConfigHolder *)TSContDataGet(cont);
   if (!configh) {
-      return 0;
+    return 0;
   }
   return configh->config;
 }
 
-void ConfigHolder::load_config_file() {
+void
+ConfigHolder::load_config_file()
+{
   struct stat s;
 
   PluginConfig *newconfig, *oldconfig;
@@ -59,15 +63,15 @@ void ConfigHolder::load_config_file() {
 
   // check date
   if (stat(config_path, &s) < 0) {
-      TSDebug(pluginName, "Could not stat %s", config_path);
-      if(config) {
-          return;
-      }
+    TSDebug(pluginName, "Could not stat %s", config_path);
+    if (config) {
+      return;
+    }
   } else {
-      TSDebug(pluginName, "s.st_mtime=%lu, last_load=%lu", s.st_mtime, last_load);
-      if (s.st_mtime < last_load) {
-          return;
-      }
+    TSDebug(pluginName, "s.st_mtime=%lu, last_load=%lu", s.st_mtime, last_load);
+    if (s.st_mtime < last_load) {
+      return;
+    }
   }
 
   TSDebug(pluginName, "Calling new_config: %s / %p", config_path, config);
@@ -76,13 +80,13 @@ void ConfigHolder::load_config_file() {
     if (newconfig->parse_config(config_path)) {
       TSDebug(pluginName, "after new_config parse: %s", config_path);
       last_load = time(NULL);
-      PluginConfig ** confp = &(config);
+      PluginConfig **confp = &(config);
       oldconfig = __sync_lock_test_and_set(confp, newconfig);
       if (oldconfig) {
-          TSDebug(pluginName, "scheduling free: %p (%p)", oldconfig, newconfig);
-          free_cont = TSContCreate(free_handler, NULL);
-          TSContDataSet(free_cont, (void *) oldconfig);
-          TSContSchedule(free_cont, FREE_TMOUT, TS_THREAD_POOL_TASK);
+        TSDebug(pluginName, "scheduling free: %p (%p)", oldconfig, newconfig);
+        free_cont = TSContCreate(free_handler, NULL);
+        TSContDataSet(free_cont, (void *)oldconfig);
+        TSContSchedule(free_cont, FREE_TMOUT, TS_THREAD_POOL_TASK);
       }
     } else {
       TSDebug(pluginName, "new_config parse failed: %s", config_path);
@@ -95,7 +99,9 @@ void ConfigHolder::load_config_file() {
   return;
 }
 
-ConfigHolder* ConfigHolder::init(const char* path) {
+ConfigHolder *
+ConfigHolder::init(const char *path)
+{
   char default_config_file[1024];
 
   if (path) {
@@ -106,46 +112,54 @@ ConfigHolder* ConfigHolder::init(const char* path) {
       config_path = TSstrdup(path);
     }
   } else {
-      /* Default config file of plugins/cacheurl.config */
-      sprintf(default_config_file, "%s/%s", TSConfigDirGet(), default_config_name);
-      config_path = TSstrdup(default_config_file);
+    /* Default config file of plugins/cacheurl.config */
+    sprintf(default_config_file, "%s/%s", TSConfigDirGet(), default_config_name);
+    config_path = TSstrdup(default_config_file);
   }
   TSDebug(pluginName, "calling load_config_file()");
   load_config_file();
   return this;
 }
 
-static int free_handler(TSCont cont, TSEvent event, void *edata) {
-  (void) event;
-  (void) edata;
+static int
+free_handler(TSCont cont, TSEvent event, void *edata)
+{
+  (void)event;
+  (void)edata;
   PluginConfig *config;
 
   TSDebug("free_handler", "Freeing old config");
-  config = (PluginConfig *) TSContDataGet(cont);
+  config = (PluginConfig *)TSContDataGet(cont);
   delete (config);
   TSContDestroy(cont);
   return 0;
 }
 
-int ConfigHolder::config_handler(TSCont cont, TSEvent event, void *edata) {
-  (void) event;
-  (void) edata;
+int
+ConfigHolder::config_handler(TSCont cont, TSEvent event, void *edata)
+{
+  (void)event;
+  (void)edata;
   ConfigHolder *ch;
 
-  ch = (ConfigHolder *) TSContDataGet(cont);
+  ch = (ConfigHolder *)TSContDataGet(cont);
   TSDebug(ch->getPluginName(), "In config Handler");
   ch->load_config_file();
   return 0;
 }
 
-bool ConfigHolder::addUpdateRegister() {
+bool
+ConfigHolder::addUpdateRegister()
+{
   config_cont = TSContCreate(config_handler, TSMutexCreate());
-  TSContDataSet(config_cont, (void *) this);
+  TSContDataSet(config_cont, (void *)this);
   TSMgmtUpdateRegister(config_cont, uniqueID);
   return true;
 }
 
-bool ConfigHolder::removeUpdateRegister() {
+bool
+ConfigHolder::removeUpdateRegister()
+{
   TSMgmtUnRegister(uniqueID);
   TSContDestroy(config_cont);
   return true;

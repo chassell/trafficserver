@@ -3504,90 +3504,90 @@ HttpTransact::handle_response_from_parent(State *s)
       return;
     }
 
-      // try a simple retry if we received a simple retryable response from the parent.
-      if (s->current.retry_type == SIMPLE_RETRY || s->current.retry_type == DEAD_SERVER_RETRY) {
-        if (s->current.retry_type == SIMPLE_RETRY) {
-          if (s->current.simple_retry_attempts >= s->parent_result.rec->num_parents) {
-            DebugTxn("http_trans", "SIMPLE_RETRY: retried all parents, send error to client.\n");
-            next_lookup = HOST_NONE;
-          } else {
-            s->current.simple_retry_attempts++;
-            DebugTxn("http_trans", "SIMPLE_RETRY: try another parent.\n");
-            next_lookup = find_server_and_update_current_info(s);
-          }
-        } else { // DEAD_SERVER_RETRY
-          if (s->current.dead_server_retry_attempts >= s->parent_result.rec->num_parents) {
-            DebugTxn("http_trans", "DEAD_SERVER_RETRY: retried all parents, send error to client.\n");
-            next_lookup = HOST_NONE;
-          } else {
-            s->current.dead_server_retry_attempts++;
-            DebugTxn("http_trans", "DEAD_SERVER_RETRY: marking parent down and trying another.\n");
-            s->parent_params->markParentDown(&s->parent_result);
-            next_lookup = find_server_and_update_current_info(s);
-          }
-        }
-      }
-      // parent_connect_attempts is set from proxy.config.http.parent_proxy.total_connect_attempts in
-      // records.config.
-      else if (s->current.attempts < s->http_config_param->parent_connect_attempts) {
-        s->current.attempts++;
-
-        // Are we done with this particular parent?
-        // per_parent_connect_attempts should be less than proxy.config.http.parent_proxy.total_connect_attempts
-        // so that a new parent is tried.
-        if ((s->current.attempts - 1) % s->http_config_param->per_parent_connect_attempts != 0) {
-          // No we are not done with this parent so retry
-          s->next_action = how_to_open_connection(s);
-          DebugTxn("http_trans", "%s Retrying parent for attempt %d, max %" PRId64, "[handle_response_from_parent]",
-                   s->current.attempts, s->http_config_param->per_parent_connect_attempts);
-          return;
+    // try a simple retry if we received a simple retryable response from the parent.
+    if (s->current.retry_type == SIMPLE_RETRY || s->current.retry_type == DEAD_SERVER_RETRY) {
+      if (s->current.retry_type == SIMPLE_RETRY) {
+        if (s->current.simple_retry_attempts >= s->parent_result.rec->num_parents) {
+          DebugTxn("http_trans", "SIMPLE_RETRY: retried all parents, send error to client.\n");
+          next_lookup = HOST_NONE;
         } else {
-          DebugTxn("http_trans", "%s %d per parent attempts exhausted", "[handle_response_from_parent]", s->current.attempts);
-
-          // Only mark the parent down if we failed to connect
-          //  to the parent otherwise slow origin servers cause
-          //  us to mark the parent down
-          if (s->current.state == CONNECTION_ERROR) {
-            s->parent_params->markParentDown(&s->parent_result);
-          }
-          // We are done so look for another parent if any
+          s->current.simple_retry_attempts++;
+          DebugTxn("http_trans", "SIMPLE_RETRY: try another parent.\n");
           next_lookup = find_server_and_update_current_info(s);
         }
+      } else { // DEAD_SERVER_RETRY
+        if (s->current.dead_server_retry_attempts >= s->parent_result.rec->num_parents) {
+          DebugTxn("http_trans", "DEAD_SERVER_RETRY: retried all parents, send error to client.\n");
+          next_lookup = HOST_NONE;
+        } else {
+          s->current.dead_server_retry_attempts++;
+          DebugTxn("http_trans", "DEAD_SERVER_RETRY: marking parent down and trying another.\n");
+          s->parent_params->markParentDown(&s->parent_result);
+          next_lookup = find_server_and_update_current_info(s);
+        }
+      }
+    }
+    // parent_connect_attempts is set from proxy.config.http.parent_proxy.total_connect_attempts in
+    // records.config.
+    else if (s->current.attempts < s->http_config_param->parent_connect_attempts) {
+      s->current.attempts++;
+
+      // Are we done with this particular parent?
+      // per_parent_connect_attempts should be less than proxy.config.http.parent_proxy.total_connect_attempts
+      // so that a new parent is tried.
+      if ((s->current.attempts - 1) % s->http_config_param->per_parent_connect_attempts != 0) {
+        // No we are not done with this parent so retry
+        s->next_action = how_to_open_connection(s);
+        DebugTxn("http_trans", "%s Retrying parent for attempt %d, max %" PRId64, "[handle_response_from_parent]",
+                 s->current.attempts, s->http_config_param->per_parent_connect_attempts);
+        return;
       } else {
-        // Done trying parents... fail over to origin server if that is
-        //   appropriate
-        DebugTxn("http_trans", "[handle_response_from_parent] Error. No more retries.");
-        s->parent_params->markParentDown(&s->parent_result);
-        s->parent_result.r = PARENT_FAIL;
+        DebugTxn("http_trans", "%s %d per parent attempts exhausted", "[handle_response_from_parent]", s->current.attempts);
+
+        // Only mark the parent down if we failed to connect
+        //  to the parent otherwise slow origin servers cause
+        //  us to mark the parent down
+        if (s->current.state == CONNECTION_ERROR) {
+          s->parent_params->markParentDown(&s->parent_result);
+        }
+        // We are done so look for another parent if any
         next_lookup = find_server_and_update_current_info(s);
       }
+    } else {
+      // Done trying parents... fail over to origin server if that is
+      //   appropriate
+      DebugTxn("http_trans", "[handle_response_from_parent] Error. No more retries.");
+      s->parent_params->markParentDown(&s->parent_result);
+      s->parent_result.r = PARENT_FAIL;
+      next_lookup = find_server_and_update_current_info(s);
+    }
 
-      // We have either tried to find a new parent or failed over to the
-      //   origin server
-      switch (next_lookup) {
-      case PARENT_PROXY:
-        ink_assert(s->current.request_to == PARENT_PROXY);
-        TRANSACT_RETURN(SM_ACTION_DNS_LOOKUP, PPDNSLookup);
-        break;
-      case ORIGIN_SERVER:
-        s->current.attempts = 0;
-        s->next_action = how_to_open_connection(s);
-        if (s->current.server == &s->server_info && s->next_hop_scheme == URL_WKSIDX_HTTP) {
-          HttpTransactHeaders::remove_host_name_from_url(&s->hdr_info.server_request);
-        }
-        break;
-      case HOST_NONE:
-        handle_parent_died(s);
-        break;
-      default:
-        // This handles:
-        // UNDEFINED_LOOKUP, ICP_SUGGESTED_HOST,
-        // INCOMING_ROUTER
-        break;
+    // We have either tried to find a new parent or failed over to the
+    //   origin server
+    switch (next_lookup) {
+    case PARENT_PROXY:
+      ink_assert(s->current.request_to == PARENT_PROXY);
+      TRANSACT_RETURN(SM_ACTION_DNS_LOOKUP, PPDNSLookup);
+      break;
+    case ORIGIN_SERVER:
+      s->current.attempts = 0;
+      s->next_action = how_to_open_connection(s);
+      if (s->current.server == &s->server_info && s->next_hop_scheme == URL_WKSIDX_HTTP) {
+        HttpTransactHeaders::remove_host_name_from_url(&s->hdr_info.server_request);
       }
-
+      break;
+    case HOST_NONE:
+      handle_parent_died(s);
+      break;
+    default:
+      // This handles:
+      // UNDEFINED_LOOKUP, ICP_SUGGESTED_HOST,
+      // INCOMING_ROUTER
       break;
     }
+
+    break;
+  }
   }
 }
 
