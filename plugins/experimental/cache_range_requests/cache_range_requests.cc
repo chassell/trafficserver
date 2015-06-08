@@ -217,6 +217,15 @@ handle_server_read_response(TSHttpTxn txnp, struct txndata *txn_state)
       bool cacheable = TSHttpTxnIsCacheable(txnp, NULL, response);
       TSDebug(PLUGIN_NAME, "handle_server_read_response (): range is cacheable: %d", cacheable);
     }
+    else if (TS_HTTP_STATUS_OK == status) {
+      TSDebug (PLUGIN_NAME, "The origin does not support range requests, attempting to disable cache write.");
+      if (TS_SUCCESS == TSHttpTxnServerRespNoStoreSet(txnp, 1)) {
+        TSDebug (PLUGIN_NAME, "Cache write has been disabled for this transaction.");
+      }
+      else {
+        TSDebug (PLUGIN_NAME, "Unable to disable cache write for this transaction.");
+      }
+    }
   }
   TSHandleMLocRelease(response, resp_hdr, NULL);
   TSDebug(PLUGIN_NAME, "End of handle_server_read_response ()");
