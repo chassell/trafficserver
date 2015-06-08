@@ -104,9 +104,9 @@ range_header_check(TSHttpTxn txnp)
           req_url = TSHttpTxnEffectiveUrlStringGet(txnp, &url_length);
           snprintf(cache_key_url, 8192, "%s-%s", req_url, txn_state->range_value);
           TSDebug(PLUGIN_NAME, "Rewriting cache URL for %s to %s", req_url, cache_key_url);
-          txn_state->request_url = (char *)TSmalloc (length+1);
-          strncpy (txn_state->request_url, req_url, length);
-          txn_state->request_url[length] = 0;
+          txn_state->request_url = (char *)TSmalloc (url_length+1);
+          strncpy (txn_state->request_url, req_url, url_length);
+          txn_state->request_url[url_length] = 0;
 
           // set the cache key.
           if (TS_SUCCESS != TSCacheUrlSet(txnp, cache_key_url, strlen(cache_key_url))) {
@@ -216,13 +216,6 @@ handle_server_read_response(TSHttpTxn txnp, struct txndata *txn_state)
       TSDebug(PLUGIN_NAME, "handle_server_read_response (): Set response header to TS_HTTP_STATUS_OK.");
       bool cacheable = TSHttpTxnIsCacheable(txnp, NULL, response);
       TSDebug(PLUGIN_NAME, "handle_server_read_response (): range is cacheable: %d", cacheable);
-    }
-    // if the origin ignores a range request because it is not supported, the origin will send a 200 OK
-    // response along with the entire object.  In this case, restore the original cache key.
-    else if (TS_HTTP_STATUS_OK == status) {
-      if (TS_SUCCESS != TSCacheUrlSet(txnp, txn_state->request_url, strlen(txn_state->request_url))) {
-        TSDebug(PLUGIN_NAME, "TSCacheUrlSet(): failed to change the cache url to %s.", txn_state->request_url);
-      }
     }
   }
   TSHandleMLocRelease(response, resp_hdr, NULL);
