@@ -35,7 +35,6 @@
 
 struct txndata {
   char *range_value;
-  char *request_url;
 };
 
 static void handle_read_request_header(TSCont, TSEvent, void *);
@@ -96,17 +95,15 @@ range_header_check(TSHttpTxn txnp)
         if (NULL == (txn_contp = TSContCreate((TSEventFunc)transaction_handler, NULL))) {
           TSError("[%s] TSContCreate(): failed to create the transaction handler continuation.", PLUGIN_NAME);
         } else {
-          txn_state = (struct txndata *)TSmalloc (sizeof (struct txndata));
+          txn_state = (struct txndata *)TSmalloc(sizeof(struct txndata));
           txn_state->range_value = TSstrndup(hdr_value, length);
-          TSDebug (PLUGIN_NAME, "length = %d, txn_state->range_value = %s", length, txn_state->range_value);
+          TSDebug(PLUGIN_NAME, "length = %d, txn_state->range_value = %s", length, txn_state->range_value);
           txn_state->range_value[length] = '\0'; // workaround for bug in core
 
           req_url = TSHttpTxnEffectiveUrlStringGet(txnp, &url_length);
           snprintf(cache_key_url, 8192, "%s-%s", req_url, txn_state->range_value);
           TSDebug(PLUGIN_NAME, "Rewriting cache URL for %s to %s", req_url, cache_key_url);
-          txn_state->request_url = (char *)TSmalloc (url_length+1);
-          strncpy (txn_state->request_url, req_url, url_length);
-          txn_state->request_url[url_length] = 0;
+          if (req_url != NULL) TSfree (req_url);
 
           // set the cache key.
           if (TS_SUCCESS != TSCacheUrlSet(txnp, cache_key_url, strlen(cache_key_url))) {
@@ -146,7 +143,8 @@ handle_send_origin_request(TSCont contp, TSHttpTxn txnp, struct txndata *txn_sta
 
   TSDebug(PLUGIN_NAME, "Starting handle_send_origin_request()");
   if (TS_SUCCESS == TSHttpTxnServerReqGet(txnp, &hdr_bufp, &req_hdrs) && txn_state->range_value != NULL) {
-    if (set_header(hdr_bufp, req_hdrs, TS_MIME_FIELD_RANGE, TS_MIME_LEN_RANGE, txn_state->range_value, strlen(txn_state->range_value))) {
+    if (set_header(hdr_bufp, req_hdrs, TS_MIME_FIELD_RANGE, TS_MIME_LEN_RANGE, txn_state->range_value,
+                   strlen(txn_state->range_value))) {
       TSDebug(PLUGIN_NAME, "Added range header: %s", txn_state->range_value);
       TSHttpTxnHookAdd(txnp, TS_HTTP_READ_RESPONSE_HDR_HOOK, contp);
     }
@@ -163,7 +161,7 @@ static void
 handle_client_send_response(TSHttpTxn txnp)
 {
   bool partial_content_reason = false;
-  char *p, *reason;
+  char *p;
   int length;
   TSMBuffer response;
   TSMLoc resp_hdr;
@@ -175,14 +173,12 @@ handle_client_send_response(TSHttpTxn txnp)
   if (TS_SUCCESS == result) {
     TSHttpStatus status = TSHttpHdrStatusGet(response, resp_hdr);
     // a cached result will have a TS_HTTP_OK with a 'Partial Content' reason
-    if ( (p = (char *)TSHttpHdrReasonGet(response, resp_hdr, &length)) != NULL) {
-      reason = TSstrndup (p, length+1);
-      reason[length] = '\0';
-      if (strncasecmp (reason, "Partial Content", length) == 0) {
+    if ((p = (char *)TSHttpHdrReasonGet(response, resp_hdr, &length)) != NULL) {
+      if ((length == 15) && (0 == strncasecmp(p, "Partial Content", length))) {
         partial_content_reason = true;
       }
     }
-    TSDebug(PLUGIN_NAME, "status %d %s", status, reason);
+    TSDebug(PLUGIN_NAME, "status %d %.*s", status, length, p);
     if (TS_HTTP_STATUS_OK == status && partial_content_reason) {
       TSDebug(PLUGIN_NAME, "handle_client_send_response (): Got TS_HTTP_STATUS_OK.");
       TSHttpHdrStatusSet(response, resp_hdr, TS_HTTP_STATUS_PARTIAL_CONTENT);
@@ -190,7 +186,6 @@ handle_client_send_response(TSHttpTxn txnp)
     }
   }
   TSHandleMLocRelease(response, resp_hdr, NULL);
-  TSfree (reason);
   TSDebug(PLUGIN_NAME, "End of handle_client_send_response ()");
 }
 
@@ -209,21 +204,19 @@ handle_server_read_response(TSHttpTxn txnp, struct txndata *txn_state)
   TSDebug(PLUGIN_NAME, "Starting handle_server_read_response ()");
 
   if (TS_SUCCESS == TSHttpTxnServerRespGet(txnp, &response, &resp_hdr)) {
-    status = TSHttpHdrStatusGet (response, resp_hdr);
+    status = TSHttpHdrStatusGet(response, resp_hdr);
     if (TS_HTTP_STATUS_PARTIAL_CONTENT == status) {
       TSDebug(PLUGIN_NAME, "handle_server_read_response (): Got TS_HTTP_STATUS_PARTIAL_CONTENT.");
       TSHttpHdrStatusSet(response, resp_hdr, TS_HTTP_STATUS_OK);
       TSDebug(PLUGIN_NAME, "handle_server_read_response (): Set response header to TS_HTTP_STATUS_OK.");
       bool cacheable = TSHttpTxnIsCacheable(txnp, NULL, response);
       TSDebug(PLUGIN_NAME, "handle_server_read_response (): range is cacheable: %d", cacheable);
-    }
-    else if (TS_HTTP_STATUS_OK == status) {
-      TSDebug (PLUGIN_NAME, "The origin does not support range requests, attempting to disable cache write.");
+    } else if (TS_HTTP_STATUS_OK == status) {
+      TSDebug(PLUGIN_NAME, "The origin does not support range requests, attempting to disable cache write.");
       if (TS_SUCCESS == TSHttpTxnServerRespNoStoreSet(txnp, 1)) {
-        TSDebug (PLUGIN_NAME, "Cache write has been disabled for this transaction.");
-      }
-      else {
-        TSDebug (PLUGIN_NAME, "Unable to disable cache write for this transaction.");
+        TSDebug(PLUGIN_NAME, "Cache write has been disabled for this transaction.");
+      } else {
+        TSDebug(PLUGIN_NAME, "Unable to disable cache write for this transaction.");
       }
     }
   }
@@ -415,9 +408,8 @@ transaction_handler(TSCont contp, TSEvent event, void *edata)
     break;
   case TS_EVENT_HTTP_TXN_CLOSE:
     TSDebug(PLUGIN_NAME, "Starting handle_transaction_close().");
-    TSfree(txn_state);
-    TSfree(txn_state->range_value);
-    TSfree(txn_state->request_url);
+    if (txn_state != NULL && txn_state->range_value != NULL) TSfree(txn_state->range_value);
+    if (txn_state != NULL) TSfree(txn_state);
     TSContDestroy(contp);
     break;
   default:
