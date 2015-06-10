@@ -103,7 +103,8 @@ range_header_check(TSHttpTxn txnp)
           req_url = TSHttpTxnEffectiveUrlStringGet(txnp, &url_length);
           snprintf(cache_key_url, 8192, "%s-%s", req_url, txn_state->range_value);
           TSDebug(PLUGIN_NAME, "Rewriting cache URL for %s to %s", req_url, cache_key_url);
-          if (req_url != NULL) TSfree (req_url);
+          if (req_url != NULL)
+            TSfree(req_url);
 
           // set the cache key.
           if (TS_SUCCESS != TSCacheUrlSet(txnp, cache_key_url, strlen(cache_key_url))) {
@@ -408,8 +409,10 @@ transaction_handler(TSCont contp, TSEvent event, void *edata)
     break;
   case TS_EVENT_HTTP_TXN_CLOSE:
     TSDebug(PLUGIN_NAME, "Starting handle_transaction_close().");
-    if (txn_state != NULL && txn_state->range_value != NULL) TSfree(txn_state->range_value);
-    if (txn_state != NULL) TSfree(txn_state);
+    if (txn_state != NULL && txn_state->range_value != NULL)
+      TSfree(txn_state->range_value);
+    if (txn_state != NULL)
+      TSfree(txn_state);
     TSContDestroy(contp);
     break;
   default:
