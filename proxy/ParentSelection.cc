@@ -919,6 +919,7 @@ ParentRecord::Init(matcher_line *line_info)
       if (strcasecmp(val, "ignore") == 0) {
         this->ignore_query = true;
       }
+      used = true;
     } else if (strcasecmp(label, "parent_is_proxy") == 0) {
       if (strcasecmp(val, "false") == 0) {
         parent_is_proxy = false;
