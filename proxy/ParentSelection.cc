@@ -319,7 +319,7 @@ ParentConfigParams::recordRetrySuccess(ParentResult *result)
   //   result structure with a parent that is being retried
   ink_release_assert(result->retry == true);
   ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
-  if (result->r != PARENT_SPECIFIED || result->r != PARENT_ORIGIN) {
+  if (result->r != PARENT_SPECIFIED && result->r != PARENT_ORIGIN) {
     return;
   }
   // If we were set through the API we currently have not failover
