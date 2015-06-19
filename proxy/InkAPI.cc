@@ -8133,6 +8133,13 @@ TSHttpTxnConfigStringSet(TSHttpTxn txnp, TSOverridableConfigKey conf, const char
       s->t_state.txn_conf->simple_retry_response_codes_string = NULL;
     }
     break;
+  case TS_CONFIG_HTTP_DEAD_SERVER_RETRY_RESPONSE_CODES:
+    if (value && length > 0) {
+      s->t_state.txn_conf->dead_server_retry_response_codes_string = const_cast<char *>(value); // The "core" likes non-const char*
+    } else {
+      s->t_state.txn_conf->dead_server_retry_response_codes_string = NULL;
+    }
+    break;
   default:
     return TS_ERROR;
     break;
