@@ -136,6 +136,10 @@ The following configurations (from ``records.config``) are overridable: ::
     proxy.config.http.accept_encoding_filter_enabled
     proxy.config.http.cache.range.write
     proxy.config.http.global_user_agent_header
+    proxy.config.http.parent_origin.simple_retry_enabled
+    proxy.config.http.parent_origin.simple_retry_response_codes
+    proxy.config.http.parent_origin.dead_server_retry_enabled
+    proxy.config.http.parent_origin.dead_server_retry_response_codes
 
 Examples
 ========
