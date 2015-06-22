@@ -1125,11 +1125,11 @@ HttpConfig::startup()
 
   // parent origin.
   HttpEstablishStaticConfigLongLong(c.oride.simple_retry_enabled, "proxy.config.http.parent_origin.simple_retry_enabled");
-  HttpEstablishStaticConfigStringAlloc(c.oride.simple_retry_response_codes_string, 
-    "proxy.config.http.parent_origin.simple_retry_response_codes");
+  HttpEstablishStaticConfigStringAlloc(c.oride.simple_retry_response_codes_string,
+                                       "proxy.config.http.parent_origin.simple_retry_response_codes");
   HttpEstablishStaticConfigLongLong(c.oride.dead_server_retry_enabled, "proxy.config.http.parent_origin.dead_server_retry_enabled");
-  HttpEstablishStaticConfigStringAlloc(c.oride.dead_server_retry_response_codes_string, 
-    "proxy.config.http.parent_origin.dead_server_retry_response_codes");
+  HttpEstablishStaticConfigStringAlloc(c.oride.dead_server_retry_response_codes_string,
+                                       "proxy.config.http.parent_origin.dead_server_retry_response_codes");
 
 
   // Cluster time delta gets it own callback since it needs
@@ -1509,17 +1509,16 @@ ResponseCodes::contains(int code, MgmtString r_codes)
 {
   bool result = false;
   const char *delim = ",";
-  char *p = strtok ((char *)r_codes, delim);
+  char *p = strtok((char *)r_codes, delim);
 
   if (p == NULL) {
     return false;
-  }
-  else if (atoi ((const char *)p) == code) {
+  } else if (atoi((const char *)p) == code) {
     return true;
   }
 
-  while ( (p = strtok ((char *)NULL, delim)) != NULL) {
-    if (atoi ((const char *)p) == code) {
+  while ((p = strtok((char *)NULL, delim)) != NULL) {
+    if (atoi((const char *)p) == code) {
       result = true;
     }
   }

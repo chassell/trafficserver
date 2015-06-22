@@ -8624,7 +8624,6 @@ TSHttpTxnConfigFind(const char *name, int length, TSOverridableConfigKey *conf, 
       typ = TS_RECORDDATATYPE_STRING;
     }
     break;
-
   }
 
   *conf = cnf;

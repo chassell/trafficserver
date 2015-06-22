@@ -6426,8 +6426,8 @@ HttpTransact::is_response_valid(State *s, HTTPHdr *incoming_response)
     server_response = http_hdr_status_get(s->hdr_info.server_response.m_http);
     DebugTxn("http_trans", "[is_response_valid] server_response = %d\n", server_response);
     // is a simple retry required.
-    if (s->txn_conf->simple_retry_enabled && 
-            s->http_config_param->response_codes->contains(server_response, s->txn_conf->simple_retry_response_codes_string)) {
+    if (s->txn_conf->simple_retry_enabled &&
+        s->http_config_param->response_codes->contains(server_response, s->txn_conf->simple_retry_response_codes_string)) {
       DebugTxn("parent_select", "GOT A SIMPLE RETRY RESPONSE");
       // initiate a retry if we have not already tried all parents, otherwise the response is sent to the client as is.
       // see SIMPLE_RETRY in handle_response_from_parent().
@@ -6440,7 +6440,8 @@ HttpTransact::is_response_valid(State *s, HTTPHdr *incoming_response)
     }
     // is a dead server retry required.
     else if (s->txn_conf->dead_server_retry_enabled &&
-            s->http_config_param->response_codes->contains(server_response, s->txn_conf->dead_server_retry_response_codes_string)) {
+             s->http_config_param->response_codes->contains(server_response,
+                                                            s->txn_conf->dead_server_retry_response_codes_string)) {
       DebugTxn("parent_select", "GOT A DEAD_SERVER RETRY RESPONSE");
       // initiate a dead server retry if we have not already tried all parents, otherwise the response is sent to the client as is.
       // see DEAD_SERVER_RETRY in handle_response_from_parent().

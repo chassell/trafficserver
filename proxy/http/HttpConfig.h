@@ -338,7 +338,7 @@ struct HttpConfigPortRange {
 class ResponseCodes
 {
 public:
-  ResponseCodes() {};
+  ResponseCodes(){};
   bool contains(int, MgmtString);
 };
 
