@@ -1064,10 +1064,6 @@ HttpConfig::startup()
   HttpEstablishStaticConfigByte(c.oride.cache_range_write, "proxy.config.http.cache.range.write");
 
   HttpEstablishStaticConfigStringAlloc(c.connect_ports_string, "proxy.config.http.connect_ports");
-  HttpEstablishStaticConfigStringAlloc(c.simple_retry_response_codes_string,
-                                       "proxy.config.http.parent_origin.simple_retry_response_codes");
-  HttpEstablishStaticConfigStringAlloc(c.dead_server_retry_response_codes_string,
-                                       "proxy.config.http.parent_origin.dead_server_retry_response_codes");
 
   HttpEstablishStaticConfigLongLong(c.oride.request_hdr_max_size, "proxy.config.http.request_header_max_size");
   HttpEstablishStaticConfigLongLong(c.oride.response_hdr_max_size, "proxy.config.http.response_header_max_size");
@@ -1129,7 +1125,12 @@ HttpConfig::startup()
 
   // parent origin.
   HttpEstablishStaticConfigLongLong(c.oride.simple_retry_enabled, "proxy.config.http.parent_origin.simple_retry_enabled");
+  HttpEstablishStaticConfigStringAlloc(c.oride.simple_retry_response_codes_string, 
+    "proxy.config.http.parent_origin.simple_retry_response_codes");
   HttpEstablishStaticConfigLongLong(c.oride.dead_server_retry_enabled, "proxy.config.http.parent_origin.dead_server_retry_enabled");
+  HttpEstablishStaticConfigStringAlloc(c.oride.dead_server_retry_response_codes_string, 
+    "proxy.config.http.parent_origin.dead_server_retry_response_codes");
+
 
   // Cluster time delta gets it own callback since it needs
   //  to use ink_atomic_swap
@@ -1334,10 +1335,7 @@ HttpConfig::reconfigure()
 
   params->connect_ports_string = ats_strdup(m_master.connect_ports_string);
   params->connect_ports = parse_ports_list(params->connect_ports_string);
-  params->simple_retry_response_codes_string = ats_strdup(m_master.simple_retry_response_codes_string);
-  params->simple_retry_response_codes = new ResponseCodesMap(params->simple_retry_response_codes_string);
-  params->dead_server_retry_response_codes_string = ats_strdup(m_master.dead_server_retry_response_codes_string);
-  params->dead_server_retry_response_codes = new ResponseCodesMap(params->dead_server_retry_response_codes_string);
+  params->response_codes = new ResponseCodes();
 
   params->oride.request_hdr_max_size = m_master.oride.request_hdr_max_size;
   params->oride.response_hdr_max_size = m_master.oride.response_hdr_max_size;
@@ -1392,6 +1390,8 @@ HttpConfig::reconfigure()
   params->autoconf_localhost_only = m_master.autoconf_localhost_only;
   params->oride.simple_retry_enabled = m_master.oride.simple_retry_enabled;
   params->oride.dead_server_retry_enabled = m_master.oride.dead_server_retry_enabled;
+  params->oride.simple_retry_response_codes_string = m_master.oride.simple_retry_response_codes_string;
+  params->oride.dead_server_retry_response_codes_string = m_master.oride.dead_server_retry_response_codes_string;
 
   m_id = configProcessor.set(m_id, params);
 
@@ -1502,39 +1502,28 @@ HttpConfig::parse_ports_list(char *ports_string)
 }
 
 ///////////////////////////////////////////////////////
-// ResponseCodesMap implementation.
+// ResponseCodes implementation.
 // ///////////////////////////////////////////////////
-ResponseCodesMap::ResponseCodesMap(MgmtString str)
-{
-  char buf[4096];
-  if (str == NULL)
-    return;
-  char *p = strncpy(buf, str, 4095);
-
-  while (p != NULL) {
-    if (isdigit(*p)) {
-      int i = atoi(p);
-      insert(std::pair<int, int>(i, i));
-      if ((p = strchr(p, ',')) == NULL)
-        break;
-    }
-    p++;
-  }
-}
-
 bool
-ResponseCodesMap::contains(int i)
+ResponseCodes::contains(int code, MgmtString r_codes)
 {
-  ResponseCodesMap::iterator it;
+  bool result = false;
+  const char *delim = ",";
+  char *p = strtok ((char *)r_codes, delim);
 
-  if (empty())
+  if (p == NULL) {
     return false;
-
-  it = find(i);
-  if (it != end() && it->second == i)
+  }
+  else if (atoi ((const char *)p) == code) {
     return true;
+  }
 
-  return false;
+  while ( (p = strtok ((char *)NULL, delim)) != NULL) {
+    if (atoi ((const char *)p) == code) {
+      result = true;
+    }
+  }
+  return result;
 }
 
 ////////////////////////////////////////////////////////////////

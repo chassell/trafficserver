@@ -335,11 +335,11 @@ struct HttpConfigPortRange {
 // Container for simple retry and dead server retry http
 // response codes.
 /////////////////////////////////////////////////////////////
-class ResponseCodesMap : public std::map<int, int>
+class ResponseCodes
 {
 public:
-  ResponseCodesMap(MgmtString);
-  bool contains(int);
+  ResponseCodes() {};
+  bool contains(int, MgmtString);
 };
 
 /////////////////////////////////////////////////////////////
@@ -375,7 +375,8 @@ struct OverridableHttpConfigParams {
 
       // Strings / floats must come last
       proxy_response_server_string(NULL), proxy_response_server_string_len(0), global_user_agent_header(NULL),
-      global_user_agent_header_size(0), cache_heuristic_lm_factor(0.10), freshness_fuzz_prob(0.005), background_fill_threshold(0.5)
+      global_user_agent_header_size(0), cache_heuristic_lm_factor(0.10), freshness_fuzz_prob(0.005), background_fill_threshold(0.5),
+      simple_retry_response_codes_string(NULL), dead_server_retry_response_codes_string(NULL)
   {
   }
 
@@ -568,6 +569,8 @@ struct OverridableHttpConfigParams {
   MgmtFloat cache_heuristic_lm_factor;
   MgmtFloat freshness_fuzz_prob;
   MgmtFloat background_fill_threshold;
+  MgmtString simple_retry_response_codes_string;
+  MgmtString dead_server_retry_response_codes_string;
 };
 
 
@@ -677,10 +680,7 @@ public:
   /////////////////////////////////////////////////////////
   // simple retry and dead server retry response codes. //
   ///////////////////////////////////////////////////////
-  char *simple_retry_response_codes_string;
-  ResponseCodesMap *simple_retry_response_codes;
-  char *dead_server_retry_response_codes_string;
-  ResponseCodesMap *dead_server_retry_response_codes;
+  ResponseCodes *response_codes;
 
   // Push //
   //////////
@@ -873,21 +873,11 @@ inline HttpConfigParams::~HttpConfigParams()
   ats_free(cache_vary_default_images);
   ats_free(cache_vary_default_other);
   ats_free(connect_ports_string);
-  ats_free(simple_retry_response_codes_string);
-  ats_free(dead_server_retry_response_codes_string);
   ats_free(reverse_proxy_no_host_redirect);
   ats_free(url_expansions);
 
   if (connect_ports) {
     delete connect_ports;
-  }
-
-  if (simple_retry_response_codes) {
-    delete simple_retry_response_codes;
-  }
-
-  if (dead_server_retry_response_codes) {
-    delete dead_server_retry_response_codes;
   }
 }
 #endif /* #ifndef _HttpConfig_h_ */
