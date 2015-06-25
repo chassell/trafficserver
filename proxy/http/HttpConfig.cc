@@ -1507,22 +1507,19 @@ HttpConfig::parse_ports_list(char *ports_string)
 bool
 ResponseCodes::contains(int code, MgmtString r_codes)
 {
-  bool result = false;
-  const char *delim = ",";
-  char *p = strtok((char *)r_codes, delim);
+  char *c = r_codes, *p = NULL;
 
-  if (p == NULL) {
-    return false;
-  } else if (atoi((const char *)p) == code) {
-    return true;
-  }
-
-  while ((p = strtok((char *)NULL, delim)) != NULL) {
-    if (atoi((const char *)p) == code) {
-      result = true;
+  do {
+    if (atoi(c) == code) {
+      return true;
     }
-  }
-  return result;
+    p = strchr (c, ',');
+    if (p != NULL) {
+      c = (p+1);
+    }
+  } while (p != NULL);
+
+  return false;
 }
 
 ////////////////////////////////////////////////////////////////
