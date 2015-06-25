@@ -386,7 +386,7 @@ ParentConfigParams::markParentDown(ParentResult *result)
       new_fail_count = pRec->failCount = 1;
     }
 
-    Debug("parent_select", "Parent %s marked as down %s:%d", (result->retry) ? "retry" : "initially", pRec->hostname, pRec->port);
+    Note("Parent %s marked as down %s:%d", (result->retry) ? "retry" : "initially", pRec->hostname, pRec->port);
 
   } else {
     int old_count = ink_atomic_increment(&pRec->failCount, 1);
@@ -396,7 +396,7 @@ ParentConfigParams::markParentDown(ParentResult *result)
   }
 
   if (new_fail_count > 0 && new_fail_count == FailThreshold) {
-    Note("http parent proxy %s:%d marked down", pRec->hostname, pRec->port);
+    Note("Failure threshold met, http parent proxy %s:%d marked down", pRec->hostname, pRec->port);
     pRec->available = false;
     Debug("parent_select", "Parent marked unavailable, pRec->available=%d", pRec->available);
   }
