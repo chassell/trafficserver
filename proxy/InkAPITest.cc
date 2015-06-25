@@ -7207,6 +7207,7 @@ const char *SDK_Overridable_Configs[TS_CONFIG_LAST_ENTRY] = {
   "proxy.config.http.cache.max_open_read_retries", "proxy.config.http.cache.range.write",
   "proxy.config.http.post.check.content_length.enabled", "proxy.config.http.global_user_agent_header",
   "proxy.config.http.auth_server_session_private", "proxy.config.http.transaction_active_timeout_in",
+  "proxy.config.http.parent_proxy.per_parent_connect_attempts", "proxy.config.http.parent_proxy.total_connect_attempts",
   "proxy.config.http.parent_origin.simple_retry_enabled", "proxy.config.http.parent_origin.simple_retry_response_codes",
   "proxy.config.http.parent_origin.dead_server_retry_enabled", "proxy.config.http.parent_origin.dead_server_retry_response_codes"};
 

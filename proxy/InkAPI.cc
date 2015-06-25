@@ -7925,6 +7925,14 @@ _conf_to_memberp(TSOverridableConfigKey conf, OverridableHttpConfigParams *overr
     typ = OVERRIDABLE_TYPE_INT;
     ret = &overridableHttpConfig->transaction_active_timeout_in;
     break;
+  case TS_CONFIG_HTTP_PER_PARENT_CONNECT_ATTEMPTS:
+    typ = OVERRIDABLE_TYPE_INT;
+    ret = &overridableHttpConfig->per_parent_connect_attempts;
+    break;
+  case TS_CONFIG_HTTP_PARENT_TOTAL_CONNECT_ATTEMPTS:
+    typ = OVERRIDABLE_TYPE_INT;
+    ret = &overridableHttpConfig->parent_connect_attempts;
+    break;
   case TS_CONFIG_HTTP_SIMPLE_RETRY_ENABLED:
     typ = OVERRIDABLE_TYPE_INT;
     ret = &overridableHttpConfig->simple_retry_enabled;
@@ -8587,6 +8595,10 @@ TSHttpTxnConfigFind(const char *name, int length, TSOverridableConfigKey *conf, 
 
   case 53:
     switch (name[length - 1]) {
+    case 's':
+      if (!strncmp(name, "proxy.config.http.parent_proxy.total_connect_attempts", length)) 
+        cnf = TS_CONFIG_HTTP_PARENT_TOTAL_CONNECT_ATTEMPTS;
+      break;
     case 't':
       if (!strncmp(name, "proxy.config.http.transaction_no_activity_timeout_out", length))
         cnf = TS_CONFIG_HTTP_TRANSACTION_NO_ACTIVITY_TIMEOUT_OUT;
@@ -8607,8 +8619,16 @@ TSHttpTxnConfigFind(const char *name, int length, TSOverridableConfigKey *conf, 
     break;
 
   case 58:
-    if (!strncmp(name, "proxy.config.http.connect_attempts_max_retries_dead_server", length))
-      cnf = TS_CONFIG_HTTP_CONNECT_ATTEMPTS_MAX_RETRIES_DEAD_SERVER;
+    switch (name[length - 1]) {
+      case 'r':
+        if (!strncmp(name, "proxy.config.http.connect_attempts_max_retries_dead_server", length))
+          cnf = TS_CONFIG_HTTP_CONNECT_ATTEMPTS_MAX_RETRIES_DEAD_SERVER;
+        break;
+      case 's':
+        if (!strncmp(name, "proxy.config.http.parent_proxy.per_parent_connect_attempts", length)) 
+          cnf = TS_CONFIG_HTTP_PER_PARENT_CONNECT_ATTEMPTS;
+        break;
+    }
     break;
 
   case 59:
