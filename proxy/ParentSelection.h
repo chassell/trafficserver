@@ -107,6 +107,10 @@ struct ParentSelectionInterface {
   inkcoreapi virtual void recordRetrySuccess(ParentResult *result) = 0;
 };
 
+//
+//  Implementation of round robin based upon client IP, 
+//  ParentRR_t = P_HASH_ROUND_ROBIN.
+//
 class ParentRoundRobinClientIp : public ParentSelectionInterface {
   public:
     ParentRoundRobinClientIp();
@@ -119,6 +123,10 @@ class ParentRoundRobinClientIp : public ParentSelectionInterface {
     void recordRetrySuccess(ParentResult *result);
 };
 
+//
+//  Implementation of round robin based upon consistent hash of the URL, 
+//  ParentRR_t = P_CONSISTENT_HASH.
+//
 class ParentConsistentHash : public ParentSelectionInterface {
   public:
     ParentConsistentHash();
@@ -131,6 +139,11 @@ class ParentConsistentHash : public ParentSelectionInterface {
     void recordRetrySuccess(ParentResult *result);
 };
 
+//
+//  Implementation of no round robin, first parent is always used until
+//  its marked down.
+//  ParentRR_t = P_NO_ROUND_ROBIN
+//
 class ParentRoundRobinNone : public ParentSelectionInterface {
   public:
     ParentRoundRobinNone();
@@ -143,6 +156,10 @@ class ParentRoundRobinNone : public ParentSelectionInterface {
     void recordRetrySuccess(ParentResult *result);
 };
 
+//
+//  Implementation of strict round robin.
+//  ParentRR_t = P_STRICT_ROUND_ROBIN
+//
 class ParentRoundRobinStrict : public ParentSelectionInterface {
   public:
     ParentRoundRobinStrict();
