@@ -166,32 +166,32 @@ class ParentSelectionComposite : public ParentSelectionInterface {
     }
 
     bool apiParentExists(HttpRequestData *rdata) {
-      ink_assert(parent_type != NULL);
+      ink_release_assert(parent_type != NULL);
       return parent_type->apiParentExists(rdata);
     }
 
     void findParent(HttpRequestData *rdata, ParentResult *result) {
-      ink_assert(parent_type != NULL);
+      ink_release_assert(parent_type != NULL);
       parent_type->findParent(rdata, result);
     }
 
     void markParentDown(ParentResult *result) {
-      ink_assert(parent_type != NULL);
+      ink_release_assert(parent_type != NULL);
       parent_type->markParentDown(result);
     }
 
     void nextParent(HttpRequestData *rdata, ParentResult *result) {
-      ink_assert(parent_type != NULL);
+      ink_release_assert(parent_type != NULL);
       parent_type->nextParent(rdata, result);
     }
 
     bool parentExists(HttpRequestData *rdata) {
-      ink_assert(parent_type != NULL);
+      ink_release_assert(parent_type != NULL);
       return parent_type->parentExists(rdata);
     }
 
     void recordRetrySuccess(ParentResult *result) {
-      ink_assert(parent_type != NULL);
+      ink_release_assert(parent_type != NULL);
       parent_type->recordRetrySuccess(result);
     }
 };

@@ -86,6 +86,8 @@ ParentSelectionComposite::ParentSelectionComposite(ParentRR_t _type) {
   case P_CONSISTENT_HASH:
     parent_type = new ParentConsistentHash();
     break;
+  default:
+    ink_release_assert(0);
  }
 }
 
