@@ -59,7 +59,142 @@ enum ParentResultType {
   PARENT_ORIGIN,
 };
 
+enum ParentRR_t {
+  P_NO_ROUND_ROBIN = 0,
+  P_STRICT_ROUND_ROBIN,
+  P_HASH_ROUND_ROBIN,
+  P_CONSISTENT_HASH,
+};
+
 typedef ControlMatcher<ParentRecord, ParentResult> P_table;
+
+struct ParentSelectionInterface {
+  // bool apiParentExists(HttpRequestData* rdata)
+  //
+  //   Retures true if a parent has been set through the api
+  inkcoreapi virtual bool apiParentExists(HttpRequestData *rdata) = 0;
+
+  // void findParent(RequestData* rdata, ParentResult* result)
+  //
+  //   Does initial parent lookup
+  //
+  inkcoreapi virtual void findParent(HttpRequestData *rdata, ParentResult *result) = 0;
+
+  // void markParentDown(ParentResult* rsult)
+  //
+  //    Marks the parent pointed to by result as down
+  //
+  inkcoreapi virtual void markParentDown(ParentResult *result) = 0;
+
+  // void nextParent(RequestData* rdata, ParentResult* result);
+  //
+  //    Marks the parent pointed to by result as down and attempts
+  //      to find the next parent
+  //
+  inkcoreapi virtual void nextParent(HttpRequestData *rdata, ParentResult *result) = 0;
+
+  // bool parentExists(HttpRequestData* rdata)
+  //
+  //   Returns true if there is a parent matching the request data and
+  //   false otherwise
+  inkcoreapi virtual bool parentExists(HttpRequestData *rdata) = 0;
+
+  // void recordRetrySuccess
+  //
+  //    After a successful retry, http calls this function
+  //      to clear the bits indicating the parent is down
+  //
+  inkcoreapi virtual void recordRetrySuccess(ParentResult *result) = 0;
+};
+
+class ParentRoundRobinClientIp : public ParentSelectionInterface {
+  public:
+    ParentRoundRobinClientIp();
+    ~ParentRoundRobinClientIp();
+    bool apiParentExists(HttpRequestData *rdata);
+    void findParent(HttpRequestData *rdata, ParentResult *result);
+    void markParentDown(ParentResult *result);
+    void nextParent(HttpRequestData *rdata, ParentResult *result);
+    bool parentExists(HttpRequestData *rdata);
+    void recordRetrySuccess(ParentResult *result);
+};
+
+class ParentConsistentHash : public ParentSelectionInterface {
+  public:
+    ParentConsistentHash();
+    ~ParentConsistentHash();
+    bool apiParentExists(HttpRequestData *rdata);
+    void findParent(HttpRequestData *rdata, ParentResult *result);
+    void markParentDown(ParentResult *result);
+    void nextParent(HttpRequestData *rdata, ParentResult *result);
+    bool parentExists(HttpRequestData *rdata);
+    void recordRetrySuccess(ParentResult *result);
+};
+
+class ParentRoundRobinNone : public ParentSelectionInterface {
+  public:
+    ParentRoundRobinNone();
+    ~ParentRoundRobinNone();
+    bool apiParentExists(HttpRequestData *rdata);
+    void findParent(HttpRequestData *rdata, ParentResult *result);
+    void markParentDown(ParentResult *result);
+    void nextParent(HttpRequestData *rdata, ParentResult *result);
+    bool parentExists(HttpRequestData *rdata);
+    void recordRetrySuccess(ParentResult *result);
+};
+
+class ParentRoundRobinStrict : public ParentSelectionInterface {
+  public:
+    ParentRoundRobinStrict();
+    ~ParentRoundRobinStrict();
+    bool apiParentExists(HttpRequestData *rdata);
+    void findParent(HttpRequestData *rdata, ParentResult *result);
+    void markParentDown(ParentResult *result);
+    void nextParent(HttpRequestData *rdata, ParentResult *result);
+    bool parentExists(HttpRequestData *rdata);
+    void recordRetrySuccess(ParentResult *result);
+};
+
+class ParentSelectionComposite : public ParentSelectionInterface {
+  ParentSelectionInterface *parent_type;  
+
+  public:
+    ParentSelectionComposite(ParentRR_t _type);
+
+    ~ParentSelectionComposite() {
+      free(parent_type);
+    }
+
+    bool apiParentExists(HttpRequestData *rdata) {
+      ink_assert(parent_type != NULL);
+      return parent_type->apiParentExists(rdata);
+    }
+
+    void findParent(HttpRequestData *rdata, ParentResult *result) {
+      ink_assert(parent_type != NULL);
+      parent_type->findParent(rdata, result);
+    }
+
+    void markParentDown(ParentResult *result) {
+      ink_assert(parent_type != NULL);
+      parent_type->markParentDown(result);
+    }
+
+    void nextParent(HttpRequestData *rdata, ParentResult *result) {
+      ink_assert(parent_type != NULL);
+      parent_type->nextParent(rdata, result);
+    }
+
+    bool parentExists(HttpRequestData *rdata) {
+      ink_assert(parent_type != NULL);
+      return parent_type->parentExists(rdata);
+    }
+
+    void recordRetrySuccess(ParentResult *result) {
+      ink_assert(parent_type != NULL);
+      parent_type->recordRetrySuccess(result);
+    }
+};
 
 //
 // API to outside world
@@ -180,13 +315,6 @@ struct pRecord : ATSConsistentHashNode {
   const char *scheme; // for which parent matches (if any)
   int idx;
   float weight;
-};
-
-enum ParentRR_t {
-  P_NO_ROUND_ROBIN = 0,
-  P_STRICT_ROUND_ROBIN,
-  P_HASH_ROUND_ROBIN,
-  P_CONSISTENT_HASH,
 };
 
 // class ParentRecord : public ControlBase

@@ -70,6 +70,185 @@ enum ParentCB_t {
 //   between HttpTransact & the parent selection code.  The following
 ParentRecord *const extApiRecord = (ParentRecord *)0xeeeeffff;
 
+ParentSelectionComposite::ParentSelectionComposite(ParentRR_t _type) {
+ parent_type = NULL;
+
+ switch (_type) {
+  case P_NO_ROUND_ROBIN:
+    parent_type = new ParentRoundRobinNone();
+    break;
+  case P_STRICT_ROUND_ROBIN:
+    parent_type = new ParentRoundRobinStrict();
+    break;
+  case P_HASH_ROUND_ROBIN:
+    parent_type = new ParentRoundRobinClientIp();
+    break;
+  case P_CONSISTENT_HASH:
+    parent_type = new ParentConsistentHash();
+    break;
+ }
+}
+
+ParentRoundRobinClientIp::ParentRoundRobinClientIp() {
+  // TODO Implement
+  ;
+}
+
+ParentRoundRobinClientIp::~ParentRoundRobinClientIp() {
+  // TODO Implement
+  ;
+}
+
+bool ParentRoundRobinClientIp::apiParentExists(HttpRequestData *rdata) {
+  // TODO Implement
+  return false;
+}
+
+void ParentRoundRobinClientIp::findParent(HttpRequestData *rdata, ParentResult *result) {
+  // TODO Implement
+  ;
+}
+
+void ParentRoundRobinClientIp::markParentDown(ParentResult *result) {
+  // TODO Implement
+  ;
+}
+
+void ParentRoundRobinClientIp::nextParent(HttpRequestData *rdata, ParentResult *result) {
+  // TODO Implement
+  ;
+}
+
+bool ParentRoundRobinClientIp::parentExists(HttpRequestData *rdata) {
+  // TODO Implement
+  return false;
+}
+
+void ParentRoundRobinClientIp::recordRetrySuccess(ParentResult *result) {
+  // TODO Implement
+  ;
+}
+
+ParentConsistentHash::ParentConsistentHash() {
+  // TODO Implement
+  ;
+}
+
+ParentConsistentHash::~ParentConsistentHash() {
+  // TODO Implement
+  ;
+}
+
+bool ParentConsistentHash::apiParentExists(HttpRequestData *rdata) {
+  // TODO Implement
+  return false;
+}
+
+void ParentConsistentHash::findParent(HttpRequestData *rdata, ParentResult *result) {
+  // TODO Implement
+  ;
+}
+
+void ParentConsistentHash::markParentDown(ParentResult *result) {
+  // TODO Implement
+  ;
+}
+
+void ParentConsistentHash::nextParent(HttpRequestData *rdata, ParentResult *result) {
+  // TODO Implement
+  ;
+}
+
+bool ParentConsistentHash::parentExists(HttpRequestData *rdata) {
+  // TODO Implement
+  return false;
+}
+
+void ParentConsistentHash::recordRetrySuccess(ParentResult *result) {
+  // TODO Implement
+  ;
+}
+
+ParentRoundRobinNone::ParentRoundRobinNone() {
+  // TODO Implement
+  ;
+}
+
+ParentRoundRobinNone::~ParentRoundRobinNone() {
+  // TODO Implement
+  ;
+}
+
+bool ParentRoundRobinNone::apiParentExists(HttpRequestData *rdata) {
+  // TODO Implement
+  return false;
+}
+
+void ParentRoundRobinNone::findParent(HttpRequestData *rdata, ParentResult *result) {
+  // TODO Implement
+  ;
+}
+
+void ParentRoundRobinNone::markParentDown(ParentResult *result) {
+  // TODO Implement
+  ;
+}
+
+void ParentRoundRobinNone::nextParent(HttpRequestData *rdata, ParentResult *result) {
+  // TODO Implement
+  ;
+}
+
+bool ParentRoundRobinNone::parentExists(HttpRequestData *rdata) {
+  // TODO Implement
+  return false;
+}
+
+void ParentRoundRobinNone::recordRetrySuccess(ParentResult *result) {
+  // TODO Implement
+  ;
+}
+
+ParentRoundRobinStrict::ParentRoundRobinStrict() {
+  // TODO Implement
+  ;
+}
+
+ParentRoundRobinStrict::~ParentRoundRobinStrict() {
+  // TODO Implement
+  ;
+}
+
+bool ParentRoundRobinStrict::apiParentExists(HttpRequestData *rdata) {
+  // TODO Implement
+  return false;
+}
+
+void ParentRoundRobinStrict::findParent(HttpRequestData *rdata, ParentResult *result) {
+  // TODO Implement
+  ;
+}
+
+void ParentRoundRobinStrict::markParentDown(ParentResult *result) {
+  // TODO Implement
+  ;
+}
+
+void ParentRoundRobinStrict::nextParent(HttpRequestData *rdata, ParentResult *result) {
+  // TODO Implement
+  ;
+}
+
+bool ParentRoundRobinStrict::parentExists(HttpRequestData *rdata) {
+  // TODO Implement
+  return false;
+}
+
+void ParentRoundRobinStrict::recordRetrySuccess(ParentResult *result) {
+  // TODO Implement
+  ;
+}
+
 ParentConfigParams::ParentConfigParams()
   : ParentTable(NULL), DefaultParent(NULL), ParentRetryTime(30), ParentEnable(0), FailThreshold(10), DNS_ParentOnly(0)
 {
