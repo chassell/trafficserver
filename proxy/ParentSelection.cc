@@ -70,27 +70,6 @@ enum ParentCB_t {
 //   between HttpTransact & the parent selection code.  The following
 ParentRecord *const extApiRecord = (ParentRecord *)0xeeeeffff;
 
-ParentSelectionComposite::ParentSelectionComposite(ParentRR_t _type) {
- parent_type = NULL;
-
- switch (_type) {
-  case P_NO_ROUND_ROBIN:
-    parent_type = new ParentRoundRobinNone();
-    break;
-  case P_STRICT_ROUND_ROBIN:
-    parent_type = new ParentRoundRobinStrict();
-    break;
-  case P_HASH_ROUND_ROBIN:
-    parent_type = new ParentRoundRobinClientIp();
-    break;
-  case P_CONSISTENT_HASH:
-    parent_type = new ParentConsistentHash();
-    break;
-  default:
-    ink_release_assert(0);
- }
-}
-
 ParentRoundRobinClientIp::ParentRoundRobinClientIp() {
   // TODO Implement
   ;
@@ -251,12 +230,29 @@ void ParentRoundRobinStrict::recordRetrySuccess(ParentResult *result) {
   ;
 }
 
-ParentConfigParams::ParentConfigParams()
-  : ParentTable(NULL), DefaultParent(NULL), ParentRetryTime(30), ParentEnable(0), FailThreshold(10), DNS_ParentOnly(0)
-{
+// was ParentSelectionComposite.
+ParentSelectionStrategy::ParentSelectionStrategy(ParentRR_t _type) {
+ parent_type = NULL;
+
+ switch (_type) {
+  case P_NO_ROUND_ROBIN:
+    parent_type = new ParentRoundRobinNone();
+    break;
+  case P_STRICT_ROUND_ROBIN:
+    parent_type = new ParentRoundRobinStrict();
+    break;
+  case P_HASH_ROUND_ROBIN:
+    parent_type = new ParentRoundRobinClientIp();
+    break;
+  case P_CONSISTENT_HASH:
+    parent_type = new ParentConsistentHash();
+    break;
+  default:
+    ink_release_assert(0);
+ }
 }
 
-ParentConfigParams::~ParentConfigParams()
+ParentSelectionStrategy::~ParentSelectionStrategy()
 {
   if (ParentTable) {
     delete ParentTable;
@@ -264,6 +260,10 @@ ParentConfigParams::~ParentConfigParams()
 
   if (DefaultParent) {
     delete DefaultParent;
+  }
+
+  if (parent_type) {
+    delete parent_type;
   }
 }
 
@@ -305,13 +305,39 @@ ParentConfig::reconfigure()
   int enable = 0;
   int fail_threshold;
   int dns_parent_only;
-
   ParentConfigParams *params;
-  params = new ParentConfigParams;
+  P_table *ptable = NULL;
+  ParentRR_t round_robin_type = P_NO_ROUND_ROBIN;
+  HostMatcher<ParentRecord,ParentResult> *hostMatcher = NULL;
+  HostRegexMatcher<ParentRecord,ParentResult> *hostRegexMatcher = NULL;
+  IpMatcher<ParentRecord,ParentResult> *ipMatcher = NULL;
+  RegexMatcher<ParentRecord,ParentResult> *regexMatcher = NULL;
+  UrlMatcher<ParentRecord,ParentResult> *urlMatcher = NULL;
+
+  ptable = new P_table(file_var, modulePrefix, &http_dest_tags);
+  
+  if ( (hostMatcher = ptable->getHostMatcher()) != NULL) {
+    round_robin_type = hostMatcher->getDataArray()->round_robin;
+  }
+  else if ( (hostRegexMatcher = ptable->getHrMatcher()) != NULL) {
+    round_robin_type = hostRegexMatcher->getDataArray()->round_robin;
+  }
+  else if ( (ipMatcher = ptable->getIPMatcher()) != NULL) {
+    round_robin_type = ipMatcher->getDataArray()->round_robin;
+  }
+  else if ( (regexMatcher = ptable->getReMatcher()) != NULL) {
+    round_robin_type = regexMatcher->getDataArray()->round_robin;
+  }
+  else if ( (urlMatcher = ptable->getUrlMatcher()) != NULL) {
+    round_robin_type = urlMatcher->getDataArray()->round_robin;
+  }
+
+  params = new ParentConfigParams();
+  params->parent_strategy = new ParentSelectionStrategy(round_robin_type);
 
   // Allocate parent table
-  params->ParentTable = new P_table(file_var, modulePrefix, &http_dest_tags);
-
+  params->ParentTable = ptable;
+  //
   // Handle default parent
   PARENT_ReadConfigStringAlloc(default_val, default_var);
   params->DefaultParent = createDefaultParent(default_val);
@@ -361,6 +387,26 @@ ParentConfig::print()
   params->ParentTable->Print();
 
   ParentConfig::release(params);
+}
+
+ParentConfigParams::ParentConfigParams()
+  : ParentTable(NULL), DefaultParent(NULL), parent_strategy(NULL), ParentRetryTime(30), ParentEnable(0), FailThreshold(10), DNS_ParentOnly(0)
+{
+}
+
+ParentConfigParams::~ParentConfigParams()
+{
+  if (ParentTable) {
+    delete ParentTable;
+  }
+
+  if (DefaultParent) {
+    delete DefaultParent;
+  }
+
+  if (parent_strategy) {
+    delete parent_strategy;
+  }
 }
 
 bool

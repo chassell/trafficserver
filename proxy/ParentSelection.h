@@ -172,15 +172,11 @@ class ParentRoundRobinStrict : public ParentSelectionInterface {
     void recordRetrySuccess(ParentResult *result);
 };
 
-class ParentSelectionComposite : public ParentSelectionInterface {
-  ParentSelectionInterface *parent_type;  
+class ParentSelectionStrategy : public ParentSelectionInterface {
 
   public:
-    ParentSelectionComposite(ParentRR_t _type);
-
-    ~ParentSelectionComposite() {
-      free(parent_type);
-    }
+    ParentSelectionStrategy(ParentRR_t _type);
+    ~ParentSelectionStrategy();
 
     bool apiParentExists(HttpRequestData *rdata) {
       ink_release_assert(parent_type != NULL);
@@ -211,6 +207,14 @@ class ParentSelectionComposite : public ParentSelectionInterface {
       ink_release_assert(parent_type != NULL);
       parent_type->recordRetrySuccess(result);
     }
+
+  P_table *ParentTable;
+  ParentRecord *DefaultParent;
+  ParentSelectionInterface *parent_type;  
+  int32_t ParentRetryTime;
+  int32_t ParentEnable;
+  int32_t FailThreshold;
+  int32_t DNS_ParentOnly;
 };
 
 //
@@ -288,6 +292,7 @@ struct ParentConfigParams : public ConfigInfo {
 
   P_table *ParentTable;
   ParentRecord *DefaultParent;
+  ParentSelectionStrategy *parent_strategy;
   int32_t ParentRetryTime;
   int32_t ParentEnable;
   int32_t FailThreshold;
