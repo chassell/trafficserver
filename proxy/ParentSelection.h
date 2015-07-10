@@ -68,7 +68,58 @@ enum ParentRR_t {
 
 typedef ControlMatcher<ParentRecord, ParentResult> P_table;
 
+struct ParentConfigParams : public ConfigInfo {
+  ParentConfigParams();
+  ~ParentConfigParams();
+
+  // void findParent(RequestData* rdata, ParentResult* result)
+  //
+  //   Does initial parent lookup
+  //
+  inkcoreapi void findParent(HttpRequestData *rdata, ParentResult *result);
+
+  // void markParentDown(ParentResult* rsult)
+  //
+  //    Marks the parent pointed to by result as down
+  //
+  inkcoreapi void markParentDown(ParentResult *result);
+
+  // void recordRetrySuccess
+  //
+  //    After a successful retry, http calls this function
+  //      to clear the bits indicating the parent is down
+  //
+  void recordRetrySuccess(ParentResult *result);
+
+  // void nextParent(RequestData* rdata, ParentResult* result);
+  //
+  //    Marks the parent pointed to by result as down and attempts
+  //      to find the next parent
+  //
+  inkcoreapi void nextParent(HttpRequestData *rdata, ParentResult *result);
+
+  // bool parentExists(HttpRequestData* rdata)
+  //
+  //   Returns true if there is a parent matching the request data and
+  //   false otherwise
+  bool parentExists(HttpRequestData *rdata);
+
+  // bool apiParentExists(HttpRequestData* rdata)
+  //
+  //   Retures true if a parent has been set through the api
+  bool apiParentExists(HttpRequestData *rdata);
+
+  P_table *ParentTable;
+  ParentRecord *DefaultParent;
+  int32_t ParentRetryTime;
+  int32_t ParentEnable;
+  int32_t FailThreshold;
+  int32_t DNS_ParentOnly;
+};
+
 struct ParentSelectionInterface {
+  ParentConfigParams *parent_params;
+
   // bool apiParentExists(HttpRequestData* rdata)
   //
   //   Retures true if a parent has been set through the api
@@ -173,9 +224,19 @@ class ParentRoundRobinStrict : public ParentSelectionInterface {
 };
 
 class ParentSelectionStrategy : public ParentSelectionInterface {
+  ParentSelectionInterface *parent_type;  
+
+  // using automatic allocation for these
+  // will set parent_type to point to the proper strategy
+  // in the constructor.
+  ParentRoundRobinNone parentRoundRobinNone;
+  ParentRoundRobinStrict parentRoundRobinStrict;
+  ParentRoundRobinClientIp parentRoundRobinClientIp;
+  ParentConsistentHash parentConsistentHash;
 
   public:
-    ParentSelectionStrategy(ParentRR_t _type);
+    ParentSelectionStrategy() : parent_type(NULL) { parent_params = NULL; }
+    ParentSelectionStrategy(ParentRR_t _type, ParentConfigParams *_parent_params);
     ~ParentSelectionStrategy();
 
     bool apiParentExists(HttpRequestData *rdata) {
@@ -207,14 +268,6 @@ class ParentSelectionStrategy : public ParentSelectionInterface {
       ink_release_assert(parent_type != NULL);
       parent_type->recordRetrySuccess(result);
     }
-
-  P_table *ParentTable;
-  ParentRecord *DefaultParent;
-  ParentSelectionInterface *parent_type;  
-  int32_t ParentRetryTime;
-  int32_t ParentEnable;
-  int32_t FailThreshold;
-  int32_t DNS_ParentOnly;
 };
 
 //
@@ -249,67 +302,14 @@ struct ParentResult {
 
 class HttpRequestData;
 
-struct ParentConfigParams : public ConfigInfo {
-  ParentConfigParams();
-  ~ParentConfigParams();
-
-  // void findParent(RequestData* rdata, ParentResult* result)
-  //
-  //   Does initial parent lookup
-  //
-  inkcoreapi void findParent(HttpRequestData *rdata, ParentResult *result);
-
-  // void markParentDown(ParentResult* rsult)
-  //
-  //    Marks the parent pointed to by result as down
-  //
-  inkcoreapi void markParentDown(ParentResult *result);
-
-  // void recordRetrySuccess
-  //
-  //    After a successful retry, http calls this function
-  //      to clear the bits indicating the parent is down
-  //
-  void recordRetrySuccess(ParentResult *result);
-
-  // void nextParent(RequestData* rdata, ParentResult* result);
-  //
-  //    Marks the parent pointed to by result as down and attempts
-  //      to find the next parent
-  //
-  inkcoreapi void nextParent(HttpRequestData *rdata, ParentResult *result);
-
-  // bool parentExists(HttpRequestData* rdata)
-  //
-  //   Returns true if there is a parent matching the request data and
-  //   false otherwise
-  bool parentExists(HttpRequestData *rdata);
-
-  // bool apiParentExists(HttpRequestData* rdata)
-  //
-  //   Retures true if a parent has been set through the api
-  bool apiParentExists(HttpRequestData *rdata);
-
-  P_table *ParentTable;
-  ParentRecord *DefaultParent;
-  ParentSelectionStrategy *parent_strategy;
-  int32_t ParentRetryTime;
-  int32_t ParentEnable;
-  int32_t FailThreshold;
-  int32_t DNS_ParentOnly;
-};
-
 struct ParentConfig {
 public:
   static void startup();
   static void reconfigure();
   static void print();
 
-  inkcoreapi static ParentConfigParams *
-  acquire()
-  {
-    return (ParentConfigParams *)configProcessor.get(ParentConfig::m_id);
-  }
+  inkcoreapi static ParentConfigParams *acquire();
+
   inkcoreapi static void
   release(ParentConfigParams *params)
   {
