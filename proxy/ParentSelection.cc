@@ -70,47 +70,9 @@ enum ParentCB_t {
 //   between HttpTransact & the parent selection code.  The following
 ParentRecord *const extApiRecord = (ParentRecord *)0xeeeeffff;
 
-ParentRoundRobinClientIp::ParentRoundRobinClientIp() {
-  parent_params = NULL;
-}
-
-ParentRoundRobinClientIp::~ParentRoundRobinClientIp() {
-  // TODO Implement
-  ;
-}
-
-bool ParentRoundRobinClientIp::apiParentExists(HttpRequestData *rdata) {
-  // TODO Implement
-  return false;
-}
-
-void ParentRoundRobinClientIp::findParent(HttpRequestData *rdata, ParentResult *result) {
-  // TODO Implement
-  ;
-}
-
-void ParentRoundRobinClientIp::markParentDown(ParentResult *result) {
-  // TODO Implement
-  ;
-}
-
-void ParentRoundRobinClientIp::nextParent(HttpRequestData *rdata, ParentResult *result) {
-  // TODO Implement
-  ;
-}
-
-bool ParentRoundRobinClientIp::parentExists(HttpRequestData *rdata) {
-  // TODO Implement
-  return false;
-}
-
-void ParentRoundRobinClientIp::recordRetrySuccess(ParentResult *result) {
-  // TODO Implement
-  ;
-}
-
-ParentConsistentHash::ParentConsistentHash() {
-  parent_params = NULL;
+ParentConsistentHash::ParentConsistentHash(P_table *_parent_table) {
+    // TODO Implement
+    parent_table = _parent_table;
 }
 
 ParentConsistentHash::~ParentConsistentHash() {
@@ -148,105 +110,81 @@ void ParentConsistentHash::recordRetrySuccess(ParentResult *result) {
   ;
 }
 
-ParentRoundRobinNone::ParentRoundRobinNone() {
-  parent_params = NULL;
+ParentRoundRobin::ParentRoundRobin(P_table *_parent_table) {
+  // TODO Implement
+  parent_table = _parent_table;
 }
 
-ParentRoundRobinNone::~ParentRoundRobinNone() {
+ParentRoundRobin::~ParentRoundRobin() {
   // TODO Implement
   ;
 }
 
-bool ParentRoundRobinNone::apiParentExists(HttpRequestData *rdata) {
+bool ParentRoundRobin::apiParentExists(HttpRequestData *rdata) {
   // TODO Implement
   return false;
 }
 
-void ParentRoundRobinNone::findParent(HttpRequestData *rdata, ParentResult *result) {
+void ParentRoundRobin::findParent(HttpRequestData *rdata, ParentResult *result) {
   // TODO Implement
   ;
 }
 
-void ParentRoundRobinNone::markParentDown(ParentResult *result) {
+void ParentRoundRobin::markParentDown(ParentResult *result) {
   // TODO Implement
   ;
 }
 
-void ParentRoundRobinNone::nextParent(HttpRequestData *rdata, ParentResult *result) {
+void ParentRoundRobin::nextParent(HttpRequestData *rdata, ParentResult *result) {
   // TODO Implement
   ;
 }
 
-bool ParentRoundRobinNone::parentExists(HttpRequestData *rdata) {
+bool ParentRoundRobin::parentExists(HttpRequestData *rdata) {
   // TODO Implement
   return false;
 }
 
-void ParentRoundRobinNone::recordRetrySuccess(ParentResult *result) {
+void ParentRoundRobin::recordRetrySuccess(ParentResult *result) {
   // TODO Implement
   ;
 }
 
-ParentRoundRobinStrict::ParentRoundRobinStrict() {
-  parent_params = NULL;
-}
+ParentSelectionStrategy::ParentSelectionStrategy(P_table *_parent_table) {
+  parent_table = _parent_table;
+  parent_type = NULL;
 
-ParentRoundRobinStrict::~ParentRoundRobinStrict() {
-  // TODO Implement
-  ;
-}
+  ParentRR_t round_robin_type = P_NO_ROUND_ROBIN;
+  HostMatcher<ParentRecord,ParentResult> *hostMatcher = NULL;
+  HostRegexMatcher<ParentRecord,ParentResult> *hostRegexMatcher = NULL;
+  IpMatcher<ParentRecord,ParentResult> *ipMatcher = NULL;
+  RegexMatcher<ParentRecord,ParentResult> *regexMatcher = NULL;
+  UrlMatcher<ParentRecord,ParentResult> *urlMatcher = NULL;
 
-bool ParentRoundRobinStrict::apiParentExists(HttpRequestData *rdata) {
-  // TODO Implement
-  return false;
-}
+  if ( (hostMatcher = _parent_table->getHostMatcher()) != NULL) {
+    round_robin_type = hostMatcher->getDataArray()->round_robin;
+  }
+  else if ( (hostRegexMatcher = _parent_table->getHrMatcher()) != NULL) {
+    round_robin_type = hostRegexMatcher->getDataArray()->round_robin;
+  }
+  else if ( (ipMatcher = _parent_table->getIPMatcher()) != NULL) {
+    round_robin_type = ipMatcher->getDataArray()->round_robin;
+  }
+  else if ( (regexMatcher = _parent_table->getReMatcher()) != NULL) {
+    round_robin_type = regexMatcher->getDataArray()->round_robin;
+  }
+  else if ( (urlMatcher = _parent_table->getUrlMatcher()) != NULL) {
+    round_robin_type = urlMatcher->getDataArray()->round_robin;
+  }
 
-void ParentRoundRobinStrict::findParent(HttpRequestData *rdata, ParentResult *result) {
-  // TODO Implement
-  ;
-}
-
-void ParentRoundRobinStrict::markParentDown(ParentResult *result) {
-  // TODO Implement
-  ;
-}
-
-void ParentRoundRobinStrict::nextParent(HttpRequestData *rdata, ParentResult *result) {
-  // TODO Implement
-  ;
-}
-
-bool ParentRoundRobinStrict::parentExists(HttpRequestData *rdata) {
-  // TODO Implement
-  return false;
-}
-
-void ParentRoundRobinStrict::recordRetrySuccess(ParentResult *result) {
-  // TODO Implement
-  ;
-}
-
-// was ParentSelectionComposite.
-ParentSelectionStrategy::ParentSelectionStrategy(ParentRR_t _type, ParentConfigParams *_parent_params) {
- parent_type = NULL;
- parent_params = _parent_params;
-
- switch (_type) {
+ switch (round_robin_type) {
   case P_NO_ROUND_ROBIN:
-    parent_type = &parentRoundRobinNone;
-    parentRoundRobinNone.parent_params = _parent_params;
-    break;
   case P_STRICT_ROUND_ROBIN:
-    parent_type = &parentRoundRobinStrict;
-    parentRoundRobinStrict.parent_params = _parent_params;
-    break;
   case P_HASH_ROUND_ROBIN:
-    parent_type = &parentRoundRobinClientIp;
-    parentRoundRobinClientIp.parent_params = _parent_params;
+    parent_type = new ParentRoundRobin(_parent_table); 
     break;
   case P_CONSISTENT_HASH:
-    parent_type = &parentConsistentHash;
-    parentConsistentHash.parent_params = _parent_params;
+    parent_type = new ParentConsistentHash(_parent_table);
     break;
   default:
     ink_release_assert(0);
@@ -259,6 +197,7 @@ ParentSelectionStrategy::~ParentSelectionStrategy()
 
 int ParentConfig::m_id = 0;
 
+/*
 ParentConfigParams *
 ParentConfig::acquire()
 {
@@ -296,6 +235,7 @@ ParentConfig::acquire()
   //make appropriate modifications to HttpTransact.
   return parent_params;
 }
+*/
 
 //
 //   Begin API functions
@@ -334,12 +274,15 @@ ParentConfig::reconfigure()
   int fail_threshold;
   int dns_parent_only;
   ParentConfigParams *params;
+  ParentSelectionStrategy *parent_strategy;
 
   params = new ParentConfigParams();
-
+  
   // Allocate parent table
   params->ParentTable = new P_table(file_var, modulePrefix, &http_dest_tags);
-  //
+
+  parent_strategy = new ParentSelectionStrategy(params->ParentTable);
+  
   // Handle default parent
   PARENT_ReadConfigStringAlloc(default_val, default_var);
   params->DefaultParent = createDefaultParent(default_val);

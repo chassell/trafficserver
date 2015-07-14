@@ -118,7 +118,7 @@ struct ParentConfigParams : public ConfigInfo {
 };
 
 struct ParentSelectionInterface {
-  ParentConfigParams *parent_params;
+  P_table *parent_table;
 
   // bool apiParentExists(HttpRequestData* rdata)
   //
@@ -159,28 +159,12 @@ struct ParentSelectionInterface {
 };
 
 //
-//  Implementation of round robin based upon client IP, 
-//  ParentRR_t = P_HASH_ROUND_ROBIN.
-//
-class ParentRoundRobinClientIp : public ParentSelectionInterface {
-  public:
-    ParentRoundRobinClientIp();
-    ~ParentRoundRobinClientIp();
-    bool apiParentExists(HttpRequestData *rdata);
-    void findParent(HttpRequestData *rdata, ParentResult *result);
-    void markParentDown(ParentResult *result);
-    void nextParent(HttpRequestData *rdata, ParentResult *result);
-    bool parentExists(HttpRequestData *rdata);
-    void recordRetrySuccess(ParentResult *result);
-};
-
-//
 //  Implementation of round robin based upon consistent hash of the URL, 
 //  ParentRR_t = P_CONSISTENT_HASH.
 //
 class ParentConsistentHash : public ParentSelectionInterface {
   public:
-    ParentConsistentHash();
+    ParentConsistentHash(P_table *_parent_table);
     ~ParentConsistentHash();
     bool apiParentExists(HttpRequestData *rdata);
     void findParent(HttpRequestData *rdata, ParentResult *result);
@@ -191,14 +175,14 @@ class ParentConsistentHash : public ParentSelectionInterface {
 };
 
 //
-//  Implementation of no round robin, first parent is always used until
-//  its marked down.
-//  ParentRR_t = P_NO_ROUND_ROBIN
+//  Implementation of the various round robin strategies. 
+//  ParentRR_t is one of P_NO_ROUND_ROBIN, P_STRICT_ROUND_ROBIN, or 
+//  P_HASH_ROUND_ROBIN.
 //
-class ParentRoundRobinNone : public ParentSelectionInterface {
+class ParentRoundRobin : public ParentSelectionInterface {
   public:
-    ParentRoundRobinNone();
-    ~ParentRoundRobinNone();
+    ParentRoundRobin(P_table *_parent_table);
+    ~ParentRoundRobin();
     bool apiParentExists(HttpRequestData *rdata);
     void findParent(HttpRequestData *rdata, ParentResult *result);
     void markParentDown(ParentResult *result);
@@ -207,36 +191,12 @@ class ParentRoundRobinNone : public ParentSelectionInterface {
     void recordRetrySuccess(ParentResult *result);
 };
 
-//
-//  Implementation of strict round robin.
-//  ParentRR_t = P_STRICT_ROUND_ROBIN
-//
-class ParentRoundRobinStrict : public ParentSelectionInterface {
-  public:
-    ParentRoundRobinStrict();
-    ~ParentRoundRobinStrict();
-    bool apiParentExists(HttpRequestData *rdata);
-    void findParent(HttpRequestData *rdata, ParentResult *result);
-    void markParentDown(ParentResult *result);
-    void nextParent(HttpRequestData *rdata, ParentResult *result);
-    bool parentExists(HttpRequestData *rdata);
-    void recordRetrySuccess(ParentResult *result);
-};
-
-class ParentSelectionStrategy : public ParentSelectionInterface {
+class ParentSelectionStrategy : public ConfigInfo, ParentSelectionInterface {
   ParentSelectionInterface *parent_type;  
 
-  // using automatic allocation for these
-  // will set parent_type to point to the proper strategy
-  // in the constructor.
-  ParentRoundRobinNone parentRoundRobinNone;
-  ParentRoundRobinStrict parentRoundRobinStrict;
-  ParentRoundRobinClientIp parentRoundRobinClientIp;
-  ParentConsistentHash parentConsistentHash;
-
   public:
-    ParentSelectionStrategy() : parent_type(NULL) { parent_params = NULL; }
-    ParentSelectionStrategy(ParentRR_t _type, ParentConfigParams *_parent_params);
+    ParentSelectionStrategy() : parent_type(NULL) {}
+    ParentSelectionStrategy(P_table *parent_table);
     ~ParentSelectionStrategy();
 
     bool apiParentExists(HttpRequestData *rdata) {
@@ -308,7 +268,11 @@ public:
   static void reconfigure();
   static void print();
 
-  inkcoreapi static ParentConfigParams *acquire();
+  inkcoreapi static ParentConfigParams *
+  acquire()
+  {
+    return (ParentConfigParams *)configProcessor.get(ParentConfig::m_id);
+  }
 
   inkcoreapi static void
   release(ParentConfigParams *params)
