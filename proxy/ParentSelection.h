@@ -117,52 +117,62 @@ struct ParentConfigParams : public ConfigInfo {
   int32_t DNS_ParentOnly;
 };
 
-struct ParentSelectionInterface {
-  P_table *parent_table;
+class ParentSelectionBase {
+  public:
 
-  // bool apiParentExists(HttpRequestData* rdata)
-  //
-  //   Retures true if a parent has been set through the api
-  inkcoreapi virtual bool apiParentExists(HttpRequestData *rdata) = 0;
+    ParentSelectionBase() : ParentTable(NULL), DefaultParent(NULL), ParentRetryTime(0),
+        ParentEnable(0), FailThreshold(0), DNS_ParentOnly(0) {}
 
-  // void findParent(RequestData* rdata, ParentResult* result)
-  //
-  //   Does initial parent lookup
-  //
-  inkcoreapi virtual void findParent(HttpRequestData *rdata, ParentResult *result) = 0;
+    // bool apiParentExists(HttpRequestData* rdata)
+    //
+    //   Retures true if a parent has been set through the api
+    inkcoreapi virtual bool apiParentExists(HttpRequestData *rdata) = 0;
 
-  // void markParentDown(ParentResult* rsult)
-  //
-  //    Marks the parent pointed to by result as down
-  //
-  inkcoreapi virtual void markParentDown(ParentResult *result) = 0;
+    // void findParent(RequestData* rdata, ParentResult* result)
+    //
+    //   Does initial parent lookup
+    //
+    inkcoreapi virtual void findParent(HttpRequestData *rdata, ParentResult *result) = 0;
 
-  // void nextParent(RequestData* rdata, ParentResult* result);
-  //
-  //    Marks the parent pointed to by result as down and attempts
-  //      to find the next parent
-  //
-  inkcoreapi virtual void nextParent(HttpRequestData *rdata, ParentResult *result) = 0;
+    // void markParentDown(ParentResult* rsult)
+    //
+    //    Marks the parent pointed to by result as down
+    //
+    inkcoreapi virtual void markParentDown(ParentResult *result) = 0;
 
-  // bool parentExists(HttpRequestData* rdata)
-  //
-  //   Returns true if there is a parent matching the request data and
-  //   false otherwise
-  inkcoreapi virtual bool parentExists(HttpRequestData *rdata) = 0;
+    // void nextParent(RequestData* rdata, ParentResult* result);
+    //
+    //    Marks the parent pointed to by result as down and attempts
+    //      to find the next parent
+    //
+    inkcoreapi virtual void nextParent(HttpRequestData *rdata, ParentResult *result) = 0;
 
-  // void recordRetrySuccess
-  //
-  //    After a successful retry, http calls this function
-  //      to clear the bits indicating the parent is down
-  //
-  inkcoreapi virtual void recordRetrySuccess(ParentResult *result) = 0;
+    // bool parentExists(HttpRequestData* rdata)
+    //
+    //   Returns true if there is a parent matching the request data and
+    //   false otherwise
+    inkcoreapi virtual bool parentExists(HttpRequestData *rdata) = 0;
+
+    // void recordRetrySuccess
+    //
+    //    After a successful retry, http calls this function
+    //      to clear the bits indicating the parent is down
+    //
+    inkcoreapi virtual void recordRetrySuccess(ParentResult *result) = 0;
+
+    P_table *ParentTable;
+    ParentRecord *DefaultParent;
+    int32_t ParentRetryTime;
+    int32_t ParentEnable;
+    int32_t FailThreshold;
+    int32_t DNS_ParentOnly;
 };
 
 //
 //  Implementation of round robin based upon consistent hash of the URL, 
 //  ParentRR_t = P_CONSISTENT_HASH.
 //
-class ParentConsistentHash : public ParentSelectionInterface {
+class ParentConsistentHash : public ParentSelectionBase {
   public:
     ParentConsistentHash(P_table *_parent_table);
     ~ParentConsistentHash();
@@ -179,7 +189,7 @@ class ParentConsistentHash : public ParentSelectionInterface {
 //  ParentRR_t is one of P_NO_ROUND_ROBIN, P_STRICT_ROUND_ROBIN, or 
 //  P_HASH_ROUND_ROBIN.
 //
-class ParentRoundRobin : public ParentSelectionInterface {
+class ParentRoundRobin : public ParentSelectionBase {
   public:
     ParentRoundRobin(P_table *_parent_table);
     ~ParentRoundRobin();
@@ -191,11 +201,17 @@ class ParentRoundRobin : public ParentSelectionInterface {
     void recordRetrySuccess(ParentResult *result);
 };
 
-class ParentSelectionStrategy : public ConfigInfo, ParentSelectionInterface {
-  ParentSelectionInterface *parent_type;  
+class ParentSelectionStrategy : public ConfigInfo, public ParentSelectionBase {
 
   public:
-    ParentSelectionStrategy() : parent_type(NULL) {}
+    ParentSelectionStrategy() : parent_type(NULL) {
+        ParentTable = NULL;
+        ParentRetryTime = 0; 
+        ParentEnable = 0; 
+        FailThreshold = 0;
+        DNS_ParentOnly = 0;
+    }
+
     ParentSelectionStrategy(P_table *parent_table);
     ~ParentSelectionStrategy();
 
@@ -228,6 +244,8 @@ class ParentSelectionStrategy : public ConfigInfo, ParentSelectionInterface {
       ink_release_assert(parent_type != NULL);
       parent_type->recordRetrySuccess(result);
     }
+
+    ParentSelectionBase *parent_type;  
 };
 
 //

@@ -72,7 +72,7 @@ ParentRecord *const extApiRecord = (ParentRecord *)0xeeeeffff;
 
 ParentConsistentHash::ParentConsistentHash(P_table *_parent_table) {
     // TODO Implement
-    parent_table = _parent_table;
+    ParentTable = _parent_table;
 }
 
 ParentConsistentHash::~ParentConsistentHash() {
@@ -81,8 +81,7 @@ ParentConsistentHash::~ParentConsistentHash() {
 }
 
 bool ParentConsistentHash::apiParentExists(HttpRequestData *rdata) {
-  // TODO Implement
-  return false;
+   return (rdata->api_info && rdata->api_info->parent_proxy_name != NULL && rdata->api_info->parent_proxy_port > 0);
 }
 
 void ParentConsistentHash::findParent(HttpRequestData *rdata, ParentResult *result) {
@@ -111,8 +110,8 @@ void ParentConsistentHash::recordRetrySuccess(ParentResult *result) {
 }
 
 ParentRoundRobin::ParentRoundRobin(P_table *_parent_table) {
-  // TODO Implement
-  parent_table = _parent_table;
+  char *default_val = NULL;
+  ParentTable = _parent_table;
 }
 
 ParentRoundRobin::~ParentRoundRobin() {
@@ -121,13 +120,113 @@ ParentRoundRobin::~ParentRoundRobin() {
 }
 
 bool ParentRoundRobin::apiParentExists(HttpRequestData *rdata) {
-  // TODO Implement
-  return false;
+   return (rdata->api_info && rdata->api_info->parent_proxy_name != NULL && rdata->api_info->parent_proxy_port > 0);
 }
 
 void ParentRoundRobin::findParent(HttpRequestData *rdata, ParentResult *result) {
-  // TODO Implement
-  ;
+  P_table *tablePtr = ParentTable;
+  ParentRecord *defaultPtr = DefaultParent;
+  ParentRecord *rec;
+  
+ ink_assert(result->r == PARENT_UNDEFINED);
+ 
+ // Check to see if we are enabled
+ if (ParentEnable == 0) {
+  result->r = PARENT_DIRECT;
+  return;
+ }
+ // Initialize the result structure
+ result->rec = NULL;
+ result->epoch = tablePtr;
+ result->line_number = 0xffffffff;
+ result->wrap_around = false;
+ // if this variabel is not set, we have problems: the code in
+ // FindParent relies on the value of start_parent and when it is not
+ // initialized, the code in FindParent can get into an infinite loop!
+ result->start_parent = 0;
+ result->last_parent = 0;
+
+  // Check to see if the parent was set through the
+  //   api
+  if (apiParentExists(rdata)) {
+    result->r = PARENT_SPECIFIED;
+    result->hostname = rdata->api_info->parent_proxy_name;
+    result->port = rdata->api_info->parent_proxy_port;
+    result->rec = extApiRecord;
+    result->epoch = NULL;
+    result->start_parent = 0;
+    result->last_parent = 0;
+ 
+    Debug("parent_select", "Result for %s was API set parent %s:%d", rdata->get_host(), result->hostname, result->port);
+  }
+ 
+  tablePtr->Match(rdata, result);
+  rec = result->rec;
+
+  if (rec == NULL) {
+    // No parents were found
+    //
+    // If there is a default parent, use it
+    if (defaultPtr != NULL) {
+     rec = result->rec = defaultPtr;
+    } else {
+      result->r = PARENT_DIRECT;
+      Debug("cdn", "Returning PARENT_DIRECT (no parents were found)");
+      return;
+    }
+  }
+  // Loop through the set of parents to see if any are
+  //   available
+  Debug("cdn", "Calling FindParent from findParent");
+
+  // Bug INKqa08251:
+  // If a parent proxy is set by the API,
+  // no need to call FindParent()
+  if (rec != extApiRecord)
+    // TODO add FindParent functionality.
+    //rec->FindParent(true, result, rdata, this);
+
+  if (is_debug_tag_set("parent_select") || is_debug_tag_set("cdn")) {
+    switch (result->r) {
+      case PARENT_UNDEFINED:
+        Debug("cdn", "PARENT_UNDEFINED");
+        break;
+      case PARENT_FAIL:
+        Debug("cdn", "PARENT_FAIL");
+        break;
+      case PARENT_DIRECT:
+        Debug("cdn", "PARENT_DIRECT");
+        break;
+      case PARENT_SPECIFIED:
+        Debug("cdn", "PARENT_SPECIFIED");
+        break;
+      case PARENT_ORIGIN:
+        Debug("cdn", "PARENT_ORIGIN");
+        break;
+      default:
+        // Handled here:
+        // PARENT_AGENT
+      break;
+    }
+
+    const char *host = rdata->get_host();
+
+    switch (result->r) {
+      case PARENT_UNDEFINED:
+      case PARENT_FAIL:
+      case PARENT_DIRECT:
+        Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
+        break;
+      case PARENT_ORIGIN:
+      case PARENT_SPECIFIED:
+        Debug("parent_select", "Result for %s was parent %s:%d", host, result->hostname, result->port);
+        break;
+      default:
+        // Handled here:
+        // PARENT_AGENT
+        break;
+    }
+  }
 }
 
 void ParentRoundRobin::markParentDown(ParentResult *result) {
@@ -151,8 +250,12 @@ void ParentRoundRobin::recordRetrySuccess(ParentResult *result) {
 }
 
 ParentSelectionStrategy::ParentSelectionStrategy(P_table *_parent_table) {
-  parent_table = _parent_table;
   parent_type = NULL;
+  ParentTable = _parent_table;
+  ParentRetryTime = 0;
+  ParentEnable = 0;
+  FailThreshold = 0;
+  DNS_ParentOnly = 0;
 
   ParentRR_t round_robin_type = P_NO_ROUND_ROBIN;
   HostMatcher<ParentRecord,ParentResult> *hostMatcher = NULL;
@@ -274,7 +377,7 @@ ParentConfig::reconfigure()
   int fail_threshold;
   int dns_parent_only;
   ParentConfigParams *params;
-  ParentSelectionStrategy *parent_strategy;
+  ParentSelectionStrategy *parent_strategy = NULL;
 
   params = new ParentConfigParams();
   
@@ -282,27 +385,38 @@ ParentConfig::reconfigure()
   params->ParentTable = new P_table(file_var, modulePrefix, &http_dest_tags);
 
   parent_strategy = new ParentSelectionStrategy(params->ParentTable);
+  ink_assert(parent_strategy != NULL);
   
   // Handle default parent
   PARENT_ReadConfigStringAlloc(default_val, default_var);
+  //TODO remove params
   params->DefaultParent = createDefaultParent(default_val);
+  parent_strategy->parent_type->DefaultParent = createDefaultParent(default_val);
   ats_free(default_val);
 
   // Handle parent timeout
   PARENT_ReadConfigInteger(retry_time, retry_var);
+  //TODO remove params
   params->ParentRetryTime = retry_time;
+  parent_strategy->parent_type->ParentRetryTime = retry_time;
 
   // Handle parent enable
   PARENT_ReadConfigInteger(enable, enable_var);
+  //TODO remove params
   params->ParentEnable = enable;
+  parent_strategy->parent_type->ParentEnable = enable;
 
   // Handle the fail threshold
   PARENT_ReadConfigInteger(fail_threshold, threshold_var);
+  //TODO remove params
   params->FailThreshold = fail_threshold;
+  parent_strategy->parent_type->FailThreshold = fail_threshold;
 
   // Handle dns parent only
   PARENT_ReadConfigInteger(dns_parent_only, dns_parent_only_var);
+  //TODO remove params
   params->DNS_ParentOnly = dns_parent_only;
+  parent_strategy->parent_type->DNS_ParentOnly = dns_parent_only;
 
   m_id = configProcessor.set(m_id, params);
 
