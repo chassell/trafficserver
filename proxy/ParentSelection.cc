@@ -70,61 +70,145 @@ enum ParentCB_t {
 //   between HttpTransact & the parent selection code.  The following
 ParentRecord *const extApiRecord = (ParentRecord *)0xeeeeffff;
 
-ParentConsistentHash::ParentConsistentHash(P_table *_parent_table) {
+bool ParentSelectionBase::apiParentExists(HttpRequestData *rdata) {
+   return (rdata->api_info && rdata->api_info->parent_proxy_name != NULL && rdata->api_info->parent_proxy_port > 0);
+}
+
+void ParentSelectionBase::markParentDown(ParentResult *result) {
+  time_t now;
+  pRecord *pRec;
+  int new_fail_count = 0;
+
+  //  Make sure that we are being called back with with a
+  //   result structure with a parent
+  ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
+  if (result->r != PARENT_SPECIFIED && result->r != PARENT_ORIGIN) {
+    return;
+  }
+  // If we were set through the API we currently have not failover
+  //   so just return fail
+  if (result->rec == extApiRecord) {
+    return;
+  }
+
+  ink_assert((int)(result->last_parent) < result->rec->num_parents);
+  pRec = result->rec->parents + result->last_parent;
+
+  // If the parent has already been marked down, just increment
+  //   the failure count.  If this is the first mark down on a
+  //   parent we need to both set the failure time and set
+  //   count to one.  It's possible for the count and time get out
+  //   sync due there being no locks.  Therefore the code should
+  //   handle this condition.  If this was the result of a retry, we
+  //   must update move the failedAt timestamp to now so that we continue
+  //   negative cache the parent
+  if (pRec->failedAt == 0 || result->retry == true) {
+    // Reread the current time.  We want this to be accurate since
+    //   it relates to how long the parent has been down.
+    now = time(NULL);
+
+    // Mark the parent as down
+    ink_atomic_swap(&pRec->failedAt, now);
+
+    // If this is clean mark down and not a failed retry, we
+    //   must set the count to reflect this
+    if (result->retry == false) {
+      new_fail_count = pRec->failCount = 1;
+    }
+
+    Note("Parent %s marked as down %s:%d", (result->retry) ? "retry" : "initially", pRec->hostname, pRec->port);
+
+  } else {
+    int old_count = ink_atomic_increment(&pRec->failCount, 1);
+
+    Debug("parent_select", "Parent fail count increased to %d for %s:%d", old_count + 1, pRec->hostname, pRec->port);
+    new_fail_count = old_count + 1;
+  }
+
+  if (new_fail_count > 0 && new_fail_count == FailThreshold) {
+    Note("Failure threshold met, http parent proxy %s:%d marked down", pRec->hostname, pRec->port);
+    pRec->available = false;
+    Debug("parent_select", "Parent marked unavailable, pRec->available=%d", pRec->available);
+  }
+}
+
+bool
+ParentSelectionBase::parentExists(HttpRequestData *rdata)
+{
+  ParentResult junk;
+
+  findParent(rdata, &junk);
+
+  if (junk.r == PARENT_SPECIFIED || junk.r == PARENT_ORIGIN) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+void
+ParentSelectionBase::recordRetrySuccess(ParentResult *result)
+{
+  pRecord *pRec;
+
+  //  Make sure that we are being called back with with a
+  //   result structure with a parent that is being retried
+  ink_release_assert(result->retry == true);
+  ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
+  if (result->r != PARENT_SPECIFIED && result->r != PARENT_ORIGIN) {
+    return;
+  }
+  // If we were set through the API we currently have not failover
+  //   so just return fail
+  if (result->rec == extApiRecord) {
+    ink_assert(0);
+    return;
+  }
+
+  ink_assert((int)(result->last_parent) < result->rec->num_parents);
+  pRec = result->rec->parents + result->last_parent;
+
+  pRec->available = true;
+
+  ink_atomic_swap(&pRec->failedAt, (time_t)0);
+  int old_count = ink_atomic_swap(&pRec->failCount, 0);
+
+  if (old_count > 0) {
+    Note("http parent proxy %s:%d restored", pRec->hostname, pRec->port);
+  }
+}
+
+ParentConsistentHash::ParentConsistentHash(P_table *_parent_table, ParentRecord *_parent_record) {
     // TODO Implement
-    ParentTable = _parent_table;
+    parent_table = _parent_table;
+    parent_record = _parent_record;
 }
 
 ParentConsistentHash::~ParentConsistentHash() {
   // TODO Implement
-  ;
-}
-
-bool ParentConsistentHash::apiParentExists(HttpRequestData *rdata) {
-   return (rdata->api_info && rdata->api_info->parent_proxy_name != NULL && rdata->api_info->parent_proxy_port > 0);
 }
 
 void ParentConsistentHash::findParent(HttpRequestData *rdata, ParentResult *result) {
   // TODO Implement
-  ;
-}
-
-void ParentConsistentHash::markParentDown(ParentResult *result) {
-  // TODO Implement
-  ;
 }
 
 void ParentConsistentHash::nextParent(HttpRequestData *rdata, ParentResult *result) {
   // TODO Implement
-  ;
 }
 
-bool ParentConsistentHash::parentExists(HttpRequestData *rdata) {
-  // TODO Implement
-  return false;
-}
-
-void ParentConsistentHash::recordRetrySuccess(ParentResult *result) {
-  // TODO Implement
-  ;
-}
-
-ParentRoundRobin::ParentRoundRobin(P_table *_parent_table) {
-  char *default_val = NULL;
-  ParentTable = _parent_table;
+ParentRoundRobin::ParentRoundRobin(P_table *_parent_table, ParentRecord *_parent_record) {
+  parent_table = _parent_table;
+  parent_record = parent_record;
+  round_robin_type = parent_record->round_robin;
+  go_direct = false;
 }
 
 ParentRoundRobin::~ParentRoundRobin() {
   // TODO Implement
-  ;
-}
-
-bool ParentRoundRobin::apiParentExists(HttpRequestData *rdata) {
-   return (rdata->api_info && rdata->api_info->parent_proxy_name != NULL && rdata->api_info->parent_proxy_port > 0);
 }
 
 void ParentRoundRobin::findParent(HttpRequestData *rdata, ParentResult *result) {
-  P_table *tablePtr = ParentTable;
+  P_table *tablePtr = parent_table;
   ParentRecord *defaultPtr = DefaultParent;
   ParentRecord *rec;
   
@@ -140,9 +224,6 @@ void ParentRoundRobin::findParent(HttpRequestData *rdata, ParentResult *result) 
  result->epoch = tablePtr;
  result->line_number = 0xffffffff;
  result->wrap_around = false;
- // if this variabel is not set, we have problems: the code in
- // FindParent relies on the value of start_parent and when it is not
- // initialized, the code in FindParent can get into an infinite loop!
  result->start_parent = 0;
  result->last_parent = 0;
 
@@ -175,16 +256,9 @@ void ParentRoundRobin::findParent(HttpRequestData *rdata, ParentResult *result) 
       return;
     }
   }
-  // Loop through the set of parents to see if any are
-  //   available
-  Debug("cdn", "Calling FindParent from findParent");
 
-  // Bug INKqa08251:
-  // If a parent proxy is set by the API,
-  // no need to call FindParent()
   if (rec != extApiRecord)
-    // TODO add FindParent functionality.
-    //rec->FindParent(true, result, rdata, this);
+    locateAParent(true, result, rdata);
 
   if (is_debug_tag_set("parent_select") || is_debug_tag_set("cdn")) {
     switch (result->r) {
@@ -229,34 +303,204 @@ void ParentRoundRobin::findParent(HttpRequestData *rdata, ParentResult *result) 
   }
 }
 
-void ParentRoundRobin::markParentDown(ParentResult *result) {
-  // TODO Implement
-  ;
-}
-
 void ParentRoundRobin::nextParent(HttpRequestData *rdata, ParentResult *result) {
-  // TODO Implement
-  ;
+  P_table *tablePtr = parent_table;
+
+  //  Make sure that we are being called back with a
+  //   result structure with a parent
+  ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
+  if (result->r != PARENT_SPECIFIED && result->r != PARENT_ORIGIN) {
+    result->r = PARENT_FAIL;
+    return;
+  }
+  // If we were set through the API we currently have not failover
+  //   so just return fail
+  if (result->rec == extApiRecord) {
+    Debug("parent_select", "Retry result for %s was %s", rdata->get_host(), ParentResultStr[result->r]);
+    result->r = PARENT_FAIL;
+    return;
+  }
+  // The epoch pointer is a legacy from the time when the tables
+  //  would be swapped and deleted in the future.  I'm using the
+  //  pointer now to ensure that the ParentConfigParams structure
+  //  is properly used.  The table should never change out from
+  //  under the a http transaction
+  ink_release_assert(tablePtr == result->epoch);
+
+  // Find the next parent in the array
+  Debug("cdn", "Calling FindParent from nextParent");
+  locateAParent(false, result, rdata);
+
+  switch (result->r) {
+  case PARENT_UNDEFINED:
+    Debug("cdn", "PARENT_UNDEFINED");
+    break;
+  case PARENT_FAIL:
+    Debug("cdn", "PARENT_FAIL");
+    break;
+  case PARENT_DIRECT:
+    Debug("cdn", "PARENT_DIRECT");
+    break;
+  case PARENT_ORIGIN:
+    Debug("cdn", "PARENT_ORIGIN");
+    break;
+  case PARENT_SPECIFIED:
+    Debug("cdn", "PARENT_SPECIFIED");
+    break;
+  default:
+    // Handled here:
+    // PARENT_AGENT
+    break;
+  }
+
+  if (is_debug_tag_set("parent_select")) {
+    const char *host = rdata->get_host();
+
+    switch (result->r) {
+    case PARENT_UNDEFINED:
+    case PARENT_FAIL:
+    case PARENT_DIRECT:
+      Debug("parent_select", "Retry result for %s was %s", host, ParentResultStr[result->r]);
+      break;
+    case PARENT_ORIGIN:
+    case PARENT_SPECIFIED:
+      Debug("parent_select", "Retry result for %s was parent %s:%d", host, result->hostname, result->port);
+      break;
+    default:
+      // Handled here:
+      // PARENT_AGENT
+      break;
+    }
+  }
 }
 
-bool ParentRoundRobin::parentExists(HttpRequestData *rdata) {
-  // TODO Implement
-  return false;
-}
+void ParentRoundRobin::locateAParent(bool first_call, ParentResult *result, RequestData *rdata) {
+  Debug("cdn", "Entering ParentRoundRobin::locateAParent (the inner loop)");
+  int cur_index = 0;
+  bool parentUp = false;
+  bool parentRetry = false;
+  bool bypass_ok = (go_direct == true && DNS_ParentOnly == 0);
 
-void ParentRoundRobin::recordRetrySuccess(ParentResult *result) {
-  // TODO Implement
-  ;
+  HttpRequestData *request_info = static_cast<HttpRequestData *>(rdata);
+
+  ink_assert(parent_record->num_parents > 0 || go_direct == true);
+
+  if (first_call) {
+    if (parent_record->parents == NULL) {
+      // We should only get into this state if
+      //   if we are supposed to go direct
+      ink_assert(go_direct == true);
+      // Could not find a parent
+      if (parent_record->go_direct == true) {
+        result->r = PARENT_DIRECT;
+      } else {
+        result->r = PARENT_FAIL;
+      }
+
+      result->hostname = NULL;
+      result->port = 0;
+      return;
+    } else {
+      switch (parent_record->round_robin) {
+      case P_HASH_ROUND_ROBIN:
+        // INKqa12817 - make sure to convert to host byte order
+        // Why was it important to do host order here?  And does this have any
+        // impact with the transition to IPv6?  The IPv4 functionality is
+        // preserved for now anyway as ats_ip_hash returns the 32-bit address in
+        // that case.
+        if (rdata->get_client_ip() != NULL) {
+          cur_index = ntohl(ats_ip_hash(rdata->get_client_ip())) % parent_record->num_parents;
+        } else {
+          cur_index = 0;
+        }
+        break;
+      case P_STRICT_ROUND_ROBIN:
+        cur_index = ink_atomic_increment((int32_t *)&parent_record->rr_next, 1);
+        cur_index = cur_index % parent_record->num_parents;
+        break;
+      case P_NO_ROUND_ROBIN:
+        cur_index = result->start_parent = 0;
+        break;
+      default:
+        ink_release_assert(0);
+      }
+    }
+  }
+  else {    
+    // Move to next parent due to failure
+    cur_index = (result->last_parent + 1) % parent_record->num_parents;
+
+    // Check to see if we have wrapped around
+    if ((unsigned int)cur_index == result->start_parent) {
+      // We've wrapped around so bypass if we can
+      if (bypass_ok == true) {
+        // Could not find a parent
+        if (this->go_direct == true) {
+          result->r = PARENT_DIRECT;
+        } else {
+          result->r = PARENT_FAIL;
+        }
+        result->hostname = NULL;
+        result->port = 0;
+        return;
+      } else {
+        // Bypass disabled so keep trying, ignoring whether we think
+        //   a parent is down or not
+          result->wrap_around = true;
+      }
+    }
+  }
+  // Loop through the array of parent seeing if any are up or
+  //   should be retried
+  do {
+    // DNS ParentOnly inhibits bypassing the parent so always return that t
+    if ((parent_record->parents[cur_index].failedAt == 0) || (parent_record->parents[cur_index].failCount < FailThreshold)) {
+      Debug("parent_select", "config->FailThreshold = %d", FailThreshold);
+      Debug("parent_select", "Selecting a down parent due to little failCount"
+                             "(faileAt: %u failCount: %d)",
+            (unsigned)parent_record->parents[cur_index].failedAt, parent_record->parents[cur_index].failCount);
+      parentUp = true;
+    } else {
+      if ((result->wrap_around) || ((parent_record->parents[cur_index].failedAt + ParentRetryTime) < request_info->xact_start)) {
+        Debug("parent_select", "Parent[%d].failedAt = %u, retry = %u,xact_start = %" PRId64 " but wrap = %d", cur_index,
+              (unsigned)parent_record->parents[cur_index].failedAt, ParentRetryTime, (int64_t)request_info->xact_start,
+              result->wrap_around);
+        // Reuse the parent
+        parentUp = true;
+        parentRetry = true;
+        Debug("parent_select", "Parent marked for retry %s:%d", parent_record->parents[cur_index].hostname, parent_record->parents[cur_index].port);
+      } else {
+        parentUp = false;
+      }
+    }
+
+    if (parentUp == true) {
+      if (!parent_record->parent_is_proxy) {
+        result->r = PARENT_ORIGIN;
+      } else {
+        result->r = PARENT_SPECIFIED;
+      }
+      result->hostname = parent_record->parents[cur_index].hostname;
+      result->port = parent_record->parents[cur_index].port;
+      result->last_parent = cur_index;
+      result->retry = parentRetry;
+      ink_assert(result->hostname != NULL);
+      ink_assert(result->port != 0);
+      Debug("parent_select", "Chosen parent = %s.%d", result->hostname, result->port);
+      return;
+    }
+    cur_index = (cur_index + 1) % parent_record->num_parents;
+  } while ((unsigned int) cur_index != result->start_parent);
 }
 
 ParentSelectionStrategy::ParentSelectionStrategy(P_table *_parent_table) {
   parent_type = NULL;
-  ParentTable = _parent_table;
+  parent_table = _parent_table;
+  ParentRecord *parent_record = NULL;
   ParentRetryTime = 0;
   ParentEnable = 0;
   FailThreshold = 0;
   DNS_ParentOnly = 0;
-
   ParentRR_t round_robin_type = P_NO_ROUND_ROBIN;
   HostMatcher<ParentRecord,ParentResult> *hostMatcher = NULL;
   HostRegexMatcher<ParentRecord,ParentResult> *hostRegexMatcher = NULL;
@@ -265,29 +509,39 @@ ParentSelectionStrategy::ParentSelectionStrategy(P_table *_parent_table) {
   UrlMatcher<ParentRecord,ParentResult> *urlMatcher = NULL;
 
   if ( (hostMatcher = _parent_table->getHostMatcher()) != NULL) {
-    round_robin_type = hostMatcher->getDataArray()->round_robin;
+    parent_record = hostMatcher->getDataArray();
+    ink_assert (parent_record != NULL); 
+    round_robin_type = parent_record->round_robin;
   }
   else if ( (hostRegexMatcher = _parent_table->getHrMatcher()) != NULL) {
-    round_robin_type = hostRegexMatcher->getDataArray()->round_robin;
+    parent_record = hostRegexMatcher->getDataArray();
+    ink_assert (parent_record != NULL); 
+    round_robin_type = parent_record->round_robin;
   }
   else if ( (ipMatcher = _parent_table->getIPMatcher()) != NULL) {
-    round_robin_type = ipMatcher->getDataArray()->round_robin;
+    parent_record = ipMatcher->getDataArray();
+    ink_assert (parent_record != NULL); 
+    round_robin_type = parent_record->round_robin;
   }
   else if ( (regexMatcher = _parent_table->getReMatcher()) != NULL) {
-    round_robin_type = regexMatcher->getDataArray()->round_robin;
+    parent_record = regexMatcher->getDataArray();
+    ink_assert (parent_record != NULL); 
+    round_robin_type = parent_record->round_robin;
   }
   else if ( (urlMatcher = _parent_table->getUrlMatcher()) != NULL) {
-    round_robin_type = urlMatcher->getDataArray()->round_robin;
+    parent_record = urlMatcher->getDataArray();
+    ink_assert (parent_record != NULL); 
+    round_robin_type = parent_record->round_robin;
   }
 
  switch (round_robin_type) {
   case P_NO_ROUND_ROBIN:
   case P_STRICT_ROUND_ROBIN:
   case P_HASH_ROUND_ROBIN:
-    parent_type = new ParentRoundRobin(_parent_table); 
+    parent_type = new ParentRoundRobin(parent_table, parent_record); 
     break;
   case P_CONSISTENT_HASH:
-    parent_type = new ParentConsistentHash(_parent_table);
+    parent_type = new ParentConsistentHash(parent_table, parent_record);
     break;
   default:
     ink_release_assert(0);

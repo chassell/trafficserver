@@ -120,13 +120,13 @@ struct ParentConfigParams : public ConfigInfo {
 class ParentSelectionBase {
   public:
 
-    ParentSelectionBase() : ParentTable(NULL), DefaultParent(NULL), ParentRetryTime(0),
+    ParentSelectionBase() : parent_record(NULL), DefaultParent(NULL), ParentRetryTime(0),
         ParentEnable(0), FailThreshold(0), DNS_ParentOnly(0) {}
 
     // bool apiParentExists(HttpRequestData* rdata)
     //
     //   Retures true if a parent has been set through the api
-    inkcoreapi virtual bool apiParentExists(HttpRequestData *rdata) = 0;
+    inkcoreapi bool apiParentExists(HttpRequestData *rdata);
 
     // void findParent(RequestData* rdata, ParentResult* result)
     //
@@ -138,7 +138,7 @@ class ParentSelectionBase {
     //
     //    Marks the parent pointed to by result as down
     //
-    inkcoreapi virtual void markParentDown(ParentResult *result) = 0;
+    inkcoreapi void markParentDown(ParentResult *result);
 
     // void nextParent(RequestData* rdata, ParentResult* result);
     //
@@ -151,16 +151,17 @@ class ParentSelectionBase {
     //
     //   Returns true if there is a parent matching the request data and
     //   false otherwise
-    inkcoreapi virtual bool parentExists(HttpRequestData *rdata) = 0;
+    inkcoreapi bool parentExists(HttpRequestData *rdata);
 
     // void recordRetrySuccess
     //
     //    After a successful retry, http calls this function
     //      to clear the bits indicating the parent is down
     //
-    inkcoreapi virtual void recordRetrySuccess(ParentResult *result) = 0;
+    inkcoreapi void recordRetrySuccess(ParentResult *result);
 
-    P_table *ParentTable;
+    ParentRecord *parent_record;
+    P_table *parent_table;
     ParentRecord *DefaultParent;
     int32_t ParentRetryTime;
     int32_t ParentEnable;
@@ -174,14 +175,10 @@ class ParentSelectionBase {
 //
 class ParentConsistentHash : public ParentSelectionBase {
   public:
-    ParentConsistentHash(P_table *_parent_table);
+    ParentConsistentHash(P_table *_parent_table, ParentRecord *_parent_record);
     ~ParentConsistentHash();
-    bool apiParentExists(HttpRequestData *rdata);
     void findParent(HttpRequestData *rdata, ParentResult *result);
-    void markParentDown(ParentResult *result);
     void nextParent(HttpRequestData *rdata, ParentResult *result);
-    bool parentExists(HttpRequestData *rdata);
-    void recordRetrySuccess(ParentResult *result);
 };
 
 //
@@ -190,29 +187,29 @@ class ParentConsistentHash : public ParentSelectionBase {
 //  P_HASH_ROUND_ROBIN.
 //
 class ParentRoundRobin : public ParentSelectionBase {
+    bool go_direct;
+    ParentRR_t round_robin_type;
+
+    void locateAParent(bool firstCall, ParentResult *result, RequestData *rdata);
   public:
-    ParentRoundRobin(P_table *_parent_table);
+    ParentRoundRobin(P_table *_parent_table, ParentRecord *_parent_record);
     ~ParentRoundRobin();
-    bool apiParentExists(HttpRequestData *rdata);
     void findParent(HttpRequestData *rdata, ParentResult *result);
-    void markParentDown(ParentResult *result);
     void nextParent(HttpRequestData *rdata, ParentResult *result);
-    bool parentExists(HttpRequestData *rdata);
-    void recordRetrySuccess(ParentResult *result);
 };
 
 class ParentSelectionStrategy : public ConfigInfo, public ParentSelectionBase {
-
+    P_table *parent_table;
   public:
     ParentSelectionStrategy() : parent_type(NULL) {
-        ParentTable = NULL;
+        parent_record = NULL;
         ParentRetryTime = 0; 
         ParentEnable = 0; 
         FailThreshold = 0;
         DNS_ParentOnly = 0;
     }
 
-    ParentSelectionStrategy(P_table *parent_table);
+    ParentSelectionStrategy(P_table *_parent_table);
     ~ParentSelectionStrategy();
 
     bool apiParentExists(HttpRequestData *rdata) {
