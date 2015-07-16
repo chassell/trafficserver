@@ -68,55 +68,6 @@ enum ParentRR_t {
 
 typedef ControlMatcher<ParentRecord, ParentResult> P_table;
 
-struct ParentConfigParams : public ConfigInfo {
-  ParentConfigParams();
-  ~ParentConfigParams();
-
-  // void findParent(RequestData* rdata, ParentResult* result)
-  //
-  //   Does initial parent lookup
-  //
-  inkcoreapi void findParent(HttpRequestData *rdata, ParentResult *result);
-
-  // void markParentDown(ParentResult* rsult)
-  //
-  //    Marks the parent pointed to by result as down
-  //
-  inkcoreapi void markParentDown(ParentResult *result);
-
-  // void recordRetrySuccess
-  //
-  //    After a successful retry, http calls this function
-  //      to clear the bits indicating the parent is down
-  //
-  void recordRetrySuccess(ParentResult *result);
-
-  // void nextParent(RequestData* rdata, ParentResult* result);
-  //
-  //    Marks the parent pointed to by result as down and attempts
-  //      to find the next parent
-  //
-  inkcoreapi void nextParent(HttpRequestData *rdata, ParentResult *result);
-
-  // bool parentExists(HttpRequestData* rdata)
-  //
-  //   Returns true if there is a parent matching the request data and
-  //   false otherwise
-  bool parentExists(HttpRequestData *rdata);
-
-  // bool apiParentExists(HttpRequestData* rdata)
-  //
-  //   Retures true if a parent has been set through the api
-  bool apiParentExists(HttpRequestData *rdata);
-
-  P_table *ParentTable;
-  ParentRecord *DefaultParent;
-  int32_t ParentRetryTime;
-  int32_t ParentEnable;
-  int32_t FailThreshold;
-  int32_t DNS_ParentOnly;
-};
-
 class ParentSelectionBase {
   public:
 
@@ -174,6 +125,8 @@ class ParentSelectionBase {
 //  ParentRR_t = P_CONSISTENT_HASH.
 //
 class ParentConsistentHash : public ParentSelectionBase {
+    ATSConsistentHash *chash, *chash_secondary;
+    ATSConsistentHashIter chashIter, chash_secondaryIter;
   public:
     ParentConsistentHash(P_table *_parent_table, ParentRecord *_parent_record);
     ~ParentConsistentHash();
@@ -271,7 +224,6 @@ struct ParentResult {
   bool wrap_around;
   bool retry;
   // Arena *a;
-  ATSConsistentHashIter chashIter;
   bool foundParents[MAX_PARENTS];
 };
 
@@ -327,7 +279,7 @@ class ParentRecord : public ControlBase
 {
 public:
   ParentRecord()
-    : parents(NULL), num_parents(0), round_robin(P_NO_ROUND_ROBIN), rr_next(0), go_direct(true), parent_is_proxy(true), chash(NULL)
+    : parents(NULL), num_parents(0), round_robin(P_NO_ROUND_ROBIN), rr_next(0), go_direct(true), parent_is_proxy(true)
   {
   }
 
@@ -336,7 +288,6 @@ public:
   config_parse_error Init(matcher_line *line_info);
   bool DefaultInit(char *val);
   void UpdateMatch(ParentResult *result, RequestData *rdata);
-  void FindParent(bool firstCall, ParentResult *result, RequestData *rdata, ParentConfigParams *config);
   uint64_t getPathHash(HttpRequestData *hrdata, ATSHash64 *h);
   void Print();
   pRecord *parents;
@@ -356,13 +307,11 @@ public:
   const char *scheme;
   // private:
   const char *ProcessParents(char *val);
-  void buildConsistentHash(void);
   ParentRR_t round_robin;
   bool ignore_query;
   volatile uint32_t rr_next;
   bool go_direct;
   bool parent_is_proxy;
-  ATSConsistentHash *chash;
 };
 
 // Helper Functions
@@ -391,13 +340,13 @@ struct SocksServerConfig {
   static void reconfigure();
   static void print();
 
-  static ParentConfigParams *
+  static ParentSelectionStrategy *
   acquire()
   {
-    return (ParentConfigParams *)configProcessor.get(SocksServerConfig::m_id);
+    return (ParentSelectionStrategy *)configProcessor.get(SocksServerConfig::m_id);
   }
   static void
-  release(ParentConfigParams *params)
+  release(ParentSelectionStrategy *params)
   {
     configProcessor.release(SocksServerConfig::m_id, params);
   }
