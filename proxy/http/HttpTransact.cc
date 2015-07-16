@@ -230,7 +230,7 @@ find_server_and_update_current_info(HttpTransact::State *s)
   } else {
     switch (s->parent_result.r) {
     case PARENT_UNDEFINED:
-      s->parent_params->findParent(&s->request_data, &s->parent_result);
+      s->parent_strategy->findParent(&s->request_data, &s->parent_result);
       if (s->parent_result.rec != NULL) {
         // check to see if the parent is an origin server.
         if (!s->parent_result.rec->isParentProxy()) {
@@ -240,7 +240,7 @@ find_server_and_update_current_info(HttpTransact::State *s)
       break;
     case PARENT_SPECIFIED:
     case PARENT_ORIGIN:
-      s->parent_params->nextParent(&s->request_data, &s->parent_result);
+      s->parent_strategy->nextParent(&s->request_data, &s->parent_result);
 
       // Hack!
       // We already have a parent that failed, if we are now told
@@ -257,7 +257,7 @@ find_server_and_update_current_info(HttpTransact::State *s)
       //   1) the parent was not set from API
       //   2) the config permits us
       //   3) the config permitted us to dns the origin server
-      if (!s->parent_params->apiParentExists(&s->request_data) && s->parent_result.rec->bypass_ok() &&
+      if (!s->parent_strategy->apiParentExists(&s->request_data) && s->parent_result.rec->bypass_ok() &&
           s->http_config_param->no_dns_forward_to_parent == 0) {
         s->parent_result.r = PARENT_DIRECT;
       }
@@ -1337,7 +1337,7 @@ HttpTransact::HandleRequest(State *s)
       ats_ip_copy(&s->request_data.dest_ip, &addr);
     }
 
-    if (s->parent_params->parentExists(&s->request_data)) {
+    if (s->parent_strategy->parentExists(&s->request_data)) {
       // If the proxy is behind and firewall and there is no
       //  DNS service available, we just want to forward the request
       //  the parent proxy.  In this case, we never find out the
@@ -1357,7 +1357,7 @@ HttpTransact::HandleRequest(State *s)
   // if the newly added varible doc_in_cache_skip_dns is not enabled
   if (s->dns_info.lookup_name[0] <= '9' && s->dns_info.lookup_name[0] >= '0' &&
       (!s->state_machine->enable_redirection || !s->redirect_info.redirect_in_process) &&
-      s->parent_params->ParentTable->hostMatch) {
+      s->parent_strategy->parent_table->hostMatch) {
     s->force_dns = 1;
   }
   // YTS Team, yamsat Plugin
@@ -1755,7 +1755,7 @@ HttpTransact::OSDNSLookup(State *s)
     // we've come back after already trying the server to get a better address
     // and finished with all backtracking - return to trying the server.
     TRANSACT_RETURN(how_to_open_connection(s), HttpTransact::HandleResponse);
-  } else if (s->dns_info.lookup_name[0] <= '9' && s->dns_info.lookup_name[0] >= '0' && s->parent_params->ParentTable->hostMatch &&
+  } else if (s->dns_info.lookup_name[0] <= '9' && s->dns_info.lookup_name[0] >= '0' && s->parent_strategy->parent_table->hostMatch &&
              !s->http_config_param->no_dns_forward_to_parent) {
     // note, broken logic: ACC fudges the OR stmt to always be true,
     // 'AuthHttpAdapter' should do the rev-dns if needed, not here .
@@ -3479,7 +3479,7 @@ HttpTransact::handle_response_from_parent(State *s)
     s->current.server->connect_result = 0;
     SET_VIA_STRING(VIA_DETAIL_PP_CONNECT, VIA_DETAIL_PP_SUCCESS);
     if (s->parent_result.retry) {
-      s->parent_params->recordRetrySuccess(&s->parent_result);
+      s->parent_strategy->recordRetrySuccess(&s->parent_result);
     }
     handle_forward_server_connection_open(s);
     break;
@@ -3498,7 +3498,7 @@ HttpTransact::handle_response_from_parent(State *s)
 
     // If the request is not retryable, just give up!
     if (!is_request_retryable(s)) {
-      s->parent_params->markParentDown(&s->parent_result);
+      s->parent_strategy->markParentDown(&s->parent_result);
       s->parent_result.r = PARENT_FAIL;
       handle_parent_died(s);
       return;
@@ -3522,7 +3522,7 @@ HttpTransact::handle_response_from_parent(State *s)
         } else {
           s->current.dead_server_retry_attempts++;
           DebugTxn("http_trans", "DEAD_SERVER_RETRY: marking parent down and trying another.\n");
-          s->parent_params->markParentDown(&s->parent_result);
+          s->parent_strategy->markParentDown(&s->parent_result);
           next_lookup = find_server_and_update_current_info(s);
         }
       }
@@ -3548,7 +3548,7 @@ HttpTransact::handle_response_from_parent(State *s)
         //  to the parent otherwise slow origin servers cause
         //  us to mark the parent down
         if (s->current.state == CONNECTION_ERROR) {
-          s->parent_params->markParentDown(&s->parent_result);
+          s->parent_strategy->markParentDown(&s->parent_result);
         }
         // We are done so look for another parent if any
         next_lookup = find_server_and_update_current_info(s);
@@ -3557,7 +3557,7 @@ HttpTransact::handle_response_from_parent(State *s)
       // Done trying parents... fail over to origin server if that is
       //   appropriate
       DebugTxn("http_trans", "[handle_response_from_parent] Error. No more retries.");
-      s->parent_params->markParentDown(&s->parent_result);
+      s->parent_strategy->markParentDown(&s->parent_result);
       s->parent_result.r = PARENT_FAIL;
       next_lookup = find_server_and_update_current_info(s);
     }

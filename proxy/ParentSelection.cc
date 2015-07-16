@@ -198,7 +198,7 @@ void ParentConsistentHash::nextParent(HttpRequestData *rdata, ParentResult *resu
 
 ParentRoundRobin::ParentRoundRobin(P_table *_parent_table, ParentRecord *_parent_record) {
   parent_table = _parent_table;
-  parent_record = parent_record;
+  parent_record = _parent_record;
   round_robin_type = parent_record->round_robin;
   go_direct = false;
 }
@@ -630,49 +630,36 @@ ParentConfig::reconfigure()
   int enable = 0;
   int fail_threshold;
   int dns_parent_only;
-  ParentConfigParams *params;
   ParentSelectionStrategy *parent_strategy = NULL;
 
-  params = new ParentConfigParams();
-  
   // Allocate parent table
-  params->ParentTable = new P_table(file_var, modulePrefix, &http_dest_tags);
+  P_table *pTable  = new P_table(file_var, modulePrefix, &http_dest_tags);
 
-  parent_strategy = new ParentSelectionStrategy(params->ParentTable);
+  parent_strategy = new ParentSelectionStrategy(pTable);
   ink_assert(parent_strategy != NULL);
   
   // Handle default parent
   PARENT_ReadConfigStringAlloc(default_val, default_var);
-  //TODO remove params
-  params->DefaultParent = createDefaultParent(default_val);
   parent_strategy->parent_type->DefaultParent = createDefaultParent(default_val);
   ats_free(default_val);
 
   // Handle parent timeout
   PARENT_ReadConfigInteger(retry_time, retry_var);
-  //TODO remove params
-  params->ParentRetryTime = retry_time;
   parent_strategy->parent_type->ParentRetryTime = retry_time;
 
   // Handle parent enable
   PARENT_ReadConfigInteger(enable, enable_var);
-  //TODO remove params
-  params->ParentEnable = enable;
   parent_strategy->parent_type->ParentEnable = enable;
 
   // Handle the fail threshold
   PARENT_ReadConfigInteger(fail_threshold, threshold_var);
-  //TODO remove params
-  params->FailThreshold = fail_threshold;
   parent_strategy->parent_type->FailThreshold = fail_threshold;
 
   // Handle dns parent only
   PARENT_ReadConfigInteger(dns_parent_only, dns_parent_only_var);
-  //TODO remove params
-  params->DNS_ParentOnly = dns_parent_only;
   parent_strategy->parent_type->DNS_ParentOnly = dns_parent_only;
 
-  m_id = configProcessor.set(m_id, params);
+  m_id = configProcessor.set(m_id, parent_strategy);
 
   if (is_debug_tag_set("parent_config")) {
     ParentConfig::print();
@@ -686,20 +673,20 @@ ParentConfig::reconfigure()
 void
 ParentConfig::print()
 {
-  ParentConfigParams *params = ParentConfig::acquire();
+  ParentSelectionStrategy *strategy = ParentConfig::acquire();
 
   printf("Parent Selection Config\n");
-  printf("\tEnabled %d\tRetryTime %d\tParent DNS Only %d\n", params->ParentEnable, params->ParentRetryTime, params->DNS_ParentOnly);
-  if (params->DefaultParent == NULL) {
+  printf("\tEnabled %d\tRetryTime %d\tParent DNS Only %d\n", strategy->ParentEnable, strategy->ParentRetryTime, strategy->DNS_ParentOnly);
+  if (strategy->DefaultParent == NULL) {
     printf("\tNo Default Parent\n");
   } else {
     printf("\tDefault Parent:\n");
-    params->DefaultParent->Print();
+    strategy->DefaultParent->Print();
   }
   printf("  ");
-  params->ParentTable->Print();
+  strategy->parent_table->Print();
 
-  ParentConfig::release(params);
+  ParentConfig::release(strategy);
 }
 
 ParentConfigParams::ParentConfigParams()

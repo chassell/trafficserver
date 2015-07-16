@@ -199,9 +199,8 @@ class ParentRoundRobin : public ParentSelectionBase {
 };
 
 class ParentSelectionStrategy : public ConfigInfo, public ParentSelectionBase {
-    P_table *parent_table;
   public:
-    ParentSelectionStrategy() : parent_type(NULL) {
+    ParentSelectionStrategy() : parent_type(NULL), parent_table(NULL) {
         parent_record = NULL;
         ParentRetryTime = 0; 
         ParentEnable = 0; 
@@ -243,6 +242,7 @@ class ParentSelectionStrategy : public ConfigInfo, public ParentSelectionBase {
     }
 
     ParentSelectionBase *parent_type;  
+    P_table *parent_table;
 };
 
 //
@@ -283,16 +283,16 @@ public:
   static void reconfigure();
   static void print();
 
-  inkcoreapi static ParentConfigParams *
+  inkcoreapi static ParentSelectionStrategy *
   acquire()
   {
-    return (ParentConfigParams *)configProcessor.get(ParentConfig::m_id);
+    return (ParentSelectionStrategy *)configProcessor.get(ParentConfig::m_id);
   }
 
   inkcoreapi static void
-  release(ParentConfigParams *params)
+  release(ParentSelectionStrategy *strategy)
   {
-    configProcessor.release(ParentConfig::m_id, params);
+    configProcessor.release(ParentConfig::m_id, strategy);
   }
 
 
