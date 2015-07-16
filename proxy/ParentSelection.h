@@ -198,9 +198,6 @@ class ParentSelectionStrategy : public ConfigInfo, public ParentSelectionBase {
     P_table *parent_table;
 };
 
-//
-// API to outside world
-//
 struct ParentResult {
   ParentResult()
     : r(PARENT_UNDEFINED), hostname(NULL), port(0), line_number(0), epoch(NULL), rec(NULL), last_parent(0), start_parent(0),
@@ -247,13 +244,8 @@ public:
     configProcessor.release(ParentConfig::m_id, strategy);
   }
 
-
   static int m_id;
 };
-//
-// End API to outside world
-//
-
 
 // struct pRecord
 //
