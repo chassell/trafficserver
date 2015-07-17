@@ -196,6 +196,7 @@ ParentConsistentHash::ParentConsistentHash(P_table *_parent_table, ParentRecord 
   if (parent_record->num_secondary_parents > 0) {
     Debug("parent_select", "ParentConsistentHash(): initializing the secondary parents hash.");
     chash_secondary = new ATSConsistentHash();    
+    use_secondary_hash = true;
 
     for (i = 0; i < parent_record->num_secondary_parents; i++) {
       chash->insert(&(parent_record->secondary_parents[i]), parent_record->secondary_parents[i].weight, (ATSHash64 *)&hash);
