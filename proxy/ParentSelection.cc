@@ -199,7 +199,7 @@ ParentConsistentHash::ParentConsistentHash(P_table *_parent_table, ParentRecord 
     use_secondary_hash = true;
 
     for (i = 0; i < parent_record->num_secondary_parents; i++) {
-      chash->insert(&(parent_record->secondary_parents[i]), parent_record->secondary_parents[i].weight, (ATSHash64 *)&hash);
+      chash_secondary->insert(&(parent_record->secondary_parents[i]), parent_record->secondary_parents[i].weight, (ATSHash64 *)&hash);
     }
   } else {
     chash_secondary = NULL;
