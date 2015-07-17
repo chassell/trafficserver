@@ -185,11 +185,24 @@ ParentConsistentHash::ParentConsistentHash(P_table *_parent_table, ParentRecord 
   
   parent_table = _parent_table;
   parent_record = _parent_record;
+  ink_assert(parent_record->num_parents > 0);
 
   chash = new ATSConsistentHash();
 
   for (i = 0; i < parent_record->num_parents; i++) {
     chash->insert(&(parent_record->parents[i]), parent_record->parents[i].weight, (ATSHash64 *)&hash);
+  }
+
+  if (parent_record->num_secondary_parents > 0) {
+    Debug("parent_select", "ParentConsistentHash(): initializing the secondary parents hash.");
+    chash_secondary = new ATSConsistentHash();    
+
+    for (i = 0; i < parent_record->num_secondary_parents; i++) {
+      chash->insert(&(parent_record->secondary_parents[i]), parent_record->secondary_parents[i].weight, (ATSHash64 *)&hash);
+    }
+  } else {
+    chash_secondary = NULL;
+    use_secondary_hash = false;
   }
   Debug("parent_select", "Using a consistent hash parent selection strategy.");
 }
@@ -696,17 +709,19 @@ ParentRecord::getPathHash(HttpRequestData *hrdata, ATSHash64 *h)
   return h->get();
 }
 
-// const char* ParentRecord::ProcessParents(char* val)
+// const char* ParentRecord::ProcessParents(char* val, bool isPrimary)
 //
 //   Reads in the value of a "round-robin" or "order"
 //     directive and parses out the individual parents
-//     allocates and builds the this->parents array
+//     allocates and builds the this->parents array or 
+//     this->secondary_parents based upon the isPrimary
+//     boolean.
 //
 //   Returns NULL on success and a static error string
 //     on failure
 //
 const char *
-ParentRecord::ProcessParents(char *val)
+ParentRecord::ProcessParents(char *val, bool isPrimary)
 {
   Tokenizer pTok(",; \t\r");
   int numTok;
@@ -716,8 +731,11 @@ ParentRecord::ProcessParents(char *val)
   const char *errPtr;
   float weight = 1.0;
 
-  if (parents != NULL) {
+  if (parents != NULL && isPrimary == true) {
     return "Can not specify more than one set of parents";
+  }
+  if (secondary_parents != NULL && isPrimary == false) {
+    return "Can not specify more than one set of secondary parents";
   }
 
   numTok = pTok.Initialize(val, SHARE_TOKS);
@@ -726,7 +744,11 @@ ParentRecord::ProcessParents(char *val)
     return "No parents specified";
   }
   // Allocate the parents array
-  this->parents = (pRecord *)ats_malloc(sizeof(pRecord) * numTok);
+  if (isPrimary) {
+    this->parents = (pRecord *)ats_malloc(sizeof(pRecord) * numTok);
+  } else {
+    this->secondary_parents = (pRecord *) ats_malloc(sizeof(pRecord) * numTok);
+  }
 
   // Loop through the set of parents specified
   //
@@ -783,18 +805,35 @@ ParentRecord::ProcessParents(char *val)
       goto MERROR;
     }
     // Update the pRecords
-    memcpy(this->parents[i].hostname, current, tmp - current);
-    this->parents[i].hostname[tmp - current] = '\0';
-    this->parents[i].port = port;
-    this->parents[i].failedAt = 0;
-    this->parents[i].scheme = scheme;
-    this->parents[i].idx = i;
-    this->parents[i].name = this->parents[i].hostname;
-    this->parents[i].available = true;
-    this->parents[i].weight = weight;
+    if (isPrimary) {
+      memcpy(this->parents[i].hostname, current, tmp - current);
+      this->parents[i].hostname[tmp - current] = '\0';
+      this->parents[i].port = port;
+      this->parents[i].failedAt = 0;
+      this->parents[i].scheme = scheme;
+      this->parents[i].idx = i;
+      this->parents[i].name = this->parents[i].hostname;
+      this->parents[i].available = true;
+      this->parents[i].weight = weight;
+    } else {
+      memcpy(this->secondary_parents[i].hostname, current, tmp - current);
+      this->secondary_parents[i].hostname[tmp - current] = '\0';
+      this->secondary_parents[i].port = port;
+      this->secondary_parents[i].failedAt = 0;
+      this->secondary_parents[i].scheme = scheme;
+      this->secondary_parents[i].idx = i;
+      this->secondary_parents[i].name = this->parents[i].hostname;
+      this->secondary_parents[i].available = true;
+      this->secondary_parents[i].weight = weight;
+    }
   }
 
-  num_parents = numTok;
+  if (isPrimary) {
+    num_parents = numTok;
+  } else {
+    num_secondary_parents = numTok;
+  }
+
   return NULL;
 
 MERROR:
@@ -826,7 +865,7 @@ ParentRecord::DefaultInit(char *val)
   this->ignore_query = false;
   this->scheme = NULL;
   this->parent_is_proxy = true;
-  errPtr = ProcessParents(val);
+  errPtr = ProcessParents(val, true);
 
   if (errPtr != NULL) {
     errBuf = (char *)ats_malloc(1024);
@@ -883,8 +922,11 @@ ParentRecord::Init(matcher_line *line_info)
         errPtr = "invalid argument to round_robin directive";
       }
       used = true;
-    } else if (strcasecmp(label, "parent") == 0) {
-      errPtr = ProcessParents(val);
+    } else if (strcasecmp(label, "parent") == 0 || strcasecmp(label, "primary_parent") == 0) {
+      errPtr = ProcessParents(val, true);
+      used = true;
+    } else if (strcasecmp(label, "secondary_parent") == 0) {
+      errPtr = ProcessParents(val, false);
       used = true;
     } else if (strcasecmp(label, "go_direct") == 0) {
       if (strcasecmp(val, "false") == 0) {

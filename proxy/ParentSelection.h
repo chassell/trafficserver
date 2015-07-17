@@ -127,6 +127,7 @@ class ParentSelectionBase {
 class ParentConsistentHash : public ParentSelectionBase {
     ATSConsistentHash *chash, *chash_secondary;
     ATSConsistentHashIter chashIter, chash_secondaryIter;
+    bool use_secondary_hash;
   public:
     ParentConsistentHash(P_table *_parent_table, ParentRecord *_parent_record);
     ~ParentConsistentHash();
@@ -271,7 +272,8 @@ class ParentRecord : public ControlBase
 {
 public:
   ParentRecord()
-    : parents(NULL), num_parents(0), round_robin(P_NO_ROUND_ROBIN), rr_next(0), go_direct(true), parent_is_proxy(true)
+    : parents(NULL), secondary_parents(NULL), num_parents(0), num_secondary_parents(0), 
+      round_robin(P_NO_ROUND_ROBIN), rr_next(0), go_direct(true), parent_is_proxy(true)
   {
   }
 
@@ -283,7 +285,9 @@ public:
   uint64_t getPathHash(HttpRequestData *hrdata, ATSHash64 *h);
   void Print();
   pRecord *parents;
+  pRecord *secondary_parents;
   int num_parents;
+  int num_secondary_parents;
 
   bool
   bypass_ok() const
@@ -298,7 +302,7 @@ public:
 
   const char *scheme;
   // private:
-  const char *ProcessParents(char *val);
+  const char *ProcessParents(char *val, bool isPrimary);
   ParentRR_t round_robin;
   bool ignore_query;
   volatile uint32_t rr_next;
