@@ -725,11 +725,11 @@ const char *
 ParentRecord::ProcessParents(char *val, bool isPrimary)
 {
   Tokenizer pTok(",; \t\r");
-  int numTok;
-  const char *current;
-  int port;
-  char *tmp, *tmp2;
-  const char *errPtr;
+  int numTok = 0;
+  const char *current = NULL;
+  int port = 0;
+  char *tmp = NULL, *tmp2 = NULL;
+  const char *errPtr = NULL;
   float weight = 1.0;
 
   if (parents != NULL && isPrimary == true) {
@@ -823,7 +823,7 @@ ParentRecord::ProcessParents(char *val, bool isPrimary)
       this->secondary_parents[i].failedAt = 0;
       this->secondary_parents[i].scheme = scheme;
       this->secondary_parents[i].idx = i;
-      this->secondary_parents[i].name = this->parents[i].hostname;
+      this->secondary_parents[i].name = this->secondary_parents[i].hostname;
       this->secondary_parents[i].available = true;
       this->secondary_parents[i].weight = weight;
     }
