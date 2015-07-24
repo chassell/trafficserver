@@ -129,6 +129,8 @@ class ParentSelectionBase {
 class ParentConsistentHash : public ParentSelectionBase {
     ATSConsistentHash *chash, *chash_secondary;
     ATSConsistentHashIter chashIter, chash_secondaryIter;
+    bool go_direct;
+    bool used_secondary;
   protected:
     void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
 
@@ -210,8 +212,8 @@ class ParentSelectionStrategy : public ConfigInfo, public ParentSelectionBase {
 struct ParentResult {
   ParentResult()
     : r(PARENT_UNDEFINED), hostname(NULL), port(0), line_number(0), epoch(NULL), rec(NULL), last_parent(0), start_parent(0),
-      wrap_around(false), retry(false)
-  {
+      wrap_around(false), retry(false) 
+  { 
     memset(foundParents, 0, sizeof(foundParents));
   };
 

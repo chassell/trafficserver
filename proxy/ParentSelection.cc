@@ -279,6 +279,8 @@ ParentConsistentHash::ParentConsistentHash(P_table *_parent_table, ParentRecord 
   ATSHash64Sip24 hash;
   int i;
   
+  go_direct = false;
+  used_secondary = false;
   parent_table = _parent_table;
   parent_record = _parent_record;
   ink_assert(parent_record->num_parents > 0);
@@ -303,11 +305,96 @@ ParentConsistentHash::ParentConsistentHash(P_table *_parent_table, ParentRecord 
 }
 
 ParentConsistentHash::~ParentConsistentHash() {
-  // TODO Implement
+  if (parent_table) {
+    delete parent_table;
+  }
+  if (parent_record) {
+    delete parent_record;
+  }
 }
 
+// TODO think about simplifying this more.
 void ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, RequestData *rdata) {
-  Debug("parent_select", "In ParentConsistentHash::lookupParent(): Using a consistent hash parent selection strategy.");
+  Debug("cdn", "In ParentConsistentHash::lookupParent(): Using a consistent hash parent selection strategy.");
+  int cur_index = 0;
+  bool parentUp = false;
+  bool parentRetry = false;
+  bool bypass_ok = (go_direct == true && DNS_ParentOnly == 0);
+  uint64_t path_hash;
+ 
+  ATSHash64Sip24 hash;
+  pRecord *prtmp = NULL;
+ 
+  HttpRequestData *request_info = static_cast<HttpRequestData *>(rdata);
+
+  ink_assert(parent_record->num_parents > 0 || go_direct == true);
+  
+  if (first_call) {
+    // We should only get into this state if
+    //  we are supposed to go direct.
+    if (parent_record->parents == NULL && parent_record->secondary_parents == NULL) {
+      ink_assert(go_direct == true);
+      // Could not find a parent
+      if (this->go_direct == true) {
+        result->r = PARENT_DIRECT;
+      } else {
+        result->r = PARENT_FAIL;
+      }
+      result->hostname = NULL;
+      result->port = 0;
+      return;
+    } else {
+      path_hash = parent_record->getPathHash(request_info, (ATSHash64 *)&hash);
+      if (path_hash) {
+        prtmp = (pRecord *)chash->lookup_by_hashval(path_hash, &chashIter, &result->wrap_around);
+        if (prtmp) {
+          cur_index = prtmp->idx;
+          result->foundParents[cur_index] = true;
+          result->start_parent++;
+        } 
+        else if (!prtmp && parent_record->num_secondary_parents > 0) {
+          prtmp = (pRecord *)chash_secondary->lookup_by_hashval(path_hash, &chash_secondaryIter, &result->wrap_around);
+          if (prtmp) {
+            cur_index = prtmp->idx;
+            // TODO need a foundParents array for the secondary hash.
+            result->start_parent++;
+            used_secondary = true;
+          }
+        }
+        if (! prtmp) {
+          Error("%s:%d Consistent Hash lookup returned NULL (first lookup)", __FILE__, __LINE__);
+          cur_index = ink_atomic_increment((int32_t *)&parent_record->rr_next, 1);
+          cur_index = cur_index % parent_record->num_parents;
+        }
+      } else {
+        Error("%s:%d Could not find path", __FILE__, __LINE__);
+      }
+    }
+  } else {
+  //TODO add logic for secondary hash lookups and need a foundParents array for the secondary hash.
+    Debug("parent_select", "result->start_parent=%d, num_parents=%d", result->start_parent, parent_record->num_parents);
+    if (result->start_parent == (unsigned int)parent_record->num_parents) {
+      result->wrap_around = true;
+      result->start_parent = 0;
+    }
+
+    do {
+      prtmp = (pRecord *)chash->lookup(NULL, 0, &chashIter, &result->wrap_around, &hash);
+    } while (prtmp && result->foundParents[prtmp->idx]);
+
+    // TODO fix up this logic for when the secondary hash is used.
+    if (prtmp) {
+      cur_index = prtmp->idx;
+      result->foundParents[cur_index] = true;
+      result->start_parent++;
+    } else {
+      Error("Consistent Hash lookup returned NULL (subsequent lookup)");
+      cur_index = ink_atomic_increment((int32_t *)&parent_record->rr_next, 1);
+      cur_index = cur_index % parent_record->num_parents;
+    }
+  }
+  // TODO Loop through the array of parent seeing if any are up or
+  //   should be retried
 }
 
 void ParentConsistentHash::nextParent(HttpRequestData *rdata, ParentResult *result) {
@@ -339,7 +426,12 @@ ParentRoundRobin::ParentRoundRobin(P_table *_parent_table, ParentRecord *_parent
 }
 
 ParentRoundRobin::~ParentRoundRobin() {
-  // TODO Implement
+  if (parent_table) {
+    delete parent_table;
+  }
+  if (parent_record) {
+    delete parent_record;
+  }
 }
 
 void ParentRoundRobin::nextParent(HttpRequestData *rdata, ParentResult *result) {
@@ -489,7 +581,7 @@ void ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, Reque
   do {
     // DNS ParentOnly inhibits bypassing the parent so always return that t
     if ((parent_record->parents[cur_index].failedAt == 0) || (parent_record->parents[cur_index].failCount < FailThreshold)) {
-      Debug("parent_select", "config->FailThreshold = %d", FailThreshold);
+      Debug("parent_select", "FailThreshold = %d", FailThreshold);
       Debug("parent_select", "Selecting a down parent due to little failCount"
                              "(faileAt: %u failCount: %d)",
             (unsigned)parent_record->parents[cur_index].failedAt, parent_record->parents[cur_index].failCount);
