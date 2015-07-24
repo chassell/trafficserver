@@ -74,6 +74,102 @@ bool ParentSelectionBase::apiParentExists(HttpRequestData *rdata) {
    return (rdata->api_info && rdata->api_info->parent_proxy_name != NULL && rdata->api_info->parent_proxy_port > 0);
 }
 
+void ParentSelectionBase::findParent(HttpRequestData *rdata, ParentResult *result) {
+  P_table *tablePtr = parent_table;
+  ParentRecord *defaultPtr = DefaultParent;
+  ParentRecord *rec;
+  
+ ink_assert(result->r == PARENT_UNDEFINED);
+ 
+ // Check to see if we are enabled
+ if (ParentEnable == 0) {
+  result->r = PARENT_DIRECT;
+  return;
+ }
+ // Initialize the result structure
+ result->rec = NULL;
+ result->epoch = tablePtr;
+ result->line_number = 0xffffffff;
+ result->wrap_around = false;
+ result->start_parent = 0;
+ result->last_parent = 0;
+
+  // Check to see if the parent was set through the
+  //   api
+  if (apiParentExists(rdata)) {
+    result->r = PARENT_SPECIFIED;
+    result->hostname = rdata->api_info->parent_proxy_name;
+    result->port = rdata->api_info->parent_proxy_port;
+    result->rec = extApiRecord;
+    result->epoch = NULL;
+    result->start_parent = 0;
+    result->last_parent = 0;
+ 
+    Debug("parent_select", "Result for %s was API set parent %s:%d", rdata->get_host(), result->hostname, result->port);
+  }
+ 
+  tablePtr->Match(rdata, result);
+  rec = result->rec;
+
+  if (rec == NULL) {
+    // No parents were found
+    //
+    // If there is a default parent, use it
+    if (defaultPtr != NULL) {
+     rec = result->rec = defaultPtr;
+    } else {
+      result->r = PARENT_DIRECT;
+      Debug("cdn", "Returning PARENT_DIRECT (no parents were found)");
+      return;
+    }
+  }
+
+  if (rec != extApiRecord)
+    lookupParent(true, result, rdata);
+
+  if (is_debug_tag_set("parent_select") || is_debug_tag_set("cdn")) {
+    switch (result->r) {
+      case PARENT_UNDEFINED:
+        Debug("cdn", "PARENT_UNDEFINED");
+        break;
+      case PARENT_FAIL:
+        Debug("cdn", "PARENT_FAIL");
+        break;
+      case PARENT_DIRECT:
+        Debug("cdn", "PARENT_DIRECT");
+        break;
+      case PARENT_SPECIFIED:
+        Debug("cdn", "PARENT_SPECIFIED");
+        break;
+      case PARENT_ORIGIN:
+        Debug("cdn", "PARENT_ORIGIN");
+        break;
+      default:
+        // Handled here:
+        // PARENT_AGENT
+      break;
+    }
+
+    const char *host = rdata->get_host();
+
+    switch (result->r) {
+      case PARENT_UNDEFINED:
+      case PARENT_FAIL:
+      case PARENT_DIRECT:
+        Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
+        break;
+      case PARENT_ORIGIN:
+      case PARENT_SPECIFIED:
+        Debug("parent_select", "Result for %s was parent %s:%d", host, result->hostname, result->port);
+        break;
+      default:
+        // Handled here:
+        // PARENT_AGENT
+        break;
+    }
+  }
+}
+
 void ParentSelectionBase::markParentDown(ParentResult *result) {
   time_t now;
   pRecord *pRec;
@@ -210,8 +306,8 @@ ParentConsistentHash::~ParentConsistentHash() {
   // TODO Implement
 }
 
-void ParentConsistentHash::findParent(HttpRequestData *rdata, ParentResult *result) {
-  // TODO Implement
+void ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, RequestData *rdata) {
+  Debug("parent_select", "In ParentConsistentHash::lookupParent(): Using a consistent hash parent selection strategy.");
 }
 
 void ParentConsistentHash::nextParent(HttpRequestData *rdata, ParentResult *result) {
@@ -244,102 +340,6 @@ ParentRoundRobin::ParentRoundRobin(P_table *_parent_table, ParentRecord *_parent
 
 ParentRoundRobin::~ParentRoundRobin() {
   // TODO Implement
-}
-
-void ParentRoundRobin::findParent(HttpRequestData *rdata, ParentResult *result) {
-  P_table *tablePtr = parent_table;
-  ParentRecord *defaultPtr = DefaultParent;
-  ParentRecord *rec;
-  
- ink_assert(result->r == PARENT_UNDEFINED);
- 
- // Check to see if we are enabled
- if (ParentEnable == 0) {
-  result->r = PARENT_DIRECT;
-  return;
- }
- // Initialize the result structure
- result->rec = NULL;
- result->epoch = tablePtr;
- result->line_number = 0xffffffff;
- result->wrap_around = false;
- result->start_parent = 0;
- result->last_parent = 0;
-
-  // Check to see if the parent was set through the
-  //   api
-  if (apiParentExists(rdata)) {
-    result->r = PARENT_SPECIFIED;
-    result->hostname = rdata->api_info->parent_proxy_name;
-    result->port = rdata->api_info->parent_proxy_port;
-    result->rec = extApiRecord;
-    result->epoch = NULL;
-    result->start_parent = 0;
-    result->last_parent = 0;
- 
-    Debug("parent_select", "Result for %s was API set parent %s:%d", rdata->get_host(), result->hostname, result->port);
-  }
- 
-  tablePtr->Match(rdata, result);
-  rec = result->rec;
-
-  if (rec == NULL) {
-    // No parents were found
-    //
-    // If there is a default parent, use it
-    if (defaultPtr != NULL) {
-     rec = result->rec = defaultPtr;
-    } else {
-      result->r = PARENT_DIRECT;
-      Debug("cdn", "Returning PARENT_DIRECT (no parents were found)");
-      return;
-    }
-  }
-
-  if (rec != extApiRecord)
-    lookupParent(true, result, rdata);
-
-  if (is_debug_tag_set("parent_select") || is_debug_tag_set("cdn")) {
-    switch (result->r) {
-      case PARENT_UNDEFINED:
-        Debug("cdn", "PARENT_UNDEFINED");
-        break;
-      case PARENT_FAIL:
-        Debug("cdn", "PARENT_FAIL");
-        break;
-      case PARENT_DIRECT:
-        Debug("cdn", "PARENT_DIRECT");
-        break;
-      case PARENT_SPECIFIED:
-        Debug("cdn", "PARENT_SPECIFIED");
-        break;
-      case PARENT_ORIGIN:
-        Debug("cdn", "PARENT_ORIGIN");
-        break;
-      default:
-        // Handled here:
-        // PARENT_AGENT
-      break;
-    }
-
-    const char *host = rdata->get_host();
-
-    switch (result->r) {
-      case PARENT_UNDEFINED:
-      case PARENT_FAIL:
-      case PARENT_DIRECT:
-        Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
-        break;
-      case PARENT_ORIGIN:
-      case PARENT_SPECIFIED:
-        Debug("parent_select", "Result for %s was parent %s:%d", host, result->hostname, result->port);
-        break;
-      default:
-        // Handled here:
-        // PARENT_AGENT
-        break;
-    }
-  }
 }
 
 void ParentRoundRobin::nextParent(HttpRequestData *rdata, ParentResult *result) {
@@ -409,7 +409,7 @@ void ParentRoundRobin::nextParent(HttpRequestData *rdata, ParentResult *result) 
 }
 
 void ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestData *rdata) {
-  Debug("cdn", "Entering ParentRoundRobin::lookupParent (the inner loop)");
+  Debug("parent_select", "In ParentRoundRobin::lookupParent(): Using a round robin parent selection strategy.");
   int cur_index = 0;
   bool parentUp = false;
   bool parentRetry = false;
@@ -584,6 +584,10 @@ ParentSelectionStrategy::ParentSelectionStrategy(P_table *_parent_table) {
 
 ParentSelectionStrategy::~ParentSelectionStrategy()
 {
+}
+
+void ParentSelectionStrategy::lookupParent(bool first_call, ParentResult *result, RequestData *rdata) {
+  Debug("parent_select", "In ParentSelectionStrategy::lookupParent(): This is a noop function call.");
 }
 
 int ParentConfig::m_id = 0;

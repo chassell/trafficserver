@@ -69,6 +69,8 @@ enum ParentRR_t {
 typedef ControlMatcher<ParentRecord, ParentResult> P_table;
 
 class ParentSelectionBase {
+  protected:
+    virtual void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata) = 0;
   public:
 
     ParentSelectionBase() : parent_record(NULL), DefaultParent(NULL), ParentRetryTime(0),
@@ -83,7 +85,7 @@ class ParentSelectionBase {
     //
     //   Does initial parent lookup
     //
-    inkcoreapi virtual void findParent(HttpRequestData *rdata, ParentResult *result) = 0;
+    inkcoreapi void findParent(HttpRequestData *rdata, ParentResult *result);
 
     // void markParentDown(ParentResult* rsult)
     //
@@ -127,7 +129,9 @@ class ParentSelectionBase {
 class ParentConsistentHash : public ParentSelectionBase {
     ATSConsistentHash *chash, *chash_secondary;
     ATSConsistentHashIter chashIter, chash_secondaryIter;
+  protected:
     void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
+
   public:
     ParentConsistentHash(P_table *_parent_table, ParentRecord *_parent_record);
     ~ParentConsistentHash();
@@ -144,15 +148,19 @@ class ParentRoundRobin : public ParentSelectionBase {
     bool go_direct;
     ParentRR_t round_robin_type;
 
+  protected:
     void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
+
   public:
     ParentRoundRobin(P_table *_parent_table, ParentRecord *_parent_record);
     ~ParentRoundRobin();
-    void findParent(HttpRequestData *rdata, ParentResult *result);
     void nextParent(HttpRequestData *rdata, ParentResult *result);
 };
 
 class ParentSelectionStrategy : public ConfigInfo, public ParentSelectionBase {
+  protected:
+    void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
+
   public:
     ParentSelectionStrategy() : parent_type(NULL), parent_table(NULL) {
         parent_record = NULL;
