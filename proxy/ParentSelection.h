@@ -127,7 +127,7 @@ class ParentSelectionBase {
 class ParentConsistentHash : public ParentSelectionBase {
     ATSConsistentHash *chash, *chash_secondary;
     ATSConsistentHashIter chashIter, chash_secondaryIter;
-    bool use_secondary_hash;
+    void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
   public:
     ParentConsistentHash(P_table *_parent_table, ParentRecord *_parent_record);
     ~ParentConsistentHash();
@@ -144,7 +144,7 @@ class ParentRoundRobin : public ParentSelectionBase {
     bool go_direct;
     ParentRR_t round_robin_type;
 
-    void locateAParent(bool firstCall, ParentResult *result, RequestData *rdata);
+    void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
   public:
     ParentRoundRobin(P_table *_parent_table, ParentRecord *_parent_record);
     ~ParentRoundRobin();

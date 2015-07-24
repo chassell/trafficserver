@@ -196,14 +196,12 @@ ParentConsistentHash::ParentConsistentHash(P_table *_parent_table, ParentRecord 
   if (parent_record->num_secondary_parents > 0) {
     Debug("parent_select", "ParentConsistentHash(): initializing the secondary parents hash.");
     chash_secondary = new ATSConsistentHash();    
-    use_secondary_hash = true;
 
     for (i = 0; i < parent_record->num_secondary_parents; i++) {
       chash_secondary->insert(&(parent_record->secondary_parents[i]), parent_record->secondary_parents[i].weight, (ATSHash64 *)&hash);
     }
   } else {
     chash_secondary = NULL;
-    use_secondary_hash = false;
   }
   Debug("parent_select", "Using a consistent hash parent selection strategy.");
 }
@@ -299,7 +297,7 @@ void ParentRoundRobin::findParent(HttpRequestData *rdata, ParentResult *result) 
   }
 
   if (rec != extApiRecord)
-    locateAParent(true, result, rdata);
+    lookupParent(true, result, rdata);
 
   if (is_debug_tag_set("parent_select") || is_debug_tag_set("cdn")) {
     switch (result->r) {
@@ -364,8 +362,8 @@ void ParentRoundRobin::nextParent(HttpRequestData *rdata, ParentResult *result) 
   ink_release_assert(tablePtr == result->epoch);
 
   // Find the next parent in the array
-  Debug("cdn", "Calling locateAParent() from nextParent");
-  locateAParent(false, result, rdata);
+  Debug("cdn", "Calling lookupParent() from nextParent");
+  lookupParent(false, result, rdata);
 
   switch (result->r) {
   case PARENT_UNDEFINED:
@@ -410,8 +408,8 @@ void ParentRoundRobin::nextParent(HttpRequestData *rdata, ParentResult *result) 
   }
 }
 
-void ParentRoundRobin::locateAParent(bool first_call, ParentResult *result, RequestData *rdata) {
-  Debug("cdn", "Entering ParentRoundRobin::locateAParent (the inner loop)");
+void ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestData *rdata) {
+  Debug("cdn", "Entering ParentRoundRobin::lookupParent (the inner loop)");
   int cur_index = 0;
   bool parentUp = false;
   bool parentRetry = false;
