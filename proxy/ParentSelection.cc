@@ -520,6 +520,26 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
   } while (result->wrap_around);
 }
 
+uint32_t
+ParentConsistentHash::numParents()
+{
+  uint32_t n = 0;
+
+  switch (last_lookup) {
+    case UNDEFINED:
+      n = 0;
+      break;
+    case PRIMARY_HASH:
+      n = parent_record->num_parents;
+      break;
+    case SECONDARY_HASH:
+      n = parent_record->num_secondary_parents;
+      break;
+  }
+
+  return n;
+}
+
 ParentRoundRobin::ParentRoundRobin(P_table *_parent_table, ParentRecord *_parent_record)
 {
   parent_table = _parent_table;
@@ -673,6 +693,12 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
     }
     cur_index = (cur_index + 1) % parent_record->num_parents;
   } while ((unsigned int)cur_index != result->start_parent);
+}
+
+uint32_t
+ParentRoundRobin::numParents()
+{
+  return parent_record->num_parents;
 }
 
 ParentSelectionStrategy::ParentSelectionStrategy(P_table *_parent_table)

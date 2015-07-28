@@ -116,6 +116,8 @@ public:
   //
   inkcoreapi void recordRetrySuccess(ParentResult *result);
 
+  inkcoreapi virtual uint32_t numParents () = 0;
+
   ParentRecord *parent_record;
   P_table *parent_table;
   ParentRecord *DefaultParent;
@@ -143,6 +145,7 @@ public:
   ParentConsistentHash(P_table *_parent_table, ParentRecord *_parent_record);
   ~ParentConsistentHash();
    void findParent(HttpRequestData *rdata, ParentResult *result);
+   uint32_t numParents();
 };
 
 //
@@ -161,6 +164,7 @@ protected:
 public:
   ParentRoundRobin(P_table *_parent_table, ParentRecord *_parent_record);
   ~ParentRoundRobin();
+  uint32_t numParents ();
 };
 
 class ParentSelectionStrategy : public ConfigInfo, public ParentSelectionBase
@@ -221,6 +225,12 @@ public:
   {
     ink_release_assert(parent_type != NULL);
     parent_type->recordRetrySuccess(result);
+  }
+
+  uint32_t
+  numParents () {
+    ink_release_assert(parent_type != NULL);
+    return parent_type->numParents();
   }
 
   ParentSelectionBase *parent_type;
