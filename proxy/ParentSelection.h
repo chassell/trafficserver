@@ -35,20 +35,22 @@
 #include "ProxyConfig.h"
 #include "ControlBase.h"
 #include "ControlMatcher.h"
-
 #include "ink_apidefs.h"
-
 #include "P_RecProcess.h"
-
 #include "libts.h"
 
 #define MAX_PARENTS 64
 
 struct RequestData;
-
 struct matcher_line;
 struct ParentResult;
 class ParentRecord;
+
+enum ConsistentHashLookupSource {
+  UNDEFINED,
+  PRIMARY_HASH,
+  SECONDARY_HASH
+};
 
 enum ParentResultType {
   PARENT_UNDEFINED,
@@ -68,153 +70,171 @@ enum ParentRR_t {
 
 typedef ControlMatcher<ParentRecord, ParentResult> P_table;
 
-class ParentSelectionBase {
-  protected:
-    virtual void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata) = 0;
-  public:
+class ParentSelectionBase
+{
+protected:
+  virtual void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata) = 0;
 
-    ParentSelectionBase() : parent_record(NULL), DefaultParent(NULL), ParentRetryTime(0),
-        ParentEnable(0), FailThreshold(0), DNS_ParentOnly(0) {}
+public:
+  ParentSelectionBase()
+    : parent_record(NULL), DefaultParent(NULL), ParentRetryTime(0), ParentEnable(0), FailThreshold(0), DNS_ParentOnly(0) {}
 
-    // bool apiParentExists(HttpRequestData* rdata)
-    //
-    //   Retures true if a parent has been set through the api
-    inkcoreapi bool apiParentExists(HttpRequestData *rdata);
+  // bool apiParentExists(HttpRequestData* rdata)
+  //
+  //   Retures true if a parent has been set through the api
+  inkcoreapi bool apiParentExists(HttpRequestData *rdata);
 
-    // void findParent(RequestData* rdata, ParentResult* result)
-    //
-    //   Does initial parent lookup
-    //
-    inkcoreapi void findParent(HttpRequestData *rdata, ParentResult *result);
+  // void findParent(RequestData* rdata, ParentResult* result)
+  //
+  //   Does initial parent lookup
+  //
+  inkcoreapi void findParent(HttpRequestData *rdata, ParentResult *result);
 
-    // void markParentDown(ParentResult* rsult)
-    //
-    //    Marks the parent pointed to by result as down
-    //
-    inkcoreapi void markParentDown(ParentResult *result);
+  // void markParentDown(ParentResult* rsult)
+  //
+  //    Marks the parent pointed to by result as down
+  //
+  inkcoreapi void markParentDown(ParentResult *result);
 
-    // void nextParent(RequestData* rdata, ParentResult* result);
-    //
-    //    Marks the parent pointed to by result as down and attempts
-    //      to find the next parent
-    //
-    inkcoreapi virtual void nextParent(HttpRequestData *rdata, ParentResult *result) = 0;
+  // void nextParent(RequestData* rdata, ParentResult* result);
+  //
+  //    Marks the parent pointed to by result as down and attempts
+  //      to find the next parent
+  //
+  inkcoreapi void nextParent(HttpRequestData *rdata, ParentResult *result);
 
-    // bool parentExists(HttpRequestData* rdata)
-    //
-    //   Returns true if there is a parent matching the request data and
-    //   false otherwise
-    inkcoreapi bool parentExists(HttpRequestData *rdata);
+  // bool parentExists(HttpRequestData* rdata)
+  //
+  //   Returns true if there is a parent matching the request data and
+  //   false otherwise
+  inkcoreapi bool parentExists(HttpRequestData *rdata);
 
-    // void recordRetrySuccess
-    //
-    //    After a successful retry, http calls this function
-    //      to clear the bits indicating the parent is down
-    //
-    inkcoreapi void recordRetrySuccess(ParentResult *result);
+  // void recordRetrySuccess
+  //
+  //    After a successful retry, http calls this function
+  //      to clear the bits indicating the parent is down
+  //
+  inkcoreapi void recordRetrySuccess(ParentResult *result);
 
-    ParentRecord *parent_record;
-    P_table *parent_table;
-    ParentRecord *DefaultParent;
-    int32_t ParentRetryTime;
-    int32_t ParentEnable;
-    int32_t FailThreshold;
-    int32_t DNS_ParentOnly;
+  ParentRecord *parent_record;
+  P_table *parent_table;
+  ParentRecord *DefaultParent;
+  int32_t ParentRetryTime;
+  int32_t ParentEnable;
+  int32_t FailThreshold;
+  int32_t DNS_ParentOnly;
 };
 
 //
-//  Implementation of round robin based upon consistent hash of the URL, 
+//  Implementation of round robin based upon consistent hash of the URL,
 //  ParentRR_t = P_CONSISTENT_HASH.
 //
-class ParentConsistentHash : public ParentSelectionBase {
-    ATSConsistentHash *chash, *chash_secondary;
-    ATSConsistentHashIter chashIter, chash_secondaryIter;
-    bool go_direct;
-    bool used_secondary;
-  protected:
-    void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
+class ParentConsistentHash : public ParentSelectionBase
+{
+  ATSConsistentHash *chash, *chash_secondary;
+  ATSConsistentHashIter chashIter, chash_secondaryIter;
+  bool go_direct;
+  ConsistentHashLookupSource last_lookup;
 
-  public:
-    ParentConsistentHash(P_table *_parent_table, ParentRecord *_parent_record);
-    ~ParentConsistentHash();
-    void findParent(HttpRequestData *rdata, ParentResult *result);
-    void nextParent(HttpRequestData *rdata, ParentResult *result);
+protected:
+  void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
+
+public:
+  ParentConsistentHash(P_table *_parent_table, ParentRecord *_parent_record);
+  ~ParentConsistentHash();
+   void findParent(HttpRequestData *rdata, ParentResult *result);
 };
 
 //
-//  Implementation of the various round robin strategies. 
-//  ParentRR_t is one of P_NO_ROUND_ROBIN, P_STRICT_ROUND_ROBIN, or 
+//  Implementation of the various round robin strategies.
+//  ParentRR_t is one of P_NO_ROUND_ROBIN, P_STRICT_ROUND_ROBIN, or
 //  P_HASH_ROUND_ROBIN.
 //
-class ParentRoundRobin : public ParentSelectionBase {
-    bool go_direct;
-    ParentRR_t round_robin_type;
+class ParentRoundRobin : public ParentSelectionBase
+{
+  bool go_direct;
+  ParentRR_t round_robin_type;
 
-  protected:
-    void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
+protected:
+  void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
 
-  public:
-    ParentRoundRobin(P_table *_parent_table, ParentRecord *_parent_record);
-    ~ParentRoundRobin();
-    void nextParent(HttpRequestData *rdata, ParentResult *result);
+public:
+  ParentRoundRobin(P_table *_parent_table, ParentRecord *_parent_record);
+  ~ParentRoundRobin();
 };
 
-class ParentSelectionStrategy : public ConfigInfo, public ParentSelectionBase {
-  protected:
-    void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
+class ParentSelectionStrategy : public ConfigInfo, public ParentSelectionBase
+{
+protected:
+  void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
 
-  public:
-    ParentSelectionStrategy() : parent_type(NULL), parent_table(NULL) {
-        parent_record = NULL;
-        ParentRetryTime = 0; 
-        ParentEnable = 0; 
-        FailThreshold = 0;
-        DNS_ParentOnly = 0;
-    }
+public:
+  ParentSelectionStrategy() : parent_type(NULL), parent_table(NULL)
+  {
+    parent_record = NULL;
+    ParentRetryTime = 0;
+    ParentEnable = 0;
+    FailThreshold = 0;
+    DNS_ParentOnly = 0;
+  }
 
-    ParentSelectionStrategy(P_table *_parent_table);
-    ~ParentSelectionStrategy();
+  ParentSelectionStrategy(P_table *_parent_table);
+  ~ParentSelectionStrategy();
 
-    bool apiParentExists(HttpRequestData *rdata) {
-      ink_release_assert(parent_type != NULL);
-      return parent_type->apiParentExists(rdata);
-    }
+  bool
+  apiParentExists(HttpRequestData *rdata)
+  {
+    ink_release_assert(parent_type != NULL);
+    return parent_type->apiParentExists(rdata);
+  }
 
-    void findParent(HttpRequestData *rdata, ParentResult *result) {
-      ink_release_assert(parent_type != NULL);
-      parent_type->findParent(rdata, result);
-    }
+  void
+  findParent(HttpRequestData *rdata, ParentResult *result)
+  {
+    ink_release_assert(parent_type != NULL);
+    parent_type->findParent(rdata, result);
+  }
 
-    void markParentDown(ParentResult *result) {
-      ink_release_assert(parent_type != NULL);
-      parent_type->markParentDown(result);
-    }
+  void
+  markParentDown(ParentResult *result)
+  {
+    ink_release_assert(parent_type != NULL);
+    parent_type->markParentDown(result);
+  }
 
-    void nextParent(HttpRequestData *rdata, ParentResult *result) {
-      ink_release_assert(parent_type != NULL);
-      parent_type->nextParent(rdata, result);
-    }
+  void
+  nextParent(HttpRequestData *rdata, ParentResult *result)
+  {
+    ink_release_assert(parent_type != NULL);
+    parent_type->nextParent(rdata, result);
+  }
 
-    bool parentExists(HttpRequestData *rdata) {
-      ink_release_assert(parent_type != NULL);
-      return parent_type->parentExists(rdata);
-    }
+  bool
+  parentExists(HttpRequestData *rdata)
+  {
+    ink_release_assert(parent_type != NULL);
+    return parent_type->parentExists(rdata);
+  }
 
-    void recordRetrySuccess(ParentResult *result) {
-      ink_release_assert(parent_type != NULL);
-      parent_type->recordRetrySuccess(result);
-    }
+  void
+  recordRetrySuccess(ParentResult *result)
+  {
+    ink_release_assert(parent_type != NULL);
+    parent_type->recordRetrySuccess(result);
+  }
 
-    ParentSelectionBase *parent_type;  
-    P_table *parent_table;
+  ParentSelectionBase *parent_type;
+  P_table *parent_table;
 };
+
 
 struct ParentResult {
   ParentResult()
-    : r(PARENT_UNDEFINED), hostname(NULL), port(0), line_number(0), epoch(NULL), rec(NULL), last_parent(0), start_parent(0),
-      wrap_around(false), retry(false) 
-  { 
-    memset(foundParents, 0, sizeof(foundParents));
+    : r(PARENT_UNDEFINED), hostname(NULL), port(0), line_number(0), epoch(NULL), rec(NULL), 
+      last_parent(0), start_parent(0), wrap_around(false), retry(false)
+  {
+    memset(primaryFoundParents, 0, sizeof(primaryFoundParents));
+    memset(secondaryFoundParents, 0, sizeof(secondaryFoundParents));
   };
 
   // For outside consumption
@@ -232,7 +252,8 @@ struct ParentResult {
   bool wrap_around;
   bool retry;
   // Arena *a;
-  bool foundParents[MAX_PARENTS];
+  bool primaryFoundParents[MAX_PARENTS];
+  bool secondaryFoundParents[MAX_PARENTS];
 };
 
 class HttpRequestData;
@@ -282,8 +303,8 @@ class ParentRecord : public ControlBase
 {
 public:
   ParentRecord()
-    : parents(NULL), secondary_parents(NULL), num_parents(0), num_secondary_parents(0), 
-      round_robin(P_NO_ROUND_ROBIN), rr_next(0), go_direct(true), parent_is_proxy(true)
+    : parents(NULL), secondary_parents(NULL), num_parents(0), num_secondary_parents(0), round_robin(P_NO_ROUND_ROBIN), rr_next(0),
+      go_direct(true), parent_is_proxy(true)
   {
   }
 
