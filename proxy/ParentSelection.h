@@ -103,7 +103,7 @@ public:
   //
   //    Marks the parent pointed to by result as down
   //
-  inkcoreapi void markParentDown(ParentResult *result);
+  inkcoreapi virtual void markParentDown(ParentResult *result) = 0;
 
   // void nextParent(RequestData* rdata, ParentResult* result);
   //
@@ -123,9 +123,9 @@ public:
   //    After a successful retry, http calls this function
   //      to clear the bits indicating the parent is down
   //
-  inkcoreapi void recordRetrySuccess(ParentResult *result);
+  inkcoreapi virtual void recordRetrySuccess(ParentResult *result) = 0;
 
-  inkcoreapi virtual uint32_t numParents () = 0;
+  inkcoreapi virtual uint32_t numParents() = 0;
 
   ParentRecord *parent_record;
   P_table *parent_table;
@@ -164,8 +164,10 @@ protected:
 public:
   ParentConsistentHash(P_table *_parent_table, ParentRecord *_parent_record);
   ~ParentConsistentHash();
-   void findParent(HttpRequestData *rdata, ParentResult *result);
-   uint32_t numParents();
+  void findParent(HttpRequestData *rdata, ParentResult *result);
+  void markParentDown(ParentResult *result);
+  void recordRetrySuccess(ParentResult *result);
+  uint32_t numParents();
 };
 
 //
@@ -184,6 +186,8 @@ protected:
 public:
   ParentRoundRobin(P_table *_parent_table, ParentRecord *_parent_record);
   ~ParentRoundRobin();
+  void markParentDown(ParentResult *result);
+  void recordRetrySuccess(ParentResult *result);
   uint32_t numParents ();
 };
 
@@ -262,10 +266,7 @@ struct ParentResult {
   ParentResult()
     : r(PARENT_UNDEFINED), hostname(NULL), port(0), retry(false), line_number(0), 
       epoch(NULL), rec(NULL), last_parent(0), start_parent(0), wrap_around(false)
-  {
-    memset(primaryFoundParents, 0, sizeof(primaryFoundParents));
-    memset(secondaryFoundParents, 0, sizeof(secondaryFoundParents));
-  };
+  { }
 
   // For outside consumption
   ParentResultType r;
@@ -281,9 +282,6 @@ struct ParentResult {
   uint32_t last_parent;
   uint32_t start_parent;
   bool wrap_around;
-  // Arena *a;
-  bool primaryFoundParents[MAX_PARENTS];
-  bool secondaryFoundParents[MAX_PARENTS];
 };
 
 class HttpRequestData;
@@ -318,8 +316,7 @@ class ParentRecord : public ControlBase
 {
 public:
   ParentRecord()
-    : parents(NULL), secondary_parents(NULL), num_parents(0), num_secondary_parents(0), round_robin(P_NO_ROUND_ROBIN), rr_next(0),
-      go_direct(true), parent_is_proxy(true)
+    : parents(NULL), secondary_parents(NULL), num_parents(0), num_secondary_parents(0), round_robin(P_NO_ROUND_ROBIN), rr_next(0), go_direct(true), parent_is_proxy(true)
   {
   }
 

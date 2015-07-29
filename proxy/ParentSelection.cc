@@ -166,66 +166,6 @@ ParentSelectionBase::findParent(HttpRequestData *rdata, ParentResult *result)
 }
 
 void
-ParentSelectionBase::markParentDown(ParentResult *result)
-{
-  time_t now;
-  pRecord *pRec;
-  int new_fail_count = 0;
-
-  //  Make sure that we are being called back with with a
-  //   result structure with a parent
-  ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
-  if (result->r != PARENT_SPECIFIED && result->r != PARENT_ORIGIN) {
-    return;
-  }
-  // If we were set through the API we currently have not failover
-  //   so just return fail
-  if (result->rec == extApiRecord) {
-    return;
-  }
-
-  ink_assert((int)(result->last_parent) < result->rec->num_parents);
-  pRec = result->rec->parents + result->last_parent;
-
-  // If the parent has already been marked down, just increment
-  //   the failure count.  If this is the first mark down on a
-  //   parent we need to both set the failure time and set
-  //   count to one.  It's possible for the count and time get out
-  //   sync due there being no locks.  Therefore the code should
-  //   handle this condition.  If this was the result of a retry, we
-  //   must update move the failedAt timestamp to now so that we continue
-  //   negative cache the parent
-  if (pRec->failedAt == 0 || result->retry == true) {
-    // Reread the current time.  We want this to be accurate since
-    //   it relates to how long the parent has been down.
-    now = time(NULL);
-
-    // Mark the parent as down
-    ink_atomic_swap(&pRec->failedAt, now);
-
-    // If this is clean mark down and not a failed retry, we
-    //   must set the count to reflect this
-    if (result->retry == false) {
-      new_fail_count = pRec->failCount = 1;
-    }
-
-    Note("Parent %s marked as down %s:%d", (result->retry) ? "retry" : "initially", pRec->hostname, pRec->port);
-
-  } else {
-    int old_count = ink_atomic_increment(&pRec->failCount, 1);
-
-    Debug("parent_select", "Parent fail count increased to %d for %s:%d", old_count + 1, pRec->hostname, pRec->port);
-    new_fail_count = old_count + 1;
-  }
-
-  if (new_fail_count > 0 && new_fail_count == FailThreshold) {
-    Note("Failure threshold met, http parent proxy %s:%d marked down", pRec->hostname, pRec->port);
-    pRec->available = false;
-    Debug("parent_select", "Parent marked unavailable, pRec->available=%d", pRec->available);
-  }
-}
-
-void
 ParentSelectionBase::nextParent(HttpRequestData *rdata, ParentResult *result)
 {
   P_table *tablePtr = parent_table;
@@ -292,37 +232,6 @@ ParentSelectionBase::parentExists(HttpRequestData *rdata)
     return true;
   } else {
     return false;
-  }
-}
-
-void
-ParentSelectionBase::recordRetrySuccess(ParentResult *result)
-{
-  pRecord *pRec;
-
-  //  Make sure that we are being called back with with a
-  //   result structure with a parent that is being retried
-  ink_release_assert(result->retry == true);
-  ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
-  if (result->r != PARENT_SPECIFIED && result->r != PARENT_ORIGIN) {
-    return;
-  }
-  // If we were set through the API we currently have not failover
-  //   so just return fail
-  if (result->rec == extApiRecord) {
-    ink_assert(0);
-    return;
-  }
-
-  ink_assert((int)(result->last_parent) < result->rec->num_parents);
-  pRec = result->rec->parents + result->last_parent;
-  pRec->available = true;
-
-  ink_atomic_swap(&pRec->failedAt, (time_t)0);
-  int old_count = ink_atomic_swap(&pRec->failCount, 0);
-
-  if (old_count > 0) {
-    Note("http parent proxy %s:%d restored", pRec->hostname, pRec->port);
   }
 }
 
@@ -529,6 +438,68 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
   } while (result->wrap_around);
 }
 
+void
+ParentConsistentHash::markParentDown(ParentResult *result)
+{
+  time_t now;
+  pRecord *pRec;
+  int new_fail_count = 0;
+
+  Debug("parent_select","Starting ParentConsistentHash::markParentDown()");
+
+  //  Make sure that we are being called back with with a
+  //   result structure with a parent
+  ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
+  if (result->r != PARENT_SPECIFIED && result->r != PARENT_ORIGIN) {
+    return;
+  }
+  // If we were set through the API we currently have not failover
+  //   so just return fail
+  if (result->rec == extApiRecord) {
+    return;
+  }
+
+  ink_assert((last_parent[last_lookup]) < numParents());
+  pRec = parents[last_lookup] + last_parent[last_lookup];
+
+  // If the parent has already been marked down, just increment
+  //   the failure count.  If this is the first mark down on a
+  //   parent we need to both set the failure time and set
+  //   count to one.  It's possible for the count and time get out
+  //   sync due there being no locks.  Therefore the code should
+  //   handle this condition.  If this was the result of a retry, we
+  //   must update move the failedAt timestamp to now so that we continue
+  //   negative cache the parent
+  if (pRec->failedAt == 0 || result->retry == true) {
+    // Reread the current time.  We want this to be accurate since
+    //   it relates to how long the parent has been down.
+    now = time(NULL);
+
+    // Mark the parent as down
+    ink_atomic_swap(&pRec->failedAt, now);
+
+    // If this is clean mark down and not a failed retry, we
+    //   must set the count to reflect this
+    if (result->retry == false) {
+      new_fail_count = pRec->failCount = 1;
+    }
+
+    Note("Parent %s marked as down %s:%d", (result->retry) ? "retry" : "initially", pRec->hostname, pRec->port);
+
+  } else {
+    int old_count = ink_atomic_increment(&pRec->failCount, 1);
+
+    Debug("parent_select", "Parent fail count increased to %d for %s:%d", old_count + 1, pRec->hostname, pRec->port);
+    new_fail_count = old_count + 1;
+  }
+
+  if (new_fail_count > 0 && new_fail_count == FailThreshold) {
+    Note("Failure threshold met, http parent proxy %s:%d marked down", pRec->hostname, pRec->port);
+    pRec->available = false;
+    Debug("parent_select", "Parent marked unavailable, pRec->available=%d", pRec->available);
+  }
+}
+
 uint32_t
 ParentConsistentHash::numParents()
 {
@@ -544,6 +515,37 @@ ParentConsistentHash::numParents()
   }
 
   return n;
+}
+
+void
+ParentConsistentHash::recordRetrySuccess(ParentResult *result)
+{
+  pRecord *pRec;
+
+  //  Make sure that we are being called back with with a
+  //   result structure with a parent that is being retried
+  ink_release_assert(result->retry == true);
+  ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
+  if (result->r != PARENT_SPECIFIED && result->r != PARENT_ORIGIN) {
+    return;
+  }
+  // If we were set through the API we currently have not failover
+  //   so just return fail
+  if (result->rec == extApiRecord) {
+    ink_assert(0);
+    return;
+  }
+
+  ink_assert((last_parent[last_lookup]) < numParents());
+  pRec = parents[last_lookup] + last_parent[last_lookup];
+  pRec->available = true;
+
+  ink_atomic_swap(&pRec->failedAt, (time_t)0);
+  int old_count = ink_atomic_swap(&pRec->failCount, 0);
+
+  if (old_count > 0) {
+    Note("http parent proxy %s:%d restored", pRec->hostname, pRec->port);
+  }
 }
 
 ParentRoundRobin::ParentRoundRobin(P_table *_parent_table, ParentRecord *_parent_record)
@@ -569,7 +571,7 @@ ParentRoundRobin::ParentRoundRobin(P_table *_parent_table, ParentRecord *_parent
       break;
     }
   }
-}
+} 
 
 ParentRoundRobin::~ParentRoundRobin()
 {
@@ -701,10 +703,102 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
   } while ((unsigned int)cur_index != result->start_parent);
 }
 
+void
+ParentRoundRobin::markParentDown(ParentResult *result)
+{
+  time_t now;
+  pRecord *pRec;
+  int new_fail_count = 0;
+
+  Debug("parent_select","Starting ParentRoundRobin::markParentDown()");
+  //  Make sure that we are being called back with with a
+  //   result structure with a parent
+  ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
+  if (result->r != PARENT_SPECIFIED && result->r != PARENT_ORIGIN) {
+    return;
+  }
+  // If we were set through the API we currently have not failover
+  //   so just return fail
+  if (result->rec == extApiRecord) {
+    return;
+  }
+
+  ink_assert((int)(result->last_parent) < result->rec->num_parents);
+  pRec = result->rec->parents + result->last_parent;
+
+  // If the parent has already been marked down, just increment
+  //   the failure count.  If this is the first mark down on a
+  //   parent we need to both set the failure time and set
+  //   count to one.  It's possible for the count and time get out
+  //   sync due there being no locks.  Therefore the code should
+  //   handle this condition.  If this was the result of a retry, we
+  //   must update move the failedAt timestamp to now so that we continue
+  //   negative cache the parent
+  if (pRec->failedAt == 0 || result->retry == true) {
+    // Reread the current time.  We want this to be accurate since
+    //   it relates to how long the parent has been down.
+    now = time(NULL);
+
+    // Mark the parent as down
+    ink_atomic_swap(&pRec->failedAt, now);
+
+    // If this is clean mark down and not a failed retry, we
+    //   must set the count to reflect this
+    if (result->retry == false) {
+      new_fail_count = pRec->failCount = 1;
+    }
+
+    Note("Parent %s marked as down %s:%d", (result->retry) ? "retry" : "initially", pRec->hostname, pRec->port);
+
+  } else {
+    int old_count = ink_atomic_increment(&pRec->failCount, 1);
+
+    Debug("parent_select", "Parent fail count increased to %d for %s:%d", old_count + 1, pRec->hostname, pRec->port);
+    new_fail_count = old_count + 1;
+  }
+
+  if (new_fail_count > 0 && new_fail_count == FailThreshold) {
+    Note("Failure threshold met, http parent proxy %s:%d marked down", pRec->hostname, pRec->port);
+    pRec->available = false;
+    Debug("parent_select", "Parent marked unavailable, pRec->available=%d", pRec->available);
+  }
+}
+
 uint32_t
 ParentRoundRobin::numParents()
 {
   return parent_record->num_parents;
+}
+
+void
+ParentRoundRobin::recordRetrySuccess(ParentResult *result)
+{
+  pRecord *pRec;
+
+  //  Make sure that we are being called back with with a
+  //   result structure with a parent that is being retried
+  ink_release_assert(result->retry == true);
+  ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
+  if (result->r != PARENT_SPECIFIED && result->r != PARENT_ORIGIN) {
+    return;
+  }
+  // If we were set through the API we currently have not failover
+  //   so just return fail
+  if (result->rec == extApiRecord) {
+    ink_assert(0);
+    return;
+  }
+
+  ink_assert((int)(result->last_parent) < result->rec->num_parents);
+  pRec = result->rec->parents + result->last_parent;
+  pRec->available = true;
+
+  ink_atomic_swap(&pRec->failedAt, (time_t)0);
+  int old_count = ink_atomic_swap(&pRec->failCount, 0);
+
+  if (old_count > 0) {
+    Note("http parent proxy %s:%d restored", pRec->hostname, pRec->port);
+  }
 }
 
 ParentSelectionStrategy::ParentSelectionStrategy(P_table *_parent_table)
