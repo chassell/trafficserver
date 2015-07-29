@@ -46,12 +46,6 @@ struct matcher_line;
 struct ParentResult;
 class ParentRecord;
 
-enum ConsistentHashLookupSource {
-  UNDEFINED,
-  PRIMARY_HASH,
-  SECONDARY_HASH
-};
-
 enum ParentResultType {
   PARENT_UNDEFINED,
   PARENT_DIRECT,
@@ -66,6 +60,21 @@ enum ParentRR_t {
   P_STRICT_ROUND_ROBIN,
   P_HASH_ROUND_ROBIN,
   P_CONSISTENT_HASH,
+};
+
+// struct pRecord
+//
+//    A record for an invidual parent
+//
+struct pRecord : ATSConsistentHashNode {
+  char hostname[MAXDNAME + 1];
+  int port;
+  time_t failedAt;
+  int failCount;
+  int32_t upAt;
+  const char *scheme; // for which parent matches (if any)
+  int idx;
+  float weight;
 };
 
 typedef ControlMatcher<ParentRecord, ParentResult> P_table;
@@ -133,10 +142,21 @@ public:
 //
 class ParentConsistentHash : public ParentSelectionBase
 {
-  ATSConsistentHash *chash, *chash_secondary;
-  ATSConsistentHashIter chashIter, chash_secondaryIter;
+  static const int PRIMARY = 0;
+  static const int SECONDARY = 1;
+
+  // there are two hashes PRIMARY parents
+  // and SECONDARY parents.
+  ATSConsistentHash *chash[2];
+  ATSConsistentHashIter chashIter[2];
+  pRecord *parents[2];
+  ParentRecord *rec[2];
+  uint32_t last_parent[2];
+  uint32_t start_parent[2];
+  bool wrap_around[2];
+  bool foundParents[2][MAX_PARENTS];
   bool go_direct;
-  ConsistentHashLookupSource last_lookup;
+  int last_lookup;
 
 protected:
   void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
@@ -240,8 +260,8 @@ public:
 
 struct ParentResult {
   ParentResult()
-    : r(PARENT_UNDEFINED), hostname(NULL), port(0), line_number(0), epoch(NULL), rec(NULL), 
-      last_parent(0), start_parent(0), wrap_around(false), retry(false)
+    : r(PARENT_UNDEFINED), hostname(NULL), port(0), retry(false), line_number(0), 
+      epoch(NULL), rec(NULL), last_parent(0), start_parent(0), wrap_around(false)
   {
     memset(primaryFoundParents, 0, sizeof(primaryFoundParents));
     memset(secondaryFoundParents, 0, sizeof(secondaryFoundParents));
@@ -251,6 +271,7 @@ struct ParentResult {
   ParentResultType r;
   const char *hostname;
   int port;
+  bool retry;
 
   // Internal use only
   //   Not to be modified by HTTP
@@ -260,7 +281,6 @@ struct ParentResult {
   uint32_t last_parent;
   uint32_t start_parent;
   bool wrap_around;
-  bool retry;
   // Arena *a;
   bool primaryFoundParents[MAX_PARENTS];
   bool secondaryFoundParents[MAX_PARENTS];
@@ -287,21 +307,6 @@ public:
   }
 
   static int m_id;
-};
-
-// struct pRecord
-//
-//    A record for an invidual parent
-//
-struct pRecord : ATSConsistentHashNode {
-  char hostname[MAXDNAME + 1];
-  int port;
-  time_t failedAt;
-  int failCount;
-  int32_t upAt;
-  const char *scheme; // for which parent matches (if any)
-  int idx;
-  float weight;
 };
 
 // class ParentRecord : public ControlBase

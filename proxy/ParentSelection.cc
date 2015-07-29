@@ -332,27 +332,35 @@ ParentConsistentHash::ParentConsistentHash(P_table *_parent_table, ParentRecord 
   int i;
 
   go_direct = false;
-  last_lookup = UNDEFINED;
+  last_lookup = PRIMARY;
   parent_table = _parent_table;
   parent_record = _parent_record;
   ink_assert(parent_record->num_parents > 0);
+  parents[PRIMARY] = parent_record->parents;
+  parents[SECONDARY] = parent_record->secondary_parents;
+  for (i = PRIMARY; i < SECONDARY; i++) {
+    last_parent[i] = 0;
+    start_parent[i] = 0;
+    wrap_around[i] = false;
+  }
+  memset(foundParents, 0, sizeof(foundParents));
 
-  chash = new ATSConsistentHash();
+  chash[PRIMARY] = new ATSConsistentHash();
 
   for (i = 0; i < parent_record->num_parents; i++) {
-    chash->insert(&(parent_record->parents[i]), parent_record->parents[i].weight, (ATSHash64 *)&hash);
+    chash[PRIMARY]->insert(&(parent_record->parents[i]), parent_record->parents[i].weight, (ATSHash64 *)&hash);
   }
 
   if (parent_record->num_secondary_parents > 0) {
     Debug("parent_select", "ParentConsistentHash(): initializing the secondary parents hash.");
-    chash_secondary = new ATSConsistentHash();
+    chash[SECONDARY] = new ATSConsistentHash();
 
     for (i = 0; i < parent_record->num_secondary_parents; i++) {
-      chash_secondary->insert(&(parent_record->secondary_parents[i]), parent_record->secondary_parents[i].weight,
+      chash[SECONDARY]->insert(&(parent_record->secondary_parents[i]), parent_record->secondary_parents[i].weight,
                               (ATSHash64 *)&hash);
     }
   } else {
-    chash_secondary = NULL;
+    chash[SECONDARY] = NULL;
   }
   Debug("parent_select", "Using a consistent hash parent selection strategy.");
 }
@@ -386,7 +394,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
   if (first_call) {  // First lookup (called by findParent()).
     // We should only get into this state if
     //  we are supposed to go direct.
-    if (parent_record->parents == NULL && parent_record->secondary_parents == NULL) {
+    if (parents[PRIMARY] == NULL && parents[SECONDARY] == NULL) {
       ink_assert(go_direct == true);
       // Could not find a parent
       if (go_direct == true) {
@@ -398,67 +406,69 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
       result->port = 0;
       return;
     } else { // lookup a parent.
+      last_lookup = PRIMARY;
       path_hash = parent_record->getPathHash(request_info, (ATSHash64 *)&hash);
       if (path_hash) {
-        prtmp = (pRecord *)chash->lookup_by_hashval(path_hash, &chashIter, &result->wrap_around);
+        prtmp = (pRecord *)chash[last_lookup]->lookup_by_hashval(path_hash, &chashIter[last_lookup], &wrap_around[last_lookup]);
         if (prtmp) {
           cur_index = prtmp->idx;
-          result->primaryFoundParents[cur_index] = true;
-          result->start_parent++;
-          last_lookup = PRIMARY_HASH;
+          foundParents[last_lookup][cur_index] = true;
+          start_parent[last_lookup]++;
         } else {
           Error("%s:%d - ConsistentHash lookup returned NULL (first lookup)", __FILE__, __LINE__);
           // Fall through to round robin.
           cur_index = ink_atomic_increment((int32_t *)&parent_record->rr_next, 1);
-          cur_index = cur_index % parent_record->num_parents;
+          cur_index = cur_index % numParents();
         }
       }
       else {
         Error("%s:%d - Could not find path", __FILE__, __LINE__);
         // Fall through to round robin.
         cur_index = ink_atomic_increment((int32_t *)&parent_record->rr_next, 1);
-        cur_index = cur_index % parent_record->num_parents;
+        cur_index = cur_index % numParents();
       }
     }
   } else {  // Subsequent lookups (called by nextParent()).
     if (parent_record->num_secondary_parents > 0) { // if there are secondary parents, try them.
+      last_lookup = SECONDARY;
       path_hash = parent_record->getPathHash(request_info, (ATSHash64 *)&hash);
       if (path_hash) {
-        prtmp = (pRecord *)chash_secondary->lookup_by_hashval(path_hash, &chash_secondaryIter, &result->wrap_around);
+        prtmp = (pRecord *)chash[last_lookup]->lookup_by_hashval(path_hash, &chashIter[last_lookup], &wrap_around[last_lookup]);
         if (prtmp) {
           cur_index = prtmp->idx;
-          result->secondaryFoundParents[cur_index] = true;
-          result->start_parent++;
-          last_lookup = SECONDARY_HASH;
+          foundParents[last_lookup][cur_index] = true;
+          start_parent[last_lookup]++;
         } else {
           Error("%s:%d - ConsistentHash lookup returned NULL (first lookup)", __FILE__, __LINE__);
           // Fall through to round robin.
           cur_index = ink_atomic_increment((int32_t *)&parent_record->rr_next, 1);
-          cur_index = cur_index % parent_record->num_secondary_parents;
-          last_lookup = SECONDARY_HASH;
+          cur_index = cur_index % numParents();
         }
+      } else {
+        Error("%s:%d - Could not find path.", __FILE__, __LINE__);
       }
     } else {
-      if (result->start_parent == (unsigned int)parent_record->num_parents) {
-        result->wrap_around = true;
-        result->start_parent = 0;
-        memset(result->primaryFoundParents, 0, sizeof(result->primaryFoundParents));
+      last_lookup = PRIMARY;
+      Debug("parent_select", "start_parent=%d, num_parents=%d", start_parent[last_lookup], numParents());
+      if (start_parent[last_lookup] == (unsigned int)numParents()) {
+        wrap_around[last_lookup] = true;
+        start_parent[last_lookup] = 0;
+        memset(foundParents[last_lookup], 0, sizeof(foundParents[last_lookup]));
       }
-    }
-    do {
-      prtmp = (pRecord *)chash->lookup(NULL, 0, &chashIter, &result->wrap_around, &hash);
-    } while (prtmp && result->primaryFoundParents[prtmp->idx]);
 
-    if (prtmp) {
-      last_lookup = PRIMARY_HASH;
-      cur_index = prtmp->idx;
-      result->primaryFoundParents[cur_index] = true;
-      result->start_parent++;
-    }
-    else {
-      Error("%s:%d Consistent Hash lookup returned NULL (subsequent lookup)", __FILE__, __LINE__);
-      cur_index = ink_atomic_increment((int32_t *)&parent_record->rr_next, 1);
-      cur_index = cur_index % parent_record->num_parents;
+      do {
+        prtmp = (pRecord *)chash[last_lookup]->lookup(NULL, 0, &chashIter[last_lookup], &wrap_around[last_lookup], &hash);
+      } while (prtmp && foundParents[last_lookup][prtmp->idx]);
+
+      if (prtmp) {
+        cur_index = prtmp->idx;
+        foundParents[last_lookup][cur_index] = true;
+        start_parent[last_lookup]++;
+      } else {
+        Error("Consistent Hash lookup returned NULL (subsequent lookup)");
+        cur_index = ink_atomic_increment((int32_t *)&parent_record->rr_next, 1);
+        cur_index = cur_index % numParents();
+      }
     }
   }
 
@@ -467,20 +477,19 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
   //   should be retried
   do {
     // DNS ParentOnly inhibits bypassing the parent so always return that t
-    if ((parent_record->parents[cur_index].failedAt == 0) || (parent_record->parents[cur_index].failCount < FailThreshold)) {
+    if ((parents[last_lookup][cur_index].failedAt == 0) || (parents[last_lookup][cur_index].failCount < FailThreshold)) {
       Debug("parent_select", "FailThreshold = %d", FailThreshold);
       Debug("parent_select", "Selecting a down parent due to little failCount" "(faileAt: %u failCount: %d)",
-            (unsigned)parent_record->parents[cur_index].failedAt, parent_record->parents[cur_index].failCount);
+        (unsigned)parents[last_lookup][cur_index].failedAt, parents[last_lookup][cur_index].failCount);
       parentUp = true;
     } else {
-      if ((result->wrap_around) || ((parent_record->parents[cur_index].failedAt + ParentRetryTime) < request_info->xact_start)) {
+      if ((wrap_around[last_lookup]) || ((parents[last_lookup][cur_index].failedAt + ParentRetryTime) < request_info->xact_start)) {
         Debug("parent_select", "Parent[%d].failedAt = %u, retry = %u,xact_start = %" PRId64 " but wrap = %d", cur_index,
-              (unsigned)parent_record->parents[cur_index].failedAt, ParentRetryTime, (int64_t)request_info->xact_start,
-              result->wrap_around);
-        // Reuse the parent
+          (unsigned)parents[last_lookup][cur_index].failedAt, ParentRetryTime, (int64_t)request_info->xact_start, wrap_around[last_lookup]);
+          // Reuse the parent
         parentUp = true;
         parentRetry = true;
-        Debug("parent_select", "Parent marked for retry %s:%d", parent_record->parents[cur_index].hostname, parent_record->parents[cur_index].port);
+        Debug("parent_select", "Parent marked for retry %s:%d", parents[last_lookup][cur_index].hostname, parents[last_lookup][cur_index].port);
       } else {
         parentUp = false;
       }
@@ -492,8 +501,8 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
       } else {
         result->r = PARENT_SPECIFIED;
       }
-      result->hostname = parent_record->parents[cur_index].hostname;
-      result->port = parent_record->parents[cur_index].port;
+      result->hostname = parents[last_lookup][cur_index].hostname;
+      result->port = parents[last_lookup][cur_index].port;
       result->last_parent = cur_index;
       result->retry = parentRetry;
       ink_assert(result->hostname != NULL);
@@ -502,20 +511,20 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
       return;
     }
     
-    if (result->start_parent == (unsigned int)parent_record->num_parents) {
-      result->wrap_around = false;
-      result->start_parent = 0;
-      memset(result->primaryFoundParents, 0, sizeof(result->primaryFoundParents));
+    if (start_parent[last_lookup] == (unsigned int)numParents()) {
+      wrap_around[last_lookup] = false;
+      start_parent[last_lookup] = 0;
+      memset(foundParents[last_lookup], 0, sizeof(foundParents[last_lookup]));
     }
 
     do {
-      prtmp = (pRecord *)chash->lookup(NULL, 0, &(chashIter), &result->wrap_around);
-    } while (prtmp && result->primaryFoundParents[prtmp->idx]);
+      prtmp = (pRecord *)chash[last_lookup]->lookup(NULL, 0, &(chashIter[last_lookup]), &result->wrap_around);
+    } while (prtmp && foundParents[last_lookup][prtmp->idx]);
 
     if (prtmp) {
       cur_index = prtmp->idx;
-      result->primaryFoundParents[cur_index] = true;
-      result->start_parent++;
+      foundParents[last_lookup][cur_index] = true;
+      start_parent[last_lookup]++;
     }
   } while (result->wrap_around);
 }
@@ -526,13 +535,10 @@ ParentConsistentHash::numParents()
   uint32_t n = 0;
 
   switch (last_lookup) {
-    case UNDEFINED:
-      n = 0;
-      break;
-    case PRIMARY_HASH:
+    case PRIMARY:
       n = parent_record->num_parents;
       break;
-    case SECONDARY_HASH:
+    case SECONDARY:
       n = parent_record->num_secondary_parents;
       break;
   }
