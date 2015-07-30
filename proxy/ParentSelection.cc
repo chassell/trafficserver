@@ -247,7 +247,7 @@ ParentConsistentHash::ParentConsistentHash(P_table *_parent_table, ParentRecord 
   ink_assert(parent_record->num_parents > 0);
   parents[PRIMARY] = parent_record->parents;
   parents[SECONDARY] = parent_record->secondary_parents;
-  for (i = PRIMARY; i < SECONDARY; i++) {
+  for (i = PRIMARY; i < SECONDARY+1; i++) {
     last_parent[i] = 0;
     start_parent[i] = 0;
     wrap_around[i] = false;
@@ -300,6 +300,9 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
 
   ink_assert(numParents() > 0 || go_direct == true);
 
+  //Debug("cdn", "In ParentConsistentHash::lookupParent(): cur_index=%d,last_lookup=%d,last_parent=%d,start_parent=%d,wrap_around=%d",
+  //cur_index,last_lookup,last_parent[last_lookup],start_parent[last_lookup],
+  //wrap_around[last_lookup]);
   if (first_call) {  // First lookup (called by findParent()).
     // We should only get into this state if
     //  we are supposed to go direct.
