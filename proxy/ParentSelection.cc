@@ -594,7 +594,7 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
 
   HttpRequestData *request_info = static_cast<HttpRequestData *>(rdata);
 
-  ink_assert(parent_record->num_parents > 0 || go_direct == true);
+  ink_assert(numParents() > 0 || go_direct == true);
 
   if (first_call) {
     if (parent_record->parents == NULL) {
