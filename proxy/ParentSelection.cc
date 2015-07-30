@@ -298,7 +298,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
 
   HttpRequestData *request_info = static_cast<HttpRequestData *>(rdata);
 
-  ink_assert(parent_record->num_parents > 0 || go_direct == true);
+  ink_assert(numParents() > 0 || go_direct == true);
 
   if (first_call) {  // First lookup (called by findParent()).
     // We should only get into this state if
@@ -359,7 +359,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
     } else {
       last_lookup = PRIMARY;
       Debug("parent_select", "start_parent=%d, num_parents=%d", start_parent[last_lookup], numParents());
-      if (start_parent[last_lookup] == (unsigned int)numParents()) {
+      if (start_parent[last_lookup] >= (unsigned int)numParents()) {
         wrap_around[last_lookup] = true;
         start_parent[last_lookup] = 0;
         memset(foundParents[last_lookup], 0, sizeof(foundParents[last_lookup]));
@@ -381,7 +381,6 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
     }
   }
 
-  //TODO Make sure the result has the host and port info from the correct parent record table ie, primary or secondary.
   // Loop through the array of parent seeing if any are up or
   //   should be retried
   do {
@@ -420,7 +419,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
       return;
     }
     
-    if (start_parent[last_lookup] == (unsigned int)numParents()) {
+    if (start_parent[last_lookup] >= (unsigned int)numParents()) {
       wrap_around[last_lookup] = false;
       start_parent[last_lookup] = 0;
       memset(foundParents[last_lookup], 0, sizeof(foundParents[last_lookup]));
