@@ -146,6 +146,7 @@ class ParentConsistentHash : public ParentSelectionBase
 
   // there are two hashes PRIMARY parents
   // and SECONDARY parents.
+  ATSHash64Sip24 hash[2];
   ATSConsistentHash *chash[2];
   ATSConsistentHashIter chashIter[2];
   pRecord *parents[2];
