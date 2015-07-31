@@ -37,7 +37,6 @@
 #include "ControlMatcher.h"
 #include "ink_apidefs.h"
 #include "P_RecProcess.h"
-#include "libts.h"
 
 #define MAX_PARENTS 64
 
