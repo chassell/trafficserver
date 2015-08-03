@@ -8596,7 +8596,7 @@ TSHttpTxnConfigFind(const char *name, int length, TSOverridableConfigKey *conf, 
   case 53:
     switch (name[length - 1]) {
     case 's':
-      if (!strncmp(name, "proxy.config.http.parent_proxy.total_connect_attempts", length)) 
+      if (!strncmp(name, "proxy.config.http.parent_proxy.total_connect_attempts", length))
         cnf = TS_CONFIG_HTTP_PARENT_TOTAL_CONNECT_ATTEMPTS;
       break;
     case 't':
@@ -8620,14 +8620,14 @@ TSHttpTxnConfigFind(const char *name, int length, TSOverridableConfigKey *conf, 
 
   case 58:
     switch (name[length - 1]) {
-      case 'r':
-        if (!strncmp(name, "proxy.config.http.connect_attempts_max_retries_dead_server", length))
-          cnf = TS_CONFIG_HTTP_CONNECT_ATTEMPTS_MAX_RETRIES_DEAD_SERVER;
-        break;
-      case 's':
-        if (!strncmp(name, "proxy.config.http.parent_proxy.per_parent_connect_attempts", length)) 
-          cnf = TS_CONFIG_HTTP_PER_PARENT_CONNECT_ATTEMPTS;
-        break;
+    case 'r':
+      if (!strncmp(name, "proxy.config.http.connect_attempts_max_retries_dead_server", length))
+        cnf = TS_CONFIG_HTTP_CONNECT_ATTEMPTS_MAX_RETRIES_DEAD_SERVER;
+      break;
+    case 's':
+      if (!strncmp(name, "proxy.config.http.parent_proxy.per_parent_connect_attempts", length))
+        cnf = TS_CONFIG_HTTP_PER_PARENT_CONNECT_ATTEMPTS;
+      break;
     }
     break;
 

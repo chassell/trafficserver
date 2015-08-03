@@ -1755,8 +1755,8 @@ HttpTransact::OSDNSLookup(State *s)
     // we've come back after already trying the server to get a better address
     // and finished with all backtracking - return to trying the server.
     TRANSACT_RETURN(how_to_open_connection(s), HttpTransact::HandleResponse);
-  } else if (s->dns_info.lookup_name[0] <= '9' && s->dns_info.lookup_name[0] >= '0' && s->parent_strategy->parent_table->hostMatch &&
-             !s->http_config_param->no_dns_forward_to_parent) {
+  } else if (s->dns_info.lookup_name[0] <= '9' && s->dns_info.lookup_name[0] >= '0' &&
+             s->parent_strategy->parent_table->hostMatch && !s->http_config_param->no_dns_forward_to_parent) {
     // note, broken logic: ACC fudges the OR stmt to always be true,
     // 'AuthHttpAdapter' should do the rev-dns if needed, not here .
     TRANSACT_RETURN(SM_ACTION_DNS_REVERSE_LOOKUP, HttpTransact::StartAccessControl);
@@ -3507,7 +3507,7 @@ HttpTransact::handle_response_from_parent(State *s)
     // try a simple retry if we received a simple retryable response from the parent.
     if (s->current.retry_type == SIMPLE_RETRY || s->current.retry_type == DEAD_SERVER_RETRY) {
       if (s->current.retry_type == SIMPLE_RETRY) {
-        if (s->current.simple_retry_attempts >= (int)s->parent_strategy->numParents()-1) {
+        if (s->current.simple_retry_attempts >= (int)s->parent_strategy->numParents() - 1) {
           DebugTxn("http_trans", "SIMPLE_RETRY: retried all parents, send error to client.\n");
           next_lookup = HOST_NONE;
         } else {
@@ -3516,7 +3516,7 @@ HttpTransact::handle_response_from_parent(State *s)
           next_lookup = find_server_and_update_current_info(s);
         }
       } else { // DEAD_SERVER_RETRY
-        if (s->current.dead_server_retry_attempts >= (int)s->parent_strategy->numParents()-1) {
+        if (s->current.dead_server_retry_attempts >= (int)s->parent_strategy->numParents() - 1) {
           DebugTxn("http_trans", "DEAD_SERVER_RETRY: retried all parents, send error to client.\n");
           next_lookup = HOST_NONE;
         } else {

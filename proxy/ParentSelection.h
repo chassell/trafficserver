@@ -85,7 +85,9 @@ protected:
 
 public:
   ParentSelectionBase()
-    : parent_record(NULL), DefaultParent(NULL), ParentRetryTime(0), ParentEnable(0), FailThreshold(0), DNS_ParentOnly(0) {}
+    : parent_record(NULL), DefaultParent(NULL), ParentRetryTime(0), ParentEnable(0), FailThreshold(0), DNS_ParentOnly(0)
+  {
+  }
 
   // bool apiParentExists(HttpRequestData* rdata)
   //
@@ -188,7 +190,7 @@ public:
   ~ParentRoundRobin();
   void markParentDown(ParentResult *result);
   void recordRetrySuccess(ParentResult *result);
-  uint32_t numParents ();
+  uint32_t numParents();
 };
 
 class ParentSelectionStrategy : public ConfigInfo, public ParentSelectionBase
@@ -252,7 +254,8 @@ public:
   }
 
   uint32_t
-  numParents () {
+  numParents()
+  {
     ink_release_assert(parent_type != NULL);
     return parent_type->numParents();
   }
@@ -264,9 +267,10 @@ public:
 
 struct ParentResult {
   ParentResult()
-    : r(PARENT_UNDEFINED), hostname(NULL), port(0), retry(false), line_number(0), 
-      epoch(NULL), rec(NULL), last_parent(0), start_parent(0), wrap_around(false)
-  { }
+    : r(PARENT_UNDEFINED), hostname(NULL), port(0), retry(false), line_number(0), epoch(NULL), rec(NULL), last_parent(0),
+      start_parent(0), wrap_around(false)
+  {
+  }
 
   // For outside consumption
   ParentResultType r;
@@ -316,7 +320,8 @@ class ParentRecord : public ControlBase
 {
 public:
   ParentRecord()
-    : parents(NULL), secondary_parents(NULL), num_parents(0), num_secondary_parents(0), round_robin(P_NO_ROUND_ROBIN), rr_next(0), go_direct(true), parent_is_proxy(true)
+    : parents(NULL), secondary_parents(NULL), num_parents(0), num_secondary_parents(0), round_robin(P_NO_ROUND_ROBIN), rr_next(0),
+      go_direct(true), parent_is_proxy(true)
   {
   }
 

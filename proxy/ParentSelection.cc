@@ -137,30 +137,30 @@ ParentSelectionBase::findParent(HttpRequestData *rdata, ParentResult *result)
 
   if (is_debug_tag_set("parent_select") || is_debug_tag_set("cdn")) {
     switch (result->r) {
-      case PARENT_UNDEFINED:
-        Debug("cdn", "PARENT_UNDEFINED");
-        Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
-        break;
-      case PARENT_FAIL:
-        Debug("cdn", "PARENT_FAIL");
-        Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
-        break;
-      case PARENT_DIRECT:
-        Debug("cdn", "PARENT_DIRECT");
-        Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
-        break;
-      case PARENT_ORIGIN:
-        Debug("cdn", "PARENT_ORIGIN");
-        Debug("parent_select", "Result for %s was parent %s:%d", host, result->hostname, result->port);
-        break;
-      case PARENT_SPECIFIED:
-        Debug("cdn", "PARENT_SPECIFIED");
-        Debug("parent_select", "Result for %s was parent %s:%d", host, result->hostname, result->port);
-        break;
-      default:
-        // Handled here:
-        // PARENT_AGENT
-        break;
+    case PARENT_UNDEFINED:
+      Debug("cdn", "PARENT_UNDEFINED");
+      Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
+      break;
+    case PARENT_FAIL:
+      Debug("cdn", "PARENT_FAIL");
+      Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
+      break;
+    case PARENT_DIRECT:
+      Debug("cdn", "PARENT_DIRECT");
+      Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
+      break;
+    case PARENT_ORIGIN:
+      Debug("cdn", "PARENT_ORIGIN");
+      Debug("parent_select", "Result for %s was parent %s:%d", host, result->hostname, result->port);
+      break;
+    case PARENT_SPECIFIED:
+      Debug("cdn", "PARENT_SPECIFIED");
+      Debug("parent_select", "Result for %s was parent %s:%d", host, result->hostname, result->port);
+      break;
+    default:
+      // Handled here:
+      // PARENT_AGENT
+      break;
     }
   }
 }
@@ -246,7 +246,7 @@ ParentConsistentHash::ParentConsistentHash(P_table *_parent_table, ParentRecord 
   ink_assert(parent_record->num_parents > 0);
   parents[PRIMARY] = parent_record->parents;
   parents[SECONDARY] = parent_record->secondary_parents;
-  for (i = PRIMARY; i < SECONDARY+1; i++) {
+  for (i = PRIMARY; i < SECONDARY + 1; i++) {
     last_parent[i] = 0;
     start_parent[i] = 0;
     wrap_around[i] = false;
@@ -265,7 +265,7 @@ ParentConsistentHash::ParentConsistentHash(P_table *_parent_table, ParentRecord 
 
     for (i = 0; i < parent_record->num_secondary_parents; i++) {
       chash[SECONDARY]->insert(&(parent_record->secondary_parents[i]), parent_record->secondary_parents[i].weight,
-                              (ATSHash64 *)&hash[SECONDARY]);
+                               (ATSHash64 *)&hash[SECONDARY]);
     }
   } else {
     chash[SECONDARY] = NULL;
@@ -299,7 +299,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
 
   ink_assert(numParents() > 0 || go_direct == true);
 
-  if (first_call) {  // First lookup (called by findParent()).
+  if (first_call) { // First lookup (called by findParent()).
     start_parent[PRIMARY] = 0;
     last_parent[PRIMARY] = 0;
     wrap_around[PRIMARY] = 0;
@@ -331,7 +331,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
         }
       }
     }
-  } else {  // Subsequent lookups (called by nextParent()).
+  } else {                                          // Subsequent lookups (called by nextParent()).
     if (parent_record->num_secondary_parents > 0) { // if there are secondary parents, try them.
       start_parent[SECONDARY] = 0;
       last_parent[SECONDARY] = 0;
@@ -380,17 +380,20 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
     // DNS ParentOnly inhibits bypassing the parent so always return that t
     if ((parents[last_lookup][cur_index].failedAt == 0) || (parents[last_lookup][cur_index].failCount < FailThreshold)) {
       Debug("parent_select", "FailThreshold = %d", FailThreshold);
-      Debug("parent_select", "Selecting a down parent due to little failCount" "(faileAt: %u failCount: %d)",
-        (unsigned)parents[last_lookup][cur_index].failedAt, parents[last_lookup][cur_index].failCount);
+      Debug("parent_select", "Selecting a down parent due to little failCount"
+                             "(faileAt: %u failCount: %d)",
+            (unsigned)parents[last_lookup][cur_index].failedAt, parents[last_lookup][cur_index].failCount);
       parentUp = true;
     } else {
       if ((wrap_around[last_lookup]) || ((parents[last_lookup][cur_index].failedAt + ParentRetryTime) < request_info->xact_start)) {
         Debug("parent_select", "Parent[%d].failedAt = %u, retry = %u,xact_start = %" PRId64 " but wrap = %d", cur_index,
-          (unsigned)parents[last_lookup][cur_index].failedAt, ParentRetryTime, (int64_t)request_info->xact_start, wrap_around[last_lookup]);
-          // Reuse the parent
+              (unsigned)parents[last_lookup][cur_index].failedAt, ParentRetryTime, (int64_t)request_info->xact_start,
+              wrap_around[last_lookup]);
+        // Reuse the parent
         parentUp = true;
         parentRetry = true;
-        Debug("parent_select", "Parent marked for retry %s:%d", parents[last_lookup][cur_index].hostname, parents[last_lookup][cur_index].port);
+        Debug("parent_select", "Parent marked for retry %s:%d", parents[last_lookup][cur_index].hostname,
+              parents[last_lookup][cur_index].port);
       } else {
         parentUp = false;
       }
@@ -411,7 +414,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
       Debug("parent_select", "Chosen parent = %s.%d", result->hostname, result->port);
       return;
     }
-    
+
     if (start_parent[last_lookup] == (unsigned int)numParents()) {
       wrap_around[last_lookup] = true;
       start_parent[last_lookup] = 0;
@@ -443,7 +446,7 @@ ParentConsistentHash::markParentDown(ParentResult *result)
   pRecord *pRec;
   int new_fail_count = 0;
 
-  Debug("parent_select","Starting ParentConsistentHash::markParentDown()");
+  Debug("parent_select", "Starting ParentConsistentHash::markParentDown()");
 
   //  Make sure that we are being called back with with a
   //   result structure with a parent
@@ -504,12 +507,12 @@ ParentConsistentHash::numParents()
   uint32_t n = 0;
 
   switch (last_lookup) {
-    case PRIMARY:
-      n = parent_record->num_parents;
-      break;
-    case SECONDARY:
-      n = parent_record->num_secondary_parents;
-      break;
+  case PRIMARY:
+    n = parent_record->num_parents;
+    break;
+  case SECONDARY:
+    n = parent_record->num_secondary_parents;
+    break;
   }
 
   return n;
@@ -569,7 +572,7 @@ ParentRoundRobin::ParentRoundRobin(P_table *_parent_table, ParentRecord *_parent
       break;
     }
   }
-} 
+}
 
 ParentRoundRobin::~ParentRoundRobin()
 {
@@ -664,7 +667,8 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
     // DNS ParentOnly inhibits bypassing the parent so always return that t
     if ((parent_record->parents[cur_index].failedAt == 0) || (parent_record->parents[cur_index].failCount < FailThreshold)) {
       Debug("parent_select", "FailThreshold = %d", FailThreshold);
-      Debug("parent_select", "Selecting a down parent due to little failCount" "(faileAt: %u failCount: %d)",
+      Debug("parent_select", "Selecting a down parent due to little failCount"
+                             "(faileAt: %u failCount: %d)",
             (unsigned)parent_record->parents[cur_index].failedAt, parent_record->parents[cur_index].failCount);
       parentUp = true;
     } else {
@@ -708,7 +712,7 @@ ParentRoundRobin::markParentDown(ParentResult *result)
   pRecord *pRec;
   int new_fail_count = 0;
 
-  Debug("parent_select","Starting ParentRoundRobin::markParentDown()");
+  Debug("parent_select", "Starting ParentRoundRobin::markParentDown()");
   //  Make sure that we are being called back with with a
   //   result structure with a parent
   ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
