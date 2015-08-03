@@ -412,14 +412,14 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
       return;
     }
     
-    if (start_parent[last_lookup] >= (unsigned int)numParents()) {
-      wrap_around[last_lookup] = false;
+    if (start_parent[last_lookup] == (unsigned int)numParents()) {
+      wrap_around[last_lookup] = true;
       start_parent[last_lookup] = 0;
       memset(foundParents[last_lookup], 0, sizeof(foundParents[last_lookup]));
     }
 
     do {
-      prtmp = (pRecord *)chash[last_lookup]->lookup(NULL, 0, &chashIter[last_lookup], &wrap_around[last_lookup]);
+      prtmp = (pRecord *)chash[last_lookup]->lookup(NULL, 0, &chashIter[last_lookup], &wrap_around[last_lookup], &hash);
     } while (prtmp && foundParents[last_lookup][prtmp->idx]);
 
     if (prtmp) {
@@ -427,7 +427,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
       foundParents[last_lookup][cur_index] = true;
       start_parent[last_lookup]++;
     }
-  } while (!prtmp || wrap_around[last_lookup]);
+  } while (wrap_around[last_lookup]);
 
   if (go_direct == true) {
     result->r = PARENT_DIRECT;
