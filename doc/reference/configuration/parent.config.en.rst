@@ -21,11 +21,12 @@ parent.config
 
 .. configfile:: parent.config
 
-The :file:`parent.config` file identifies the parent proxies used in an
-cache hierarchy. Use this file to perform the following configuration:
+The :file:`parent.config` file identifies the parent proxies or origins 
+used in an cache hierarchy. Use this file to perform the following configuration:
 
 -  Set up parent cache hierarchies, with multiple parents and parent
    failover
+-  Configure multiple parent origin servers.
 -  Configure selected URL requests to bypass parent proxies
 
 Traffic Server uses the :file:`parent.config` file only when the parent
@@ -122,6 +123,15 @@ The following list shows the possible actions and their allowed values.
     origin server. You can specify either a hostname or an IP address,
     but; you must specify the port number.
 
+.. _parent-config-format-secondary_parent-parent:
+
+``secondary_parent``
+    An option ordered list of secondary parent servers using the same format
+    as the ``parent`` list.  A ``secondary_parent`` list only applies
+    when ``round_robin`` is set to ``consistent_hash``.  If when using
+    ``consistent_hash``, if the server chosen from the primary list fails,
+    a parent is selected from a secondary consistent hash ring.
+
 .. _parent-config-format-round-robin:
 
 ``round_robin``
@@ -134,6 +144,20 @@ The following list shows the possible actions and their allowed values.
        ``proxy2`` serves the second request, and so on.
     -  ``false`` - Round robin selection does not occur.
     -  ``consistent_hash`` - consistent hash.
+
+.. _parent-config-format-parent_is_proxy:
+
+``parent_is_proxy``
+    One of the following values:
+
+    - ``true`` - Specifies that the parents are ATS cache proxies, within
+                 a hierarchy.  This is the default value, if ``parent_is_proxy``
+                 is not specified in the configuration.
+
+    - ``false`` - Specifies that the parents are origin servers. The request
+                  url's are modified so they are appropriate for origin
+                  requests.  Normal Parent Selection behaviour applies to
+                  the origins listed.
 
 .. _parent-config-format-go-direct:
 
