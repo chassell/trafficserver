@@ -300,9 +300,6 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
   ink_assert(numParents() > 0 || go_direct == true);
 
   if (first_call) { // First lookup (called by findParent()).
-    start_parent[PRIMARY] = 0;
-    last_parent[PRIMARY] = 0;
-    wrap_around[PRIMARY] = 0;
     // We should only get into this state if
     //  we are supposed to go direct.
     if (parents[PRIMARY] == NULL && parents[SECONDARY] == NULL) {
@@ -318,6 +315,9 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
       return;
     } else { // lookup a parent.
       last_lookup = PRIMARY;
+      start_parent[last_lookup] = 0;
+      last_parent[last_lookup] = 0;
+      wrap_around[last_lookup] = 0;
       path_hash = parent_record->getPathHash(request_info, (ATSHash64 *)&hash);
       if (path_hash) {
         prtmp = (pRecord *)chash[last_lookup]->lookup_by_hashval(path_hash, &chashIter[last_lookup], &wrap_around[last_lookup]);
@@ -333,10 +333,10 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
     }
   } else {                                          // Subsequent lookups (called by nextParent()).
     if (parent_record->num_secondary_parents > 0) { // if there are secondary parents, try them.
-      start_parent[SECONDARY] = 0;
-      last_parent[SECONDARY] = 0;
-      wrap_around[SECONDARY] = 0;
       last_lookup = SECONDARY;
+      start_parent[last_lookup] = 0;
+      last_parent[last_lookup] = 0;
+      wrap_around[last_lookup] = 0;
       path_hash = parent_record->getPathHash(request_info, (ATSHash64 *)&hash);
       if (path_hash) {
         prtmp = (pRecord *)chash[last_lookup]->lookup_by_hashval(path_hash, &chashIter[last_lookup], &wrap_around[last_lookup]);
