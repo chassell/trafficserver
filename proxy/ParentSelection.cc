@@ -331,8 +331,8 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
         }
       }
     }
-  } else {                                          // Subsequent lookups (called by nextParent()).
-    if (parent_record->num_secondary_parents > 0) { // if there are secondary parents, try them.
+  } else {                                                                    // Subsequent lookups (called by nextParent()).
+    if (parent_record->num_secondary_parents > 0 && last_lookup == PRIMARY) { // if there are secondary parents, try them.
       last_lookup = SECONDARY;
       start_parent[last_lookup] = 0;
       last_parent[last_lookup] = 0;

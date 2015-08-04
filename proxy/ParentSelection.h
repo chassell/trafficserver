@@ -92,41 +92,41 @@ public:
   // bool apiParentExists(HttpRequestData* rdata)
   //
   //   Retures true if a parent has been set through the api
-  inkcoreapi bool apiParentExists(HttpRequestData *rdata);
+  bool apiParentExists(HttpRequestData *rdata);
 
   // void findParent(RequestData* rdata, ParentResult* result)
   //
   //   Does initial parent lookup
   //
-  inkcoreapi void findParent(HttpRequestData *rdata, ParentResult *result);
+  void findParent(HttpRequestData *rdata, ParentResult *result);
 
   // void markParentDown(ParentResult* rsult)
   //
   //    Marks the parent pointed to by result as down
   //
-  inkcoreapi virtual void markParentDown(ParentResult *result) = 0;
+  virtual void markParentDown(ParentResult *result) = 0;
 
   // void nextParent(RequestData* rdata, ParentResult* result);
   //
   //    Marks the parent pointed to by result as down and attempts
   //      to find the next parent
   //
-  inkcoreapi void nextParent(HttpRequestData *rdata, ParentResult *result);
+  void nextParent(HttpRequestData *rdata, ParentResult *result);
 
   // bool parentExists(HttpRequestData* rdata)
   //
   //   Returns true if there is a parent matching the request data and
   //   false otherwise
-  inkcoreapi bool parentExists(HttpRequestData *rdata);
+  bool parentExists(HttpRequestData *rdata);
 
   // void recordRetrySuccess
   //
   //    After a successful retry, http calls this function
   //      to clear the bits indicating the parent is down
   //
-  inkcoreapi virtual void recordRetrySuccess(ParentResult *result) = 0;
+  virtual void recordRetrySuccess(ParentResult *result) = 0;
 
-  inkcoreapi virtual uint32_t numParents() = 0;
+  virtual uint32_t numParents() = 0;
 
   ParentRecord *parent_record;
   P_table *parent_table;
@@ -296,13 +296,13 @@ public:
   static void reconfigure();
   static void print();
 
-  inkcoreapi static ParentSelectionStrategy *
+  static ParentSelectionStrategy *
   acquire()
   {
     return (ParentSelectionStrategy *)configProcessor.get(ParentConfig::m_id);
   }
 
-  inkcoreapi static void
+  static void
   release(ParentSelectionStrategy *strategy)
   {
     configProcessor.release(ParentConfig::m_id, strategy);
