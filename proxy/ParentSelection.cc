@@ -136,30 +136,30 @@ ParentSelectionBase::findParent(HttpRequestData *rdata, ParentResult *result)
   const char *host = rdata->get_host();
 
   switch (result->r) {
-    case PARENT_UNDEFINED:
-      Debug("parent_select", "PARENT_UNDEFINED");
-      Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
-      break;
-    case PARENT_FAIL:
-      Debug("parent_select", "PARENT_FAIL");
-      Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
-      break;
-    case PARENT_DIRECT:
-      Debug("parent_select", "PARENT_DIRECT");
-      Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
-      break;
-    case PARENT_ORIGIN:
-      Debug("parent_select", "PARENT_ORIGIN");
-      Debug("parent_select", "Result for %s was parent %s:%d", host, result->hostname, result->port);
-      break;
-    case PARENT_SPECIFIED:
-      Debug("parent_select", "PARENT_SPECIFIED");
-      Debug("parent_select", "Result for %s was parent %s:%d", host, result->hostname, result->port);
-      break;
-    default:
-      // Handled here:
-      // PARENT_AGENT
-      break;
+  case PARENT_UNDEFINED:
+    Debug("parent_select", "PARENT_UNDEFINED");
+    Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
+    break;
+  case PARENT_FAIL:
+    Debug("parent_select", "PARENT_FAIL");
+    Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
+    break;
+  case PARENT_DIRECT:
+    Debug("parent_select", "PARENT_DIRECT");
+    Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
+    break;
+  case PARENT_ORIGIN:
+    Debug("parent_select", "PARENT_ORIGIN");
+    Debug("parent_select", "Result for %s was parent %s:%d", host, result->hostname, result->port);
+    break;
+  case PARENT_SPECIFIED:
+    Debug("parent_select", "PARENT_SPECIFIED");
+    Debug("parent_select", "Result for %s was parent %s:%d", host, result->hostname, result->port);
+    break;
+  default:
+    // Handled here:
+    // PARENT_AGENT
+    break;
   }
 }
 
@@ -191,28 +191,28 @@ ParentSelectionBase::nextParent(HttpRequestData *rdata, ParentResult *result)
   const char *host = rdata->get_host();
 
   switch (result->r) {
-    case PARENT_UNDEFINED:
-      Debug("parent_select", "PARENT_UNDEFINED");
-      Debug("parent_select", "Retry result for %s was %s", host, ParentResultStr[result->r]);
-      break;
-    case PARENT_FAIL:
-      Debug("parent_select", "PARENT_FAIL");
-      Debug("parent_select", "Retry result for %s was %s", host, ParentResultStr[result->r]);
-      break;
-    case PARENT_DIRECT:
-      Debug("parent_select", "PARENT_DIRECT");
-      Debug("parent_select", "Retry result for %s was %s", host, ParentResultStr[result->r]);
-      break;
-    case PARENT_ORIGIN:
-      Debug("parent_select", "PARENT_ORIGIN");
-      Debug("parent_select", "Retry result for %s was parent %s:%d", host, result->hostname, result->port);
-      break;
-    case PARENT_SPECIFIED:
-      Debug("parent_select", "Retry result for %s was parent %s:%d", host, result->hostname, result->port);
-      break;
-    default:
-      // Handled here:
-      // PARENT_AGENT
+  case PARENT_UNDEFINED:
+    Debug("parent_select", "PARENT_UNDEFINED");
+    Debug("parent_select", "Retry result for %s was %s", host, ParentResultStr[result->r]);
+    break;
+  case PARENT_FAIL:
+    Debug("parent_select", "PARENT_FAIL");
+    Debug("parent_select", "Retry result for %s was %s", host, ParentResultStr[result->r]);
+    break;
+  case PARENT_DIRECT:
+    Debug("parent_select", "PARENT_DIRECT");
+    Debug("parent_select", "Retry result for %s was %s", host, ParentResultStr[result->r]);
+    break;
+  case PARENT_ORIGIN:
+    Debug("parent_select", "PARENT_ORIGIN");
+    Debug("parent_select", "Retry result for %s was parent %s:%d", host, result->hostname, result->port);
+    break;
+  case PARENT_SPECIFIED:
+    Debug("parent_select", "Retry result for %s was parent %s:%d", host, result->hostname, result->port);
+    break;
+  default:
+    // Handled here:
+    // PARENT_AGENT
     break;
   }
 }

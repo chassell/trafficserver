@@ -82,55 +82,55 @@ typedef ControlMatcher<ParentRecord, ParentResult> P_table;
 // API definition.
 class ParentSelectionInterface
 {
-  public:
-    // bool apiParentExists(HttpRequestData* rdata)
-    //
-    //   Retures true if a parent has been set through the api
-    virtual bool apiParentExists(HttpRequestData *rdata) = 0;
+public:
+  // bool apiParentExists(HttpRequestData* rdata)
+  //
+  //   Retures true if a parent has been set through the api
+  virtual bool apiParentExists(HttpRequestData *rdata) = 0;
 
-    // void findParent(RequestData* rdata, ParentResult* result)
-    //
-    //   Does initial parent lookup
-    //
-    virtual void findParent(HttpRequestData *rdata, ParentResult *result) = 0;
+  // void findParent(RequestData* rdata, ParentResult* result)
+  //
+  //   Does initial parent lookup
+  //
+  virtual void findParent(HttpRequestData *rdata, ParentResult *result) = 0;
 
-    // void markParentDown(ParentResult* rsult)
-    //
-    //    Marks the parent pointed to by result as down
-    //
-    virtual void markParentDown(ParentResult *result) = 0;
+  // void markParentDown(ParentResult* rsult)
+  //
+  //    Marks the parent pointed to by result as down
+  //
+  virtual void markParentDown(ParentResult *result) = 0;
 
-    // void nextParent(RequestData* rdata, ParentResult* result);
-    //
-    //    Marks the parent pointed to by result as down and attempts
-    //      to find the next parent
-    //
-    virtual void nextParent(HttpRequestData *rdata, ParentResult *result) = 0;
+  // void nextParent(RequestData* rdata, ParentResult* result);
+  //
+  //    Marks the parent pointed to by result as down and attempts
+  //      to find the next parent
+  //
+  virtual void nextParent(HttpRequestData *rdata, ParentResult *result) = 0;
 
-    // uint32_t numParents();
-    //
-    // Returns the number of parent records in a strategy.
-    //
-    virtual uint32_t numParents() = 0;
+  // uint32_t numParents();
+  //
+  // Returns the number of parent records in a strategy.
+  //
+  virtual uint32_t numParents() = 0;
 
-    // bool parentExists(HttpRequestData* rdata)
-    //
-    //   Returns true if there is a parent matching the request data and
-    //   false otherwise
-    virtual bool parentExists(HttpRequestData *rdata) = 0;
+  // bool parentExists(HttpRequestData* rdata)
+  //
+  //   Returns true if there is a parent matching the request data and
+  //   false otherwise
+  virtual bool parentExists(HttpRequestData *rdata) = 0;
 
-    // void recordRetrySuccess
-    //
-    //    After a successful retry, http calls this function
-    //      to clear the bits indicating the parent is down
-    //
-    virtual void recordRetrySuccess(ParentResult *result) = 0;
+  // void recordRetrySuccess
+  //
+  //    After a successful retry, http calls this function
+  //      to clear the bits indicating the parent is down
+  //
+  virtual void recordRetrySuccess(ParentResult *result) = 0;
 };
 
 //
 // Implements common functionality of the ParentSelectionInterface.
 //
-class ParentSelectionBase: public ParentSelectionInterface
+class ParentSelectionBase : public ParentSelectionInterface
 {
 protected:
   virtual void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata) = 0;
