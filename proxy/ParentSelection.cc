@@ -123,7 +123,7 @@ ParentSelectionBase::findParent(HttpRequestData *rdata, ParentResult *result)
       rec = result->rec = defaultPtr;
     } else {
       result->r = PARENT_DIRECT;
-      Debug("cdn", "Returning PARENT_DIRECT (no parents were found)");
+      Debug("parent_select", "Returning PARENT_DIRECT (no parents were found)");
       return;
     }
   }
@@ -135,33 +135,31 @@ ParentSelectionBase::findParent(HttpRequestData *rdata, ParentResult *result)
 
   const char *host = rdata->get_host();
 
-  if (is_debug_tag_set("parent_select") || is_debug_tag_set("cdn")) {
-    switch (result->r) {
+  switch (result->r) {
     case PARENT_UNDEFINED:
-      Debug("cdn", "PARENT_UNDEFINED");
+      Debug("parent_select", "PARENT_UNDEFINED");
       Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
       break;
     case PARENT_FAIL:
-      Debug("cdn", "PARENT_FAIL");
+      Debug("parent_select", "PARENT_FAIL");
       Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
       break;
     case PARENT_DIRECT:
-      Debug("cdn", "PARENT_DIRECT");
+      Debug("parent_select", "PARENT_DIRECT");
       Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
       break;
     case PARENT_ORIGIN:
-      Debug("cdn", "PARENT_ORIGIN");
+      Debug("parent_select", "PARENT_ORIGIN");
       Debug("parent_select", "Result for %s was parent %s:%d", host, result->hostname, result->port);
       break;
     case PARENT_SPECIFIED:
-      Debug("cdn", "PARENT_SPECIFIED");
+      Debug("parent_select", "PARENT_SPECIFIED");
       Debug("parent_select", "Result for %s was parent %s:%d", host, result->hostname, result->port);
       break;
     default:
       // Handled here:
       // PARENT_AGENT
       break;
-    }
   }
 }
 
@@ -187,27 +185,26 @@ ParentSelectionBase::nextParent(HttpRequestData *rdata, ParentResult *result)
   ink_release_assert(tablePtr == result->epoch);
 
   // Find the next parent in the array
-  Debug("cdn", "Calling lookupParent() from nextParent");
+  Debug("parent_select", "Calling lookupParent() from nextParent");
   lookupParent(false, result, rdata);
 
-  if (is_debug_tag_set("parent_select") || is_debug_tag_set("cdn")) {
-    const char *host = rdata->get_host();
+  const char *host = rdata->get_host();
 
-    switch (result->r) {
+  switch (result->r) {
     case PARENT_UNDEFINED:
-      Debug("cdn", "PARENT_UNDEFINED");
+      Debug("parent_select", "PARENT_UNDEFINED");
       Debug("parent_select", "Retry result for %s was %s", host, ParentResultStr[result->r]);
       break;
     case PARENT_FAIL:
-      Debug("cdn", "PARENT_FAIL");
+      Debug("parent_select", "PARENT_FAIL");
       Debug("parent_select", "Retry result for %s was %s", host, ParentResultStr[result->r]);
       break;
     case PARENT_DIRECT:
-      Debug("cdn", "PARENT_DIRECT");
+      Debug("parent_select", "PARENT_DIRECT");
       Debug("parent_select", "Retry result for %s was %s", host, ParentResultStr[result->r]);
       break;
     case PARENT_ORIGIN:
-      Debug("cdn", "PARENT_ORIGIN");
+      Debug("parent_select", "PARENT_ORIGIN");
       Debug("parent_select", "Retry result for %s was parent %s:%d", host, result->hostname, result->port);
       break;
     case PARENT_SPECIFIED:
@@ -216,8 +213,7 @@ ParentSelectionBase::nextParent(HttpRequestData *rdata, ParentResult *result)
     default:
       // Handled here:
       // PARENT_AGENT
-      break;
-    }
+    break;
   }
 }
 
@@ -286,7 +282,7 @@ ParentConsistentHash::~ParentConsistentHash()
 void
 ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, RequestData *rdata)
 {
-  Debug("cdn", "In ParentConsistentHash::lookupParent(): Using a consistent hash parent selection strategy.");
+  Debug("parent_select", "In ParentConsistentHash::lookupParent(): Using a consistent hash parent selection strategy.");
   int cur_index = 0;
   bool parentUp = false;
   bool parentRetry = false;
@@ -437,6 +433,9 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
   } else {
     result->r = PARENT_FAIL;
   }
+
+  result->hostname = NULL;
+  result->port = 0;
 }
 
 void
@@ -703,6 +702,15 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
     }
     cur_index = (cur_index + 1) % parent_record->num_parents;
   } while ((unsigned int)cur_index != result->start_parent);
+
+  if (go_direct == true) {
+    result->r = PARENT_DIRECT;
+  } else {
+    result->r = PARENT_FAIL;
+  }
+
+  result->hostname = NULL;
+  result->port = 0;
 }
 
 void
