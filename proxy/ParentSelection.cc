@@ -363,7 +363,8 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
         foundParents[last_lookup][cur_index] = true;
         start_parent[last_lookup]++;
       } else {
-        Error("Consistent Hash lookup returned NULL (subsequent lookup)");
+        Error("Consistent Hash lookup returned NULL (subsequent lookup), last_lookup=%d,cur_index=%d,start_parent[last_lookup]=%d,wrap_around[last_lookup]=%d,last_parent[last_lookup]=%d", 
+          last_lookup, cur_index,start_parent[last_lookup],wrap_around[last_lookup],last_parent[last_lookup]);
         cur_index = ink_atomic_increment((int32_t *)&parent_record->rr_next, 1);
         cur_index = cur_index % numParents();
       }
