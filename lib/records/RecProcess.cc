@@ -173,16 +173,16 @@ raw_stat_sync_to_global(RecRawStatBlock *rsb, int id)
     tlp = ((RecRawStat *)((char *)(eventProcessor.all_ethreads[i]) + rsb->ethr_stat_offset)) + id;
     total.sum += tlp->sum;
     total.count += tlp->count;
-    Debug("stats","raw_stat_sync_to_global(): ethread: %d, id: %d, total.sum: %" PRId64 ", total.count: %" PRId64 ", tlp->sum: %" PRId64 ", tlp->count: %" PRId64,
-      i, id, total.sum, total.count, tlp->sum, tlp->count);
+    //Debug("stats","raw_stat_sync_to_global(): ethread: %d, id: %d, total.sum: %" PRId64 ", total.count: %" PRId64 ", tlp->sum: %" PRId64 ", tlp->count: %" PRId64,
+      //i, id, total.sum, total.count, tlp->sum, tlp->count);
   }
 
   for (i = 0; i < eventProcessor.n_dthreads; i++) {
     tlp = ((RecRawStat *)((char *)(eventProcessor.all_dthreads[i]) + rsb->ethr_stat_offset)) + id;
     total.sum += tlp->sum;
     total.count += tlp->count;
-    Debug("stats","raw_stat_sync_to_global(): dthread: %d, id: %d, total.sum: %" PRId64 ", total.count: %" PRId64 ", tlp->sum: %" PRId64 ", tlp->count: %" PRId64,
-      i, id, total.sum, total.count, tlp->sum, tlp->count);
+    //Debug("stats","raw_stat_sync_to_global(): dthread: %d, id: %d, total.sum: %" PRId64 ", total.count: %" PRId64 ", tlp->sum: %" PRId64 ", tlp->count: %" PRId64,
+      //i, id, total.sum, total.count, tlp->sum, tlp->count);
   }
 
   if (total.sum < 0) { // Assure that we stay positive
