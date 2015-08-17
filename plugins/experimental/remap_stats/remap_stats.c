@@ -50,8 +50,6 @@ stat_add(char *name, TSMgmtInt amount, TSStatPersistence persist_type, TSMutex c
   static __thread struct hsearch_data stat_cache;
   static __thread bool hash_init = false;
 
-  TSDebug(DEBUG_TAG, "stat_add(): name: %s, amount: %d, persist_type: %d", name, amount, persist_type);
-
   if (unlikely(!hash_init)) {
     hcreate_r(TS_MAX_API_STATS << 1, &stat_cache);
     hash_init = true;
@@ -127,8 +125,7 @@ handle_read_req_hdr(TSCont cont, TSEvent event ATS_UNUSED, void *edata)
   TSHttpTxnArgSet(txn, config->txn_slot, txnd);
 
   TSHttpTxnReenable(txn, TS_EVENT_HTTP_CONTINUE);
-  TSDebug(DEBUG_TAG, "Read Req Handler Finished, txn_slot: %d, post_remap_host=%d", 
-    config->txn_slot, config->post_remap_host);
+  TSDebug(DEBUG_TAG, "Read Req Handler Finished")
   return 0;
 }
 
@@ -149,8 +146,7 @@ handle_post_remap(TSCont cont, TSEvent event ATS_UNUSED, void *edata)
   }
 
   TSHttpTxnReenable(txn, TS_EVENT_HTTP_CONTINUE);
-  TSDebug(DEBUG_TAG, "Post Remap Handler Finished, txn_slot: %d, post_remap_host: %d", 
-    config->txn_slot, config->post_remap_host);
+  TSDebug(DEBUG_TAG, "Post Remap Handler Finished.);
   return 0;
 }
 
