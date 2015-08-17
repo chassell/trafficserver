@@ -125,7 +125,7 @@ handle_read_req_hdr(TSCont cont, TSEvent event ATS_UNUSED, void *edata)
   TSHttpTxnArgSet(txn, config->txn_slot, txnd);
 
   TSHttpTxnReenable(txn, TS_EVENT_HTTP_CONTINUE);
-  TSDebug(DEBUG_TAG, "Read Req Handler Finished")
+  TSDebug(DEBUG_TAG, "Read Req Handler Finished");
   return 0;
 }
 
@@ -146,7 +146,7 @@ handle_post_remap(TSCont cont, TSEvent event ATS_UNUSED, void *edata)
   }
 
   TSHttpTxnReenable(txn, TS_EVENT_HTTP_CONTINUE);
-  TSDebug(DEBUG_TAG, "Post Remap Handler Finished.);
+  TSDebug(DEBUG_TAG, "Post Remap Handler Finished.");
   return 0;
 }
 
