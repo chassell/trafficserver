@@ -83,8 +83,10 @@ stat_add(char *name, TSMgmtInt amount, TSStatPersistence persist_type, TSMutex c
   } else
     stat_id = (int)((intptr_t)result->data);
 
-  if (likely(stat_id >= 0))
+  if (likely(stat_id >= 0)) {
+    TSDebug(DEBUG_TAG, "stat_add(): preparing to increment, name=%s, stat_id=%d, amount=%" PRId64, name, stat_id, amount);
     TSStatIntIncrement(stat_id, amount);
+  }
   else
     TSDebug(DEBUG_TAG, "stat error! stat_name: %s stat_id: %d", name, stat_id);
 }
@@ -144,7 +146,7 @@ handle_post_remap(TSCont cont, TSEvent event ATS_UNUSED, void *edata)
   }
 
   TSHttpTxnReenable(txn, TS_EVENT_HTTP_CONTINUE);
-  TSDebug(DEBUG_TAG, "Post Remap Handler Finished");
+  TSDebug(DEBUG_TAG, "Post Remap Handler Finished.");
   return 0;
 }
 
@@ -169,6 +171,8 @@ handle_txn_close(TSCont cont, TSEvent event ATS_UNUSED, void *edata)
   txnd = TSHttpTxnArgGet(txn, config->txn_slot);
 
   hostname = (char *)((uintptr_t)txnd & (~((uintptr_t)0x01))); // Get hostname
+
+  TSDebug(DEBUG_TAG, "handle_txn_close(): hostname: %s", hostname);
 
   if (txnd) {
     if ((uintptr_t)txnd & 0x01) // remap succeeded?
