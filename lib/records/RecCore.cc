@@ -765,7 +765,7 @@ RecRegisterStat(RecT rec_type, const char *name, RecDataT data_type, RecData dat
     }
 
     r->stat_meta.persist_type = persist_type;
-    Debug("stats.create","RecRegisterStat(): Stat created, name: %s, data address: %p", name, r);
+    Debug("stats.create","RecRegisterStat(): Stat created, name: %s, data address: %p", name, &r->stat_meta.data_raw);
   } else {
     ink_assert(!"Can't register record!");
     RecDebug(DL_Warning, "failed to register '%s' record", name);
