@@ -32,7 +32,6 @@
 
 #define PLUGIN_NAME "remap_stats"
 #define DEBUG_TAG PLUGIN_NAME
-#define DEBUG_TAG2 "remap_stats.create"
 
 #define MAX_STAT_LENGTH (1 << 8)
 
@@ -71,7 +70,7 @@ stat_add(char *name, TSMgmtInt amount, TSStatPersistence persist_type, TSMutex c
       if (stat_id == TS_ERROR)
         TSDebug(DEBUG_TAG, "Error creating stat_name: %s", name);
       else
-        TSDebug(DEBUG_TAG2, "Created stat_name: %s stat_id: %d", name, stat_id);
+        TSError("[%s:%d] Created stat_name: %s stat_id: %d", __FILE__, __LINE__, name, stat_id);
     }
     TSMutexUnlock(create_mutex);
 

@@ -48,6 +48,7 @@ register_record(RecT rec_type, const char *name, RecDataT data_type, RecData dat
     ink_release_assert(r->data_type == data_type);
     // Note: do not set r->data as we want to keep the previous value
     RecDataSet(r->data_type, &(r->data_default), &(data_default));
+    Warning("register_record(): reusing a data entry, name:%s", name);
   } else {
     if ((r = RecAlloc(rec_type, name, data_type)) == NULL) {
       return NULL;
@@ -765,7 +766,7 @@ RecRegisterStat(RecT rec_type, const char *name, RecDataT data_type, RecData dat
     }
 
     r->stat_meta.persist_type = persist_type;
-    Debug("stats.create","RecRegisterStat(): Stat created, name: %s, data address: %p", name, &r->stat_meta.data_raw);
+    Warning("RecRegisterStat(): Stat created, name: %s, data address: %p", name, &r->stat_meta.data_raw);
   } else {
     ink_assert(!"Can't register record!");
     RecDebug(DL_Warning, "failed to register '%s' record", name);
