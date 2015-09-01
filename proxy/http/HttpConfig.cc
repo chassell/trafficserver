@@ -1392,6 +1392,7 @@ HttpConfig::reconfigure()
   params->oride.dead_server_retry_enabled = m_master.oride.dead_server_retry_enabled;
   params->oride.simple_retry_response_codes_string = m_master.oride.simple_retry_response_codes_string;
   params->oride.dead_server_retry_response_codes_string = m_master.oride.dead_server_retry_response_codes_string;
+  params->oride.url_remap_required = m_master.oride.url_remap_required;
 
   m_id = configProcessor.set(m_id, params);
 

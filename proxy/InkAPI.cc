@@ -7953,6 +7953,10 @@ _conf_to_memberp(TSOverridableConfigKey conf, OverridableHttpConfigParams *overr
     ret = &overridableHttpConfig->dead_server_retry_response_codes_string;
     typ = OVERRIDABLE_TYPE_STRING;
     break;
+  case TS_CONFIG_HTTP_URL_REMAP_REQUIRED:
+    ret = &overridableHttpConfig->url_remap_required;
+    typ = OVERRIDABLE_TYPE_BYTE;
+    break;
 
   // This helps avoiding compiler warnings, yet detect unhandled enum members.
   case TS_CONFIG_NULL:
@@ -8256,6 +8260,11 @@ TSHttpTxnConfigFind(const char *name, int length, TSOverridableConfigKey *conf, 
 
   case 37:
     switch (name[length - 1]) {
+    case 'd':
+      if (!strncmp(name, "proxy.config.url_remap.remap_required", length)) {
+        cnf = TS_CONFIG_HTTP_URL_REMAP_REQUIRED;
+      }
+      break;
     case 'e':
       if (!strncmp(name, "proxy.config.http.cache.max_stale_age", length))
         cnf = TS_CONFIG_HTTP_CACHE_MAX_STALE_AGE;
