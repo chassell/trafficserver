@@ -293,9 +293,9 @@ static int
 handle_config_update(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
 {
   config_t *config = (config_t *)TSContDataGet(cont);
-  TSCont do_update_cont = TSContCreate(do_time_update, NULL);
 
   if (config->schedule_delay > 0) {
+    TSCont do_update_cont = TSContCreate(do_time_update, NULL);
     TSContDataSet(do_update_cont, (void *)config);
     TSContSchedule(do_update_cont, TS_HRTIME_SECONDS(config->schedule_delay), TS_THREAD_POOL_TASK);
   } else {
