@@ -194,8 +194,9 @@ raw_stat_sync_to_global(RecRawStatBlock *rsb, int id)
   delta.count = total.count - rsb->global[id]->last_count;
 
   // This is too verbose now, so leaving it out / leif
-  Debug("stats.verbose", "raw_stat_sync_to_global(): rsb pointer:%p rsb data pointer:%p id:%d delta:%" PRId64 " total:%" PRId64 " last:%" PRId64 " global:%"
-    PRId64 "\n", rsb, rsb->global[id], id, delta.sum, total.sum, rsb->global[id]->last_sum, rsb->global[id]->sum);
+  Debug("stats.verbose", "raw_stat_sync_to_global(): rsb pointer:%p rsb data pointer:%p id:%d delta:%" PRId64 " total:%" PRId64
+                         " last:%" PRId64 " global:%" PRId64 "\n",
+        rsb, rsb->global[id], id, delta.sum, total.sum, rsb->global[id]->last_sum, rsb->global[id]->sum);
 
   // increment the global values by the delta
   ink_atomic_increment(&(rsb->global[id]->sum), delta.sum);
@@ -556,9 +557,8 @@ _RecRegisterRawStat(RecRawStatBlock *rsb, RecT rec_type, const char *name, RecDa
     goto Ldone;
   }
   if (r->rsb_id > 0 && r->rsb_id != id) {
-    Warning ("_RecRegisterRawStat(): Created and reusing a stat with id = %d for new stat named %s", r->rsb_id, name);
-  }
-  else {
+    Warning("_RecRegisterRawStat(): Created and reusing a stat with id = %d for new stat named %s", r->rsb_id, name);
+  } else {
     Warning("_RecRegisterStat(): Stat created, name: %s, id: %d", name, id);
   }
   r->rsb_id = id; // This is the index within the RSB raw block for this stat, used for lookups by name.
