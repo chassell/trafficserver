@@ -23,7 +23,6 @@
 #include "ink_defs.h"
 
 #include "ts/ts.h"
-#include "ts/experimental.h"
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -119,6 +118,7 @@ stat_add(char *name, TSMgmtInt amount, TSStatPersistence persist_type, TSMutex c
     // Stat expiry should be rare, so lets assume this is unlikely
     if (unlikely(val->last_update < config_last_update)) {
       stat_id = lookup_stat(name, persist_type, create_mutex);
+      TSDebug(DEBUG_TAG, "stat_add(): running stat expiry check for stat_id:%d named: %s", stat_id, name);
       // Stat changes should not happen so lets assume this is unlikely
       if (unlikely(val->stat_id != stat_id)) {
         TSError("[%s:%d] Found difference stat_name: %s old stat_id: %d new stat_id: %d", __FILE__, __LINE__, name, val->stat_id,
@@ -281,6 +281,8 @@ static int
 do_time_update(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
 {
   config_t *config = (config_t *)TSContDataGet(cont);
+  TSDebug(DEBUG_TAG, "do_time_update() called, updating config->last_update.");
+
 
   while (!__sync_bool_compare_and_swap(&(config->last_update), config->last_update, now()))
     ;
@@ -294,10 +296,12 @@ handle_config_update(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUS
 {
   config_t *config = (config_t *)TSContDataGet(cont);
 
+  TSDebug(DEBUG_TAG, "handle_config_update() called due to management update.");
+
   if (config->schedule_delay > 0) {
     TSCont do_update_cont = TSContCreate(do_time_update, NULL);
     TSContDataSet(do_update_cont, (void *)config);
-    TSContSchedule(do_update_cont, TS_HRTIME_SECONDS(config->schedule_delay), TS_THREAD_POOL_TASK);
+    TSContSchedule(do_update_cont, config->schedule_delay * 1000, TS_THREAD_POOL_TASK);
   } else {
     while (!__sync_bool_compare_and_swap(&(config->last_update), config->last_update, now()))
       ;
