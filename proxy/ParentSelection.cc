@@ -853,9 +853,11 @@ ParentSelectionStrategy::ParentSelectionStrategy(P_table *_parent_table)
   case P_NO_ROUND_ROBIN:
   case P_STRICT_ROUND_ROBIN:
   case P_HASH_ROUND_ROBIN:
+    TSDebug("parent_select","allocation ParentRoundRobin() type");
     parent_type = new ParentRoundRobin(parent_table, parent_record);
     break;
   case P_CONSISTENT_HASH:
+    TSDebug("parent_select","allocation ParentConsistentHash() type");
     parent_type = new ParentConsistentHash(parent_table, parent_record);
     break;
   default:
