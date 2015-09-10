@@ -789,7 +789,7 @@ RecRegisterStat(RecT rec_type, const char *name, RecDataT data_type, RecData dat
     // new default value.
     if ((r->stat_meta.persist_type == RECP_NULL || r->stat_meta.persist_type == RECP_PERSISTENT) &&
         persist_type == RECP_NON_PERSISTENT) {
-      RecDebug(DL_Debug, "resetting default value for formerly persisted stat '%s'", r->name);
+      RecDebug(DL_Debug, "resetting default value for formerly persisted stat id:%d '%s'", r->rsb_id, r->name);
       RecDataSet(r->data_type, &(r->data), &(data_default));
     }
 
