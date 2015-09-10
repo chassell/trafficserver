@@ -173,16 +173,18 @@ raw_stat_sync_to_global(RecRawStatBlock *rsb, int id)
     tlp = ((RecRawStat *)((char *)(eventProcessor.all_ethreads[i]) + rsb->ethr_stat_offset)) + id;
     total.sum += tlp->sum;
     total.count += tlp->count;
-    //Debug("stats","raw_stat_sync_to_global(): ethread: %d, id: %d, total.sum: %" PRId64 ", total.count: %" PRId64 ", tlp->sum: %" PRId64 ", tlp->count: %" PRId64,
-      //i, id, total.sum, total.count, tlp->sum, tlp->count);
+    // Debug("stats","raw_stat_sync_to_global(): ethread: %d, id: %d, total.sum: %" PRId64 ", total.count: %" PRId64 ", tlp->sum: %"
+    // PRId64 ", tlp->count: %" PRId64,
+    // i, id, total.sum, total.count, tlp->sum, tlp->count);
   }
 
   for (i = 0; i < eventProcessor.n_dthreads; i++) {
     tlp = ((RecRawStat *)((char *)(eventProcessor.all_dthreads[i]) + rsb->ethr_stat_offset)) + id;
     total.sum += tlp->sum;
     total.count += tlp->count;
-    //Debug("stats","raw_stat_sync_to_global(): dthread: %d, id: %d, total.sum: %" PRId64 ", total.count: %" PRId64 ", tlp->sum: %" PRId64 ", tlp->count: %" PRId64,
-      //i, id, total.sum, total.count, tlp->sum, tlp->count);
+    // Debug("stats","raw_stat_sync_to_global(): dthread: %d, id: %d, total.sum: %" PRId64 ", total.count: %" PRId64 ", tlp->sum: %"
+    // PRId64 ", tlp->count: %" PRId64,
+    // i, id, total.sum, total.count, tlp->sum, tlp->count);
   }
 
   if (total.sum < 0) { // Assure that we stay positive
@@ -198,8 +200,9 @@ raw_stat_sync_to_global(RecRawStatBlock *rsb, int id)
   delta.count = total.count - rsb->global[id]->last_count;
 
   // This is too verbose now, so leaving it out / leif
-  Debug("stats", "raw_stat_sync_to_global(): rsb pointer:%p id:%d delta:%" PRId64 " total:%" PRId64 " last:%" PRId64 " global:%"
-    PRId64 "\n", rsb, id, delta.sum, total.sum, rsb->global[id]->last_sum, rsb->global[id]->sum);
+  Debug("stats",
+        "raw_stat_sync_to_global(): rsb pointer:%p id:%d delta:%" PRId64 " total:%" PRId64 " last:%" PRId64 " global:%" PRId64 "\n",
+        rsb, id, delta.sum, total.sum, rsb->global[id]->last_sum, rsb->global[id]->sum);
 
   // increment the global values by the delta
   ink_atomic_increment(&(rsb->global[id]->sum), delta.sum);

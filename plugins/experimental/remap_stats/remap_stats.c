@@ -86,8 +86,7 @@ stat_add(char *name, TSMgmtInt amount, TSStatPersistence persist_type, TSMutex c
   if (likely(stat_id >= 0)) {
     TSDebug(DEBUG_TAG, "stat_add(): preparing to increment, name=%s, stat_id=%d, amount=%" PRId64, name, stat_id, amount);
     TSStatIntIncrement(stat_id, amount);
-  }
-  else
+  } else
     TSDebug(DEBUG_TAG, "stat error! stat_name: %s stat_id: %d", name, stat_id);
 }
 
