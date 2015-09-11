@@ -3507,7 +3507,7 @@ HttpTransact::handle_response_from_parent(State *s)
     // try a simple retry if we received a simple retryable response from the parent.
     if (s->current.retry_type == SIMPLE_RETRY || s->current.retry_type == DEAD_SERVER_RETRY) {
       if (s->current.retry_type == SIMPLE_RETRY) {
-        if (s->current.simple_retry_attempts >= (int)s->parent_strategy->numParents() - 1) {
+        if (s->current.simple_retry_attempts >= (int)s->parent_strategy->numParents(&s->parent_result) - 1) {
           DebugTxn("http_trans", "SIMPLE_RETRY: retried all parents, send error to client.\n");
           next_lookup = HOST_NONE;
         } else {
@@ -3516,7 +3516,7 @@ HttpTransact::handle_response_from_parent(State *s)
           next_lookup = find_server_and_update_current_info(s);
         }
       } else { // DEAD_SERVER_RETRY
-        if (s->current.dead_server_retry_attempts >= (int)s->parent_strategy->numParents() - 1) {
+        if (s->current.dead_server_retry_attempts >= (int)s->parent_strategy->numParents(&s->parent_result) - 1) {
           DebugTxn("http_trans", "DEAD_SERVER_RETRY: retried all parents, send error to client.\n");
           next_lookup = HOST_NONE;
         } else {
@@ -6431,7 +6431,7 @@ HttpTransact::is_response_valid(State *s, HTTPHdr *incoming_response)
       DebugTxn("parent_select", "GOT A SIMPLE RETRY RESPONSE");
       // initiate a retry if we have not already tried all parents, otherwise the response is sent to the client as is.
       // see SIMPLE_RETRY in handle_response_from_parent().
-      if (s->current.simple_retry_attempts < (int)s->parent_strategy->numParents()) {
+      if (s->current.simple_retry_attempts < (int)s->parent_strategy->numParents(&s->parent_result)) {
         s->current.state = BAD_INCOMING_RESPONSE;
         s->current.retry_type = SIMPLE_RETRY;
       } else {
@@ -6445,7 +6445,7 @@ HttpTransact::is_response_valid(State *s, HTTPHdr *incoming_response)
       DebugTxn("parent_select", "GOT A DEAD_SERVER RETRY RESPONSE");
       // initiate a dead server retry if we have not already tried all parents, otherwise the response is sent to the client as is.
       // see DEAD_SERVER_RETRY in handle_response_from_parent().
-      if (s->current.dead_server_retry_attempts < (int)s->parent_strategy->numParents()) {
+      if (s->current.dead_server_retry_attempts < (int)s->parent_strategy->numParents(&s->parent_result)) {
         s->current.state = BAD_INCOMING_RESPONSE;
         s->current.retry_type = DEAD_SERVER_RETRY;
       } else {
