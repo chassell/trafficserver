@@ -183,7 +183,13 @@ public:
   //
   // Returns the number of parent records in a strategy.
   //
-  virtual uint32_t numParents(ParentResult *result) = 0;
+  virtual uint32_t numParents() = 0;
+
+  // uint32_t numParents(ParentResult *result);
+  //
+  // Returns the number of parent records in a strategy.
+  //
+  virtual uint32_t numParents(ParentResult *result) = 0; 
 
   // bool parentExists(HttpRequestData* rdata)
   //
@@ -205,13 +211,6 @@ public:
 class ParentSelectionBase : public ParentSelectionInterface
 {
 public:
-  ParentSelectionBase();
-  bool apiParentExists(HttpRequestData *rdata);
-  void findParent(HttpRequestData *rdata, ParentResult *result);
-  void nextParent(HttpRequestData *rdata, ParentResult *result);
-  bool parentExists(HttpRequestData *rdata);
-  virtual void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata) = 0;
-
   ParentRecord *parent_record;
   P_table *parent_table;
   ParentRecord *DefaultParent;
@@ -219,6 +218,20 @@ public:
   int32_t ParentEnable;
   int32_t FailThreshold;
   int32_t DNS_ParentOnly;
+
+  ParentSelectionBase(P_table *_parent_table) { 
+    parent_table = _parent_table; 
+    Debug("jjr","ParentSelectionStrategy::ParentSelectionBase: parent_table:%p", parent_table);
+  }
+  ParentSelectionBase();
+  void setParentTable (P_table *_parent_table) { parent_table = _parent_table; }
+  bool apiParentExists(HttpRequestData *rdata);
+  void findParent(HttpRequestData *rdata, ParentResult *result);
+  void nextParent(HttpRequestData *rdata, ParentResult *result);
+  uint32_t numParents();
+  uint32_t numParents(ParentResult *result);
+  bool parentExists(HttpRequestData *rdata);
+  virtual void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata) = 0;
 };
 
 //
@@ -248,7 +261,7 @@ public:
   ~ParentConsistentHash();
   void markParentDown(ParentResult *result);
   void recordRetrySuccess(ParentResult *result);
-  uint32_t numParents(ParentResult *result);
+  uint32_t numParents();
   void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
 };
 
@@ -267,26 +280,24 @@ public:
   ~ParentRoundRobin();
   void markParentDown(ParentResult *result);
   void recordRetrySuccess(ParentResult *result);
-  uint32_t numParents(ParentResult *result);
   void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
 };
 
-class ParentSelectionStrategy : public ConfigInfo, public ParentSelectionBase
+class ParentSelectionStrategy : public ParentSelectionBase, public ConfigInfo
 {
-protected:
-  void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
-
 public:
-  ParentSelectionStrategy() : parent_type(NULL), parent_table(NULL)
-  {
-    parent_record = NULL;
+  ParentSelectionStrategy(P_table *_parent_table) {
+    parent_table = _parent_table;
+    Debug("jjr","ParentSelectionStrategy::ParentSelectionStrategy: parent_table:%p", parent_table);
   }
+  ~ParentSelectionStrategy() {};
 
-  ParentSelectionStrategy(P_table *_parent_table);
-  ~ParentSelectionStrategy();
-
-  void
-  findParent(HttpRequestData *rdata, ParentResult *result);
+  void 
+  lookupParent(bool firstCall, ParentResult *result, RequestData *rdata)
+  {
+    ink_release_assert(result->rec->lookup_strategy != NULL);
+    return result->rec->lookup_strategy->lookupParent(firstCall, result, rdata);
+  }
 
   void
   markParentDown(ParentResult *result)
@@ -302,29 +313,12 @@ public:
     result->rec->lookup_strategy->nextParent(rdata, result);
   }
 
-  bool
-  parentExists(HttpRequestData *rdata)
-  {
-    ink_release_assert(parent_type != NULL);
-    return parent_type->parentExists(rdata);
-  }
-
   void
   recordRetrySuccess(ParentResult *result)
   {
     ink_release_assert(result != NULL);
     result->rec->lookup_strategy->recordRetrySuccess(result);
   }
-
-  uint32_t
-  numParents(ParentResult *result)
-  {
-    ink_release_assert(result->rec->lookup_strategy != NULL);
-    return result->rec->lookup_strategy->numParents(result);
-  }
-
-  ParentSelectionBase *parent_type;
-  P_table *parent_table;
 };
 
 class HttpRequestData;
