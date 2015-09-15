@@ -221,7 +221,6 @@ public:
 
   ParentSelectionBase(P_table *_parent_table) { 
     parent_table = _parent_table; 
-    Debug("jjr","ParentSelectionStrategy::ParentSelectionBase: parent_table:%p", parent_table);
   }
   ParentSelectionBase();
   void setParentTable (P_table *_parent_table) { parent_table = _parent_table; }
@@ -288,7 +287,6 @@ class ParentSelectionStrategy : public ParentSelectionBase, public ConfigInfo
 public:
   ParentSelectionStrategy(P_table *_parent_table) {
     parent_table = _parent_table;
-    Debug("jjr","ParentSelectionStrategy::ParentSelectionStrategy: parent_table:%p", parent_table);
   }
   ~ParentSelectionStrategy() {};
 

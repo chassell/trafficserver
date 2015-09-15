@@ -115,7 +115,7 @@ ParentSelectionBase::findParent(HttpRequestData *rdata, ParentResult *result)
   ParentRecord *defaultPtr = DefaultParent;
   ParentRecord *rec;
 
-  Debug("jjr", "In ParentSelectionBase::findParent(): parent_table:%p.", parent_table);
+  Debug("parent_select", "In ParentSelectionBase::findParent(): parent_table:%p.", parent_table);
   ink_assert(result->r == PARENT_UNDEFINED);
 
   // Check to see if we are enabled
@@ -201,8 +201,9 @@ ParentSelectionBase::nextParent(HttpRequestData *rdata, ParentResult *result)
 {
   P_table *tablePtr = parent_table;
 
-  Debug("jjr","ParentSelectionBase::nextParent(): result->rec: %p, result->epoch: %p", result->rec, result->epoch);
-  Debug("jjr","ParentConsistentHash::nextParent(): parent_table:%p.", parent_table);
+  Debug("parent_select","ParentSelectionBase::nextParent(): parent_table: %p, result->rec: %p, result->epoch: %p", 
+    parent_table, result->rec, result->epoch);
+
   //  Make sure that we are being called back with a
   //   result structure with a parent
   ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
@@ -219,7 +220,6 @@ ParentSelectionBase::nextParent(HttpRequestData *rdata, ParentResult *result)
   }
   Debug("parent_select","ParentSelectionBase::nextParent(): result->r: %d, tablePtr: %p, result->epoch: %p",
     result->r, tablePtr, result->epoch);
-  Debug("jjr","ParentSelectionBase::nextParent(): parent_table: %p", parent_table);
   ink_release_assert(tablePtr == result->epoch);
 
   // Find the next parent in the array
@@ -330,7 +330,7 @@ void
 ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, RequestData *rdata)
 {
   Debug("parent_select", "In ParentConsistentHash::lookupParent(): Using a consistent hash parent selection strategy.");
-  Debug("jjr","ParentConsistentHash::lookupParent(): parent_table:%p.", parent_table);
+  Debug("parent_select","ParentConsistentHash::lookupParent(): parent_table:%p.", parent_table);
   int cur_index = 0;
   bool parentUp = false;
   bool parentRetry = false;
@@ -632,7 +632,7 @@ void
 ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestData *rdata)
 {
   Debug("parent_select", "In ParentRoundRobin::lookupParent(): Using a round robin parent selection strategy.");
-  Debug("jjr","ParentRoundRobin::lookupParent(): parent_table:%p.", parent_table);
+  Debug("parent_select","ParentRoundRobin::lookupParent(): parent_table:%p.", parent_table);
   int cur_index = 0;
   bool parentUp = false;
   bool parentRetry = false;
