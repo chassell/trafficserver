@@ -130,7 +130,7 @@ public:
 struct ParentResult {
   ParentResult()
     : r(PARENT_UNDEFINED), hostname(NULL), port(0), retry(false), line_number(0), epoch(NULL), rec(NULL), last_parent(0),
-      start_parent(0), wrap_around(false)
+      start_parent(0), wrap_around(false), last_lookup(0)
   {
   }
 
@@ -148,6 +148,7 @@ struct ParentResult {
   uint32_t last_parent;
   uint32_t start_parent;
   bool wrap_around;
+  int last_lookup;  // state for for consistent hash.
 };
 
 //
@@ -178,12 +179,6 @@ public:
   //      to find the next parent
   //
   virtual void nextParent(HttpRequestData *rdata, ParentResult *result) = 0;
-
-  // uint32_t numParents();
-  //
-  // Returns the number of parent records in a strategy.
-  //
-  virtual uint32_t numParents() = 0;
 
   // uint32_t numParents(ParentResult *result);
   //
@@ -227,8 +222,6 @@ public:
   bool apiParentExists(HttpRequestData *rdata);
   void findParent(HttpRequestData *rdata, ParentResult *result);
   void nextParent(HttpRequestData *rdata, ParentResult *result);
-  uint32_t numParents();
-  uint32_t numParents(ParentResult *result);
   bool parentExists(HttpRequestData *rdata);
   virtual void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata) = 0;
 };
@@ -239,9 +232,6 @@ public:
 //
 class ParentConsistentHash : public ParentSelectionBase, public ControlBase
 {
-  static const int PRIMARY = 0;
-  static const int SECONDARY = 1;
-
   // there are two hashes PRIMARY parents
   // and SECONDARY parents.
   ATSHash64Sip24 hash[2];
@@ -253,15 +243,16 @@ class ParentConsistentHash : public ParentSelectionBase, public ControlBase
   bool wrap_around[2];
   bool foundParents[2][MAX_PARENTS];
   bool go_direct;
-  int last_lookup;
 
 public:
+  static const int PRIMARY = 0;
+  static const int SECONDARY = 1;
   ParentConsistentHash(ParentRecord *_parent_record);
   ~ParentConsistentHash();
   void markParentDown(ParentResult *result);
   void recordRetrySuccess(ParentResult *result);
-  uint32_t numParents();
   void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
+  uint32_t numParents(ParentResult *result);
 };
 
 //
@@ -280,6 +271,7 @@ public:
   void markParentDown(ParentResult *result);
   void recordRetrySuccess(ParentResult *result);
   void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
+  uint32_t numParents(ParentResult *result);
 };
 
 class ParentSelectionStrategy : public ParentSelectionBase, public ConfigInfo
@@ -311,6 +303,12 @@ public:
     result->rec->lookup_strategy->nextParent(rdata, result);
   }
 
+  uint32_t
+  numParents(ParentResult *result) {
+    ink_release_assert(result->rec->lookup_strategy != NULL);
+    return result->rec->lookup_strategy->numParents(result);
+  }
+
   void
   recordRetrySuccess(ParentResult *result)
   {
@@ -326,6 +324,7 @@ public:
   static void startup();
   static void reconfigure();
   static void print();
+  static void set_parent_table(P_table *pTable, ParentRecord *rec, int num_elements);
 
   static ParentSelectionStrategy *
   acquire()
