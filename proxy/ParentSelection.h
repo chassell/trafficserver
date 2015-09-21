@@ -98,7 +98,6 @@ public:
   config_parse_error Init(matcher_line *line_info);
   bool DefaultInit(char *val);
   void UpdateMatch(ParentResult *result, RequestData *rdata);
-  uint64_t getPathHash(HttpRequestData *hrdata, ATSHash64 *h);
   void Print();
   pRecord *parents;
   pRecord *secondary_parents;
@@ -126,6 +125,12 @@ public:
   bool parent_is_proxy;
   ParentSelectionBase *lookup_strategy;
 };
+
+// If the parent was set by the external customer api,
+//   our HttpRequestData structure told us what parent to
+//   use and we are only called to preserve clean interface
+//   between HttpTransact & the parent selection code.  The following
+ParentRecord *const extApiRecord = (ParentRecord *)0xeeeeffff;
 
 struct ParentResult {
   ParentResult()
@@ -224,54 +229,6 @@ public:
   void nextParent(HttpRequestData *rdata, ParentResult *result);
   bool parentExists(HttpRequestData *rdata);
   virtual void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata) = 0;
-};
-
-//
-//  Implementation of round robin based upon consistent hash of the URL,
-//  ParentRR_t = P_CONSISTENT_HASH.
-//
-class ParentConsistentHash : public ParentSelectionBase, public ControlBase
-{
-  // there are two hashes PRIMARY parents
-  // and SECONDARY parents.
-  ATSHash64Sip24 hash[2];
-  ATSConsistentHash *chash[2];
-  ATSConsistentHashIter chashIter[2];
-  pRecord *parents[2];
-  uint32_t last_parent[2];
-  uint32_t start_parent[2];
-  bool wrap_around[2];
-  bool foundParents[2][MAX_PARENTS];
-  bool go_direct;
-
-public:
-  static const int PRIMARY = 0;
-  static const int SECONDARY = 1;
-  ParentConsistentHash(ParentRecord *_parent_record);
-  ~ParentConsistentHash();
-  void markParentDown(ParentResult *result);
-  void recordRetrySuccess(ParentResult *result);
-  void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
-  uint32_t numParents(ParentResult *result);
-};
-
-//
-//  Implementation of the various round robin strategies.
-//  ParentRR_t is one of P_NO_ROUND_ROBIN, P_STRICT_ROUND_ROBIN, or
-//  P_HASH_ROUND_ROBIN.
-//
-class ParentRoundRobin : public ParentSelectionBase
-{
-  bool go_direct;
-  ParentRR_t round_robin_type;
-
-public:
-  ParentRoundRobin(ParentRecord *_parent_record);
-  ~ParentRoundRobin();
-  void markParentDown(ParentResult *result);
-  void recordRetrySuccess(ParentResult *result);
-  void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
-  uint32_t numParents(ParentResult *result);
 };
 
 class ParentSelectionStrategy : public ParentSelectionBase, public ConfigInfo
