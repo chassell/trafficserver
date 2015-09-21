@@ -173,12 +173,18 @@ raw_stat_sync_to_global(RecRawStatBlock *rsb, int id)
     tlp = ((RecRawStat *)((char *)(eventProcessor.all_ethreads[i]) + rsb->ethr_stat_offset)) + id;
     total.sum += tlp->sum;
     total.count += tlp->count;
+    // Debug("stats","raw_stat_sync_to_global(): ethread: %d, id: %d, total.sum: %" PRId64 ", total.count: %" PRId64 ", tlp->sum: %"
+    // PRId64 ", tlp->count: %" PRId64,
+    // i, id, total.sum, total.count, tlp->sum, tlp->count);
   }
 
   for (i = 0; i < eventProcessor.n_dthreads; i++) {
     tlp = ((RecRawStat *)((char *)(eventProcessor.all_dthreads[i]) + rsb->ethr_stat_offset)) + id;
     total.sum += tlp->sum;
     total.count += tlp->count;
+    // Debug("stats","raw_stat_sync_to_global(): dthread: %d, id: %d, total.sum: %" PRId64 ", total.count: %" PRId64 ", tlp->sum: %"
+    // PRId64 ", tlp->count: %" PRId64,
+    // i, id, total.sum, total.count, tlp->sum, tlp->count);
   }
 
   if (total.sum < 0) { // Assure that we stay positive
@@ -194,9 +200,9 @@ raw_stat_sync_to_global(RecRawStatBlock *rsb, int id)
   delta.count = total.count - rsb->global[id]->last_count;
 
   // This is too verbose now, so leaving it out / leif
-  // Debug("stats", "raw_stat_sync_to_global(): rsb pointer:%p id:%d delta:%" PRId64 " total:%" PRId64 " last:%" PRId64 " global:%"
-  // PRId64 "\n",
-  // rsb, id, delta.sum, total.sum, rsb->global[id]->last_sum, rsb->global[id]->sum);
+  Debug("stats.verbose", "raw_stat_sync_to_global(): rsb pointer:%p rsb data pointer:%p id:%d delta:%" PRId64 " total:%" PRId64
+                         " last:%" PRId64 " global:%" PRId64 "\n",
+        rsb, rsb->global[id], id, delta.sum, total.sum, rsb->global[id]->last_sum, rsb->global[id]->sum);
 
   // increment the global values by the delta
   ink_atomic_increment(&(rsb->global[id]->sum), delta.sum);
@@ -540,7 +546,7 @@ int
 _RecRegisterRawStat(RecRawStatBlock *rsb, RecT rec_type, const char *name, RecDataT data_type, RecPersistT persist_type, int id,
                     RecRawStatSyncCb sync_cb)
 {
-  Debug("stats", "RecRawStatSyncCb(%s): rsb pointer:%p id:%d\n", name, rsb, id);
+  Debug("stats", "_RecRegisterRawStat(%s): rsb pointer:%p id:%d\n", name, rsb, id);
 
   // check to see if we're good to proceed
   ink_assert(id < rsb->max_stats);
@@ -556,6 +562,11 @@ _RecRegisterRawStat(RecRawStatBlock *rsb, RecT rec_type, const char *name, RecDa
     err = REC_ERR_FAIL;
     goto Ldone;
   }
+  if (r->rsb_id > 0 && r->rsb_id != id) {
+    Warning("_RecRegisterRawStat(): Created and reusing a stat with id = %d for new stat named %s", r->rsb_id, name);
+  } else {
+    Warning("_RecRegisterStat(): Stat created, name: %s, id: %d", name, id);
+  }
   r->rsb_id = id; // This is the index within the RSB raw block for this stat, used for lookups by name.
   if (i_am_the_record_owner(r->rec_type)) {
     r->sync_required = r->sync_required | REC_PEER_SYNC_REQUIRED;
@@ -570,6 +581,7 @@ _RecRegisterRawStat(RecRawStatBlock *rsb, RecT rec_type, const char *name, RecDa
 
   // setup the periodic sync callback
   RecRegisterRawStatSyncCb(name, sync_cb, rsb, id);
+  Warning("_RecRegisterRawStat(): Stat created, id:%d name:%s, data address:%p", id, name, &r->stat_meta.data_raw);
 
 Ldone:
   return err;

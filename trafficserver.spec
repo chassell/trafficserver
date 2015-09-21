@@ -3,6 +3,7 @@
 %global commit %(git describe --long |   sed 's/^\\\(.*\\\)-\\\([0-9]\\\+\\\)-g\\\([0-9a-f]\\\+\\\)$/\\\3/')
 %global git_serial %(git rev-list HEAD | wc -l)
 %global install_prefix "/opt"
+%global api_stats "4096"
 
 Name:		trafficserver
 Version:	%{tag}
@@ -31,7 +32,7 @@ autoreconf -vfi
 #id ats &>/dev/null || /usr/sbin/useradd -u 176 -r ats -s /sbin/nologin -d /
 
 %build
-./configure --prefix=%{install_prefix}/%{name} --with-user=ats --with-group=ats --with-build-number=%{release} --enable-experimental-plugins
+./configure --prefix=%{install_prefix}/%{name} --with-user=ats --with-group=ats --with-build-number=%{release} --enable-experimental-plugins --with-max-api-stats=%{api_stats}
 make %{?_smp_mflags}
 
 %install

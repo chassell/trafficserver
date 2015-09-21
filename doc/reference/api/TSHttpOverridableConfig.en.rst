@@ -57,6 +57,7 @@ Configurations
 The following configurations (from ``records.config``) are overridable: ::
 
     proxy.config.url_remap.pristine_host_hdr
+    proxy.config.url_remap.remap_required
     proxy.config.http.chunking_enabled
     proxy.config.http.negative_caching_enabled
     proxy.config.http.negative_caching_lifetime

@@ -6754,15 +6754,19 @@ TSCacheScan(TSCont contp, TSCacheKey key, int KB_per_second)
 int
 TSStatCreate(const char *the_name, TSRecordDataType the_type, TSStatPersistence persist, TSStatSync sync)
 {
-  int id = ink_atomic_increment(&api_rsb_index, 1);
   RecRawStatSyncCb syncer = RecRawStatSyncCount;
 
   // TODO: This only supports "int" data types at this point, since the "Raw" stats
   // interfaces only supports integers. Going forward, we could extend either the "Raw"
   // stats APIs, or make non-int use the direct (synchronous) stats APIs (slower).
-  if ((sdk_sanity_check_null_ptr((void *)the_name) != TS_SUCCESS) || (sdk_sanity_check_null_ptr((void *)api_rsb) != TS_SUCCESS) ||
-      (id >= api_rsb->max_stats))
+  if ((sdk_sanity_check_null_ptr((void *)the_name) != TS_SUCCESS) || (sdk_sanity_check_null_ptr((void *)api_rsb) != TS_SUCCESS)) {
     return TS_ERROR;
+  }
+
+  int id = ink_atomic_increment(&api_rsb_index, 1);
+  if (id >= api_rsb->max_stats) {
+    return TS_ERROR;
+  }
 
   switch (sync) {
   case TS_STAT_SYNC_SUM:
@@ -7949,6 +7953,10 @@ _conf_to_memberp(TSOverridableConfigKey conf, OverridableHttpConfigParams *overr
     ret = &overridableHttpConfig->dead_server_retry_response_codes_string;
     typ = OVERRIDABLE_TYPE_STRING;
     break;
+  case TS_CONFIG_HTTP_URL_REMAP_REQUIRED:
+    ret = &overridableHttpConfig->url_remap_required;
+    typ = OVERRIDABLE_TYPE_BYTE;
+    break;
 
   // This helps avoiding compiler warnings, yet detect unhandled enum members.
   case TS_CONFIG_NULL:
@@ -8252,6 +8260,11 @@ TSHttpTxnConfigFind(const char *name, int length, TSOverridableConfigKey *conf, 
 
   case 37:
     switch (name[length - 1]) {
+    case 'd':
+      if (!strncmp(name, "proxy.config.url_remap.remap_required", length)) {
+        cnf = TS_CONFIG_HTTP_URL_REMAP_REQUIRED;
+      }
+      break;
     case 'e':
       if (!strncmp(name, "proxy.config.http.cache.max_stale_age", length))
         cnf = TS_CONFIG_HTTP_CACHE_MAX_STALE_AGE;
@@ -8674,7 +8687,8 @@ TSMgmtStringCreate(TSRecordType rec_type, const char *name, const TSMgmtString d
   if (check_regex == NULL && check_type != TS_RECORDCHECK_NULL)
     return TS_ERROR;
   if (REC_ERR_OKAY != RecRegisterConfigString((enum RecT)rec_type, name, data_default, (enum RecUpdateT)update_type,
-                                              (enum RecCheckT)check_type, check_regex, (enum RecAccessT)access_type))
+                                              (enum RecCheckT)check_type, check_regex, REC_SOURCE_EXPLICIT,
+                                              (enum RecAccessT)access_type))
     return TS_ERROR;
 
   return TS_SUCCESS;
@@ -8687,7 +8701,8 @@ TSMgmtIntCreate(TSRecordType rec_type, const char *name, TSMgmtInt data_default,
   if (check_regex == NULL && check_type != TS_RECORDCHECK_NULL)
     return TS_ERROR;
   if (REC_ERR_OKAY != RecRegisterConfigInt((enum RecT)rec_type, name, (RecInt)data_default, (enum RecUpdateT)update_type,
-                                           (enum RecCheckT)check_type, check_regex, (enum RecAccessT)access_type))
+                                           (enum RecCheckT)check_type, check_regex, REC_SOURCE_EXPLICIT,
+                                           (enum RecAccessT)access_type))
     return TS_ERROR;
 
   return TS_SUCCESS;

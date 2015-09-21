@@ -23,12 +23,14 @@
 #include "ink_defs.h"
 
 #include "ts/ts.h"
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
 #include <getopt.h>
 #include <search.h>
+#include <time.h>
 
 #define PLUGIN_NAME "remap_stats"
 #define DEBUG_TAG PLUGIN_NAME
@@ -36,17 +38,52 @@
 #define MAX_STAT_LENGTH (1 << 8)
 
 typedef struct {
+  time_t last_update;
   bool post_remap_host;
-  int txn_slot;
+  int txn_slot, schedule_delay;
   TSStatPersistence persist_type;
   TSMutex stat_creation_mutex;
 } config_t;
 
+typedef struct {
+  int stat_id;
+  time_t last_update;
+} value_t;
+
+static int
+lookup_stat(char *name, TSStatPersistence persist_type, TSMutex create_mutex)
+{
+  int stat_id = -1;
+
+  TSMutexLock(create_mutex);
+  if (TS_ERROR == TSStatFindName((const char *)name, &stat_id)) {
+    stat_id = TSStatCreate((const char *)name, TS_RECORDDATATYPE_INT, persist_type, TS_STAT_SYNC_SUM);
+    if (stat_id == TS_ERROR)
+      TSDebug(DEBUG_TAG, "Error creating stat_name: %s", name);
+    else
+      TSError("[%s:%d] Created stat_name: %s stat_id: %d", __FILE__, __LINE__, name, stat_id);
+  }
+  TSMutexUnlock(create_mutex);
+
+  return stat_id;
+}
+
+static inline time_t
+now()
+{
+  struct timespec ts;
+
+  clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
+
+  return ts.tv_sec;
+}
+
 static void
-stat_add(char *name, TSMgmtInt amount, TSStatPersistence persist_type, TSMutex create_mutex)
+stat_add(char *name, TSMgmtInt amount, TSStatPersistence persist_type, TSMutex create_mutex, time_t config_last_update)
 {
   int stat_id = -1;
   ENTRY search, *result = NULL;
+  value_t *val;
   static __thread struct hsearch_data stat_cache;
   static __thread bool hash_init = false;
 
@@ -64,28 +101,40 @@ stat_add(char *name, TSMgmtInt amount, TSStatPersistence persist_type, TSMutex c
     // This is an unlikely path because we most likely have the stat cached
     // so this mutex won't be much overhead and it fixes a race condition
     // in the RecCore. Hopefully this can be removed in the future.
-    TSMutexLock(create_mutex);
-    if (TS_ERROR == TSStatFindName((const char *)name, &stat_id)) {
-      stat_id = TSStatCreate((const char *)name, TS_RECORDDATATYPE_INT, persist_type, TS_STAT_SYNC_SUM);
-      if (stat_id == TS_ERROR)
-        TSDebug(DEBUG_TAG, "Error creating stat_name: %s", name);
-      else
-        TSDebug(DEBUG_TAG, "Created stat_name: %s stat_id: %d", name, stat_id);
-    }
-    TSMutexUnlock(create_mutex);
+    stat_id = lookup_stat(name, persist_type, create_mutex);
 
     if (stat_id >= 0) {
       search.key = TSstrdup(name);
-      search.data = (void *)((intptr_t)stat_id);
+      val = (value_t *)TSmalloc(sizeof(value_t));
+      val->stat_id = stat_id;
+      val->last_update = now();
+      search.data = (void *)val;
       hsearch_r(search, ENTER, &result, &stat_cache);
       TSDebug(DEBUG_TAG, "Cached stat_name: %s stat_id: %d", name, stat_id);
     }
-  } else
-    stat_id = (int)((intptr_t)result->data);
+  } else {
+    val = (value_t *)result->data;
 
-  if (likely(stat_id >= 0))
+    // Stat expiry should be rare, so lets assume this is unlikely
+    if (unlikely(val->last_update < config_last_update)) {
+      stat_id = lookup_stat(name, persist_type, create_mutex);
+      TSDebug(DEBUG_TAG, "stat_add(): running stat expiry check for stat_id:%d named: %s", stat_id, name);
+      // Stat changes should not happen so lets assume this is unlikely
+      if (unlikely(val->stat_id != stat_id)) {
+        TSError("[%s:%d] Found difference stat_name: %s old stat_id: %d new stat_id: %d", __FILE__, __LINE__, name, val->stat_id,
+                stat_id);
+        val->stat_id = stat_id;
+        val->last_update = now();
+      }
+    } else {
+      stat_id = val->stat_id;
+    }
+  }
+
+  if (likely(stat_id >= 0)) {
+    TSDebug(DEBUG_TAG, "stat_add(): preparing to increment, name=%s, stat_id=%d, amount=%" PRId64, name, stat_id, amount);
     TSStatIntIncrement(stat_id, amount);
-  else
+  } else
     TSDebug(DEBUG_TAG, "stat error! stat_name: %s stat_id: %d", name, stat_id);
 }
 
@@ -144,10 +193,9 @@ handle_post_remap(TSCont cont, TSEvent event ATS_UNUSED, void *edata)
   }
 
   TSHttpTxnReenable(txn, TS_EVENT_HTTP_CONTINUE);
-  TSDebug(DEBUG_TAG, "Post Remap Handler Finished");
+  TSDebug(DEBUG_TAG, "Post Remap Handler Finished.");
   return 0;
 }
-
 
 #define CREATE_STAT_NAME(s, h, b) snprintf(s, MAX_STAT_LENGTH, "plugin.%s.%s.%s", PLUGIN_NAME, h, b)
 
@@ -170,6 +218,8 @@ handle_txn_close(TSCont cont, TSEvent event ATS_UNUSED, void *edata)
 
   hostname = (char *)((uintptr_t)txnd & (~((uintptr_t)0x01))); // Get hostname
 
+  TSDebug(DEBUG_TAG, "handle_txn_close(): hostname: %s", hostname);
+
   if (txnd) {
     if ((uintptr_t)txnd & 0x01) // remap succeeded?
     {
@@ -185,13 +235,13 @@ handle_txn_close(TSCont cont, TSEvent event ATS_UNUSED, void *edata)
       in_bytes += TSHttpTxnClientReqBodyBytesGet(txn);
 
       CREATE_STAT_NAME(stat_name, remap, "in_bytes");
-      stat_add(stat_name, (TSMgmtInt)in_bytes, config->persist_type, config->stat_creation_mutex);
+      stat_add(stat_name, (TSMgmtInt)in_bytes, config->persist_type, config->stat_creation_mutex, config->last_update);
 
       out_bytes = TSHttpTxnClientRespHdrBytesGet(txn);
       out_bytes += TSHttpTxnClientRespBodyBytesGet(txn);
 
       CREATE_STAT_NAME(stat_name, remap, "out_bytes");
-      stat_add(stat_name, (TSMgmtInt)out_bytes, config->persist_type, config->stat_creation_mutex);
+      stat_add(stat_name, (TSMgmtInt)out_bytes, config->persist_type, config->stat_creation_mutex, config->last_update);
 
       if (TSHttpTxnClientRespGet(txn, &buf, &hdr_loc) == TS_SUCCESS) {
         status_code = (int)TSHttpHdrStatusGet(buf, hdr_loc);
@@ -210,10 +260,10 @@ handle_txn_close(TSCont cont, TSEvent event ATS_UNUSED, void *edata)
         else
           CREATE_STAT_NAME(stat_name, remap, "status_other");
 
-        stat_add(stat_name, 1, config->persist_type, config->stat_creation_mutex);
+        stat_add(stat_name, 1, config->persist_type, config->stat_creation_mutex, config->last_update);
       } else {
         CREATE_STAT_NAME(stat_name, remap, "status_unknown");
-        stat_add(stat_name, 1, config->persist_type, config->stat_creation_mutex);
+        stat_add(stat_name, 1, config->persist_type, config->stat_creation_mutex, config->last_update);
       }
 
       if (remap != unknown)
@@ -227,11 +277,43 @@ handle_txn_close(TSCont cont, TSEvent event ATS_UNUSED, void *edata)
   return 0;
 }
 
+static int
+do_time_update(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
+{
+  config_t *config = (config_t *)TSContDataGet(cont);
+  TSDebug(DEBUG_TAG, "do_time_update() called, updating config->last_update.");
+
+
+  while (!__sync_bool_compare_and_swap(&(config->last_update), config->last_update, now()))
+    ;
+
+  TSContDestroy(cont);
+  return 0;
+}
+
+static int
+handle_config_update(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
+{
+  config_t *config = (config_t *)TSContDataGet(cont);
+
+  TSDebug(DEBUG_TAG, "handle_config_update() called due to management update.");
+
+  if (config->schedule_delay > 0) {
+    TSCont do_update_cont = TSContCreate(do_time_update, NULL);
+    TSContDataSet(do_update_cont, (void *)config);
+    TSContSchedule(do_update_cont, config->schedule_delay * 1000, TS_THREAD_POOL_TASK);
+  } else {
+    while (!__sync_bool_compare_and_swap(&(config->last_update), config->last_update, now()))
+      ;
+  }
+  return 0;
+}
+
 void
 TSPluginInit(int argc, const char *argv[])
 {
   TSPluginRegistrationInfo info;
-  TSCont pre_remap_cont, post_remap_cont, global_cont;
+  TSCont pre_remap_cont, post_remap_cont, global_cont, update_cont;
   config_t *config;
 
   info.plugin_name = PLUGIN_NAME;
@@ -248,14 +330,18 @@ TSPluginInit(int argc, const char *argv[])
   config->post_remap_host = false;
   config->persist_type = TS_STAT_NON_PERSISTENT;
   config->stat_creation_mutex = TSMutexCreate();
+  config->schedule_delay = 0;
+  config->last_update = 0;
 
   if (argc > 1) {
     int c;
     optind = 1;
-    static const struct option longopts[] = {
-      {"post-remap-host", no_argument, NULL, 'P'}, {"persistent", no_argument, NULL, 'p'}, {NULL, 0, NULL, 0}};
+    static const struct option longopts[] = {{"post-remap-host", no_argument, NULL, 'P'},
+                                             {"persistent", no_argument, NULL, 'p'},
+                                             {"delay", required_argument, NULL, 'd'},
+                                             {NULL, 0, NULL, 0}};
 
-    while ((c = getopt_long(argc, (char *const *)argv, "Pp", longopts, NULL)) != -1) {
+    while ((c = getopt_long(argc, (char *const *)argv, "Ppd:", longopts, NULL)) != -1) {
       switch (c) {
       case 'P':
         config->post_remap_host = true;
@@ -264,6 +350,10 @@ TSPluginInit(int argc, const char *argv[])
       case 'p':
         config->persist_type = TS_STAT_PERSISTENT;
         TSDebug(DEBUG_TAG, "Using persistent stats");
+        break;
+      case 'd':
+        config->schedule_delay = atoi(optarg);
+        TSDebug(DEBUG_TAG, "Setting scheduling delay to %d", config->schedule_delay);
         break;
       default:
         break;
@@ -286,6 +376,10 @@ TSPluginInit(int argc, const char *argv[])
   global_cont = TSContCreate(handle_txn_close, NULL);
   TSContDataSet(global_cont, (void *)config);
   TSHttpHookAdd(TS_HTTP_TXN_CLOSE_HOOK, global_cont);
+
+  update_cont = TSContCreate(handle_config_update, NULL);
+  TSContDataSet(update_cont, (void *)config);
+  TSMgmtUpdateRegister(update_cont, PLUGIN_NAME);
 
   TSDebug(DEBUG_TAG, "Init complete");
 }
