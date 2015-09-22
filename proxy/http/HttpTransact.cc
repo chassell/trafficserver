@@ -3543,14 +3543,13 @@ HttpTransact::handle_response_from_parent(State *s)
                  s->current.attempts, s->txn_conf->per_parent_connect_attempts);
         return;
       } else {
-        DebugTxn("http_trans", "%s %d per parent attempts exhausted, s->current.state: %d", "[handle_response_from_parent]", 
-          s->current.attempts, s->current.state);
+        DebugTxn("http_trans", "%s %d per parent attempts exhausted, s->current.state: %d", "[handle_response_from_parent]",
+                 s->current.attempts, s->current.state);
 
         // Only mark the parent down if we failed to connect
         //  to the parent otherwise slow origin servers cause
         //  us to mark the parent down
-        if (s->current.state != ACTIVE_TIMEOUT && 
-            s->current.state != CONNECTION_ALIVE && s->current.state != CONNECTION_CLOSED) {
+        if (s->current.state != ACTIVE_TIMEOUT && s->current.state != CONNECTION_ALIVE && s->current.state != CONNECTION_CLOSED) {
           s->parent_params->markParentDown(&s->parent_result);
         }
         // We are done so look for another parent if any
