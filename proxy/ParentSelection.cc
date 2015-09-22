@@ -619,7 +619,7 @@ ParentRecord::FindParent(bool first_call, ParentResult *result, RequestData *rda
     if ((parents[cur_index].failedAt == 0) || (parents[cur_index].failCount < config->FailThreshold)) {
       Debug("parent_select", "config->FailThreshold = %d", config->FailThreshold);
       Debug("parent_select", "Selecting a parent due to little failCount"
-                             "(faileAt: %u failCount: %d)",
+                             "(failedAt: %u failCount: %d)",
             (unsigned)parents[cur_index].failedAt, parents[cur_index].failCount);
       parentUp = true;
     } else {
