@@ -3551,7 +3551,7 @@ HttpTransact::handle_response_from_parent(State *s)
         //  us to mark the parent down
         if (s->current.state != ACTIVE_TIMEOUT && 
             s->current.state != CONNECTION_ALIVE && s->current.state != CONNECTION_CLOSED) {
-          s->parent_params->markParentDown(&s->parent_result);
+          s->parent_strategy->markParentDown(&s->parent_result);
         }
         // We are done so look for another parent if any
         next_lookup = find_server_and_update_current_info(s);

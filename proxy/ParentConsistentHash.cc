@@ -192,7 +192,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
     // DNS ParentOnly inhibits bypassing the parent so always return that t
     if ((parents[result->last_lookup][cur_index].failedAt == 0) || (parents[result->last_lookup][cur_index].failCount < FailThreshold)) {
       Debug("parent_select", "FailThreshold = %d", FailThreshold);
-      Debug("parent_select", "Selecting a down parent due to little failCount"
+      Debug("parent_select", "Selecting a parent due to little failCount"
                              "(faileAt: %u failCount: %d)",
             (unsigned)parents[result->last_lookup][cur_index].failedAt, parents[result->last_lookup][cur_index].failCount);
       parentUp = true;
