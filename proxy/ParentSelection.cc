@@ -618,7 +618,7 @@ ParentRecord::FindParent(bool first_call, ParentResult *result, RequestData *rda
     // DNS ParentOnly inhibits bypassing the parent so always return that t
     if ((parents[cur_index].failedAt == 0) || (parents[cur_index].failCount < config->FailThreshold)) {
       Debug("parent_select", "config->FailThreshold = %d", config->FailThreshold);
-      Debug("parent_select", "Selecting a down parent due to little failCount"
+      Debug("parent_select", "Selecting a parent due to little failCount"
                              "(faileAt: %u failCount: %d)",
             (unsigned)parents[cur_index].failedAt, parents[cur_index].failCount);
       parentUp = true;
