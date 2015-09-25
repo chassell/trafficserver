@@ -27,8 +27,8 @@
  *
  *****************************************************************************/
 
- #ifndef _PARENT_ROUND_ROBIN_H
- #define _PARENT_ROUND_ROBIN_H
+#ifndef _PARENT_ROUND_ROBIN_H
+#define _PARENT_ROUND_ROBIN_H
 
 #include "ParentSelection.h"
 
@@ -46,4 +46,4 @@ public:
   void recordRetrySuccess(ParentResult *result);
 };
 
- #endif
+#endif

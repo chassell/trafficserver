@@ -66,7 +66,7 @@ enum ParentCB_t {
   PARENT_DNS_ONLY_CB,
 };
 
-ParentSelectionBase::ParentSelectionBase ()
+ParentSelectionBase::ParentSelectionBase()
 {
   char *default_val = NULL;
   int retry_time = 30;
@@ -74,7 +74,7 @@ ParentSelectionBase::ParentSelectionBase ()
   int fail_threshold;
   int dns_parent_only;
   parent_table = NULL;
-  parent_record = NULL;  
+  parent_record = NULL;
 
   // Handle default parent
   PARENT_ReadConfigStringAlloc(default_val, default_var);
@@ -197,8 +197,8 @@ ParentSelectionBase::nextParent(HttpRequestData *rdata, ParentResult *result)
 {
   P_table *tablePtr = parent_table;
 
-  Debug("parent_select","ParentSelectionBase::nextParent(): parent_table: %p, result->rec: %p, result->epoch: %p", 
-    parent_table, result->rec, result->epoch);
+  Debug("parent_select", "ParentSelectionBase::nextParent(): parent_table: %p, result->rec: %p, result->epoch: %p", parent_table,
+        result->rec, result->epoch);
 
   //  Make sure that we are being called back with a
   //   result structure with a parent
@@ -214,8 +214,8 @@ ParentSelectionBase::nextParent(HttpRequestData *rdata, ParentResult *result)
     result->r = PARENT_FAIL;
     return;
   }
-  Debug("parent_select","ParentSelectionBase::nextParent(): result->r: %d, tablePtr: %p, result->epoch: %p",
-    result->r, tablePtr, result->epoch);
+  Debug("parent_select", "ParentSelectionBase::nextParent(): result->r: %d, tablePtr: %p, result->epoch: %p", result->r, tablePtr,
+        result->epoch);
   ink_release_assert(tablePtr == result->epoch);
 
   // Find the next parent in the array
@@ -269,7 +269,8 @@ int ParentConfig::m_id = 0;
 
 // helper function for setting parent table pointer.
 void
-ParentConfig::set_parent_table (P_table *pTable, ParentRecord *rec, int num_elements) {
+ParentConfig::set_parent_table(P_table *pTable, ParentRecord *rec, int num_elements)
+{
   for (int i = 0; i < num_elements; i++) {
     rec[i].lookup_strategy->setParentTable(pTable);
   }
@@ -319,19 +320,23 @@ ParentConfig::reconfigure()
     num_el = pTable->reMatch->getNumElements();
     rec = pTable->reMatch->getDataArray();
     set_parent_table(pTable, rec, num_el);
-  } if (pTable->urlMatch) {
+  }
+  if (pTable->urlMatch) {
     num_el = pTable->urlMatch->getNumElements();
     rec = pTable->urlMatch->getDataArray();
     set_parent_table(pTable, rec, num_el);
-  } if (pTable->hostMatch) {
+  }
+  if (pTable->hostMatch) {
     num_el = pTable->hostMatch->getNumElements();
     rec = pTable->hostMatch->getDataArray();
     set_parent_table(pTable, rec, num_el);
-  } if (pTable->ipMatch) {
+  }
+  if (pTable->ipMatch) {
     num_el = pTable->ipMatch->getNumElements();
     rec = pTable->ipMatch->getDataArray();
     set_parent_table(pTable, rec, num_el);
-  } if (pTable->hrMatch) {
+  }
+  if (pTable->hrMatch) {
     num_el = pTable->hrMatch->getNumElements();
     rec = pTable->hrMatch->getDataArray();
     set_parent_table(pTable, rec, num_el);
@@ -647,17 +652,17 @@ ParentRecord::Init(matcher_line *line_info)
   }
 
   switch (round_robin) {
-    case P_NO_ROUND_ROBIN:
-    case P_STRICT_ROUND_ROBIN:
-    case P_HASH_ROUND_ROBIN:
-      TSDebug("parent_select","allocating ParentRoundRobin() lookup strategy.");
-      lookup_strategy = new ParentRoundRobin(this);
-      break;
-    case P_CONSISTENT_HASH:
-      TSDebug("parent_select","allocating ParentConsistentHash() lookup strategy.");
-      lookup_strategy = new ParentConsistentHash(this);
-      break;
-    default:
+  case P_NO_ROUND_ROBIN:
+  case P_STRICT_ROUND_ROBIN:
+  case P_HASH_ROUND_ROBIN:
+    TSDebug("parent_select", "allocating ParentRoundRobin() lookup strategy.");
+    lookup_strategy = new ParentRoundRobin(this);
+    break;
+  case P_CONSISTENT_HASH:
+    TSDebug("parent_select", "allocating ParentConsistentHash() lookup strategy.");
+    lookup_strategy = new ParentConsistentHash(this);
+    break;
+  default:
     ink_release_assert(0);
   }
 

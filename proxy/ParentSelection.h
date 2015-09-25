@@ -153,7 +153,7 @@ struct ParentResult {
   uint32_t last_parent;
   uint32_t start_parent;
   bool wrap_around;
-  int last_lookup;  // state for for consistent hash.
+  int last_lookup; // state for for consistent hash.
 };
 
 //
@@ -189,7 +189,7 @@ public:
   //
   // Returns the number of parent records in a strategy.
   //
-  virtual uint32_t numParents(ParentResult *result) = 0; 
+  virtual uint32_t numParents(ParentResult *result) = 0;
 
   // bool parentExists(HttpRequestData* rdata)
   //
@@ -219,11 +219,13 @@ public:
   int32_t FailThreshold;
   int32_t DNS_ParentOnly;
 
-  ParentSelectionBase(P_table *_parent_table) { 
-    parent_table = _parent_table; 
-  }
+  ParentSelectionBase(P_table *_parent_table) { parent_table = _parent_table; }
   ParentSelectionBase();
-  void setParentTable (P_table *_parent_table) { parent_table = _parent_table; }
+  void
+  setParentTable(P_table *_parent_table)
+  {
+    parent_table = _parent_table;
+  }
   bool apiParentExists(HttpRequestData *rdata);
   void findParent(HttpRequestData *rdata, ParentResult *result);
   void nextParent(HttpRequestData *rdata, ParentResult *result);
@@ -234,12 +236,10 @@ public:
 class ParentSelectionStrategy : public ParentSelectionBase, public ConfigInfo
 {
 public:
-  ParentSelectionStrategy(P_table *_parent_table) {
-    parent_table = _parent_table;
-  }
-  ~ParentSelectionStrategy() {};
+  ParentSelectionStrategy(P_table *_parent_table) { parent_table = _parent_table; }
+  ~ParentSelectionStrategy(){};
 
-  void 
+  void
   lookupParent(bool firstCall, ParentResult *result, RequestData *rdata)
   {
     ink_release_assert(result->rec->lookup_strategy != NULL);
@@ -261,7 +261,8 @@ public:
   }
 
   uint32_t
-  numParents(ParentResult *result) {
+  numParents(ParentResult *result)
+  {
     ink_release_assert(result->rec->lookup_strategy != NULL);
     return result->rec->lookup_strategy->numParents(result);
   }

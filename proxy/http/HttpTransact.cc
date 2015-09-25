@@ -3510,7 +3510,6 @@ HttpTransact::handle_response_from_parent(State *s)
       if (s->current.retry_type == SIMPLE_RETRY) {
         if (s->current.simple_retry_attempts >= (int)s->parent_strategy->numParents(&s->parent_result) - 1) {
           DebugTxn("http_trans", "SIMPLE_RETRY: retried all parents, send error to client.\n");
-          next_lookup = HOST_NONE;
         } else {
           s->current.simple_retry_attempts++;
           DebugTxn("http_trans", "SIMPLE_RETRY: try another parent.\n");
@@ -3519,7 +3518,6 @@ HttpTransact::handle_response_from_parent(State *s)
       } else { // DEAD_SERVER_RETRY
         if (s->current.dead_server_retry_attempts >= (int)s->parent_strategy->numParents(&s->parent_result) - 1) {
           DebugTxn("http_trans", "DEAD_SERVER_RETRY: retried all parents, send error to client.\n");
-          next_lookup = HOST_NONE;
         } else {
           s->current.dead_server_retry_attempts++;
           DebugTxn("http_trans", "DEAD_SERVER_RETRY: marking parent down and trying another.\n");
@@ -3543,14 +3541,13 @@ HttpTransact::handle_response_from_parent(State *s)
                  s->current.attempts, s->txn_conf->per_parent_connect_attempts);
         return;
       } else {
-        DebugTxn("http_trans", "%s %d per parent attempts exhausted, s->current.state: %d", "[handle_response_from_parent]", 
-          s->current.attempts, s->current.state);
+        DebugTxn("http_trans", "%s %d per parent attempts exhausted, s->current.state: %d", "[handle_response_from_parent]",
+                 s->current.attempts, s->current.state);
 
         // Only mark the parent down if we failed to connect
         //  to the parent otherwise slow origin servers cause
         //  us to mark the parent down
-        if (s->current.state != ACTIVE_TIMEOUT && 
-            s->current.state != CONNECTION_ALIVE && s->current.state != CONNECTION_CLOSED) {
+        if (s->current.state != ACTIVE_TIMEOUT && s->current.state != CONNECTION_ALIVE && s->current.state != CONNECTION_CLOSED) {
           s->parent_strategy->markParentDown(&s->parent_result);
         }
         // We are done so look for another parent if any
@@ -6431,6 +6428,7 @@ HttpTransact::is_response_valid(State *s, HTTPHdr *incoming_response)
     DebugTxn("http_trans", "[is_response_valid] server_response = %d\n", server_response);
     // is a simple retry required.
     if (s->txn_conf->simple_retry_enabled &&
+        (s->current.simple_retry_attempts < (int)s->parent_strategy->numParents(&s->parent_result) - 1) &&
         s->http_config_param->response_codes->contains(server_response, s->txn_conf->simple_retry_response_codes_string)) {
       DebugTxn("parent_select", "GOT A SIMPLE RETRY RESPONSE");
       // initiate a retry if we have not already tried all parents, otherwise the response is sent to the client as is.
@@ -6444,6 +6442,7 @@ HttpTransact::is_response_valid(State *s, HTTPHdr *incoming_response)
     }
     // is a dead server retry required.
     else if (s->txn_conf->dead_server_retry_enabled &&
+             (s->current.dead_server_retry_attempts < (int)s->parent_strategy->numParents(&s->parent_result) - 1) &&
              s->http_config_param->response_codes->contains(server_response,
                                                             s->txn_conf->dead_server_retry_response_codes_string)) {
       DebugTxn("parent_select", "GOT A DEAD_SERVER RETRY RESPONSE");

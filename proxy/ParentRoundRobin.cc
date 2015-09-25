@@ -58,7 +58,7 @@ void
 ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestData *rdata)
 {
   Debug("parent_select", "In ParentRoundRobin::lookupParent(): Using a round robin parent selection strategy.");
-  Debug("parent_select","ParentRoundRobin::lookupParent(): parent_table: %p.", parent_table);
+  Debug("parent_select", "ParentRoundRobin::lookupParent(): parent_table: %p.", parent_table);
   int cur_index = 0;
   bool parentUp = false;
   bool parentRetry = false;
@@ -282,4 +282,3 @@ ParentRoundRobin::recordRetrySuccess(ParentResult *result)
     Note("http parent proxy %s:%d restored", pRec->hostname, pRec->port);
   }
 }
-
