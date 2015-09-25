@@ -6423,11 +6423,11 @@ HttpTransact::is_response_valid(State *s, HTTPHdr *incoming_response)
   }
 
   // is this response is from a load balanced parent.
-  if (s->current.request_to == PARENT_PROXY && s->parent_result.r == PARENT_ORIGIN) { 
+  if (s->current.request_to == PARENT_PROXY && s->parent_result.r == PARENT_ORIGIN) {
     server_response = http_hdr_status_get(s->hdr_info.server_response.m_http);
     DebugTxn("http_trans", "[is_response_valid] server_response = %d\n", server_response);
     // is a simple retry required.
-    if (s->txn_conf->simple_retry_enabled && (s->current.simple_retry_attempts < s->parent_result.rec->num_parents -1) &&
+    if (s->txn_conf->simple_retry_enabled && (s->current.simple_retry_attempts < s->parent_result.rec->num_parents - 1) &&
         s->http_config_param->response_codes->contains(server_response, s->txn_conf->simple_retry_response_codes_string)) {
       DebugTxn("parent_select", "GOT A SIMPLE RETRY RESPONSE");
       // initiate a retry if we have not already tried all parents, otherwise the response is sent to the client as is.
@@ -6440,9 +6440,10 @@ HttpTransact::is_response_valid(State *s, HTTPHdr *incoming_response)
       }
     }
     // is a dead server retry required.
-    else if (s->txn_conf->dead_server_retry_enabled && 
-      (s->current.dead_server_retry_attempts < s->parent_result.rec->num_parents -1) &&
-      s->http_config_param->response_codes->contains(server_response, s->txn_conf->dead_server_retry_response_codes_string)) {
+    else if (s->txn_conf->dead_server_retry_enabled &&
+             (s->current.dead_server_retry_attempts < s->parent_result.rec->num_parents - 1) &&
+             s->http_config_param->response_codes->contains(server_response,
+                                                            s->txn_conf->dead_server_retry_response_codes_string)) {
       DebugTxn("parent_select", "GOT A DEAD_SERVER RETRY RESPONSE");
       // initiate a dead server retry if we have not already tried all parents, otherwise the response is sent to the client as is.
       // see DEAD_SERVER_RETRY in handle_response_from_parent().
