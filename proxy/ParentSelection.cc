@@ -171,7 +171,6 @@ ParentSelectionBase::findParent(HttpRequestData *rdata, ParentResult *result)
     break;
   case PARENT_FAIL:
     Debug("parent_select", "PARENT_FAIL");
-    Debug("parent_select", "Result for %s was %s", host, ParentResultStr[result->r]);
     break;
   case PARENT_DIRECT:
     Debug("parent_select", "PARENT_DIRECT");
