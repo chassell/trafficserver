@@ -204,6 +204,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
     result->r = PARENT_FAIL;
     result->hostname = NULL;
     result->port = 0;
+    result->retry = false;
   }
 
   return;
