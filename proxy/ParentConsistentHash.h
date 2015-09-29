@@ -44,9 +44,6 @@ class ParentConsistentHash : public ParentSelectionBase, public ControlBase
   ATSConsistentHash *chash[2];
   ATSConsistentHashIter chashIter[2];
   pRecord *parents[2];
-  uint32_t last_parent[2];
-  uint32_t start_parent[2];
-  bool wrap_around[2];
   bool foundParents[2][MAX_PARENTS];
   bool go_direct;
 
