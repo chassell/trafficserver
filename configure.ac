@@ -1968,6 +1968,7 @@ AS_IF([test "x$enable_experimental_plugins" = xyes], [
     plugins/experimental/ssl_cert_loader/Makefile
     plugins/experimental/sslheaders/Makefile
     plugins/experimental/stale_while_revalidate/Makefile
+    plugins/experimental/stream_editor/Makefile
     plugins/experimental/ts_lua/Makefile
     plugins/experimental/url_sig/Makefile
     plugins/experimental/xdebug/Makefile
