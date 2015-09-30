@@ -92,7 +92,7 @@ ParentConsistentHash::getPathHash(HttpRequestData *hrdata, ATSHash64 *h)
 void
 ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, RequestData *rdata)
 {
-  ATSHash64Sip24  hash;
+  ATSHash64Sip24 hash;
   ATSConsistentHash *fhash;
   HttpRequestData *request_info = static_cast<HttpRequestData *>(rdata);
   bool parentRetry = false;
@@ -101,7 +101,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
   uint32_t last_lookup;
   pRecord *prtmp = NULL, *pRec = NULL;
 
-  Debug("parent_select","ParentConsistentHash::%s(): Using a consistent hash parent selection strategy.", __func__);
+  Debug("parent_select", "ParentConsistentHash::%s(): Using a consistent hash parent selection strategy.", __func__);
   ink_assert(numParents(result) > 0 || go_direct == true);
 
   // Should only get into this state if we are supposed to go direct.
@@ -118,70 +118,71 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
 
   // findParent() call if first_call.
   if (first_call) {
-    Debug("parent_select","first_call: %d", first_call);
     last_lookup = PRIMARY;
     path_hash = getPathHash(request_info, (ATSHash64 *)&hash);
     fhash = chash[PRIMARY];
     if (path_hash) {
-      prtmp = (pRecord *) fhash->lookup_by_hashval(path_hash, &chashIter[last_lookup], &wrap_around[last_lookup]);
-      if (prtmp) pRec = (parents[last_lookup] + prtmp->idx);
+      prtmp = (pRecord *)fhash->lookup_by_hashval(path_hash, &chashIter[last_lookup], &wrap_around[last_lookup]);
+      if (prtmp)
+        pRec = (parents[last_lookup] + prtmp->idx);
     }
-  // else called by nextParent().
+    // else called by nextParent().
   } else {
-    Debug("parent_select","first_call: %d", first_call);
     if (chash[SECONDARY] != NULL) {
       last_lookup = SECONDARY;
       fhash = chash[SECONDARY];
       path_hash = getPathHash(request_info, (ATSHash64 *)&hash);
       if (path_hash) {
-        prtmp = (pRecord *) fhash->lookup_by_hashval(path_hash, &chashIter[last_lookup], &wrap_around[last_lookup]);
-        if (prtmp) pRec = (parents[last_lookup] + prtmp->idx);
+        prtmp = (pRecord *)fhash->lookup_by_hashval(path_hash, &chashIter[last_lookup], &wrap_around[last_lookup]);
+        if (prtmp)
+          pRec = (parents[last_lookup] + prtmp->idx);
       }
     } else {
       last_lookup = PRIMARY;
       fhash = chash[PRIMARY];
-      prtmp = (pRecord *) fhash->lookup(NULL, 0, &chashIter[last_lookup], &wrap_around[last_lookup], &hash);
-      if (prtmp) pRec = (parents[last_lookup] + prtmp->idx);
+      prtmp = (pRecord *)fhash->lookup(NULL, 0, &chashIter[last_lookup], &wrap_around[last_lookup], &hash);
+      if (prtmp)
+        pRec = (parents[last_lookup] + prtmp->idx);
     }
   }
 
   // didn't find a parent or the parent is marked unavailable.
-  if (! prtmp || (pRec && ! pRec->available)) {
+  if (!prtmp || (pRec && !pRec->available)) {
     do {
-      if (pRec && ! pRec->available) {
-        Debug("parent_select","Parent.failedAt = %u, retry = %u, xact_start = %u", (unsigned int)pRec->failedAt, 
-          (unsigned int)ParentRetryTime, (unsigned int)request_info->xact_start);
-        if ( (pRec->failedAt + ParentRetryTime) < request_info->xact_start) {
+      if (pRec && !pRec->available) {
+        Debug("parent_select", "Parent.failedAt = %u, retry = %u, xact_start = %u", (unsigned int)pRec->failedAt,
+              (unsigned int)ParentRetryTime, (unsigned int)request_info->xact_start);
+        if ((pRec->failedAt + ParentRetryTime) < request_info->xact_start) {
           parentRetry = true;
           // need to set this so that recordRetrySuccess locates the correct parent record.
           result->last_parent = prtmp->idx;
           result->retry = parentRetry;
           recordRetrySuccess(result);
-          Debug("parent_select","Down parent %s is now retryable, marked it available.", pRec->hostname);
+          Debug("parent_select", "Down parent %s is now retryable, marked it available.", pRec->hostname);
           break;
         }
-      } 
-      Debug("parent_select","wrap_around[PRIMARY]: %d, wrap_around[SECONDARY]: %d", wrap_around[PRIMARY], wrap_around[SECONDARY]);
-      if (! wrap_around[PRIMARY] || (chash[SECONDARY] != NULL && ! wrap_around[SECONDARY])) {
-        Debug("parent_select","Selected parent %s is not available, looking up another parent.", pRec->hostname);
-        if (chash[SECONDARY] != NULL && ! wrap_around[SECONDARY]) {
+      }
+      Debug("parent_select", "wrap_around[PRIMARY]: %d, wrap_around[SECONDARY]: %d", wrap_around[PRIMARY], wrap_around[SECONDARY]);
+      if (!wrap_around[PRIMARY] || (chash[SECONDARY] != NULL && !wrap_around[SECONDARY])) {
+        Debug("parent_select", "Selected parent %s is not available, looking up another parent.", pRec->hostname);
+        if (chash[SECONDARY] != NULL && !wrap_around[SECONDARY]) {
           fhash = chash[SECONDARY];
           last_lookup = SECONDARY;
         } else {
           fhash = chash[PRIMARY];
           last_lookup = PRIMARY;
         }
-        prtmp = (pRecord *) fhash->lookup(NULL, 0, &chashIter[last_lookup], &wrap_around[last_lookup], &hash);
+        prtmp = (pRecord *)fhash->lookup(NULL, 0, &chashIter[last_lookup], &wrap_around[last_lookup], &hash);
         if (prtmp) {
           pRec = (parents[last_lookup] + prtmp->idx);
-          Debug("parent_select","Selected a new parent: %s.", pRec->hostname);
+          Debug("parent_select", "Selected a new parent: %s.", pRec->hostname);
         }
       }
       if (wrap_around[PRIMARY] && wrap_around[SECONDARY]) {
-        Debug("parent_select","No available parents.");
+        Debug("parent_select", "No available parents.");
         break;
       }
-    } while (! prtmp || ! pRec->available);
+    } while (!prtmp || !pRec->available);
   }
 
   // use the available parent.
@@ -199,8 +200,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
     ink_assert(result->hostname != NULL);
     ink_assert(result->port != 0);
     Debug("parent_select", "Chosen parent: %s.%d", result->hostname, result->port);
-  }
-  else {
+  } else {
     result->r = PARENT_FAIL;
     result->hostname = NULL;
     result->port = 0;
@@ -268,7 +268,7 @@ ParentConsistentHash::markParentDown(ParentResult *result)
   if (new_fail_count > 0 && new_fail_count == FailThreshold) {
     Note("Failure threshold met, http parent proxy %s:%d marked down", pRec->hostname, pRec->port);
     pRec->available = false;
-    Debug("parent_select", "Parent marked unavailable, pRec->available=%d", pRec->available);
+    Debug("parent_select", "Parent %s:%d marked unavailable, pRec->available=%d", pRec->hostname, pRec->port, pRec->available);
   }
 }
 
