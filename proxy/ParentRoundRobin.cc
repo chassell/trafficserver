@@ -188,7 +188,7 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
 uint32_t
 ParentRoundRobin::numParents(ParentResult *result)
 {
-  return parent_record->num_secondary_parents;
+  return parent_record->num_parents;
 }
 
 void

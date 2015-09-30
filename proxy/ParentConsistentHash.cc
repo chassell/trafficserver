@@ -140,9 +140,11 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
     } else {
       last_lookup = PRIMARY;
       fhash = chash[PRIMARY];
-      prtmp = (pRecord *)fhash->lookup(NULL, 0, &chashIter[last_lookup], &wrap_around[last_lookup], &hash);
-      if (prtmp)
-        pRec = (parents[last_lookup] + prtmp->idx);
+      do { // search until we've selected a different parent.
+        prtmp = (pRecord *)fhash->lookup(NULL, 0, &chashIter[last_lookup], &wrap_around[last_lookup], &hash);
+        if (prtmp)
+          pRec = (parents[last_lookup] + prtmp->idx);
+      } while (prtmp && strcmp (prtmp->hostname, result->hostname) == 0);
     }
   }
 
