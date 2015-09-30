@@ -3510,17 +3510,21 @@ HttpTransact::handle_response_from_parent(State *s)
       if (s->current.retry_type == SIMPLE_RETRY) {
         if (s->current.simple_retry_attempts >= (int)s->parent_strategy->numParents(&s->parent_result) - 1) {
           DebugTxn("http_trans", "SIMPLE_RETRY: retried all parents, send error to client.\n");
+          s->current.retry_type = UNDEFINED_RETRY;
         } else {
           s->current.simple_retry_attempts++;
           DebugTxn("http_trans", "SIMPLE_RETRY: try another parent.\n");
+          s->current.retry_type = UNDEFINED_RETRY;
           next_lookup = find_server_and_update_current_info(s);
         }
       } else { // DEAD_SERVER_RETRY
         if (s->current.dead_server_retry_attempts >= (int)s->parent_strategy->numParents(&s->parent_result) - 1) {
           DebugTxn("http_trans", "DEAD_SERVER_RETRY: retried all parents, send error to client.\n");
+          s->current.retry_type = UNDEFINED_RETRY;
         } else {
           s->current.dead_server_retry_attempts++;
           DebugTxn("http_trans", "DEAD_SERVER_RETRY: marking parent down and trying another.\n");
+          s->current.retry_type = UNDEFINED_RETRY;
           s->parent_strategy->markParentDown(&s->parent_result);
           next_lookup = find_server_and_update_current_info(s);
         }
