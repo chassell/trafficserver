@@ -147,16 +147,23 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
   }
 
   // didn't find a parent or the parent is marked unavailable.
-  if (!prtmp || (pRec && !pRec->available)) {
+  if (!pRec || (pRec && !pRec->available)) {
     do {
       if (pRec && !pRec->available) {
         Debug("parent_select", "Parent.failedAt = %u, retry = %u, xact_start = %u", (unsigned int)pRec->failedAt,
               (unsigned int)ParentRetryTime, (unsigned int)request_info->xact_start);
         if ((pRec->failedAt + ParentRetryTime) < request_info->xact_start) {
           parentRetry = true;
-          // need to set this so that recordRetrySuccess locates the correct parent record.
+          // make sure that the proper state is recorded in the result structure 
+          // so that recordRetrySuccess() finds the proper record.
           result->last_parent = prtmp->idx;
+          result->last_lookup = last_lookup;
           result->retry = parentRetry;
+          if (!parent_record->parent_is_proxy) {
+            result->r = PARENT_ORIGIN;
+          } else {
+            result->r = PARENT_SPECIFIED;
+          }
           recordRetrySuccess(result);
           Debug("parent_select", "Down parent %s is now retryable, marked it available.", pRec->hostname);
           break;
@@ -311,6 +318,7 @@ ParentConsistentHash::recordRetrySuccess(ParentResult *result)
   ink_assert((result->last_parent) < numParents(result));
   pRec = parents[result->last_lookup] + result->last_parent;
   pRec->available = true;
+  Debug("parent_select", "%s:%s(): marked %s:%d available.", __FILE__, __func__, pRec->hostname, pRec->port);
 
   ink_atomic_swap(&pRec->failedAt, (time_t)0);
   int old_count = ink_atomic_swap(&pRec->failCount, 0);
