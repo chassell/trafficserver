@@ -43,13 +43,6 @@
 // forward declare in name only so it can be a friend.
 struct IpAllowUpdate;
 
-//
-// Timeout the IpAllowTable * this amount of time after the
-//    a reconfig event happens that the old table gets thrown
-//    away
-//
-static uint64_t const IP_ALLOW_TIMEOUT = HRTIME_HOUR;
-
 /** An access control record.
     It has the methods permitted and the source line.
 */
