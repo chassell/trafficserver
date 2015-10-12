@@ -6429,8 +6429,8 @@ HttpTransact::is_response_valid(State *s, HTTPHdr *incoming_response)
   // is this response is from a load balanced parent.
   if (s->current.request_to == PARENT_PROXY && s->parent_result.r == PARENT_ORIGIN) {
     server_response = http_hdr_status_get(s->hdr_info.server_response.m_http);
-    DebugTxn("http_trans", "[is_response_valid] server_response = %d, simple_retry_attempts: %d, numParents:%d \n", 
-      server_response, s->current.simple_retry_attempts, s->parent_strategy->numParents(&s->parent_result));
+    DebugTxn("http_trans", "[is_response_valid] server_response = %d, simple_retry_attempts: %d, numParents:%d \n", server_response,
+             s->current.simple_retry_attempts, s->parent_strategy->numParents(&s->parent_result));
     // is a simple retry required.
     if (s->txn_conf->simple_retry_enabled &&
         (s->current.simple_retry_attempts < (int)s->parent_strategy->numParents(&s->parent_result) - 1) &&

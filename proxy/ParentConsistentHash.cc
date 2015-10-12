@@ -144,7 +144,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
         prtmp = (pRecord *)fhash->lookup(NULL, 0, &chashIter[last_lookup], &wrap_around[last_lookup], &hash);
         if (prtmp)
           pRec = (parents[last_lookup] + prtmp->idx);
-      } while (prtmp && strcmp (prtmp->hostname, result->hostname) == 0);
+      } while (prtmp && strcmp(prtmp->hostname, result->hostname) == 0);
     }
   }
 
@@ -156,7 +156,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
               (unsigned int)ParentRetryTime, (unsigned int)request_info->xact_start);
         if ((pRec->failedAt + ParentRetryTime) < request_info->xact_start) {
           parentRetry = true;
-          // make sure that the proper state is recorded in the result structure 
+          // make sure that the proper state is recorded in the result structure
           // so that recordRetrySuccess() finds the proper record.
           result->last_parent = prtmp->idx;
           result->last_lookup = last_lookup;
