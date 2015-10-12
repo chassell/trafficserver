@@ -166,6 +166,10 @@ traffic_server_SOURCES = \
   Main.h \
   ParentSelection.cc \
   ParentSelection.h \
+	ParentConsistentHash.cc \
+	ParentConsistentHash.h \
+	ParentRoundRobin.cc \
+	ParentRoundRobin.h \
   Plugin.cc \
   Plugin.h \
   PluginVC.cc \
@@ -283,6 +287,8 @@ traffic_sac_SOURCES = \
   ICPStats.cc \
   IPAllow.cc \
   ParentSelection.cc \
+  ParentConsistentHash.cc \
+  ParentRoundRobin.cc \
   ControlBase.cc \
   ControlMatcher.cc \
   CacheControl.cc \

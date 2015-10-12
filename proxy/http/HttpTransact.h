@@ -836,7 +836,7 @@ public:
     bool cdn_remap_complete;
     bool first_dns_lookup;
 
-    ParentConfigParams *parent_params;
+    ParentSelectionStrategy *parent_strategy;
     ParentResult parent_result;
     HttpRequestData request_data;
     CacheControlResult cache_control;
@@ -967,7 +967,7 @@ public:
     void
     init()
     {
-      parent_params = ParentConfig::acquire();
+      parent_strategy = ParentConfig::acquire();
       current_stats = &first_stats;
     }
 
@@ -978,7 +978,7 @@ public:
         is_revalidation_necessary(false), request_will_not_selfloop(false), // YTS Team, yamsat
         source(SOURCE_NONE), pre_transform_source(SOURCE_NONE), req_flavor(REQ_FLAVOR_FWDPROXY), pending_work(NULL),
         cdn_saved_next_action(SM_ACTION_UNDEFINED), cdn_saved_transact_return_point(NULL), cdn_remap_complete(false),
-        first_dns_lookup(true), parent_params(NULL), cache_lookup_result(CACHE_LOOKUP_NONE), backdoor_request(false),
+        first_dns_lookup(true), parent_strategy(NULL), cache_lookup_result(CACHE_LOOKUP_NONE), backdoor_request(false),
         cop_test_page(false), next_action(SM_ACTION_UNDEFINED), api_next_action(SM_ACTION_UNDEFINED), transact_return_point(NULL),
         is_upgrade_request(false), post_remap_upgrade_return_point(NULL), upgrade_token_wks(NULL), is_websocket(false),
         did_upgrade_succeed(false), internal_msg_buffer(NULL), internal_msg_buffer_type(NULL), internal_msg_buffer_size(0),
@@ -1055,8 +1055,8 @@ public:
       free_internal_msg_buffer();
       ats_free(internal_msg_buffer_type);
 
-      ParentConfig::release(parent_params);
-      parent_params = NULL;
+      ParentConfig::release(parent_strategy);
+      parent_strategy = NULL;
 
       hdr_info.client_request.destroy();
       hdr_info.client_response.destroy();
