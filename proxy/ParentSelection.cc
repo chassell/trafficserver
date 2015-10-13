@@ -653,6 +653,11 @@ ParentRecord::Init(matcher_line *line_info)
   }
 
   switch (round_robin) {
+  // ParentRecord.round_robin defaults to P_NO_ROUND_ROBIN when round_robin
+  // is not set in parent.config.  Therefore ParentRoundRobin is the default
+  // strategy.  If setting go_direct to true, there should be no parent list
+  // in parent.config and ParentRoundRobin::lookup will set parent_result->r
+  // to PARENT_DIRECT.
   case P_NO_ROUND_ROBIN:
   case P_STRICT_ROUND_ROBIN:
   case P_HASH_ROUND_ROBIN:
