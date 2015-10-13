@@ -27,7 +27,6 @@ ParentRoundRobin::ParentRoundRobin(ParentRecord *_parent_record)
   parent_record = _parent_record;
   round_robin_type = parent_record->round_robin;
 
-  go_direct = false;
   if (is_debug_tag_set("parent_select")) {
     switch (round_robin_type) {
     case P_NO_ROUND_ROBIN:
@@ -62,17 +61,17 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
   int cur_index = 0;
   bool parentUp = false;
   bool parentRetry = false;
-  bool bypass_ok = (go_direct == true && DNS_ParentOnly == 0);
+  bool bypass_ok = (parent_record->go_direct == true && DNS_ParentOnly == 0);
 
   HttpRequestData *request_info = static_cast<HttpRequestData *>(rdata);
 
-  ink_assert(numParents(result) > 0 || go_direct == true);
+  ink_assert(numParents(result) > 0 || parent_record->go_direct == true);
 
   if (first_call) {
     if (parent_record->parents == NULL) {
       // We should only get into this state if
       //   if we are supposed to go direct
-      ink_assert(go_direct == true);
+      ink_assert(parent_record->go_direct == true);
       // Could not find a parent
       if (parent_record->go_direct == true) {
         result->r = PARENT_DIRECT;
@@ -117,7 +116,7 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
       // We've wrapped around so bypass if we can
       if (bypass_ok == true) {
         // Could not find a parent
-        if (this->go_direct == true) {
+        if (parent_record->go_direct == true) {
           result->r = PARENT_DIRECT;
         } else {
           result->r = PARENT_FAIL;
@@ -175,7 +174,7 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
     cur_index = (cur_index + 1) % parent_record->num_parents;
   } while ((unsigned int)cur_index != result->start_parent);
 
-  if (go_direct == true) {
+  if (parent_record->go_direct == true) {
     result->r = PARENT_DIRECT;
   } else {
     result->r = PARENT_FAIL;

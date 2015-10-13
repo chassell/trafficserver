@@ -34,7 +34,6 @@
 
 class ParentRoundRobin : public ParentSelectionBase
 {
-  bool go_direct;
   ParentRR_t round_robin_type;
 
 public:

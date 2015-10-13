@@ -45,7 +45,6 @@ class ParentConsistentHash : public ParentSelectionBase, public ControlBase
   ATSConsistentHashIter chashIter[2];
   pRecord *parents[2];
   bool foundParents[2][MAX_PARENTS];
-  bool go_direct;
 
 public:
   static const int PRIMARY = 0;

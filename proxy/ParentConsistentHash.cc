@@ -26,7 +26,6 @@ ParentConsistentHash::ParentConsistentHash(ParentRecord *_parent_record)
 {
   int i;
 
-  go_direct = false;
   parent_record = _parent_record;
   ink_assert(parent_record->num_parents > 0);
   parents[PRIMARY] = parent_record->parents;
@@ -102,11 +101,11 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
   pRecord *prtmp = NULL, *pRec = NULL;
 
   Debug("parent_select", "ParentConsistentHash::%s(): Using a consistent hash parent selection strategy.", __func__);
-  ink_assert(numParents(result) > 0 || go_direct == true);
+  ink_assert(numParents(result) > 0 || parent_record->go_direct == true);
 
   // Should only get into this state if we are supposed to go direct.
   if (parents[PRIMARY] == NULL && parents[SECONDARY] == NULL) {
-    if (go_direct == true) {
+    if (parent_record->go_direct == true) {
       result->r = PARENT_DIRECT;
     } else {
       result->r = PARENT_FAIL;
