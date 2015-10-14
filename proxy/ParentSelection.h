@@ -89,7 +89,7 @@ class ParentRecord : public ControlBase
 public:
   ParentRecord()
     : parents(NULL), secondary_parents(NULL), num_parents(0), num_secondary_parents(0), 
-      round_robin(P_NO_ROUND_ROBIN), rr_next(0), ignore_query(false), go_direct(true), 
+      round_robin(P_NO_ROUND_ROBIN), ignore_query(false), rr_next(0), go_direct(true), 
       parent_is_proxy(true), lookup_strategy(NULL)
   {
   }
