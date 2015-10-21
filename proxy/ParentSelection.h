@@ -45,6 +45,7 @@ struct matcher_line;
 struct ParentResult;
 class ParentRecord;
 class ParentSelectionBase;
+class ParentSelectionInterface;
 
 enum ParentResultType {
   PARENT_UNDEFINED,
@@ -123,7 +124,7 @@ public:
   volatile uint32_t rr_next;
   bool go_direct;
   bool parent_is_proxy;
-  ParentSelectionBase *lookup_strategy;
+  ParentSelectionInterface *lookup_strategy;
 };
 
 // If the parent was set by the external customer api,
@@ -166,11 +167,17 @@ public:
   //   Retures true if a parent has been set through the api
   virtual bool apiParentExists(HttpRequestData *rdata) = 0;
 
-  // void findParent(RequestData* rdata, ParentResult* result)
+  // void findParent(HttpRequestData* rdata, ParentResult* result)
   //
   //   Does initial parent lookup
   //
   virtual void findParent(HttpRequestData *rdata, ParentResult *result) = 0;
+
+  // void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata)
+  //
+  // The implementation parent lookup.
+  //
+  virtual void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata) = 0;
 
   // void markParentDown(ParentResult* rsult)
   //
@@ -178,7 +185,7 @@ public:
   //
   virtual void markParentDown(ParentResult *result) = 0;
 
-  // void nextParent(RequestData* rdata, ParentResult* result);
+  // void nextParent(HttpRequestData* rdata, ParentResult* result);
   //
   //    Marks the parent pointed to by result as down and attempts
   //      to find the next parent
@@ -203,6 +210,11 @@ public:
   //      to clear the bits indicating the parent is down
   //
   virtual void recordRetrySuccess(ParentResult *result) = 0;
+
+  // void setParentTable (P_table *_parent_table).
+  //
+  // parent table setter.
+  virtual void setParentTable(P_table *_parent_table) = 0;
 };
 
 //
@@ -230,7 +242,6 @@ public:
   void findParent(HttpRequestData *rdata, ParentResult *result);
   void nextParent(HttpRequestData *rdata, ParentResult *result);
   bool parentExists(HttpRequestData *rdata);
-  virtual void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata) = 0;
 };
 
 class ParentSelectionStrategy : public ParentSelectionBase, public ConfigInfo
