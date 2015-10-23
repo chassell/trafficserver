@@ -305,12 +305,12 @@ ParentConfig::reconfigure()
 {
   int num_el = 0;
   ParentRecord *rec = NULL;
-  ParentSelectionStrategy *parent_strategy = NULL;
+  ParentConfigParams *parent_strategy = NULL;
 
   // Allocate parent table
   P_table *pTable = new P_table(file_var, modulePrefix, &http_dest_tags);
 
-  parent_strategy = new ParentSelectionStrategy(pTable);
+  parent_strategy = new ParentConfigParams(pTable);
   ink_assert(parent_strategy != NULL);
 
   m_id = configProcessor.set(m_id, parent_strategy);
@@ -358,7 +358,7 @@ ParentConfig::reconfigure()
 void
 ParentConfig::print()
 {
-  ParentSelectionStrategy *strategy = ParentConfig::acquire();
+  ParentConfigParams *strategy = ParentConfig::acquire();
 
   printf("Parent Selection Config\n");
   printf("\tEnabled %d\tRetryTime %d\tParent DNS Only %d\n", strategy->ParentEnable, strategy->ParentRetryTime,
@@ -784,12 +784,12 @@ SocksServerConfig::reconfigure()
   int retry_time = 30;
   int fail_threshold;
 
-  ParentSelectionStrategy *parent_strategy = NULL;
+  ParentConfigParams *parent_strategy = NULL;
 
   // Allocate parent table
   P_table *pTable = new P_table("proxy.config.socks.socks_config_file", "[Socks Server Selection]", &socks_server_tags);
 
-  parent_strategy = new ParentSelectionStrategy(pTable);
+  parent_strategy = new ParentConfigParams(pTable);
   ink_assert(parent_strategy != NULL);
 
   // Handle default parent
@@ -828,7 +828,7 @@ SocksServerConfig::reconfigure()
 void
 SocksServerConfig::print()
 {
-  ParentSelectionStrategy *params = SocksServerConfig::acquire();
+  ParentConfigParams *params = SocksServerConfig::acquire();
 
   printf("Parent Selection Config for Socks Server\n");
   printf("\tEnabled %d\tRetryTime %d\tParent DNS Only %d\n", params->ParentEnable, params->ParentRetryTime, params->DNS_ParentOnly);
@@ -879,7 +879,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
   // first, set everything up
   *pstatus = REGRESSION_TEST_INPROGRESS;
   ParentConfig config;
-  ParentSelectionStrategy *params;
+  ParentConfigParams *params;
   P_table *ParentTable;
   passes = fails = 0;
   config.startup();
@@ -889,7 +889,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
   ParentTable = new P_table("", "ParentSelection Unit Test Table", &http_dest_tags,                                      \
                             ALLOW_HOST_TABLE | ALLOW_REGEX_TABLE | ALLOW_URL_TABLE | ALLOW_IP_TABLE | DONT_BUILD_TABLE); \
   ParentTable->BuildTableFromString(tbl);                                                                                \
-  params = new ParentSelectionStrategy(ParentTable);                                                                     \
+  params = new ParentConfigParams(ParentTable);                                                                     \
   params->FailThreshold = 1;                                                                                             \
   params->ParentEnable = true;                                                                                           \
   params->ParentRetryTime = 5;

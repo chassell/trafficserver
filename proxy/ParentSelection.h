@@ -45,7 +45,7 @@ struct matcher_line;
 struct ParentResult;
 class ParentRecord;
 class ParentSelectionBase;
-class ParentSelectionInterface;
+class ParentSelection;
 
 enum ParentResultType {
   PARENT_UNDEFINED,
@@ -124,7 +124,7 @@ public:
   volatile uint32_t rr_next;
   bool go_direct;
   bool parent_is_proxy;
-  ParentSelectionInterface *lookup_strategy;
+  ParentSelection *lookup_strategy;
 };
 
 // If the parent was set by the external customer api,
@@ -159,7 +159,7 @@ struct ParentResult {
 
 //
 // API definition.
-class ParentSelectionInterface
+class ParentSelection
 {
 public:
   // bool apiParentExists(HttpRequestData* rdata)
@@ -218,9 +218,9 @@ public:
 };
 
 //
-// Implements common functionality of the ParentSelectionInterface.
+// Implements common functionality of the ParentSelection.
 //
-class ParentSelectionBase : public ParentSelectionInterface
+class ParentSelectionBase : public ParentSelection
 {
 public:
   ParentRecord *parent_record;
@@ -244,11 +244,11 @@ public:
   bool parentExists(HttpRequestData *rdata);
 };
 
-class ParentSelectionStrategy : public ParentSelectionBase, public ConfigInfo
+class ParentConfigParams : public ParentSelectionBase, public ConfigInfo
 {
 public:
-  ParentSelectionStrategy(P_table *_parent_table) { parent_table = _parent_table; }
-  ~ParentSelectionStrategy(){};
+  ParentConfigParams(P_table *_parent_table) { parent_table = _parent_table; }
+  ~ParentConfigParams(){};
 
   void
   lookupParent(bool firstCall, ParentResult *result, RequestData *rdata)
@@ -295,14 +295,14 @@ public:
   static void print();
   static void set_parent_table(P_table *pTable, ParentRecord *rec, int num_elements);
 
-  static ParentSelectionStrategy *
+  static ParentConfigParams *
   acquire()
   {
-    return (ParentSelectionStrategy *)configProcessor.get(ParentConfig::m_id);
+    return (ParentConfigParams *)configProcessor.get(ParentConfig::m_id);
   }
 
   static void
-  release(ParentSelectionStrategy *strategy)
+  release(ParentConfigParams *strategy)
   {
     configProcessor.release(ParentConfig::m_id, strategy);
   }
@@ -336,13 +336,13 @@ struct SocksServerConfig {
   static void reconfigure();
   static void print();
 
-  static ParentSelectionStrategy *
+  static ParentConfigParams *
   acquire()
   {
-    return (ParentSelectionStrategy *)configProcessor.get(SocksServerConfig::m_id);
+    return (ParentConfigParams *)configProcessor.get(SocksServerConfig::m_id);
   }
   static void
-  release(ParentSelectionStrategy *params)
+  release(ParentConfigParams *params)
   {
     configProcessor.release(SocksServerConfig::m_id, params);
   }

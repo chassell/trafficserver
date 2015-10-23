@@ -124,7 +124,7 @@ struct SocksEntry : public Continuation {
 
 #ifdef SOCKS_WITH_TS
   // socks server selection:
-  ParentSelectionStrategy *server_params;
+  ParentConfigParams *server_params;
   HttpRequestData req_data; // We dont use any http specific fields.
   ParentResult server_result;
 #endif
