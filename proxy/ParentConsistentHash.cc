@@ -152,8 +152,8 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
     do {
       if (pRec && !pRec->available) {
         Debug("parent_select", "Parent.failedAt = %u, retry = %u, xact_start = %u", (unsigned int)pRec->failedAt,
-              (unsigned int)ParentRetryTime, (unsigned int)request_info->xact_start);
-        if ((pRec->failedAt + ParentRetryTime) < request_info->xact_start) {
+              (unsigned int)c_params->ParentRetryTime, (unsigned int)request_info->xact_start);
+        if ((pRec->failedAt + c_params->ParentRetryTime) < request_info->xact_start) {
           parentRetry = true;
           // make sure that the proper state is recorded in the result structure
           // so that recordRetrySuccess() finds the proper record.
@@ -273,7 +273,7 @@ ParentConsistentHash::markParentDown(ParentResult *result)
     new_fail_count = old_count + 1;
   }
 
-  if (new_fail_count > 0 && new_fail_count == FailThreshold) {
+  if (new_fail_count > 0 && new_fail_count == c_params->FailThreshold) {
     Note("Failure threshold met, http parent proxy %s:%d marked down", pRec->hostname, pRec->port);
     pRec->available = false;
     Debug("parent_select", "Parent %s:%d marked unavailable, pRec->available=%d", pRec->hostname, pRec->port, pRec->available);

@@ -36,7 +36,7 @@
 //  Implementation of round robin based upon consistent hash of the URL,
 //  ParentRR_t = P_CONSISTENT_HASH.
 //
-class ParentConsistentHash : public ParentSelectionBase
+class ParentConsistentHash : ParentSelectionBase, public ParentSelectionStrategy
 {
   // there are two hashes PRIMARY parents
   // and SECONDARY parents.

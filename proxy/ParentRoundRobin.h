@@ -32,7 +32,7 @@
 
 #include "ParentSelection.h"
 
-class ParentRoundRobin : public ParentSelectionBase
+class ParentRoundRobin : ParentSelectionBase, public ParentSelectionStrategy
 {
   ParentRR_t round_robin_type;
 

@@ -68,44 +68,72 @@ enum ParentCB_t {
 
 ParentSelectionBase::ParentSelectionBase()
 {
-  char *default_val = NULL;
-  int retry_time = 30;
-  int enable = 0;
-  int fail_threshold;
-  int dns_parent_only;
-  parent_table = NULL;
+  bool enable = false;
+  int32_t retry_time = 0;
+  int32_t fail_threshold = 0;
+  int32_t dns_parent_only = 0;
+
+  this->c_params = (struct config_params *)ats_malloc(sizeof(struct config_params));
+
+  // Handle parent timeout
+  PARENT_ReadConfigInteger(retry_time, retry_var);
+  c_params->ParentRetryTime = retry_time;
+
+  // Handle parent enable
+  PARENT_ReadConfigInteger(enable, enable_var);
+  c_params->ParentEnable = enable;
+
+  // Handle the fail threshold
+  PARENT_ReadConfigInteger(fail_threshold, threshold_var);
+  c_params->FailThreshold = fail_threshold;
+
+  // Handle dns parent only
+  PARENT_ReadConfigInteger(dns_parent_only, dns_parent_only_var);
+  c_params->DNS_ParentOnly = dns_parent_only;
+
   parent_record = NULL;
+}
+
+ParentConfigParams::ParentConfigParams(P_table *_parent_table) { 
+  char *default_val = NULL;
+  parent_table = _parent_table; 
+  bool enable = false;
+  int32_t retry_time = 0;
+  int32_t fail_threshold = 0;
+  int32_t dns_parent_only = 0;
+
+  this->c_params = (struct config_params *)ats_malloc(sizeof(struct config_params));
+
+  // Handle parent timeout
+  PARENT_ReadConfigInteger(retry_time, retry_var);
+  c_params->ParentRetryTime = retry_time;
+
+  // Handle parent enable
+  PARENT_ReadConfigInteger(enable, enable_var);
+  c_params->ParentEnable = enable;
+
+  // Handle the fail threshold
+  PARENT_ReadConfigInteger(fail_threshold, threshold_var);
+  c_params->FailThreshold = fail_threshold;
+
+  // Handle dns parent only
+  PARENT_ReadConfigInteger(dns_parent_only, dns_parent_only_var);
+  c_params->DNS_ParentOnly = dns_parent_only;
 
   // Handle default parent
   PARENT_ReadConfigStringAlloc(default_val, default_var);
   DefaultParent = createDefaultParent(default_val);
   ats_free(default_val);
-
-  // Handle parent timeout
-  PARENT_ReadConfigInteger(retry_time, retry_var);
-  ParentRetryTime = retry_time;
-
-  // Handle parent enable
-  PARENT_ReadConfigInteger(enable, enable_var);
-  ParentEnable = enable;
-
-  // Handle the fail threshold
-  PARENT_ReadConfigInteger(fail_threshold, threshold_var);
-  FailThreshold = fail_threshold;
-
-  // Handle dns parent only
-  PARENT_ReadConfigInteger(dns_parent_only, dns_parent_only_var);
-  DNS_ParentOnly = dns_parent_only;
 }
 
 bool
-ParentSelectionBase::apiParentExists(HttpRequestData *rdata)
+ParentConfigParams::apiParentExists(HttpRequestData *rdata)
 {
   return (rdata->api_info && rdata->api_info->parent_proxy_name != NULL && rdata->api_info->parent_proxy_port > 0);
 }
 
 void
-ParentSelectionBase::findParent(HttpRequestData *rdata, ParentResult *result)
+ParentConfigParams::findParent(HttpRequestData *rdata, ParentResult *result)
 {
   P_table *tablePtr = parent_table;
   ParentRecord *defaultPtr = DefaultParent;
@@ -115,7 +143,7 @@ ParentSelectionBase::findParent(HttpRequestData *rdata, ParentResult *result)
   ink_assert(result->r == PARENT_UNDEFINED);
 
   // Check to see if we are enabled
-  if (ParentEnable == 0) {
+  if (c_params->ParentEnable == 0) {
     result->r = PARENT_DIRECT;
     return;
   }
@@ -192,7 +220,7 @@ ParentSelectionBase::findParent(HttpRequestData *rdata, ParentResult *result)
 }
 
 void
-ParentSelectionBase::nextParent(HttpRequestData *rdata, ParentResult *result)
+ParentConfigParams::nextParent(HttpRequestData *rdata, ParentResult *result)
 {
   P_table *tablePtr = parent_table;
 
@@ -219,7 +247,7 @@ ParentSelectionBase::nextParent(HttpRequestData *rdata, ParentResult *result)
 
   // Find the next parent in the array
   Debug("parent_select", "Calling lookupParent() from nextParent");
-  lookupParent(false, result, rdata);
+  result->rec->lookup_strategy->lookupParent(false, result, rdata);
 
   const char *host = rdata->get_host();
 
@@ -251,7 +279,7 @@ ParentSelectionBase::nextParent(HttpRequestData *rdata, ParentResult *result)
 }
 
 bool
-ParentSelectionBase::parentExists(HttpRequestData *rdata)
+ParentConfigParams::parentExists(HttpRequestData *rdata)
 {
   ParentResult result;
 
@@ -265,15 +293,6 @@ ParentSelectionBase::parentExists(HttpRequestData *rdata)
 }
 
 int ParentConfig::m_id = 0;
-
-// helper function for setting parent table pointer.
-void
-ParentConfig::set_parent_table(P_table *pTable, ParentRecord *rec, int num_elements)
-{
-  for (int i = 0; i < num_elements; i++) {
-    rec[i].lookup_strategy->setParentTable(pTable);
-  }
-}
 
 void
 ParentConfig::startup()
@@ -303,49 +322,16 @@ ParentConfig::startup()
 void
 ParentConfig::reconfigure()
 {
-  int num_el = 0;
-  ParentRecord *rec = NULL;
-  ParentConfigParams *parent_strategy = NULL;
+  ParentConfigParams *params = NULL;
 
   // Allocate parent table
   P_table *pTable = new P_table(file_var, modulePrefix, &http_dest_tags);
 
-  parent_strategy = new ParentConfigParams(pTable);
-  ink_assert(parent_strategy != NULL);
+  params = new ParentConfigParams(pTable);
+  ink_assert(params != NULL);
 
-  m_id = configProcessor.set(m_id, parent_strategy);
+  m_id = configProcessor.set(m_id, params);
 
-  if (pTable->reMatch) {
-    num_el = pTable->reMatch->getNumElements();
-    rec = pTable->reMatch->getDataArray();
-    set_parent_table(pTable, rec, num_el);
-  }
-  if (pTable->urlMatch) {
-    num_el = pTable->urlMatch->getNumElements();
-    rec = pTable->urlMatch->getDataArray();
-    set_parent_table(pTable, rec, num_el);
-  }
-  if (pTable->hostMatch) {
-    num_el = pTable->hostMatch->getNumElements();
-    rec = pTable->hostMatch->getDataArray();
-    set_parent_table(pTable, rec, num_el);
-  }
-  if (pTable->ipMatch) {
-    num_el = pTable->ipMatch->getNumElements();
-    rec = pTable->ipMatch->getDataArray();
-    set_parent_table(pTable, rec, num_el);
-  }
-  if (pTable->hrMatch) {
-    num_el = pTable->hrMatch->getNumElements();
-    rec = pTable->hrMatch->getDataArray();
-    set_parent_table(pTable, rec, num_el);
-  }
-
-  if (num_el > 0 && rec) {
-    for (int i = 0; i < num_el; i++) {
-      rec[i].lookup_strategy->setParentTable(pTable);
-    }
-  }
   if (is_debug_tag_set("parent_config")) {
     ParentConfig::print();
   }
@@ -358,21 +344,21 @@ ParentConfig::reconfigure()
 void
 ParentConfig::print()
 {
-  ParentConfigParams *strategy = ParentConfig::acquire();
+  ParentConfigParams *params = ParentConfig::acquire();
 
   printf("Parent Selection Config\n");
-  printf("\tEnabled %d\tRetryTime %d\tParent DNS Only %d\n", strategy->ParentEnable, strategy->ParentRetryTime,
-         strategy->DNS_ParentOnly);
-  if (strategy->DefaultParent == NULL) {
+  printf("\tEnabled %d\tRetryTime %d\tParent DNS Only %d\n", params->c_params->ParentEnable, params->c_params->ParentRetryTime,
+         params->c_params->DNS_ParentOnly);
+  if (params->DefaultParent == NULL) {
     printf("\tNo Default Parent\n");
   } else {
     printf("\tDefault Parent:\n");
-    strategy->DefaultParent->Print();
+    params->DefaultParent->Print();
   }
   printf("  ");
-  strategy->parent_table->Print();
+  params->parent_table->Print();
 
-  ParentConfig::release(strategy);
+  ParentConfig::release(params);
 }
 
 // const char* ParentRecord::ProcessParents(char* val, bool isPrimary)
@@ -784,41 +770,41 @@ SocksServerConfig::reconfigure()
   int retry_time = 30;
   int fail_threshold;
 
-  ParentConfigParams *parent_strategy = NULL;
+  ParentConfigParams *params = NULL;
 
   // Allocate parent table
   P_table *pTable = new P_table("proxy.config.socks.socks_config_file", "[Socks Server Selection]", &socks_server_tags);
 
-  parent_strategy = new ParentConfigParams(pTable);
-  ink_assert(parent_strategy != NULL);
+  params = new ParentConfigParams(pTable);
+  ink_assert(params != NULL);
 
   // Handle default parent
   PARENT_ReadConfigStringAlloc(default_val, "proxy.config.socks.default_servers");
-  parent_strategy->DefaultParent = createDefaultParent(default_val);
+  params->DefaultParent = createDefaultParent(default_val);
   ats_free(default_val);
 
-  if (parent_strategy->DefaultParent)
-    setup_socks_servers(parent_strategy->DefaultParent, 1);
-  if (parent_strategy->parent_table->ipMatch)
-    setup_socks_servers(parent_strategy->parent_table->ipMatch->data_array, parent_strategy->parent_table->ipMatch->array_len);
+  if (params->DefaultParent)
+    setup_socks_servers(params->DefaultParent, 1);
+  if (params->parent_table->ipMatch)
+    setup_socks_servers(params->parent_table->ipMatch->data_array, params->parent_table->ipMatch->array_len);
 
   // Handle parent timeout
   PARENT_ReadConfigInteger(retry_time, "proxy.config.socks.server_retry_time");
-  parent_strategy->ParentRetryTime = retry_time;
+  params->c_params->ParentRetryTime = retry_time;
 
   // Handle parent enable
   // enable is always true for use. We will come here only if socks is enabled
-  parent_strategy->ParentEnable = 1;
+  params->c_params->ParentEnable = 1;
 
   // Handle the fail threshold
   PARENT_ReadConfigInteger(fail_threshold, "proxy.config.socks.server_fail_threshold");
-  parent_strategy->FailThreshold = fail_threshold;
+  params->c_params->FailThreshold = fail_threshold;
 
   // Handle dns parent only
   // PARENT_ReadConfigInteger(dns_parent_only, dns_parent_only_var);
-  parent_strategy->DNS_ParentOnly = 0;
+  params->c_params->DNS_ParentOnly = 0;
 
-  m_id = configProcessor.set(m_id, parent_strategy);
+  m_id = configProcessor.set(m_id, params);
 
   if (is_debug_tag_set("parent_config")) {
     SocksServerConfig::print();
@@ -831,7 +817,7 @@ SocksServerConfig::print()
   ParentConfigParams *params = SocksServerConfig::acquire();
 
   printf("Parent Selection Config for Socks Server\n");
-  printf("\tEnabled %d\tRetryTime %d\tParent DNS Only %d\n", params->ParentEnable, params->ParentRetryTime, params->DNS_ParentOnly);
+  printf("\tEnabled %d\tRetryTime %d\tParent DNS Only %d\n", params->c_params->ParentEnable, params->c_params->ParentRetryTime, params->c_params->DNS_ParentOnly);
   if (params->DefaultParent == NULL) {
     printf("\tNo Default Parent\n");
   } else {
@@ -890,9 +876,9 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
                             ALLOW_HOST_TABLE | ALLOW_REGEX_TABLE | ALLOW_URL_TABLE | ALLOW_IP_TABLE | DONT_BUILD_TABLE); \
   ParentTable->BuildTableFromString(tbl);                                                                                \
   params = new ParentConfigParams(ParentTable);                                                                     \
-  params->FailThreshold = 1;                                                                                             \
-  params->ParentEnable = true;                                                                                           \
-  params->ParentRetryTime = 5;
+  params->c_params->FailThreshold = 1;                                                                                             \
+  params->c_params->ParentEnable = true;                                                                                           \
+  params->c_params->ParentRetryTime = 5;
   HttpRequestData *request = NULL;
   ParentResult *result = NULL;
 #define REINIT                            \
@@ -1078,7 +1064,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
   }
 
   // sleep(5); // parents should come back up; they don't
-  sleep(params->ParentRetryTime + 1);
+  sleep(params->c_params->ParentRetryTime + 1);
 
   // Fix: The following tests failed because
   // br() should set xact_start correctly instead of 0.
