@@ -72,7 +72,7 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
       //   if we are supposed to go direct
       ink_assert(parent_record->go_direct == true);
       // Could not find a parent
-      if (parent_record->go_direct == true) {
+      if (parent_record->go_direct == true && parent_record->parent_is_proxy) {
         result->r = PARENT_DIRECT;
       } else {
         result->r = PARENT_FAIL;
@@ -115,7 +115,7 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
       // We've wrapped around so bypass if we can
       if (bypass_ok == true) {
         // Could not find a parent
-        if (parent_record->go_direct == true) {
+        if (parent_record->go_direct == true && parent_record->parent_is_proxy) {
           result->r = PARENT_DIRECT;
         } else {
           result->r = PARENT_FAIL;
@@ -173,7 +173,7 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
     cur_index = (cur_index + 1) % parent_record->num_parents;
   } while ((unsigned int)cur_index != result->start_parent);
 
-  if (parent_record->go_direct == true) {
+  if (parent_record->go_direct == true && parent_record->parent_is_proxy) {
     result->r = PARENT_DIRECT;
   } else {
     result->r = PARENT_FAIL;

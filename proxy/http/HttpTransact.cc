@@ -258,7 +258,7 @@ find_server_and_update_current_info(HttpTransact::State *s)
       //   2) the config permits us
       //   3) the config permitted us to dns the origin server
       if (!s->parent_params->apiParentExists(&s->request_data) && s->parent_result.rec->bypass_ok() &&
-          s->http_config_param->no_dns_forward_to_parent == 0) {
+          s->http_config_param->no_dns_forward_to_parent == 0 && s->parent_result.rec->isParentProxy()) {
         s->parent_result.r = PARENT_DIRECT;
       }
       break;

@@ -186,7 +186,11 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
           Debug("parent_select", "Selected a new parent: %s.", pRec->hostname);
         }
       }
-      if (wrap_around[PRIMARY] && wrap_around[SECONDARY]) {
+      if (wrap_around[PRIMARY] && chash[SECONDARY] == NULL) {
+        Debug("parent_select", "No available parents.");
+        break;
+      }  
+      if (wrap_around[PRIMARY] && chash[SECONDARY] != NULL && wrap_around[SECONDARY]) {
         Debug("parent_select", "No available parents.");
         break;
       }
