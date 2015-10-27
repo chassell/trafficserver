@@ -198,13 +198,17 @@ struct config_params {
 //
 // Implements common functionality of the ParentSelection.
 //
-class ParentSelectionBase 
+class ParentSelectionBase
 {
 public:
   ParentRecord *parent_record;
   struct config_params *c_params;
   ParentSelectionBase();
-  ~ParentSelectionBase() { if (c_params) delete c_params;}
+  ~ParentSelectionBase()
+  {
+    if (c_params)
+      delete c_params;
+  }
 };
 
 class ParentConfigParams : public ParentSelectionStrategy, public ConfigInfo
