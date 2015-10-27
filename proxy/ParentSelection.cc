@@ -889,7 +889,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
   ParentTable = new P_table("", "ParentSelection Unit Test Table", &http_dest_tags,                                      \
                             ALLOW_HOST_TABLE | ALLOW_REGEX_TABLE | ALLOW_URL_TABLE | ALLOW_IP_TABLE | DONT_BUILD_TABLE); \
   ParentTable->BuildTableFromString(tbl);                                                                                \
-  params = new ParentConfigParams(ParentTable);                                                                     \
+  params = new ParentConfigParams(ParentTable);                                                                          \
   params->FailThreshold = 1;                                                                                             \
   params->ParentEnable = true;                                                                                           \
   params->ParentRetryTime = 5;
