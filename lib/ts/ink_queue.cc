@@ -106,7 +106,7 @@ ink_freelist_init(InkFreeList **fl, const char *name, uint32_t type_size, uint32
   if (ats_hugepage_enabled()) {
     f->chunk_size = INK_ALIGN(chunk_size * f->type_size, ats_hugepage_size()) / f->type_size;
   } else {
-    f->chunk_size = chunk_size;
+    f->chunk_size = INK_ALIGN(chunk_size * f->type_size, ats_pagesize()) / f->type_size;
   }
   SET_FREELIST_POINTER_VERSION(f->head, FROM_PTR(0), 0);
 
@@ -177,14 +177,12 @@ ink_freelist_new(InkFreeList *f)
       char *oldsbrk = (char *)sbrk(0), *newsbrk = NULL;
 #endif
       if (ats_hugepage_enabled())
-        newp = ats_alloc_hugepage(f->chunk_size * type_size);
+        newp = ats_alloc_hugepage(INK_ALIGN(f->chunk_size * f->type_size, ats_hugepage_size()));
 
       if (newp == NULL) {
-        if (f->alignment)
-          newp = ats_memalign(f->alignment, f->chunk_size * type_size);
-        else
-          newp = ats_malloc(f->chunk_size * type_size);
+        newp = ats_memalign(ats_pagesize(), INK_ALIGN(f->chunk_size * f->type_size, ats_pagesize()));
       }
+
       ats_madvise((caddr_t)newp, f->chunk_size * type_size, f->advice);
       fl_memadd(f->chunk_size * type_size);
 #ifdef DEBUG
@@ -238,7 +236,6 @@ ink_freelist_new(InkFreeList *f)
 #endif /* SANITY */
     }
   } while (result == 0);
-  ink_assert(!((uintptr_t)TO_PTR(FREELIST_POINTER(item)) & (((uintptr_t)f->alignment) - 1)));
 
   ink_atomic_increment((int *)&f->used, 1);
   ink_atomic_increment(&fastalloc_mem_in_use, (int64_t)f->type_size);
@@ -252,7 +249,7 @@ ink_freelist_new(InkFreeList *f)
     newp = ats_memalign(f->alignment, f->type_size);
   else
     newp = ats_malloc(f->type_size);
-  ats_madvise((caddr_t)newp, f->type_size, f->advice);
+
   return newp;
 #endif
 }
