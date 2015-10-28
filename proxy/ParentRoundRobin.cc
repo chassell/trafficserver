@@ -57,11 +57,10 @@ void
 ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestData *rdata)
 {
   Debug("parent_select", "In ParentRoundRobin::lookupParent(): Using a round robin parent selection strategy.");
-  Debug("parent_select", "ParentRoundRobin::lookupParent(): parent_table: %p.", parent_table);
   int cur_index = 0;
   bool parentUp = false;
   bool parentRetry = false;
-  bool bypass_ok = (parent_record->go_direct == true && DNS_ParentOnly == 0);
+  bool bypass_ok = (parent_record->go_direct == true && c_params->DNS_ParentOnly == 0);
 
   HttpRequestData *request_info = static_cast<HttpRequestData *>(rdata);
 
@@ -73,7 +72,7 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
       //   if we are supposed to go direct
       ink_assert(parent_record->go_direct == true);
       // Could not find a parent
-      if (parent_record->go_direct == true) {
+      if (parent_record->go_direct == true && parent_record->parent_is_proxy) {
         result->r = PARENT_DIRECT;
       } else {
         result->r = PARENT_FAIL;
@@ -116,7 +115,7 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
       // We've wrapped around so bypass if we can
       if (bypass_ok == true) {
         // Could not find a parent
-        if (parent_record->go_direct == true) {
+        if (parent_record->go_direct == true && parent_record->parent_is_proxy) {
           result->r = PARENT_DIRECT;
         } else {
           result->r = PARENT_FAIL;
@@ -135,16 +134,18 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
   //   should be retried
   do {
     // DNS ParentOnly inhibits bypassing the parent so always return that t
-    if ((parent_record->parents[cur_index].failedAt == 0) || (parent_record->parents[cur_index].failCount < FailThreshold)) {
-      Debug("parent_select", "FailThreshold = %d", FailThreshold);
+    if ((parent_record->parents[cur_index].failedAt == 0) ||
+        (parent_record->parents[cur_index].failCount < c_params->FailThreshold)) {
+      Debug("parent_select", "FailThreshold = %d", c_params->FailThreshold);
       Debug("parent_select", "Selecting a parent due to little failCount"
                              "(faileAt: %u failCount: %d)",
             (unsigned)parent_record->parents[cur_index].failedAt, parent_record->parents[cur_index].failCount);
       parentUp = true;
     } else {
-      if ((result->wrap_around) || ((parent_record->parents[cur_index].failedAt + ParentRetryTime) < request_info->xact_start)) {
+      if ((result->wrap_around) ||
+          ((parent_record->parents[cur_index].failedAt + c_params->ParentRetryTime) < request_info->xact_start)) {
         Debug("parent_select", "Parent[%d].failedAt = %u, retry = %u,xact_start = %" PRId64 " but wrap = %d", cur_index,
-              (unsigned)parent_record->parents[cur_index].failedAt, ParentRetryTime, (int64_t)request_info->xact_start,
+              (unsigned)parent_record->parents[cur_index].failedAt, c_params->ParentRetryTime, (int64_t)request_info->xact_start,
               result->wrap_around);
         // Reuse the parent
         parentUp = true;
@@ -174,7 +175,7 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
     cur_index = (cur_index + 1) % parent_record->num_parents;
   } while ((unsigned int)cur_index != result->start_parent);
 
-  if (parent_record->go_direct == true) {
+  if (parent_record->go_direct == true && parent_record->parent_is_proxy) {
     result->r = PARENT_DIRECT;
   } else {
     result->r = PARENT_FAIL;
@@ -244,7 +245,7 @@ ParentRoundRobin::markParentDown(ParentResult *result)
     new_fail_count = old_count + 1;
   }
 
-  if (new_fail_count > 0 && new_fail_count == FailThreshold) {
+  if (new_fail_count > 0 && new_fail_count == c_params->FailThreshold) {
     Note("Failure threshold met, http parent proxy %s:%d marked down", pRec->hostname, pRec->port);
     pRec->available = false;
     Debug("parent_select", "Parent marked unavailable, pRec->available=%d", pRec->available);

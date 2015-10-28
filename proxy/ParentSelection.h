@@ -45,7 +45,7 @@ struct matcher_line;
 struct ParentResult;
 class ParentRecord;
 class ParentSelectionBase;
-class ParentSelection;
+class ParentSelectionStrategy;
 
 enum ParentResultType {
   PARENT_UNDEFINED,
@@ -124,7 +124,7 @@ public:
   volatile uint32_t rr_next;
   bool go_direct;
   bool parent_is_proxy;
-  ParentSelection *lookup_strategy;
+  ParentSelectionStrategy *lookup_strategy;
 };
 
 // If the parent was set by the external customer api,
@@ -159,20 +159,9 @@ struct ParentResult {
 
 //
 // API definition.
-class ParentSelection
+class ParentSelectionStrategy
 {
 public:
-  // bool apiParentExists(HttpRequestData* rdata)
-  //
-  //   Retures true if a parent has been set through the api
-  virtual bool apiParentExists(HttpRequestData *rdata) = 0;
-
-  // void findParent(HttpRequestData* rdata, ParentResult* result)
-  //
-  //   Does initial parent lookup
-  //
-  virtual void findParent(HttpRequestData *rdata, ParentResult *result) = 0;
-
   // void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata)
   //
   // The implementation parent lookup.
@@ -185,24 +174,11 @@ public:
   //
   virtual void markParentDown(ParentResult *result) = 0;
 
-  // void nextParent(HttpRequestData* rdata, ParentResult* result);
-  //
-  //    Marks the parent pointed to by result as down and attempts
-  //      to find the next parent
-  //
-  virtual void nextParent(HttpRequestData *rdata, ParentResult *result) = 0;
-
   // uint32_t numParents(ParentResult *result);
   //
   // Returns the number of parent records in a strategy.
   //
   virtual uint32_t numParents(ParentResult *result) = 0;
-
-  // bool parentExists(HttpRequestData* rdata)
-  //
-  //   Returns true if there is a parent matching the request data and
-  //   false otherwise
-  virtual bool parentExists(HttpRequestData *rdata) = 0;
 
   // void recordRetrySuccess
   //
@@ -210,46 +186,46 @@ public:
   //      to clear the bits indicating the parent is down
   //
   virtual void recordRetrySuccess(ParentResult *result) = 0;
+};
 
-  // void setParentTable (P_table *_parent_table).
-  //
-  // parent table setter.
-  virtual void setParentTable(P_table *_parent_table) = 0;
+struct config_params {
+  int32_t ParentRetryTime;
+  int32_t ParentEnable;
+  int32_t FailThreshold;
+  int32_t DNS_ParentOnly;
 };
 
 //
 // Implements common functionality of the ParentSelection.
 //
-class ParentSelectionBase : public ParentSelection
+class ParentSelectionBase
 {
 public:
   ParentRecord *parent_record;
+  struct config_params *c_params;
+  ParentSelectionBase();
+  ~ParentSelectionBase()
+  {
+    if (c_params)
+      delete c_params;
+  }
+};
+
+class ParentConfigParams : public ParentSelectionStrategy, public ConfigInfo
+{
+public:
   P_table *parent_table;
   ParentRecord *DefaultParent;
-  int32_t ParentRetryTime;
-  int32_t ParentEnable;
-  int32_t FailThreshold;
-  int32_t DNS_ParentOnly;
+  struct config_params *c_params;
+  ParentConfigParams(P_table *_parent_table);
+  ~ParentConfigParams(){};
 
-  ParentSelectionBase(P_table *_parent_table) { parent_table = _parent_table; }
-  ParentSelectionBase();
-  void
-  setParentTable(P_table *_parent_table)
-  {
-    parent_table = _parent_table;
-  }
   bool apiParentExists(HttpRequestData *rdata);
   void findParent(HttpRequestData *rdata, ParentResult *result);
   void nextParent(HttpRequestData *rdata, ParentResult *result);
   bool parentExists(HttpRequestData *rdata);
-};
 
-class ParentConfigParams : public ParentSelectionBase, public ConfigInfo
-{
-public:
-  ParentConfigParams(P_table *_parent_table) { parent_table = _parent_table; }
-  ~ParentConfigParams(){};
-
+  // implementation of functions from ParentSelectionStrategy.
   void
   lookupParent(bool firstCall, ParentResult *result, RequestData *rdata)
   {
@@ -262,13 +238,6 @@ public:
   {
     ink_release_assert(result->rec->lookup_strategy != NULL);
     result->rec->lookup_strategy->markParentDown(result);
-  }
-
-  void
-  nextParent(HttpRequestData *rdata, ParentResult *result)
-  {
-    ink_release_assert(result->rec->lookup_strategy != NULL);
-    result->rec->lookup_strategy->nextParent(rdata, result);
   }
 
   uint32_t

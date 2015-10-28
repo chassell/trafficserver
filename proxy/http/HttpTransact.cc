@@ -209,7 +209,7 @@ find_server_and_update_current_info(HttpTransact::State *s)
   int host_len;
   const char *host = s->hdr_info.client_request.host_get(&host_len);
 
-  DebugTxn("http_trans", "starting find_server_adn_update_current_info()");
+  DebugTxn("http_trans", "starting find_server_and_update_current_info()");
   if (ptr_len_cmp(host, host_len, local_host_ip_str, sizeof(local_host_ip_str) - 1) == 0) {
     // Do not forward requests to local_host onto a parent.
     // I just wanted to do this for cop heartbeats, someone else
@@ -231,12 +231,6 @@ find_server_and_update_current_info(HttpTransact::State *s)
     switch (s->parent_result.r) {
     case PARENT_UNDEFINED:
       s->parent_params->findParent(&s->request_data, &s->parent_result);
-      if (s->parent_result.rec != NULL) {
-        // check to see if the parent is an origin server.
-        if (!s->parent_result.rec->isParentProxy()) {
-          s->parent_result.r = PARENT_ORIGIN;
-        }
-      }
       break;
     case PARENT_SPECIFIED:
     case PARENT_ORIGIN:
@@ -258,7 +252,7 @@ find_server_and_update_current_info(HttpTransact::State *s)
       //   2) the config permits us
       //   3) the config permitted us to dns the origin server
       if (!s->parent_params->apiParentExists(&s->request_data) && s->parent_result.rec->bypass_ok() &&
-          s->http_config_param->no_dns_forward_to_parent == 0) {
+          s->http_config_param->no_dns_forward_to_parent == 0 && s->parent_result.rec->isParentProxy()) {
         s->parent_result.r = PARENT_DIRECT;
       }
       break;
@@ -3080,6 +3074,11 @@ HttpTransact::HandleCacheOpenReadMiss(State *s)
 
   if (!h->is_cache_control_set(HTTP_VALUE_ONLY_IF_CACHED)) {
     find_server_and_update_current_info(s);
+    // parent_result.r could come back set as PARENT_FAIL, need to check this.
+    if (s->parent_result.r == PARENT_FAIL) {
+      handle_parent_died(s);
+      return;
+    }
     if (!ats_is_ip(&s->current.server->addr)) {
       ink_release_assert(s->current.request_to == PARENT_PROXY || s->http_config_param->no_dns_forward_to_parent != 0);
       if (s->current.request_to == PARENT_PROXY) {
