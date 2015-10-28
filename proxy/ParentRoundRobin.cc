@@ -134,14 +134,16 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
   //   should be retried
   do {
     // DNS ParentOnly inhibits bypassing the parent so always return that t
-    if ((parent_record->parents[cur_index].failedAt == 0) || (parent_record->parents[cur_index].failCount < c_params->FailThreshold)) {
+    if ((parent_record->parents[cur_index].failedAt == 0) ||
+        (parent_record->parents[cur_index].failCount < c_params->FailThreshold)) {
       Debug("parent_select", "FailThreshold = %d", c_params->FailThreshold);
       Debug("parent_select", "Selecting a parent due to little failCount"
                              "(faileAt: %u failCount: %d)",
             (unsigned)parent_record->parents[cur_index].failedAt, parent_record->parents[cur_index].failCount);
       parentUp = true;
     } else {
-      if ((result->wrap_around) || ((parent_record->parents[cur_index].failedAt + c_params->ParentRetryTime) < request_info->xact_start)) {
+      if ((result->wrap_around) ||
+          ((parent_record->parents[cur_index].failedAt + c_params->ParentRetryTime) < request_info->xact_start)) {
         Debug("parent_select", "Parent[%d].failedAt = %u, retry = %u,xact_start = %" PRId64 " but wrap = %d", cur_index,
               (unsigned)parent_record->parents[cur_index].failedAt, c_params->ParentRetryTime, (int64_t)request_info->xact_start,
               result->wrap_around);

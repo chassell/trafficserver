@@ -50,8 +50,8 @@ static const char *enable_var = "proxy.config.http.parent_proxy_routing_enable";
 static const char *threshold_var = "proxy.config.http.parent_proxy.fail_threshold";
 static const char *dns_parent_only_var = "proxy.config.http.no_dns_just_forward_to_parent";
 
-static const char *ParentResultStr[] = {"Parent_Undefined", "Parent_Direct", "Parent_Specified", "Parent_Failed"};
-
+static const char *ParentResultStr[] = {"PARENT_UNDEFINED", "PARENT_DIRECT", "PARENT_SPECIFIED",
+                                        "PARENT_AGENT",     "PARENT_FAIL",   "PARENT_ORIGIN"};
 static const char *ParentRRStr[] = {"false", "strict", "true", "consistent"};
 
 //
@@ -94,9 +94,10 @@ ParentSelectionBase::ParentSelectionBase()
   parent_record = NULL;
 }
 
-ParentConfigParams::ParentConfigParams(P_table *_parent_table) { 
+ParentConfigParams::ParentConfigParams(P_table *_parent_table)
+{
   char *default_val = NULL;
-  parent_table = _parent_table; 
+  parent_table = _parent_table;
   bool enable = false;
   int32_t retry_time = 0;
   int32_t fail_threshold = 0;
@@ -817,7 +818,8 @@ SocksServerConfig::print()
   ParentConfigParams *params = SocksServerConfig::acquire();
 
   printf("Parent Selection Config for Socks Server\n");
-  printf("\tEnabled %d\tRetryTime %d\tParent DNS Only %d\n", params->c_params->ParentEnable, params->c_params->ParentRetryTime, params->c_params->DNS_ParentOnly);
+  printf("\tEnabled %d\tRetryTime %d\tParent DNS Only %d\n", params->c_params->ParentEnable, params->c_params->ParentRetryTime,
+         params->c_params->DNS_ParentOnly);
   if (params->DefaultParent == NULL) {
     printf("\tNo Default Parent\n");
   } else {
@@ -875,9 +877,9 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
   ParentTable = new P_table("", "ParentSelection Unit Test Table", &http_dest_tags,                                      \
                             ALLOW_HOST_TABLE | ALLOW_REGEX_TABLE | ALLOW_URL_TABLE | ALLOW_IP_TABLE | DONT_BUILD_TABLE); \
   ParentTable->BuildTableFromString(tbl);                                                                                \
-  params = new ParentConfigParams(ParentTable);                                                                     \
-  params->c_params->FailThreshold = 1;                                                                                             \
-  params->c_params->ParentEnable = true;                                                                                           \
+  params = new ParentConfigParams(ParentTable);                                                                          \
+  params->c_params->FailThreshold = 1;                                                                                   \
+  params->c_params->ParentEnable = true;                                                                                 \
   params->c_params->ParentRetryTime = 5;
   HttpRequestData *request = NULL;
   ParentResult *result = NULL;

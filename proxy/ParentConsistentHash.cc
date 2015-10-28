@@ -189,7 +189,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
       if (wrap_around[PRIMARY] && chash[SECONDARY] == NULL) {
         Debug("parent_select", "No available parents.");
         break;
-      }  
+      }
       if (wrap_around[PRIMARY] && chash[SECONDARY] != NULL && wrap_around[SECONDARY]) {
         Debug("parent_select", "No available parents.");
         break;
