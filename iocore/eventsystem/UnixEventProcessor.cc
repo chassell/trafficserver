@@ -135,10 +135,14 @@ EventProcessor::start(int n_event_threads, size_t stacksize)
   Debug("iocore_thread", "Affinity: %d %ss: %d PU: %d", affinity, obj_name, obj_count, ink_number_of_processors());
 
 #endif
-  for (i = first_thread; i < n_ethreads; i++) {
-    snprintf(thr_name, MAX_THREAD_NAME_LENGTH, "[ET_NET %d]", i);
-    ink_thread tid = all_ethreads[i]->start(thr_name, stacksize);
-    (void)tid;
+  for (i = 0; i < n_ethreads; i++) {
+    ink_thread tid;
+    if (i >= first_thread) {
+      snprintf(thr_name, MAX_THREAD_NAME_LENGTH, "[ET_NET %d]", i);
+      tid = all_ethreads[i]->start(thr_name, stacksize);
+    } else {
+      tid = ink_thread_self();
+    }
 #if TS_USE_HWLOC
     if (obj_count > 0) {
       obj = hwloc_get_obj_by_type(ink_get_topology(), obj_type, i % obj_count);
@@ -154,6 +158,8 @@ EventProcessor::start(int n_event_threads, size_t stacksize)
     } else {
       Warning("hwloc returned an unexpected value -- CPU affinity disabled");
     }
+#else
+    (void)tid;
 #endif // TS_USE_HWLOC
   }
 
