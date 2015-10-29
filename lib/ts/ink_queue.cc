@@ -163,6 +163,7 @@ ink_freelist_new(InkFreeList *f)
     if (TO_PTR(FREELIST_POINTER(item)) == NULL) {
       uint32_t type_size = f->type_size;
       uint32_t i;
+      size_t alloc_size = 0;
 
 #ifdef MEMPROTECT
       if (type_size >= MEMPROTECT_SIZE) {
@@ -176,14 +177,17 @@ ink_freelist_new(InkFreeList *f)
 #ifdef DEBUG
       char *oldsbrk = (char *)sbrk(0), *newsbrk = NULL;
 #endif
-      if (ats_hugepage_enabled())
-        newp = ats_alloc_hugepage(INK_ALIGN(f->chunk_size * f->type_size, ats_hugepage_size()));
-
-      if (newp == NULL) {
-        newp = ats_memalign(ats_pagesize(), INK_ALIGN(f->chunk_size * f->type_size, ats_pagesize()));
+      if (ats_hugepage_enabled()) {
+        alloc_size = INK_ALIGN(f->chunk_size * f->type_size, ats_hugepage_size());
+        newp = ats_alloc_hugepage(alloc_size);
       }
 
-      ats_madvise((caddr_t)newp, f->chunk_size * type_size, f->advice);
+      if (newp == NULL) {
+        alloc_size = INK_ALIGN(f->chunk_size * f->type_size, ats_pagesize());
+        newp = ats_memalign(ats_pagesize(), alloc_size);
+      }
+
+      ats_madvise((caddr_t)newp, alloc_size, f->advice);
       fl_memadd(f->chunk_size * type_size);
 #ifdef DEBUG
       newsbrk = (char *)sbrk(0);
