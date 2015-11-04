@@ -5034,6 +5034,11 @@ HttpTransact::get_ka_info_from_config(State *s, ConnectionAttributes *server_inf
 {
   bool check_hostdb = false;
 
+  if (! server_info) {
+    DebugTxn("mydebug", "server_info connection attributes are null, unable to set keep-alive and version flags.")
+    return false;
+  }
+
   if (server_info->http_version > HTTPVersion(0, 9)) {
     DebugTxn("http_trans", "get_ka_info_from_config, version already set server_info->http_version %d",
              server_info->http_version.m_version);
