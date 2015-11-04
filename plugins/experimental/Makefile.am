@@ -19,7 +19,7 @@ SUBDIRS = \
  background_fetch \
  balancer \
  buffer_upload \
- cache_promote \
+ #cache_promote \
  cache_range_requests \
  channel_stats \
  collapsed_connection \
