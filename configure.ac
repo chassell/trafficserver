@@ -578,10 +578,7 @@ CXXFLAGS="${_ts_saved_CXXFLAGS}"
 # AX_CXX_COMPILE_STDCXX_11 requires the current language to be C++.
 AC_LANG_PUSH([C++])
 
-AX_CXX_COMPILE_STDCXX_11( [noext], [enable_cxx_11_support=yes], [
-  enable_cxx_11_support=no
-  AC_MSG_NOTICE([disabling features that depend on C++11 support])
-])
+AX_CXX_COMPILE_STDCXX_11( [noext], [mandatory])
 
 AM_CONDITIONAL([BUILD_HAVE_CXX_11], [ test "x${enable_cxx_11_support}" = "xyes" ])
 if test "x${enable_cxx_11_support}" = "xyes" ; then
