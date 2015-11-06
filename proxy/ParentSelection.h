@@ -186,6 +186,10 @@ public:
   //      to clear the bits indicating the parent is down
   //
   virtual void recordRetrySuccess(ParentResult *result) = 0;
+
+  // virtual descructor needed to avoid undefined behavior whe
+  // delete is called using a pointer and to avoid resource leaks.
+  virtual ~ParentSelectionStrategy() {};
 };
 
 struct config_params {
