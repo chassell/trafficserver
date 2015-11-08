@@ -2627,7 +2627,12 @@ HttpTransact::HandleCacheOpenReadHit(State *s)
     }
 
     if (s->stale_icp_lookup == false) {
-      find_server_and_update_current_info(s);
+      LookingUp_t result = find_server_and_update_current_info(s);
+      // Handle a HOST_NONE and PARENT_FAIL result.
+      if (result == HttpTransact::HOST_NONE && s->parent_result.r == PARENT_FAIL) {
+        handle_parent_died(s);
+        return;
+      }
 
       // We do not want to try to revalidate documents if we think
       //  the server is down due to the something report problem
