@@ -2627,12 +2627,7 @@ HttpTransact::HandleCacheOpenReadHit(State *s)
     }
 
     if (s->stale_icp_lookup == false) {
-      LookingUp_t result = find_server_and_update_current_info(s);
-      // Handle a HOST_NONE and PARENT_FAIL result.
-      if (result == HttpTransact::HOST_NONE && s->parent_result.r == PARENT_FAIL) {
-        handle_parent_died(s);
-        return;
-      }
+      find_server_and_update_current_info(s);
 
       // We do not want to try to revalidate documents if we think
       //  the server is down due to the something report problem
@@ -2647,6 +2642,18 @@ HttpTransact::HandleCacheOpenReadHit(State *s)
         server_up = false;
         update_current_info(&s->current, NULL, UNDEFINED_LOOKUP, 0);
         DebugTxn("http_trans", "CacheOpenReadHit - server_down, returning stale document");
+      }
+      else if (s->current.request_to == HOST_NONE && s->parent_result.r == PARENT_FAIL) {
+        if (is_server_negative_cached(s) && response_returnable == true &&
+          is_stale_cache_response_returnable(s) == true) {
+          server_up = false;
+          update_current_info(&s->current, NULL, UNDEFINED_LOOKUP, 0);
+          DebugTxn("http_trans", "CacheOpenReadHit - server_down, returning stale document");
+        }
+        else {
+          handle_parent_died(s);
+          return;
+        }
       }
     }
 
