@@ -3481,13 +3481,13 @@ HttpTransact::handle_response_from_icp_suggested_host(State *s)
 void
 HttpTransact::handle_response_from_parent(State *s)
 {
-  DebugTxn("http_trans", "[handle_response_from_parent] (hrfp)");
+  DebugTxn("http_trans", "[%s] (hrfp)", __func__);
   HTTP_RELEASE_ASSERT(s->current.server == &s->parent_info);
 
   s->parent_info.state = s->current.state;
   switch (s->current.state) {
   case CONNECTION_ALIVE:
-    DebugTxn("http_trans", "[hrfp] connection alive");
+    DebugTxn("http_trans", "[%s] connection alive", __func__);
     s->current.server->connect_result = 0;
     SET_VIA_STRING(VIA_DETAIL_PP_CONNECT, VIA_DETAIL_PP_SUCCESS);
     if (s->parent_result.retry) {
@@ -3497,7 +3497,7 @@ HttpTransact::handle_response_from_parent(State *s)
     break;
   default: {
     LookingUp_t next_lookup = UNDEFINED_LOOKUP;
-    DebugTxn("http_trans", "[hrfp] connection not alive");
+    DebugTxn("http_trans", "[%s] connection not alive, s->current.state: %d", __func__, s->current.state);
     SET_VIA_STRING(VIA_DETAIL_PP_CONNECT, VIA_DETAIL_PP_FAILURE);
 
     ink_assert(s->hdr_info.server_request.valid());
@@ -3505,11 +3505,12 @@ HttpTransact::handle_response_from_parent(State *s)
     s->current.server->connect_result = ENOTCONN;
 
     char addrbuf[INET6_ADDRSTRLEN];
-    DebugTxn("http_trans", "[%d] failed to connect to parent %s", s->current.attempts,
-             ats_ip_ntop(&s->current.server->addr.sa, addrbuf, sizeof(addrbuf)));
+    DebugTxn("http_trans", "[%s] failed to connect to parent %s after %d attempts", __func__,
+             ats_ip_ntop(&s->current.server->addr.sa, addrbuf, sizeof(addrbuf)), s->current.attempts);
 
     // If the request is not retryable, just give up!
     if (!is_request_retryable(s)) {
+      DebugTxn("http_trans", "request is not retryable, marking parent down.");
       s->parent_params->markParentDown(&s->parent_result);
       s->parent_result.r = PARENT_FAIL;
       handle_parent_died(s);
@@ -3552,17 +3553,18 @@ HttpTransact::handle_response_from_parent(State *s)
       if ((s->current.attempts - 1) % s->txn_conf->per_parent_connect_attempts != 0) {
         // No we are not done with this parent so retry
         s->next_action = how_to_open_connection(s);
-        DebugTxn("http_trans", "%s Retrying parent for attempt %d, max %" PRId64, "[handle_response_from_parent]",
-                 s->current.attempts, s->txn_conf->per_parent_connect_attempts);
+        DebugTxn("http_trans", "[%s] Retrying parent for attempt %d, max %d", __func__,
+          s->current.attempts, (int) s->txn_conf->per_parent_connect_attempts);
         return;
       } else {
-        DebugTxn("http_trans", "%s %d per parent attempts exhausted, s->current.state: %d", "[handle_response_from_parent]",
+        DebugTxn("http_trans", "[%s] %d per parent attempts exhausted, s->current.state: %d", __func__,
                  s->current.attempts, s->current.state);
 
         // Only mark the parent down if we failed to connect
         //  to the parent otherwise slow origin servers cause
         //  us to mark the parent down
-        if (s->current.state == CONNECTION_ERROR) {
+        if (s->current.state != ACTIVE_TIMEOUT && s->current.state != CONNECTION_ALIVE &&
+            s->current.state != CONNECTION_CLOSED && s->current.state != INACTIVE_TIMEOUT) {
             s->parent_params->markParentDown(&s->parent_result);
         }
         // We are done so look for another parent if any
@@ -3571,7 +3573,7 @@ HttpTransact::handle_response_from_parent(State *s)
     } else {
       // Done trying parents... fail over to origin server if that is
       //   appropriate
-      DebugTxn("http_trans", "[handle_response_from_parent] Error. No more retries.");
+      DebugTxn("http_trans", "[%s] Error. No more retries.", __func__);
       s->parent_params->markParentDown(&s->parent_result);
       s->parent_result.r = PARENT_FAIL;
       next_lookup = find_server_and_update_current_info(s);
