@@ -1000,6 +1000,8 @@ adjust_sys_settings(void)
       fds_limit = (int)lim.rlim_cur;
       syslog(LOG_NOTICE, "NOTE: RLIMIT_NOFILE(%d):cur(%d),max(%d)", RLIMIT_NOFILE, (int)lim.rlim_cur, (int)lim.rlim_max);
     }
+  } else {
+    syslog(LOG_NOTICE, "NOTE: Could not read sys.fs.file-max");
   }
 
   REC_ReadConfigInteger(fds_throttle, "proxy.config.net.connections_throttle");
