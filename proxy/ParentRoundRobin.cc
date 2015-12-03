@@ -90,14 +90,14 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
         // preserved for now anyway as ats_ip_hash returns the 32-bit address in
         // that case.
         if (rdata->get_client_ip() != NULL) {
-          cur_index = ntohl(ats_ip_hash(rdata->get_client_ip())) % parent_record->num_parents;
+          cur_index = result->start_parent = ntohl(ats_ip_hash(rdata->get_client_ip())) % parent_record->num_parents;
         } else {
           cur_index = 0;
         }
         break;
       case P_STRICT_ROUND_ROBIN:
         cur_index = ink_atomic_increment((int32_t *)&parent_record->rr_next, 1);
-        cur_index = cur_index % parent_record->num_parents;
+        cur_index = result->start_parent = cur_index % parent_record->num_parents;
         break;
       case P_NO_ROUND_ROBIN:
         cur_index = result->start_parent = 0;
