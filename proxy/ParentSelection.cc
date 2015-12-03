@@ -1088,6 +1088,48 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
       ink_assert(0);
     }
   }
+  
+  // Test 173
+  tbl[0] = '\0';
+  ST(173)
+  T("dest_domain=rabbit.net parent=fuzzy:80|1.0;fluffy:80|1.0 secondary_parent=furry:80|1.0;frisky:80|1.0 "
+    "round_robin=consistent_hash go_direct=false\n")
+  REBUILD
+  REINIT br(request, "i.am.rabbit.net");
+  FP sleep(1);
+  RE(verify(result, PARENT_SPECIFIED, "fuzzy", 80), 173)
+  params->markParentDown(result); // fuzzy is down.
+
+  // Test 174
+  ST(174)
+  REINIT br(request, "i.am.rabbit.net");
+  FP sleep(1);
+  RE(verify(result, PARENT_SPECIFIED, "frisky", 80), 174)
+
+  params->markParentDown(result); // frisky is down.
+
+  // Test 175
+  ST(175)
+  REINIT br(request, "i.am.rabbit.net");
+  FP sleep(1);
+  RE(verify(result, PARENT_SPECIFIED, "furry", 80), 175)
+
+  params->markParentDown(result); // frisky is down.
+
+  // Test 176
+  ST(176)
+  REINIT br(request, "i.am.rabbit.net");
+  FP sleep(1);
+  RE(verify(result, PARENT_SPECIFIED, "fluffy", 80), 176)
+
+  params->markParentDown(result); // all are down now.
+
+  // Test 177
+  ST(177)
+  REINIT br(request, "i.am.rabbit.net");
+  FP sleep(1);
+  RE(verify(result, PARENT_FAIL, NULL, 80), 177)
+
   delete request;
   delete result;
   delete params;

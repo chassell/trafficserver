@@ -94,6 +94,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
   ATSHash64Sip24 hash;
   ATSConsistentHash *fhash;
   HttpRequestData *request_info = static_cast<HttpRequestData *>(rdata);
+  bool firstCall = first_call;
   bool parentRetry = false;
   bool wrap_around[2] = {false, false};
   uint64_t path_hash = 0;
@@ -115,8 +116,8 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
     return;
   }
 
-  // findParent() call if first_call.
-  if (first_call) {
+  // findParent() call if firstCall.
+  if (firstCall) {
     last_lookup = PRIMARY;
     path_hash = getPathHash(request_info, (ATSHash64 *)&hash);
     fhash = chash[PRIMARY];
@@ -171,7 +172,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
         }
       }
       Debug("parent_select", "wrap_around[PRIMARY]: %d, wrap_around[SECONDARY]: %d", wrap_around[PRIMARY], wrap_around[SECONDARY]);
-      if (!wrap_around[PRIMARY] || (chash[SECONDARY] != NULL && !wrap_around[SECONDARY])) {
+      if (!wrap_around[PRIMARY] || (chash[SECONDARY] != NULL)) {
         Debug("parent_select", "Selected parent %s is not available, looking up another parent.", pRec->hostname);
         if (chash[SECONDARY] != NULL && !wrap_around[SECONDARY]) {
           fhash = chash[SECONDARY];
@@ -180,7 +181,12 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
           fhash = chash[PRIMARY];
           last_lookup = PRIMARY;
         }
-        prtmp = (pRecord *)fhash->lookup(NULL, 0, &chashIter[last_lookup], &wrap_around[last_lookup], &hash);
+        if (firstCall) {
+          prtmp = (pRecord *)fhash->lookup_by_hashval(path_hash, &chashIter[last_lookup], &wrap_around[last_lookup]);
+          firstCall = false;
+        } else {
+          prtmp = (pRecord *)fhash->lookup(NULL, 0, &chashIter[last_lookup], &wrap_around[last_lookup], &hash);
+        }
         if (prtmp) {
           pRec = (parents[last_lookup] + prtmp->idx);
           Debug("parent_select", "Selected a new parent: %s.", pRec->hostname);
