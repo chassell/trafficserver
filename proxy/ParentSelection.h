@@ -189,7 +189,7 @@ public:
 
   // virtual descructor needed to avoid undefined behavior whe
   // delete is called using a pointer and to avoid resource leaks.
-  virtual ~ParentSelectionStrategy() {};
+  virtual ~ParentSelectionStrategy(){};
 };
 
 struct config_params {

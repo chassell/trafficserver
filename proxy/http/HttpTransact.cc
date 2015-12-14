@@ -2642,15 +2642,12 @@ HttpTransact::HandleCacheOpenReadHit(State *s)
         server_up = false;
         update_current_info(&s->current, NULL, UNDEFINED_LOOKUP, 0);
         DebugTxn("http_trans", "CacheOpenReadHit - server_down, returning stale document");
-      }
-      else if (s->current.request_to == HOST_NONE && s->parent_result.r == PARENT_FAIL) {
-        if (is_server_negative_cached(s) && response_returnable == true &&
-          is_stale_cache_response_returnable(s) == true) {
+      } else if (s->current.request_to == HOST_NONE && s->parent_result.r == PARENT_FAIL) {
+        if (is_server_negative_cached(s) && response_returnable == true && is_stale_cache_response_returnable(s) == true) {
           server_up = false;
           update_current_info(&s->current, NULL, UNDEFINED_LOOKUP, 0);
           DebugTxn("http_trans", "CacheOpenReadHit - server_down, returning stale document");
-        }
-        else {
+        } else {
           handle_parent_died(s);
           return;
         }
@@ -3553,19 +3550,19 @@ HttpTransact::handle_response_from_parent(State *s)
       if ((s->current.attempts - 1) % s->txn_conf->per_parent_connect_attempts != 0) {
         // No we are not done with this parent so retry
         s->next_action = how_to_open_connection(s);
-        DebugTxn("http_trans", "[%s] Retrying parent for attempt %d, max %d", __func__,
-          s->current.attempts, (int) s->txn_conf->per_parent_connect_attempts);
+        DebugTxn("http_trans", "[%s] Retrying parent for attempt %d, max %d", __func__, s->current.attempts,
+                 (int)s->txn_conf->per_parent_connect_attempts);
         return;
       } else {
-        DebugTxn("http_trans", "[%s] %d per parent attempts exhausted, s->current.state: %d", __func__,
-                 s->current.attempts, s->current.state);
+        DebugTxn("http_trans", "[%s] %d per parent attempts exhausted, s->current.state: %d", __func__, s->current.attempts,
+                 s->current.state);
 
         // Only mark the parent down if we failed to connect
         //  to the parent otherwise slow origin servers cause
         //  us to mark the parent down
-        if (s->current.state != ACTIVE_TIMEOUT && s->current.state != CONNECTION_ALIVE &&
-            s->current.state != CONNECTION_CLOSED && s->current.state != INACTIVE_TIMEOUT) {
-            s->parent_params->markParentDown(&s->parent_result);
+        if (s->current.state != ACTIVE_TIMEOUT && s->current.state != CONNECTION_ALIVE && s->current.state != CONNECTION_CLOSED &&
+            s->current.state != INACTIVE_TIMEOUT) {
+          s->parent_params->markParentDown(&s->parent_result);
         }
         // We are done so look for another parent if any
         next_lookup = find_server_and_update_current_info(s);
@@ -5048,9 +5045,8 @@ HttpTransact::get_ka_info_from_config(State *s, ConnectionAttributes *server_inf
 {
   bool check_hostdb = false;
 
-  if (! server_info) {
-    TSError("[%s:%d] - Connection attributes are null, unable to set keep-alive and version flags.",
-      __FILE__, __LINE__);
+  if (!server_info) {
+    TSError("[%s:%d] - Connection attributes are null, unable to set keep-alive and version flags.", __FILE__, __LINE__);
     return false;
   }
 

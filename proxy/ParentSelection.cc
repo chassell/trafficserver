@@ -1088,7 +1088,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
       ink_assert(0);
     }
   }
-  
+
   // Test 173
   tbl[0] = '\0';
   ST(173)
