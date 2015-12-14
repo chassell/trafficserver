@@ -259,7 +259,7 @@ public:
 class match_t
 {
 public:
-  virtual bool find(const char *, size_t, size_t &, size_t &, const char *, std::string &) const = 0;
+  virtual bool find(const char *, size_t, size_t &, size_t &, const char *, std::string &, TSHttpTxn) const = 0;
   virtual size_t cont_size() const = 0;
   virtual ~match_t() {}
 };
@@ -273,7 +273,7 @@ class strmatch : public match_t
 
 public:
   virtual bool
-  find(const char *buf, size_t len, size_t &found, size_t &found_len, const char *to, std::string &repl) const
+  find(const char *buf, size_t len, size_t &found, size_t &found_len, const char *to, std::string &repl, TSHttpTxn txn) const
   {
     const char *match = icase ? strcasestr(buf, str) : strstr(buf, str);
     if (match) {
@@ -308,7 +308,7 @@ class rxmatch : public match_t
 
 public:
   virtual bool
-  find(const char *buf, size_t len, size_t &found, size_t &found_len, const char *tmpl, std::string &repl) const
+  find(const char *buf, size_t len, size_t &found, size_t &found_len, const char *tmpl, std::string &repl, TSHttpTxn txn) const
   {
     regmatch_t pmatch[MAX_RX_MATCH];
     if (regexec(&rx, buf, MAX_RX_MATCH, pmatch, REG_NOTEOL) == 0) {
@@ -326,6 +326,24 @@ public:
         case '$':
           if (isdigit(*tmpl)) {
             n = *tmpl - '0';
+          } else if (*tmpl == 'Q') {
+            tmpl++;
+            TSMBuffer bufp;
+            TSMLoc hdr_loc = NULL;
+            TSMLoc url_loc = NULL;
+
+            if (TSHttpTxnClientReqGet(txn, &bufp, &hdr_loc) == TS_SUCCESS) {
+              if (TSHttpHdrUrlGet(bufp, hdr_loc, &url_loc) == TS_SUCCESS) {
+                int query_len = 0;
+                const char *query = TSUrlHttpQueryGet(bufp, url_loc, &query_len);
+                repl.append(query, query_len);
+              }
+            }
+            if (url_loc)
+              TSHandleMLocRelease(bufp, hdr_loc, url_loc);
+            if (hdr_loc)
+              TSHandleMLocRelease(bufp, TS_NULL_MLOC, hdr_loc);
+            break;
           } else {
             n = MAX_RX_MATCH;
           }
@@ -530,7 +548,7 @@ public:
   }
 
   void
-  apply(const char *buf, size_t len, editset_t &edits) const
+  apply(const char *buf, size_t len, editset_t &edits, TSHttpTxn txn) const
   {
     /* find matches in the buf, and add match+replace to edits */
 
@@ -539,7 +557,7 @@ public:
     size_t offs = 0;
     while (offs < len) {
       std::string repl;
-      if (from->find(buf + offs, len - offs, found, found_len, to, repl)) {
+      if (from->find(buf + offs, len - offs, found, found_len, to, repl, txn)) {
         found += offs;
         edit_t(found, found_len, repl, priority).saveto(edits);
         offs = found + found_len;
@@ -582,7 +600,7 @@ typedef struct contdata_t {
 } contdata_t;
 
 static int64_t
-process_block(contdata_t *contdata, TSIOBufferReader reader)
+process_block(contdata_t *contdata, TSIOBufferReader reader, TSHttpTxn txn)
 {
   int64_t nbytes, start;
   size_t n = 0;
@@ -615,7 +633,7 @@ process_block(contdata_t *contdata, TSIOBufferReader reader)
   editset_t edits;
 
   for (rule_p r = contdata->rules.begin(); r != contdata->rules.end(); ++r) {
-    r->apply(buf, buflen, edits);
+    r->apply(buf, buflen, edits, txn);
   }
 
   for (edit_p p = edits.begin(); p != edits.end(); ++p) {
@@ -661,7 +679,7 @@ process_block(contdata_t *contdata, TSIOBufferReader reader)
   return nbytes;
 }
 static void
-streamedit_process(TSCont contp)
+streamedit_process(TSCont contp, TSHttpTxn txn)
 {
   // Read the data available to us
   // Concatenate with anything we have buffered
@@ -682,7 +700,7 @@ streamedit_process(TSCont contp)
   TSIOBuffer in_buf = TSVIOBufferGet(input_vio);
   /* Test for EOS */
   if (in_buf == NULL) {
-    process_block(contdata, NULL); // flush any buffered data
+    process_block(contdata, NULL, txn); // flush any buffered data
     TSVIONBytesSet(contdata->out_vio, contdata->bytes_out);
     TSVIOReenable(contdata->out_vio);
     return;
@@ -704,7 +722,7 @@ streamedit_process(TSCont contp)
    * that span input chunks.
    */
   while (ntodo = TSIOBufferReaderAvail(input_rd), ntodo > 0) {
-    nbytes = process_block(contdata, input_rd);
+    nbytes = process_block(contdata, input_rd, txn);
     TSIOBufferReaderConsume(input_rd, nbytes);
     TSVIONDoneSet(input_vio, TSVIONDoneGet(input_vio) + nbytes);
   }
@@ -730,6 +748,7 @@ streamedit_filter(TSCont contp, TSEvent event, void *edata)
    * Called as a continuation for filtering.
    * *** if necessary, add call at TXN_CLOSE for cleanup.
    */
+  TSHttpTxn txn = (TSHttpTxn)edata;
   TSVIO input_vio;
 
   if (TSVConnClosedGet(contp)) {
@@ -747,7 +766,7 @@ streamedit_filter(TSCont contp, TSEvent event, void *edata)
     TSVConnShutdown(TSTransformOutputVConnGet(contp), 0, 1);
     break;
   default:
-    streamedit_process(contp);
+    streamedit_process(contp, txn);
     break;
   }
   return TS_SUCCESS;
