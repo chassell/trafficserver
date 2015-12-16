@@ -32,17 +32,17 @@
 
 #include "ParentSelection.h"
 
-class ParentRoundRobin : ParentSelectionBase, public ParentSelectionStrategy
+class ParentRoundRobin : public ParentSelectionStrategy
 {
   ParentRR_t round_robin_type;
 
 public:
   ParentRoundRobin(ParentRecord *_parent_record);
   ~ParentRoundRobin();
-  void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
+  void selectParent(bool firstCall, ParentResult *result, RequestData *rdata);
   void markParentDown(ParentResult *result);
   uint32_t numParents(ParentResult *result);
-  void recordRetrySuccess(ParentResult *result);
+  void markParentUp(ParentResult *result);
 };
 
 #endif

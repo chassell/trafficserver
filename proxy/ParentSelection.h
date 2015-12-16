@@ -44,7 +44,6 @@ struct RequestData;
 struct matcher_line;
 struct ParentResult;
 class ParentRecord;
-class ParentSelectionBase;
 class ParentSelectionStrategy;
 
 enum ParentResultType {
@@ -90,7 +89,7 @@ class ParentRecord : public ControlBase
 public:
   ParentRecord()
     : parents(NULL), secondary_parents(NULL), num_parents(0), num_secondary_parents(0), round_robin(P_NO_ROUND_ROBIN),
-      ignore_query(false), rr_next(0), go_direct(true), parent_is_proxy(true), lookup_strategy(NULL)
+      ignore_query(false), rr_next(0), go_direct(true), parent_is_proxy(true), selection_strategy(NULL)
   {
   }
 
@@ -124,7 +123,7 @@ public:
   volatile uint32_t rr_next;
   bool go_direct;
   bool parent_is_proxy;
-  ParentSelectionStrategy *lookup_strategy;
+  ParentSelectionStrategy *selection_strategy;
 };
 
 // If the parent was set by the external customer api,
@@ -162,11 +161,13 @@ struct ParentResult {
 class ParentSelectionStrategy
 {
 public:
-  // void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata)
+  struct config_params *c_params;
+
+  // void selectParent(bool firstCall, ParentResult *result, RequestData *rdata)
   //
   // The implementation parent lookup.
   //
-  virtual void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata) = 0;
+  virtual void selectParent(bool firstCall, ParentResult *result, RequestData *rdata) = 0;
 
   // void markParentDown(ParentResult* rsult)
   //
@@ -180,15 +181,14 @@ public:
   //
   virtual uint32_t numParents(ParentResult *result) = 0;
 
-  // void recordRetrySuccess
+  // void markParentUp
   //
   //    After a successful retry, http calls this function
   //      to clear the bits indicating the parent is down
   //
-  virtual void recordRetrySuccess(ParentResult *result) = 0;
+  virtual void markParentUp(ParentResult *result) = 0;
 
-  // virtual descructor needed to avoid undefined behavior whe
-  // delete is called using a pointer and to avoid resource leaks.
+  // virtual descructor 
   virtual ~ParentSelectionStrategy(){};
 };
 
@@ -199,28 +199,11 @@ struct config_params {
   int32_t DNS_ParentOnly;
 };
 
-//
-// Implements common functionality of the ParentSelection.
-//
-class ParentSelectionBase
-{
-public:
-  ParentRecord *parent_record;
-  struct config_params *c_params;
-  ParentSelectionBase();
-  ~ParentSelectionBase()
-  {
-    if (c_params)
-      delete c_params;
-  }
-};
-
 class ParentConfigParams : public ParentSelectionStrategy, public ConfigInfo
 {
 public:
   P_table *parent_table;
   ParentRecord *DefaultParent;
-  struct config_params *c_params;
   ParentConfigParams(P_table *_parent_table);
   ~ParentConfigParams(){};
 
@@ -231,31 +214,37 @@ public:
 
   // implementation of functions from ParentSelectionStrategy.
   void
-  lookupParent(bool firstCall, ParentResult *result, RequestData *rdata)
+  selectParent(bool firstCall, ParentResult *result, RequestData *rdata)
   {
-    ink_release_assert(result->rec->lookup_strategy != NULL);
-    return result->rec->lookup_strategy->lookupParent(firstCall, result, rdata);
+    ink_release_assert(result->rec->selection_strategy != NULL);
+    if (result->rec->selection_strategy->c_params == NULL) {
+      result->rec->selection_strategy->c_params = c_params;
+    }
+    return result->rec->selection_strategy->selectParent(firstCall, result, rdata);
   }
 
   void
   markParentDown(ParentResult *result)
   {
-    ink_release_assert(result->rec->lookup_strategy != NULL);
-    result->rec->lookup_strategy->markParentDown(result);
+    ink_release_assert(result->rec->selection_strategy != NULL);
+    if (result->rec->selection_strategy->c_params == NULL) {
+      result->rec->selection_strategy->c_params = c_params;
+    }
+    result->rec->selection_strategy->markParentDown(result);
   }
 
   uint32_t
   numParents(ParentResult *result)
   {
-    ink_release_assert(result->rec->lookup_strategy != NULL);
-    return result->rec->lookup_strategy->numParents(result);
+    ink_release_assert(result->rec->selection_strategy != NULL);
+    return result->rec->selection_strategy->numParents(result);
   }
 
   void
-  recordRetrySuccess(ParentResult *result)
+  markParentUp(ParentResult *result)
   {
     ink_release_assert(result != NULL);
-    result->rec->lookup_strategy->recordRetrySuccess(result);
+    result->rec->selection_strategy->markParentUp(result);
   }
 };
 

@@ -36,7 +36,7 @@
 //  Implementation of round robin based upon consistent hash of the URL,
 //  ParentRR_t = P_CONSISTENT_HASH.
 //
-class ParentConsistentHash : ParentSelectionBase, public ParentSelectionStrategy
+class ParentConsistentHash : public ParentSelectionStrategy
 {
   // there are two hashes PRIMARY parents
   // and SECONDARY parents.
@@ -45,6 +45,7 @@ class ParentConsistentHash : ParentSelectionBase, public ParentSelectionStrategy
   ATSConsistentHashIter chashIter[2];
   pRecord *parents[2];
   bool foundParents[2][MAX_PARENTS];
+  bool ignore_query;
 
 public:
   static const int PRIMARY = 0;
@@ -52,10 +53,10 @@ public:
   ParentConsistentHash(ParentRecord *_parent_record);
   ~ParentConsistentHash();
   uint64_t getPathHash(HttpRequestData *hrdata, ATSHash64 *h);
-  void lookupParent(bool firstCall, ParentResult *result, RequestData *rdata);
+  void selectParent(bool firstCall, ParentResult *result, RequestData *rdata);
   void markParentDown(ParentResult *result);
   uint32_t numParents(ParentResult *result);
-  void recordRetrySuccess(ParentResult *result);
+  void markParentUp(ParentResult *result);
 };
 
 #endif

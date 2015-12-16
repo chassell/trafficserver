@@ -3488,7 +3488,7 @@ HttpTransact::handle_response_from_parent(State *s)
     s->current.server->connect_result = 0;
     SET_VIA_STRING(VIA_DETAIL_PP_CONNECT, VIA_DETAIL_PP_SUCCESS);
     if (s->parent_result.retry) {
-      s->parent_params->recordRetrySuccess(&s->parent_result);
+      s->parent_params->markParentUp(&s->parent_result);
     }
     handle_forward_server_connection_open(s);
     break;

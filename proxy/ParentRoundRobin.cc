@@ -22,10 +22,10 @@
  */
 #include "ParentRoundRobin.h"
 
-ParentRoundRobin::ParentRoundRobin(ParentRecord *_parent_record)
+ParentRoundRobin::ParentRoundRobin(ParentRecord *parent_record)
 {
-  parent_record = _parent_record;
   round_robin_type = parent_record->round_robin;
+  c_params = NULL;
 
   if (is_debug_tag_set("parent_select")) {
     switch (round_robin_type) {
@@ -46,33 +46,29 @@ ParentRoundRobin::ParentRoundRobin(ParentRecord *_parent_record)
   }
 }
 
-ParentRoundRobin::~ParentRoundRobin()
-{
-  if (parent_record) {
-    delete parent_record;
-  }
-}
+ParentRoundRobin::~ParentRoundRobin() { }
 
 void
-ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestData *rdata)
+ParentRoundRobin::selectParent(bool first_call, ParentResult *result, RequestData *rdata)
 {
-  Debug("parent_select", "In ParentRoundRobin::lookupParent(): Using a round robin parent selection strategy.");
+  Debug("parent_select", "In ParentRoundRobin::selectParent(): Using a round robin parent selection strategy.");
+
   int cur_index = 0;
   bool parentUp = false;
   bool parentRetry = false;
-  bool bypass_ok = (parent_record->go_direct == true && c_params->DNS_ParentOnly == 0);
+  bool bypass_ok = (result->rec->go_direct == true && c_params->DNS_ParentOnly == 0);
 
   HttpRequestData *request_info = static_cast<HttpRequestData *>(rdata);
 
-  ink_assert(numParents(result) > 0 || parent_record->go_direct == true);
+  ink_assert(numParents(result) > 0 || result->rec->go_direct == true);
 
   if (first_call) {
-    if (parent_record->parents == NULL) {
+    if (result->rec->parents == NULL) {
       // We should only get into this state if
       //   if we are supposed to go direct
-      ink_assert(parent_record->go_direct == true);
+      ink_assert(result->rec->go_direct == true);
       // Could not find a parent
-      if (parent_record->go_direct == true && parent_record->parent_is_proxy) {
+      if (result->rec->go_direct == true && result->rec->parent_is_proxy) {
         result->r = PARENT_DIRECT;
       } else {
         result->r = PARENT_FAIL;
@@ -82,7 +78,8 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
       result->port = 0;
       return;
     } else {
-      switch (parent_record->round_robin) {
+      Debug("parent_select","result->rec->round_robin: %d", result->rec->round_robin);
+      switch (result->rec->round_robin) {
       case P_HASH_ROUND_ROBIN:
         // INKqa12817 - make sure to convert to host byte order
         // Why was it important to do host order here?  And does this have any
@@ -90,14 +87,14 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
         // preserved for now anyway as ats_ip_hash returns the 32-bit address in
         // that case.
         if (rdata->get_client_ip() != NULL) {
-          cur_index = result->start_parent = ntohl(ats_ip_hash(rdata->get_client_ip())) % parent_record->num_parents;
+          cur_index = result->start_parent = ntohl(ats_ip_hash(rdata->get_client_ip())) % result->rec->num_parents;
         } else {
           cur_index = 0;
         }
         break;
       case P_STRICT_ROUND_ROBIN:
-        cur_index = ink_atomic_increment((int32_t *)&parent_record->rr_next, 1);
-        cur_index = result->start_parent = cur_index % parent_record->num_parents;
+        cur_index = ink_atomic_increment((int32_t *)&result->rec->rr_next, 1);
+        cur_index = result->start_parent = cur_index % result->rec->num_parents;
         break;
       case P_NO_ROUND_ROBIN:
         cur_index = result->start_parent = 0;
@@ -108,14 +105,14 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
     }
   } else {
     // Move to next parent due to failure
-    cur_index = (result->last_parent + 1) % parent_record->num_parents;
+    cur_index = (result->last_parent + 1) % result->rec->num_parents;
 
     // Check to see if we have wrapped around
     if ((unsigned int)cur_index == result->start_parent) {
       // We've wrapped around so bypass if we can
       if (bypass_ok == true) {
         // Could not find a parent
-        if (parent_record->go_direct == true && parent_record->parent_is_proxy) {
+        if (result->rec->go_direct == true && result->rec->parent_is_proxy) {
           result->r = PARENT_DIRECT;
         } else {
           result->r = PARENT_FAIL;
@@ -134,37 +131,37 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
   //   should be retried
   do {
     // DNS ParentOnly inhibits bypassing the parent so always return that t
-    if ((parent_record->parents[cur_index].failedAt == 0) ||
-        (parent_record->parents[cur_index].failCount < c_params->FailThreshold)) {
+    if ((result->rec->parents[cur_index].failedAt == 0) ||
+        (result->rec->parents[cur_index].failCount < c_params->FailThreshold)) {
       Debug("parent_select", "FailThreshold = %d", c_params->FailThreshold);
       Debug("parent_select", "Selecting a parent due to little failCount"
                              "(faileAt: %u failCount: %d)",
-            (unsigned)parent_record->parents[cur_index].failedAt, parent_record->parents[cur_index].failCount);
+            (unsigned)result->rec->parents[cur_index].failedAt, result->rec->parents[cur_index].failCount);
       parentUp = true;
     } else {
       if ((result->wrap_around) ||
-          ((parent_record->parents[cur_index].failedAt + c_params->ParentRetryTime) < request_info->xact_start)) {
+          ((result->rec->parents[cur_index].failedAt + c_params->ParentRetryTime) < request_info->xact_start)) {
         Debug("parent_select", "Parent[%d].failedAt = %u, retry = %u,xact_start = %" PRId64 " but wrap = %d", cur_index,
-              (unsigned)parent_record->parents[cur_index].failedAt, c_params->ParentRetryTime, (int64_t)request_info->xact_start,
+              (unsigned)result->rec->parents[cur_index].failedAt, c_params->ParentRetryTime, (int64_t)request_info->xact_start,
               result->wrap_around);
         // Reuse the parent
         parentUp = true;
         parentRetry = true;
-        Debug("parent_select", "Parent marked for retry %s:%d", parent_record->parents[cur_index].hostname,
-              parent_record->parents[cur_index].port);
+        Debug("parent_select", "Parent marked for retry %s:%d", result->rec->parents[cur_index].hostname,
+              result->rec->parents[cur_index].port);
       } else {
         parentUp = false;
       }
     }
 
     if (parentUp == true) {
-      if (!parent_record->parent_is_proxy) {
+      if (!result->rec->parent_is_proxy) {
         result->r = PARENT_ORIGIN;
       } else {
         result->r = PARENT_SPECIFIED;
       }
-      result->hostname = parent_record->parents[cur_index].hostname;
-      result->port = parent_record->parents[cur_index].port;
+      result->hostname = result->rec->parents[cur_index].hostname;
+      result->port = result->rec->parents[cur_index].port;
       result->last_parent = cur_index;
       result->retry = parentRetry;
       ink_assert(result->hostname != NULL);
@@ -172,10 +169,10 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
       Debug("parent_select", "Chosen parent = %s.%d", result->hostname, result->port);
       return;
     }
-    cur_index = (cur_index + 1) % parent_record->num_parents;
+    cur_index = (cur_index + 1) % result->rec->num_parents;
   } while ((unsigned int)cur_index != result->start_parent);
 
-  if (parent_record->go_direct == true && parent_record->parent_is_proxy) {
+  if (result->rec->go_direct == true && result->rec->parent_is_proxy) {
     result->r = PARENT_DIRECT;
   } else {
     result->r = PARENT_FAIL;
@@ -188,7 +185,7 @@ ParentRoundRobin::lookupParent(bool first_call, ParentResult *result, RequestDat
 uint32_t
 ParentRoundRobin::numParents(ParentResult *result)
 {
-  return parent_record->num_parents;
+  return result->rec->num_parents;
 }
 
 void
@@ -253,7 +250,7 @@ ParentRoundRobin::markParentDown(ParentResult *result)
 }
 
 void
-ParentRoundRobin::recordRetrySuccess(ParentResult *result)
+ParentRoundRobin::markParentUp(ParentResult *result)
 {
   pRecord *pRec;
 

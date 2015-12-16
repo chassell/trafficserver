@@ -22,15 +22,16 @@
  */
 #include "ParentConsistentHash.h"
 
-ParentConsistentHash::ParentConsistentHash(ParentRecord *_parent_record)
+ParentConsistentHash::ParentConsistentHash(ParentRecord *parent_record)
 {
   int i;
 
-  parent_record = _parent_record;
   ink_assert(parent_record->num_parents > 0);
   parents[PRIMARY] = parent_record->parents;
   parents[SECONDARY] = parent_record->secondary_parents;
+  ignore_query = parent_record->ignore_query;
   memset(foundParents, 0, sizeof(foundParents));
+  c_params = NULL;
 
   chash[PRIMARY] = new ATSConsistentHash();
 
@@ -54,8 +55,11 @@ ParentConsistentHash::ParentConsistentHash(ParentRecord *_parent_record)
 
 ParentConsistentHash::~ParentConsistentHash()
 {
-  if (parent_record) {
-    delete parent_record;
+  if (chash[PRIMARY]) {
+    delete chash[PRIMARY];
+  }
+  if (chash[SECONDARY]) {
+    delete chash[SECONDARY];
   }
 }
 
@@ -75,7 +79,7 @@ ParentConsistentHash::getPathHash(HttpRequestData *hrdata, ATSHash64 *h)
     h->update(tmp, len);
   }
 
-  if (!parent_record->ignore_query) {
+  if (!ignore_query) {
     tmp = url->query_get(&len);
     if (tmp) {
       h->update("?", 1);
@@ -89,7 +93,7 @@ ParentConsistentHash::getPathHash(HttpRequestData *hrdata, ATSHash64 *h)
 }
 
 void
-ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, RequestData *rdata)
+ParentConsistentHash::selectParent(bool first_call, ParentResult *result, RequestData *rdata)
 {
   ATSHash64Sip24 hash;
   ATSConsistentHash *fhash;
@@ -102,11 +106,11 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
   pRecord *prtmp = NULL, *pRec = NULL;
 
   Debug("parent_select", "ParentConsistentHash::%s(): Using a consistent hash parent selection strategy.", __func__);
-  ink_assert(numParents(result) > 0 || parent_record->go_direct == true);
+  ink_assert(numParents(result) > 0 || result->rec->go_direct == true);
 
   // Should only get into this state if we are supposed to go direct.
   if (parents[PRIMARY] == NULL && parents[SECONDARY] == NULL) {
-    if (parent_record->go_direct == true) {
+    if (result->rec->go_direct == true) {
       result->r = PARENT_DIRECT;
     } else {
       result->r = PARENT_FAIL;
@@ -157,16 +161,16 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
         if ((pRec->failedAt + c_params->ParentRetryTime) < request_info->xact_start) {
           parentRetry = true;
           // make sure that the proper state is recorded in the result structure
-          // so that recordRetrySuccess() finds the proper record.
+          // so that markParentUp() finds the proper record.
           result->last_parent = prtmp->idx;
           result->last_lookup = last_lookup;
           result->retry = parentRetry;
-          if (!parent_record->parent_is_proxy) {
+          if (!result->rec->parent_is_proxy) {
             result->r = PARENT_ORIGIN;
           } else {
             result->r = PARENT_SPECIFIED;
           }
-          recordRetrySuccess(result);
+          markParentUp(result);
           Debug("parent_select", "Down parent %s is now retryable, marked it available.", pRec->hostname);
           break;
         }
@@ -205,7 +209,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
 
   // use the available parent.
   if (pRec && pRec->available) {
-    if (!parent_record->parent_is_proxy) {
+    if (!result->rec->parent_is_proxy) {
       result->r = PARENT_ORIGIN;
     } else {
       result->r = PARENT_SPECIFIED;
@@ -219,7 +223,7 @@ ParentConsistentHash::lookupParent(bool first_call, ParentResult *result, Reques
     ink_assert(result->port != 0);
     Debug("parent_select", "Chosen parent: %s.%d", result->hostname, result->port);
   } else {
-    if (parent_record->go_direct == true && parent_record->parent_is_proxy) {
+    if (result->rec->go_direct == true && result->rec->parent_is_proxy) {
       result->r = PARENT_DIRECT;
     } else {
       result->r = PARENT_FAIL;
@@ -301,10 +305,10 @@ ParentConsistentHash::numParents(ParentResult *result)
 
   switch (result->last_lookup) {
   case PRIMARY:
-    n = parent_record->num_parents;
+    n = result->rec->num_parents;
     break;
   case SECONDARY:
-    n = parent_record->num_secondary_parents;
+    n = result->rec->num_secondary_parents;
     break;
   }
 
@@ -312,7 +316,7 @@ ParentConsistentHash::numParents(ParentResult *result)
 }
 
 void
-ParentConsistentHash::recordRetrySuccess(ParentResult *result)
+ParentConsistentHash::markParentUp(ParentResult *result)
 {
   pRecord *pRec;
 

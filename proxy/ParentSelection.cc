@@ -66,34 +66,6 @@ enum ParentCB_t {
   PARENT_DNS_ONLY_CB,
 };
 
-ParentSelectionBase::ParentSelectionBase()
-{
-  bool enable = false;
-  int32_t retry_time = 0;
-  int32_t fail_threshold = 0;
-  int32_t dns_parent_only = 0;
-
-  this->c_params = (struct config_params *)ats_malloc(sizeof(struct config_params));
-
-  // Handle parent timeout
-  PARENT_ReadConfigInteger(retry_time, retry_var);
-  c_params->ParentRetryTime = retry_time;
-
-  // Handle parent enable
-  PARENT_ReadConfigInteger(enable, enable_var);
-  c_params->ParentEnable = enable;
-
-  // Handle the fail threshold
-  PARENT_ReadConfigInteger(fail_threshold, threshold_var);
-  c_params->FailThreshold = fail_threshold;
-
-  // Handle dns parent only
-  PARENT_ReadConfigInteger(dns_parent_only, dns_parent_only_var);
-  c_params->DNS_ParentOnly = dns_parent_only;
-
-  parent_record = NULL;
-}
-
 ParentConfigParams::ParentConfigParams(P_table *_parent_table)
 {
   char *default_val = NULL;
@@ -140,7 +112,7 @@ ParentConfigParams::findParent(HttpRequestData *rdata, ParentResult *result)
   ParentRecord *defaultPtr = DefaultParent;
   ParentRecord *rec;
 
-  Debug("parent_select", "In ParentSelectionBase::findParent(): parent_table: %p.", parent_table);
+  Debug("parent_select", "In ParentConfigParams::findParent(): parent_table: %p.", parent_table);
   ink_assert(result->r == PARENT_UNDEFINED);
 
   // Check to see if we are enabled
@@ -188,7 +160,7 @@ ParentConfigParams::findParent(HttpRequestData *rdata, ParentResult *result)
 
   if (rec != extApiRecord) {
     // first lookup
-    rec->lookup_strategy->lookupParent(true, result, rdata);
+    selectParent(true, result, rdata);
   }
 
   const char *host = rdata->get_host();
@@ -225,7 +197,7 @@ ParentConfigParams::nextParent(HttpRequestData *rdata, ParentResult *result)
 {
   P_table *tablePtr = parent_table;
 
-  Debug("parent_select", "ParentSelectionBase::nextParent(): parent_table: %p, result->rec: %p, result->epoch: %p", parent_table,
+  Debug("parent_select", "ParentConfigParams::nextParent(): parent_table: %p, result->rec: %p, result->epoch: %p", parent_table,
         result->rec, result->epoch);
 
   //  Make sure that we are being called back with a
@@ -242,13 +214,13 @@ ParentConfigParams::nextParent(HttpRequestData *rdata, ParentResult *result)
     result->r = PARENT_FAIL;
     return;
   }
-  Debug("parent_select", "ParentSelectionBase::nextParent(): result->r: %d, tablePtr: %p, result->epoch: %p", result->r, tablePtr,
+  Debug("parent_select", "ParentConfigParams::nextParent(): result->r: %d, tablePtr: %p, result->epoch: %p", result->r, tablePtr,
         result->epoch);
   ink_release_assert(tablePtr == result->epoch);
 
   // Find the next parent in the array
-  Debug("parent_select", "Calling lookupParent() from nextParent");
-  result->rec->lookup_strategy->lookupParent(false, result, rdata);
+  Debug("parent_select", "Calling selectParent() from nextParent");
+  selectParent(false, result, rdata);
 
   const char *host = rdata->get_host();
 
@@ -649,11 +621,11 @@ ParentRecord::Init(matcher_line *line_info)
   case P_STRICT_ROUND_ROBIN:
   case P_HASH_ROUND_ROBIN:
     TSDebug("parent_select", "allocating ParentRoundRobin() lookup strategy.");
-    lookup_strategy = new ParentRoundRobin(this);
+    selection_strategy = new ParentRoundRobin(this);
     break;
   case P_CONSISTENT_HASH:
     TSDebug("parent_select", "allocating ParentConsistentHash() lookup strategy.");
-    lookup_strategy = new ParentConsistentHash(this);
+    selection_strategy = new ParentConsistentHash(this);
     break;
   default:
     ink_release_assert(0);
