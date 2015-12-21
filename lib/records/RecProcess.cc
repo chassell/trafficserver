@@ -562,11 +562,6 @@ _RecRegisterRawStat(RecRawStatBlock *rsb, RecT rec_type, const char *name, RecDa
     err = REC_ERR_FAIL;
     goto Ldone;
   }
-  if (r->rsb_id > 0 && r->rsb_id != id) {
-    Warning("_RecRegisterRawStat(): Created and reusing a stat with id = %d for new stat named %s", r->rsb_id, name);
-  } else {
-    Warning("_RecRegisterStat(): Stat created, name: %s, id: %d", name, id);
-  }
   r->rsb_id = id; // This is the index within the RSB raw block for this stat, used for lookups by name.
   if (i_am_the_record_owner(r->rec_type)) {
     r->sync_required = r->sync_required | REC_PEER_SYNC_REQUIRED;
@@ -581,7 +576,6 @@ _RecRegisterRawStat(RecRawStatBlock *rsb, RecT rec_type, const char *name, RecDa
 
   // setup the periodic sync callback
   RecRegisterRawStatSyncCb(name, sync_cb, rsb, id);
-  Warning("_RecRegisterRawStat(): Stat created, id:%d name:%s, data address:%p", id, name, &r->stat_meta.data_raw);
 
 Ldone:
   return err;
