@@ -87,6 +87,7 @@
 #define MAX_CONFIG_LINE 1024
 #define MAX_RX_MATCH 10
 #define WHITESPACE " \t\r\n"
+#define PLUGIN_NAME "stream_editor"
 
 #include <stdint.h>
 
@@ -139,7 +140,7 @@ struct edit_t {
         edits.insert(*this);
         return true;
       } catch (const edit_t &conflicted) {
-        TSDebug("stream-editor", "Conflicting edits [%ld-%ld] vs [%ld-%ld]", start, start + bytes, conflicted.start,
+        TSDebug(PLUGIN_NAME, "Conflicting edits [%ld-%ld] vs [%ld-%ld]", start, start + bytes, conflicted.start,
                 conflicted.start + conflicted.bytes);
         if (priority < conflicted.priority) {
           /* we win conflict and oust our enemy */
@@ -329,20 +330,16 @@ public:
           } else if (*tmpl == 'Q') {
             tmpl++;
             TSMBuffer bufp;
-            TSMLoc hdr_loc = NULL;
             TSMLoc url_loc = NULL;
 
-            if (TSHttpTxnClientReqGet(txn, &bufp, &hdr_loc) == TS_SUCCESS) {
-              if (TSHttpHdrUrlGet(bufp, hdr_loc, &url_loc) == TS_SUCCESS) {
-                int query_len = 0;
-                const char *query = TSUrlHttpQueryGet(bufp, url_loc, &query_len);
-                repl.append(query, query_len);
-              }
+            if (TSHttpTxnPristineUrlGet(txn, &bufp, &url_loc) == TS_SUCCESS) {
+              int query_len = 0;
+              const char *query = TSUrlHttpQueryGet(bufp, url_loc, &query_len);
+              TSDebug(PLUGIN_NAME, "query = %.*s", query_len, query);
+              repl.append(query, query_len);
             }
             if (url_loc)
-              TSHandleMLocRelease(bufp, hdr_loc, url_loc);
-            if (hdr_loc)
-              TSHandleMLocRelease(bufp, TS_NULL_MLOC, hdr_loc);
+              TSHandleMLocRelease(bufp, TS_NULL_MLOC, url_loc);
             break;
           } else {
             n = MAX_RX_MATCH;
@@ -865,7 +862,7 @@ TSPluginInit(int argc, const char *argv[])
   }
 
   if (rewrites_in != NULL) {
-    TSDebug("[stream-editor]", "initialising input filtering");
+    TSDebug(PLUGIN_NAME, "initialising input filtering");
     inputcont = TSContCreate(streamedit_setup, NULL);
     if (inputcont == NULL) {
       TSError("[stream-editor] failed to initialise input filtering!");
@@ -874,11 +871,11 @@ TSPluginInit(int argc, const char *argv[])
       TSHttpHookAdd(TS_HTTP_READ_REQUEST_HDR_HOOK, inputcont);
     }
   } else {
-    TSDebug("[stream-editor]", "no input filter rules, skipping filter");
+    TSDebug(PLUGIN_NAME, "no input filter rules, skipping filter");
   }
 
   if (rewrites_out != NULL) {
-    TSDebug("[stream-editor]", "initialising output filtering");
+    TSDebug(PLUGIN_NAME, "initialising output filtering");
     outputcont = TSContCreate(streamedit_setup, NULL);
     if (outputcont == NULL) {
       TSError("[stream-editor] failed to initialise output filtering!");
@@ -887,6 +884,6 @@ TSPluginInit(int argc, const char *argv[])
       TSHttpHookAdd(TS_HTTP_READ_RESPONSE_HDR_HOOK, outputcont);
     }
   } else {
-    TSDebug("[stream-editor]", "no output filter rules, skipping filter");
+    TSDebug(PLUGIN_NAME, "no output filter rules, skipping filter");
   }
 }
