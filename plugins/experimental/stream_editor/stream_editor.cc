@@ -802,6 +802,7 @@ streamedit_setup(TSCont contp, TSEvent event, void *edata)
 
   if (contdata == NULL) {
     /* Nothing to do */
+    TSHttpTxnReenable(txn, TS_EVENT_HTTP_CONTINUE);
     return TS_SUCCESS;
   }
 
