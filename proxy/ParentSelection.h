@@ -188,7 +188,7 @@ public:
   //
   virtual void markParentUp(ParentResult *result) = 0;
 
-  // virtual descructor 
+  // virtual descructor
   virtual ~ParentSelectionStrategy(){};
 };
 

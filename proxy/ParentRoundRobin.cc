@@ -46,7 +46,9 @@ ParentRoundRobin::ParentRoundRobin(ParentRecord *parent_record)
   }
 }
 
-ParentRoundRobin::~ParentRoundRobin() { }
+ParentRoundRobin::~ParentRoundRobin()
+{
+}
 
 void
 ParentRoundRobin::selectParent(bool first_call, ParentResult *result, RequestData *rdata)
@@ -78,7 +80,7 @@ ParentRoundRobin::selectParent(bool first_call, ParentResult *result, RequestDat
       result->port = 0;
       return;
     } else {
-      Debug("parent_select","result->rec->round_robin: %d", result->rec->round_robin);
+      Debug("parent_select", "result->rec->round_robin: %d", result->rec->round_robin);
       switch (result->rec->round_robin) {
       case P_HASH_ROUND_ROBIN:
         // INKqa12817 - make sure to convert to host byte order
@@ -131,8 +133,7 @@ ParentRoundRobin::selectParent(bool first_call, ParentResult *result, RequestDat
   //   should be retried
   do {
     // DNS ParentOnly inhibits bypassing the parent so always return that t
-    if ((result->rec->parents[cur_index].failedAt == 0) ||
-        (result->rec->parents[cur_index].failCount < c_params->FailThreshold)) {
+    if ((result->rec->parents[cur_index].failedAt == 0) || (result->rec->parents[cur_index].failCount < c_params->FailThreshold)) {
       Debug("parent_select", "FailThreshold = %d", c_params->FailThreshold);
       Debug("parent_select", "Selecting a parent due to little failCount"
                              "(faileAt: %u failCount: %d)",
