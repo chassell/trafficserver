@@ -22,10 +22,9 @@
  */
 #include "ParentRoundRobin.h"
 
-ParentRoundRobin::ParentRoundRobin(ParentRecord *parent_record)
+ParentRoundRobin::ParentRoundRobin(ParentRecord *parent_record, ParentRR_t _round_robin_type)
 {
-  round_robin_type = parent_record->round_robin;
-  c_params = NULL;
+  round_robin_type = _round_robin_type;
 
   if (is_debug_tag_set("parent_select")) {
     switch (round_robin_type) {
@@ -51,14 +50,14 @@ ParentRoundRobin::~ParentRoundRobin()
 }
 
 void
-ParentRoundRobin::selectParent(bool first_call, ParentResult *result, RequestData *rdata)
+ParentRoundRobin::selectParent(const ParentSelectionPolicy *policy, bool first_call, ParentResult *result, RequestData *rdata)
 {
   Debug("parent_select", "In ParentRoundRobin::selectParent(): Using a round robin parent selection strategy.");
 
   int cur_index = 0;
   bool parentUp = false;
   bool parentRetry = false;
-  bool bypass_ok = (result->rec->go_direct == true && c_params->DNS_ParentOnly == 0);
+  bool bypass_ok = (result->rec->go_direct == true && policy->DNS_ParentOnly == 0);
 
   HttpRequestData *request_info = static_cast<HttpRequestData *>(rdata);
 
@@ -80,8 +79,8 @@ ParentRoundRobin::selectParent(bool first_call, ParentResult *result, RequestDat
       result->port = 0;
       return;
     } else {
-      Debug("parent_select", "result->rec->round_robin: %d", result->rec->round_robin);
-      switch (result->rec->round_robin) {
+      Debug("parent_select", "round_robin: %d", round_robin_type);
+      switch (round_robin_type) {
       case P_HASH_ROUND_ROBIN:
         // INKqa12817 - make sure to convert to host byte order
         // Why was it important to do host order here?  And does this have any
@@ -133,17 +132,17 @@ ParentRoundRobin::selectParent(bool first_call, ParentResult *result, RequestDat
   //   should be retried
   do {
     // DNS ParentOnly inhibits bypassing the parent so always return that t
-    if ((result->rec->parents[cur_index].failedAt == 0) || (result->rec->parents[cur_index].failCount < c_params->FailThreshold)) {
-      Debug("parent_select", "FailThreshold = %d", c_params->FailThreshold);
+    if ((result->rec->parents[cur_index].failedAt == 0) || (result->rec->parents[cur_index].failCount < policy->FailThreshold)) {
+      Debug("parent_select", "FailThreshold = %d", policy->FailThreshold);
       Debug("parent_select", "Selecting a parent due to little failCount"
                              "(faileAt: %u failCount: %d)",
             (unsigned)result->rec->parents[cur_index].failedAt, result->rec->parents[cur_index].failCount);
       parentUp = true;
     } else {
       if ((result->wrap_around) ||
-          ((result->rec->parents[cur_index].failedAt + c_params->ParentRetryTime) < request_info->xact_start)) {
+          ((result->rec->parents[cur_index].failedAt + policy->ParentRetryTime) < request_info->xact_start)) {
         Debug("parent_select", "Parent[%d].failedAt = %u, retry = %u,xact_start = %" PRId64 " but wrap = %d", cur_index,
-              (unsigned)result->rec->parents[cur_index].failedAt, c_params->ParentRetryTime, (int64_t)request_info->xact_start,
+              (unsigned)result->rec->parents[cur_index].failedAt, policy->ParentRetryTime, (int64_t)request_info->xact_start,
               result->wrap_around);
         // Reuse the parent
         parentUp = true;
@@ -184,13 +183,13 @@ ParentRoundRobin::selectParent(bool first_call, ParentResult *result, RequestDat
 }
 
 uint32_t
-ParentRoundRobin::numParents(ParentResult *result)
+ParentRoundRobin::numParents(ParentResult *result) const
 {
   return result->rec->num_parents;
 }
 
 void
-ParentRoundRobin::markParentDown(ParentResult *result)
+ParentRoundRobin::markParentDown(const ParentSelectionPolicy *policy, ParentResult *result)
 {
   time_t now;
   pRecord *pRec;
@@ -243,7 +242,7 @@ ParentRoundRobin::markParentDown(ParentResult *result)
     new_fail_count = old_count + 1;
   }
 
-  if (new_fail_count > 0 && new_fail_count == c_params->FailThreshold) {
+  if (new_fail_count > 0 && new_fail_count == policy->FailThreshold) {
     Note("Failure threshold met, http parent proxy %s:%d marked down", pRec->hostname, pRec->port);
     pRec->available = false;
     Debug("parent_select", "Parent marked unavailable, pRec->available=%d", pRec->available);

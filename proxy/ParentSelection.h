@@ -88,8 +88,8 @@ class ParentRecord : public ControlBase
 {
 public:
   ParentRecord()
-    : parents(NULL), secondary_parents(NULL), num_parents(0), num_secondary_parents(0), round_robin(P_NO_ROUND_ROBIN),
-      ignore_query(false), rr_next(0), go_direct(true), parent_is_proxy(true), selection_strategy(NULL)
+    : parents(NULL), secondary_parents(NULL), num_parents(0), num_secondary_parents(0), ignore_query(false), rr_next(0),
+      go_direct(true), parent_is_proxy(true), selection_strategy(NULL)
   {
   }
 
@@ -118,7 +118,6 @@ public:
   const char *scheme;
   // private:
   const char *ProcessParents(char *val, bool isPrimary);
-  ParentRR_t round_robin;
   bool ignore_query;
   volatile uint32_t rr_next;
   bool go_direct;
@@ -156,30 +155,36 @@ struct ParentResult {
   int last_lookup; // state for for consistent hash.
 };
 
+struct ParentSelectionPolicy {
+  int32_t ParentRetryTime;
+  int32_t ParentEnable;
+  int32_t FailThreshold;
+  int32_t DNS_ParentOnly;
+  ParentSelectionPolicy();
+};
+
 //
 // API definition.
 class ParentSelectionStrategy
 {
 public:
-  struct config_params *c_params;
-
-  // void selectParent(bool firstCall, ParentResult *result, RequestData *rdata)
+  // void selectParent(const ParentSelectionPolicy *policy, bool firstCall, ParentResult *result, RequestData *rdata)
   //
   // The implementation parent lookup.
   //
-  virtual void selectParent(bool firstCall, ParentResult *result, RequestData *rdata) = 0;
+  virtual void selectParent(const ParentSelectionPolicy *policy, bool firstCall, ParentResult *result, RequestData *rdata) = 0;
 
-  // void markParentDown(ParentResult* rsult)
+  // void markParentDown(const ParentSelectionPolicy *policy, ParentResult* rsult)
   //
   //    Marks the parent pointed to by result as down
   //
-  virtual void markParentDown(ParentResult *result) = 0;
+  virtual void markParentDown(const ParentSelectionPolicy *policy, ParentResult *result) = 0;
 
   // uint32_t numParents(ParentResult *result);
   //
   // Returns the number of parent records in a strategy.
   //
-  virtual uint32_t numParents(ParentResult *result) = 0;
+  virtual uint32_t numParents(ParentResult *result) const = 0;
 
   // void markParentUp
   //
@@ -188,23 +193,14 @@ public:
   //
   virtual void markParentUp(ParentResult *result) = 0;
 
-  // virtual descructor
+  // virtual destructor.
   virtual ~ParentSelectionStrategy(){};
 };
 
-struct config_params {
-  int32_t ParentRetryTime;
-  int32_t ParentEnable;
-  int32_t FailThreshold;
-  int32_t DNS_ParentOnly;
-};
-
-class ParentConfigParams : public ParentSelectionStrategy, public ConfigInfo
+class ParentConfigParams : public ConfigInfo
 {
 public:
-  P_table *parent_table;
-  ParentRecord *DefaultParent;
-  ParentConfigParams(P_table *_parent_table);
+  explicit ParentConfigParams(P_table *_parent_table);
   ~ParentConfigParams(){};
 
   bool apiParentExists(HttpRequestData *rdata);
@@ -217,20 +213,14 @@ public:
   selectParent(bool firstCall, ParentResult *result, RequestData *rdata)
   {
     ink_release_assert(result->rec->selection_strategy != NULL);
-    if (result->rec->selection_strategy->c_params == NULL) {
-      result->rec->selection_strategy->c_params = c_params;
-    }
-    return result->rec->selection_strategy->selectParent(firstCall, result, rdata);
+    return result->rec->selection_strategy->selectParent(&policy, firstCall, result, rdata);
   }
 
   void
   markParentDown(ParentResult *result)
   {
     ink_release_assert(result->rec->selection_strategy != NULL);
-    if (result->rec->selection_strategy->c_params == NULL) {
-      result->rec->selection_strategy->c_params = c_params;
-    }
-    result->rec->selection_strategy->markParentDown(result);
+    result->rec->selection_strategy->markParentDown(&policy, result);
   }
 
   uint32_t
@@ -246,6 +236,10 @@ public:
     ink_release_assert(result != NULL);
     result->rec->selection_strategy->markParentUp(result);
   }
+
+  P_table *parent_table;
+  ParentRecord *DefaultParent;
+  ParentSelectionPolicy policy;
 };
 
 class HttpRequestData;

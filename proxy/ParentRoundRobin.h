@@ -37,11 +37,11 @@ class ParentRoundRobin : public ParentSelectionStrategy
   ParentRR_t round_robin_type;
 
 public:
-  ParentRoundRobin(ParentRecord *_parent_record);
+  ParentRoundRobin(ParentRecord *_parent_record, ParentRR_t _round_robin_type);
   ~ParentRoundRobin();
-  void selectParent(bool firstCall, ParentResult *result, RequestData *rdata);
-  void markParentDown(ParentResult *result);
-  uint32_t numParents(ParentResult *result);
+  void selectParent(const ParentSelectionPolicy *policy, bool firstCall, ParentResult *result, RequestData *rdata);
+  void markParentDown(const ParentSelectionPolicy *policy, ParentResult *result);
+  uint32_t numParents(ParentResult *result) const;
   void markParentUp(ParentResult *result);
 };
 
