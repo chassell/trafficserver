@@ -665,7 +665,7 @@ process_block(contdata_t *contdata, TSIOBufferReader reader)
   contdata->bytes_in += bytes_read;
 
   /* data after the last edit */
-  if (bytes_read < buflen - keep) {
+  if ((keep <= buflen) && (bytes_read < buflen - keep)) {
     n = TSIOBufferWrite(contdata->out_buf, buf + bytes_read, buflen - bytes_read - keep);
     contdata->bytes_in += n;
     contdata->bytes_out += n;
