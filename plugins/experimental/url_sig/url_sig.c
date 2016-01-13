@@ -245,6 +245,41 @@ err_log(char *url, char *msg)
   }
 }
 
+static char *
+getAppQueryString(char *query_string, int query_length)
+{
+  int done = 0;
+  char *p = query_string;
+
+  TSDebug (PLUGIN_NAME, "query_string: %s, query_length: %d", query_string, query_length);
+  if (p == NULL) {
+    return NULL;
+  }
+
+  do {
+    switch (*p) {
+      case 'A':
+      case 'C':
+      case 'E':
+      case 'K':
+      case 'P':
+      case 'S':
+        done = 1;
+        if (*(p-1) == '&') {
+          *(p-1) = '\0';
+        }
+        else (*p = '\0');
+        break;
+      default:
+        p = strchr(p, '&');
+        if (p == NULL) done = 1;
+        else p++;
+        break;
+    }
+  } while (! done);
+  return query_string;
+}
+
 TSRemapStatus
 TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
 {
@@ -275,7 +310,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   char *parts = NULL;
   char *part = NULL;
   char *p = NULL, *pp = NULL;
-  char *query = NULL;
+  char *query = NULL, *app_qry = NULL;
 
   int retval, sockfd;
   socklen_t peer_len;
@@ -510,9 +545,12 @@ deny:
 
 /* ********* Allow ********* */
 allow:
+  app_qry = getAppQueryString(query, strlen(query));
+  TSDebug(PLUGIN_NAME, "app_qry: %s", app_qry);
+
   TSfree(url);
   /* drop the query string so we can cache-hit */
-  rval = TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, NULL, 0);
+  rval = TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, app_qry, 0);
   if (rval != TS_SUCCESS) {
     TSError("Error stripping query string: %d.", rval);
   }
