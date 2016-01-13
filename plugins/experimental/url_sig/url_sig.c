@@ -249,7 +249,12 @@ static char *
 getAppQueryString(char *query_string, int query_length)
 {
   int done = 0;
-  char *p = query_string;
+  char *p;
+  char buf[4096];
+
+  memset(buf, 0, 4096);
+  strncpy (buf, query_string, query_length);
+  p = buf;
 
   TSDebug (PLUGIN_NAME, "query_string: %s, query_length: %d", query_string, query_length);
   if (p == NULL) {
@@ -277,7 +282,13 @@ getAppQueryString(char *query_string, int query_length)
         break;
     }
   } while (! done);
-  return query_string;
+
+  if (strlen(buf) > 0) {
+    p = TSstrdup(buf);
+    return p;
+  } else {
+    return NULL;
+  }
 }
 
 TSRemapStatus
@@ -546,13 +557,17 @@ deny:
 /* ********* Allow ********* */
 allow:
   app_qry = getAppQueryString(query, strlen(query));
-  TSDebug(PLUGIN_NAME, "app_qry: %s", app_qry);
 
   TSfree(url);
   /* drop the query string so we can cache-hit */
-  rval = TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, app_qry, 0);
+  if (app_qry != NULL) {
+    rval = TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, app_qry, strlen(app_qry));
+    TSfree(app_qry);
+  } else {
+    rval = TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, NULL, 0);
+  }
   if (rval != TS_SUCCESS) {
-    TSError("Error stripping query string: %d.", rval);
+    TSError("Error setting the query string: %d.", rval);
   }
   return TSREMAP_NO_REMAP;
 }
