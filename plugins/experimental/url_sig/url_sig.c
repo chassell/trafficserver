@@ -43,6 +43,8 @@
 
 static const char *PLUGIN_NAME = "url_sig";
 
+typedef enum { false, true } boolean_t;
+
 struct config {
   TSHttpStatus err_status;
   char *err_url;
@@ -297,7 +299,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   struct config *cfg;
   cfg = (struct config *)ih;
 
-  int url_len = 0;
+  int url_len = 0, path_params_len = 0, path_len;
   time_t expiration = 0;
   int algorithm = -1;
   int keyindex = -1;
@@ -307,8 +309,12 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   int j = 0;
   unsigned int sig_len = 0;
 
+  boolean_t has_path_params = false;
+
   /* all strings are locally allocated except url... about 25k per instance */
-  char *url;
+  char *path = NULL, *url;
+  char buf[8192] = {'\0'};
+  char path_params[8192] = {'\0'};
   char signed_part[8192] = {'\0'}; // this initializes the whole array and is needed
   char urltokstr[8192] = {'\0'};
   char client_ip[CIP_STRLEN] = {'\0'};
@@ -320,8 +326,8 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   char *signature = NULL;
   char *parts = NULL;
   char *part = NULL;
-  char *p = NULL, *pp = NULL;
-  char *query = NULL, *app_qry = NULL;
+  char *p = NULL, *pp = NULL; 
+  char *query = NULL, *app_qry = NULL, *path_query;
 
   int retval, sockfd;
   socklen_t peer_len;
@@ -356,8 +362,16 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   }
 
   if (query == NULL) {
-    err_log(url, "Has no query string.");
-    goto deny;
+    // check to see if path parameters are in use.
+    path_query = (char *) TSUrlHttpParamsGet(rri->requestBufp, rri->requestUrl, &path_params_len);
+    if (path_query != NULL) {
+      has_path_params = true;
+      strncpy (path_params, path_query, path_params_len);
+      query = path_params;
+    } else {
+      err_log(url, "Has no query string.");
+      goto deny;
+    }
   }
 
   if (strncmp(url, "http://", strlen("http://")) != 0) {
@@ -366,14 +380,16 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   }
 
   /* first, parse the query string */
-  query++; /* get rid of the ? */
+  if(!has_path_params) {
+    query++; /* get rid of the ? */
+  }
   TSDebug(PLUGIN_NAME, "Query string is:%s", query);
 
   // Client IP - this one is optional
   p = strstr(query, CIP_QSTRING "=");
   if (p != NULL) {
     p += strlen(CIP_QSTRING + 1);
-    pp = strstr(p, "&");
+    has_path_params == false ? (pp = strstr(p, "&")) : (pp = strstr(p, ";"));
     if ((pp - p) > CIP_STRLEN - 1 || (pp - p) < 4) {
       err_log(url, "IP address string too long or short.");
       goto deny;
@@ -442,7 +458,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   if (p != NULL) {
     p += strlen(PAR_QSTRING) + 1;
     parts = p; // NOTE parts is not NULL terminated it is terminated by "&" of next param
-    p = strstr(parts, "&");
+    has_path_params == false ? (p = strstr(parts, "&")) : (p = strstr(parts, ";"));
     TSDebug(PLUGIN_NAME, "Parts: %.*s", (int)(p - parts), parts);
   } else {
     err_log(url, "PartsSigned query string not found.");
@@ -468,7 +484,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
           keyindex, parts, signature);
 
   /* find the string that was signed - cycle through the parts letters, adding the part of the fqdn/path if it is 1 */
-  p = strstr(url, "?");
+  has_path_params == false ? (p = strstr(url, "&")) : (p = strstr(url, ";"));
   memcpy(urltokstr, &url[strlen("http://")], p - url - strlen("http://"));
   part = strtok_r(urltokstr, "/", &p);
   while (part != NULL) {
@@ -482,7 +498,8 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
     part = strtok_r(NULL, "/", &p);
   }
 
-  signed_part[strlen(signed_part) - 1] = '?'; // chop off the last /, replace with '?'
+  // chop off the last /, replace with '?' or ';' as appropriate.
+  has_path_params == false ? (signed_part[strlen(signed_part) - 1] = '?') : (signed_part[strlen(signed_part) - 1] = ';') ;
   p = strstr(query, SIG_QSTRING "=");
   strncat(signed_part, query, (p - query) + strlen(SIG_QSTRING) + 1);
 
@@ -557,6 +574,13 @@ deny:
 /* ********* Allow ********* */
 allow:
   app_qry = getAppQueryString(query, strlen(query));
+  TSDebug(PLUGIN_NAME, "has_path_params: %d", has_path_params);
+  if (has_path_params) {
+    TSUrlHttpParamsSet(rri->requestBufp, rri->requestUrl, NULL, 0);
+    path = (char *) TSUrlPathGet(rri->requestBufp, rri->requestUrl, &path_len);
+    strncpy(buf, path, path_len);
+    TSDebug(PLUGIN_NAME, "path: %s", path);
+  }
 
   TSfree(url);
   /* drop the query string so we can cache-hit */
