@@ -299,7 +299,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   struct config *cfg;
   cfg = (struct config *)ih;
 
-  int url_len = 0, path_params_len = 0, path_len;
+  int url_len = 0, path_params_len = 0;
   time_t expiration = 0;
   int algorithm = -1;
   int keyindex = -1;
@@ -312,8 +312,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   boolean_t has_path_params = false;
 
   /* all strings are locally allocated except url... about 25k per instance */
-  char *path = NULL, *url;
-  char buf[8192] = {'\0'};
+  char *url;
   char path_params[8192] = {'\0'};
   char signed_part[8192] = {'\0'}; // this initializes the whole array and is needed
   char urltokstr[8192] = {'\0'};
@@ -361,7 +360,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
     }
   }
 
-  if (query == NULL) {
+  if (query == NULL || strstr(query, "E=") == NULL) {
     // check to see if path parameters are in use.
     path_query = (char *) TSUrlHttpParamsGet(rri->requestBufp, rri->requestUrl, &path_params_len);
     if (path_query != NULL) {
@@ -484,7 +483,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
           keyindex, parts, signature);
 
   /* find the string that was signed - cycle through the parts letters, adding the part of the fqdn/path if it is 1 */
-  has_path_params == false ? (p = strstr(url, "&")) : (p = strstr(url, ";"));
+  has_path_params == false ? (p = strstr(url, "?")) : (p = strstr(url, ";"));
   memcpy(urltokstr, &url[strlen("http://")], p - url - strlen("http://"));
   part = strtok_r(urltokstr, "/", &p);
   while (part != NULL) {
@@ -501,6 +500,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   // chop off the last /, replace with '?' or ';' as appropriate.
   has_path_params == false ? (signed_part[strlen(signed_part) - 1] = '?') : (signed_part[strlen(signed_part) - 1] = ';') ;
   p = strstr(query, SIG_QSTRING "=");
+  TSDebug(PLUGIN_NAME, "p: %s, query: %s, signed_part: %s", p, query, signed_part);
   strncat(signed_part, query, (p - query) + strlen(SIG_QSTRING) + 1);
 
   TSDebug(PLUGIN_NAME, "Signed string=\"%s\"", signed_part);
@@ -577,9 +577,6 @@ allow:
   TSDebug(PLUGIN_NAME, "has_path_params: %d", has_path_params);
   if (has_path_params) {
     TSUrlHttpParamsSet(rri->requestBufp, rri->requestUrl, NULL, 0);
-    path = (char *) TSUrlPathGet(rri->requestBufp, rri->requestUrl, &path_len);
-    strncpy(buf, path, path_len);
-    TSDebug(PLUGIN_NAME, "path: %s", path);
   }
 
   TSfree(url);

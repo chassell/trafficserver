@@ -31,6 +31,8 @@ my $verbose   = 0;
 my $url       = undef;
 my $client    = undef;
 my $algorithm = 1;
+my $pathparams = 0;
+my $proxy = undef;
 
 $result = GetOptions(
 	"url=s"       => \$url,
@@ -40,12 +42,19 @@ $result = GetOptions(
 	"client=s"    => \$client,
 	"algorithm=i" => \$algorithm,
 	"keyindex=i"  => \$keyindex,
-	"verbose"     => \$verbose
+	"verbose"     => \$verbose,
+	"pathparams"  => \$pathparams,
+  "proxy=s"     => \$proxy
 );
 
 if ( !defined($key) || !defined($url) || !defined($duration) || !defined($keyindex) ) {
 	&help();
 	exit(1);
+}
+if ( defined($proxy) ) {
+  if ($proxy  !~ /http\:\/\/.*\:\d\d/) {
+    &help();
+  }
 }
 
 $url =~ s/^http:\/\///;
@@ -68,20 +77,43 @@ foreach my $part ( split( /\//, $url ) ) {
 my $urlHasParams = index($string,"?");
 
 chop($string);
-if ( defined($client) ) {
-  if ($urlHasParams > 0) {
-	  $string .= "&C=" . $client . "&E=" . ( time() + $duration ) . "&A=" . $algorithm . "&K=" . $keyindex . "&P=" . $useparts . "&S=";
+if ($pathparams) {
+  
+  if ( defined($client) ) {
+    if ($urlHasParams > 0) {
+      my @str = split (/\?/, $string);
+      $string = $str[0] . ";C=" . $client . ";E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
+    }
+    else {
+      $string .= ";C=" . $client . ";E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
+    }
   }
   else {
-	  $string .= "?C=" . $client . "&E=" . ( time() + $duration ) . "&A=" . $algorithm . "&K=" . $keyindex . "&P=" . $useparts . "&S=";
+    if ($urlHasParams > 0) {
+      my @str = split (/\?/, $string);
+      $string = $str[0] . ";E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
+    }
+    else {
+      $string .= ";E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
+    }
   }
 }
 else {
-  if ($urlHasParams > 0) {
-	  $string .= "&E=" . ( time() + $duration ) . "&A=" . $algorithm . "&K=" . $keyindex . "&P=" . $useparts . "&S=";
+  if ( defined($client) ) {
+    if ($urlHasParams > 0) {
+	    $string .= "&C=" . $client . "&E=" . ( time() + $duration ) . "&A=" . $algorithm . "&K=" . $keyindex . "&P=" . $useparts . "&S=";
+    }
+    else {
+	    $string .= "?C=" . $client . "&E=" . ( time() + $duration ) . "&A=" . $algorithm . "&K=" . $keyindex . "&P=" . $useparts . "&S=";
+    }
   }
   else {
-	  $string .= "?E=" . ( time() + $duration ) . "&A=" . $algorithm . "&K=" . $keyindex . "&P=" . $useparts . "&S=";
+    if ($urlHasParams > 0) {
+	    $string .= "&E=" . ( time() + $duration ) . "&A=" . $algorithm . "&K=" . $keyindex . "&P=" . $useparts . "&S=";
+    }
+    else {
+	    $string .= "?E=" . ( time() + $duration ) . "&A=" . $algorithm . "&K=" . $keyindex . "&P=" . $useparts . "&S=";
+    }
   }
 }
 
@@ -94,16 +126,41 @@ if ( $algorithm == 1 ) {
 else {
 	$digest = hmac_md5_hex( $string, $key );
 }
-if ($urlHasParams == -1) {
-  my $qstring = ( split( /\?/, $string ) )[1];
-
-  print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url . "?" . $qstring . $digest . "'\n";
-}
-else {
+if ($urlHasParams == -1) { # no application query parameters.
+  my $qstring = "";
+  if (! $pathparams ) { # use query parameters.
+    $qstring = (split(/\?/, $string))[1];
+    if ( ! defined($proxy)) {
+      print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url . "?" . $digest . "'\n";
+    } else {
+      print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy 'http://" . $url . "?" . $qstring . $digest . "'\n";
+    }
+  } else { # use path parameters.
+    my ($dat,@q) = split( /\;/, $string);
+    $qstring = join(';', @q);
+    if ( ! defined($proxy)) {
+      print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url . ";" . $qstring . $digest . "'\n";
+    } else {
+      print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy 'http://" . $url . ";" . $qstring . $digest . "'\n";
+    }
+  }
+} else { # has application parameters.
   my $url_noparams = ( split( /\?/, $url ) )[0];
-  my $qstring = ( split( /\?/, $string ) )[1];
-
-  print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url_noparams . "?" . $qstring . $digest . "'\n";
+  my $qstring = ( split( /\?/, $string) )[1];
+  if (! $pathparams) { # using only query params.
+    if (! defined($proxy)) {
+      print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url_noparams . "?" . $qstring . $digest . "'\n";
+    } else {
+      print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy 'http://" . $url_noparams . "?" . $qstring . $digest . "'\n";
+    }
+  } else {
+    my $qstring = ( split(/\?/, $url))[1];
+    if (! defined($proxy)) {
+      print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $string . $digest . "?" . $qstring . "'\n";
+    } else {
+      print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy 'http://" . $string . $digest . "?" . $qstring . "'\n";
+    }
+  }
 }
 
 sub help {
@@ -117,5 +174,7 @@ sub help {
 	print "             [--client <value>] \\ \n";
 	print "             --key <value>  \\ \n";
 	print "             [--verbose] \n";
+	print "             [--pathparms] \n";
+	print "             [--proxy <url:port value>] ex value: http://myproxy:80\n";
 	print "\n";
 }
