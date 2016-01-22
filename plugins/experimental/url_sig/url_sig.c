@@ -254,35 +254,37 @@ getAppQueryString(char *query_string, int query_length)
   char buf[4096];
 
   memset(buf, 0, 4096);
-  strncpy (buf, query_string, query_length);
+  strncpy(buf, query_string, query_length);
   p = buf;
 
-  TSDebug (PLUGIN_NAME, "query_string: %s, query_length: %d", query_string, query_length);
+  TSDebug(PLUGIN_NAME, "query_string: %s, query_length: %d", query_string, query_length);
   if (p == NULL) {
     return NULL;
   }
 
   do {
     switch (*p) {
-      case 'A':
-      case 'C':
-      case 'E':
-      case 'K':
-      case 'P':
-      case 'S':
+    case 'A':
+    case 'C':
+    case 'E':
+    case 'K':
+    case 'P':
+    case 'S':
+      done = 1;
+      if (*(p - 1) == '&') {
+        *(p - 1) = '\0';
+      } else
+        (*p = '\0');
+      break;
+    default:
+      p = strchr(p, '&');
+      if (p == NULL)
         done = 1;
-        if (*(p-1) == '&') {
-          *(p-1) = '\0';
-        }
-        else (*p = '\0');
-        break;
-      default:
-        p = strchr(p, '&');
-        if (p == NULL) done = 1;
-        else p++;
-        break;
+      else
+        p++;
+      break;
     }
-  } while (! done);
+  } while (!done);
 
   if (strlen(buf) > 0) {
     p = TSstrdup(buf);
@@ -325,7 +327,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   char *signature = NULL;
   char *parts = NULL;
   char *part = NULL;
-  char *p = NULL, *pp = NULL; 
+  char *p = NULL, *pp = NULL;
   char *query = NULL, *app_qry = NULL, *path_query;
 
   int retval, sockfd;
@@ -362,10 +364,10 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
 
   if (query == NULL) {
     // check to see if path parameters are in use.
-    path_query = (char *) TSUrlHttpParamsGet(rri->requestBufp, rri->requestUrl, &path_params_len);
+    path_query = (char *)TSUrlHttpParamsGet(rri->requestBufp, rri->requestUrl, &path_params_len);
     if (path_query != NULL) {
       has_path_params = true;
-      strncpy (path_params, path_query, path_params_len);
+      strncpy(path_params, path_query, path_params_len);
       query = path_params;
     } else {
       err_log(url, "Has no query string.");
@@ -379,7 +381,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   }
 
   /* first, parse the query string */
-  if(!has_path_params) {
+  if (!has_path_params) {
     query++; /* get rid of the ? */
   }
   TSDebug(PLUGIN_NAME, "Query string is:%s", query);
@@ -498,7 +500,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   }
 
   // chop off the last /, replace with '?' or ';' as appropriate.
-  has_path_params == false ? (signed_part[strlen(signed_part) - 1] = '?') : (signed_part[strlen(signed_part) - 1] = ';') ;
+  has_path_params == false ? (signed_part[strlen(signed_part) - 1] = '?') : (signed_part[strlen(signed_part) - 1] = ';');
   p = strstr(query, SIG_QSTRING "=");
   strncat(signed_part, query, (p - query) + strlen(SIG_QSTRING) + 1);
 
@@ -576,7 +578,7 @@ allow:
   TSDebug(PLUGIN_NAME, "has_path_params: %d", has_path_params);
   if (has_path_params) {
     TSUrlHttpParamsSet(rri->requestBufp, rri->requestUrl, NULL, 0);
-    path = (char *) TSUrlPathGet(rri->requestBufp, rri->requestUrl, &path_len);
+    path = (char *)TSUrlPathGet(rri->requestBufp, rri->requestUrl, &path_len);
     strncpy(buf, path, path_len);
     TSDebug(PLUGIN_NAME, "path: %s", path);
   }
