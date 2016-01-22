@@ -31,6 +31,7 @@
 #include <arpa/inet.h>
 #include <limits.h>
 #include <ctype.h>
+#include <stdbool.h>
 
 #ifdef HAVE_PCRE_PCRE_H
 #include <pcre/pcre.h>
@@ -42,8 +43,6 @@
 #include <ts/remap.h>
 
 static const char *PLUGIN_NAME = "url_sig";
-
-typedef enum { false, true } boolean_t;
 
 struct config {
   TSHttpStatus err_status;
@@ -309,7 +308,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   int j = 0;
   unsigned int sig_len = 0;
 
-  boolean_t has_path_params = false;
+  bool has_path_params = false;
 
   /* all strings are locally allocated except url... about 25k per instance */
   char *path = NULL, *url;
