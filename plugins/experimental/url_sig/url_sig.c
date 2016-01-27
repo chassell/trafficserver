@@ -300,7 +300,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   struct config *cfg;
   cfg = (struct config *)ih;
 
-  int url_len = 0, path_params_len = 0;
+  int url_len = 0, path_params_len = 0, path_len = 0;
   time_t expiration = 0;
   int algorithm = -1;
   int keyindex = -1;
@@ -314,7 +314,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
 
   /* all strings are locally allocated except url... about 25k per instance */
   char *url;
-  char path_params[8192] = {'\0'};
+  char path_params[8192] = {'\0'}, file[8192] = {'\0'}, new_path[8192] = {'\0'};
   char signed_part[8192] = {'\0'}; // this initializes the whole array and is needed
   char urltokstr[8192] = {'\0'};
   char client_ip[CIP_STRLEN] = {'\0'};
@@ -364,9 +364,27 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   if (query == NULL || strstr(query, "E=") == NULL) {
     // check to see if path parameters are in use.
     path_query = (char *)TSUrlHttpParamsGet(rri->requestBufp, rri->requestUrl, &path_params_len);
+    // if using path params, need to fix up the request url later as the file part of the request comes
+    // after the signing path params.
     if (path_query != NULL) {
       has_path_params = true;
-      strncpy(path_params, path_query, path_params_len);
+      if ( (p = strstr(path_query,"/")) != NULL) {
+        // 'p' and 'path_query' are pointers into the same array. calculates the new lenghth(s)
+        // required to truncate the 'file' part of the query from the signed path parameters
+        // and to copy the 'file' part so that it may be used to fix up the request.
+        int file_length = (path_params_len - (p - path_query));
+        strncpy(path_params, path_query, (path_params_len - file_length));
+        strncpy(file, p, file_length);
+        p = (char *) TSUrlPathGet(rri->requestBufp, rri->requestUrl, &path_len);
+        if (p) {
+          strncpy(new_path, p, path_len);
+          strncat(new_path, file, file_length);
+        }
+        TSDebug(PLUGIN_NAME, "has_path_params: %d, path_params: %s, file: %s, new_path: %s", has_path_params, path_params, file, new_path);
+      } else {
+        strncpy(path_params, path_query, path_params_len);
+      }
+      TSDebug(PLUGIN_NAME, "path_query: %s, length: %d", path_query, (int)strlen(path_params));
       query = path_params;
     } else {
       err_log(url, "Has no query string.");
@@ -574,14 +592,20 @@ deny:
 
 /* ********* Allow ********* */
 allow:
-  app_qry = getAppQueryString(query, strlen(query));
+  query = strstr(url, "?");
+  if (query != NULL) {
+    query++; // get rid of the '?'
+    app_qry = getAppQueryString(query, strlen(query));
+  }
   TSDebug(PLUGIN_NAME, "has_path_params: %d", has_path_params);
   if (has_path_params) {
+    if (*new_path) {
+      TSUrlPathSet(rri->requestBufp, rri->requestUrl, new_path, strlen(new_path));
+    }
     TSUrlHttpParamsSet(rri->requestBufp, rri->requestUrl, NULL, 0);
   }
 
   TSfree(url);
-  /* drop the query string so we can cache-hit */
   if (app_qry != NULL) {
     rval = TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, app_qry, strlen(app_qry));
     TSfree(app_qry);
@@ -591,5 +615,8 @@ allow:
   if (rval != TS_SUCCESS) {
     TSError("Error setting the query string: %d.", rval);
   }
+  url = TSUrlStringGet(rri->requestBufp, rri->requestUrl, &url_len);
+  TSDebug(PLUGIN_NAME, "url: %s", url);
+
   return TSREMAP_NO_REMAP;
 }

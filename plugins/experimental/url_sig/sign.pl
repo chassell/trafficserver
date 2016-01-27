@@ -58,11 +58,41 @@ if ( defined($proxy) ) {
 }
 
 $url =~ s/^http:\/\///;
+
 my $i              = 0;
 my $part_active    = 0;
 my $j              = 0;
 my @inactive_parts = ();
-foreach my $part ( split( /\//, $url ) ) {
+
+my $query_params = undef;
+my $urlHasParams = index($url,"?");
+my $file = undef;
+
+my @parts = (split(/\//, $url));
+my $parts_size = scalar(@parts);
+
+if ($pathparams) {
+  if (scalar(@parts) > 1) {
+    $file = pop @parts;
+  } else {
+    print STDERR "\nERROR: No file segment in the path when using --pathparams.\n\n";
+    &help();
+    exit 1;
+  }
+  if($urlHasParams) {
+    $file = (split(/\?/, $file))[0];
+  }
+  $parts_size = scalar(@parts);
+}
+if ($urlHasParams > 0) {
+  if ( ! $pathparams) {
+    ($parts[$parts_size -1], $query_params) = (split(/\?/, $parts[$parts_size - 1]));
+  } else {
+    $query_params = (split(/\?/, $url))[1];
+  }
+}
+
+foreach my $part (@parts) {
 	if ( length($useparts) > $i ) {
 		$part_active = substr( $useparts, $i++, 1 );
 	}
@@ -74,50 +104,41 @@ foreach my $part ( split( /\//, $url ) ) {
 	}
 	$j++;
 }
-my $urlHasParams = index($string,"?");
+
+my $signing_signature = undef;
 
 chop($string);
 if ($pathparams) {
-  
+  if ( defined($client) ) {
+    $signing_signature = ";C=" . $client . ";E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
+    $string .= $signing_signature;
+  }
+  else {
+    $signing_signature = ";E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
+    $string .= $signing_signature;
+  }
+} else {
   if ( defined($client) ) {
     if ($urlHasParams > 0) {
-      my @str = split (/\?/, $string);
-      $string = $str[0] . ";C=" . $client . ";E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
+	    $signing_signature = "?$query_params" . "&C=" . $client . "&E=" . ( time() + $duration ) . "&A=" . $algorithm . "&K=" . $keyindex . "&P=" . $useparts . "&S=";
+      $string .= $signing_signature;
     }
     else {
-      $string .= ";C=" . $client . ";E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
+	    $signing_signature = "?C=" . $client . "&E=" . ( time() + $duration ) . "&A=" . $algorithm . "&K=" . $keyindex . "&P=" . $useparts . "&S=";
+      $string .= $signing_signature;
     }
   }
   else {
     if ($urlHasParams > 0) {
-      my @str = split (/\?/, $string);
-      $string = $str[0] . ";E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
+	    $signing_signature = "?$query_params" . "&E=" . ( time() + $duration ) . "&A=" . $algorithm . "&K=" . $keyindex . "&P=" . $useparts . "&S=";
+      $string .= $signing_signature;
     }
     else {
-      $string .= ";E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
+	    $signing_signature = "?E=" . ( time() + $duration ) . "&A=" . $algorithm . "&K=" . $keyindex . "&P=" . $useparts . "&S=";
+      $string .= $signing_signature;
     }
   }
 }
-else {
-  if ( defined($client) ) {
-    if ($urlHasParams > 0) {
-	    $string .= "&C=" . $client . "&E=" . ( time() + $duration ) . "&A=" . $algorithm . "&K=" . $keyindex . "&P=" . $useparts . "&S=";
-    }
-    else {
-	    $string .= "?C=" . $client . "&E=" . ( time() + $duration ) . "&A=" . $algorithm . "&K=" . $keyindex . "&P=" . $useparts . "&S=";
-    }
-  }
-  else {
-    if ($urlHasParams > 0) {
-	    $string .= "&E=" . ( time() + $duration ) . "&A=" . $algorithm . "&K=" . $keyindex . "&P=" . $useparts . "&S=";
-    }
-    else {
-	    $string .= "?E=" . ( time() + $duration ) . "&A=" . $algorithm . "&K=" . $keyindex . "&P=" . $useparts . "&S=";
-    }
-  }
-}
-
-$verbose && print "signed string = " . $string . "\n";
 
 my $digest;
 if ( $algorithm == 1 ) {
@@ -126,41 +147,51 @@ if ( $algorithm == 1 ) {
 else {
 	$digest = hmac_md5_hex( $string, $key );
 }
+
+$verbose && print "\nSigned String: $string\n\n";
+
 if ($urlHasParams == -1) { # no application query parameters.
-  my $qstring = "";
-  if (! $pathparams ) { # use query parameters.
-    $qstring = (split(/\?/, $string))[1];
     if ( ! defined($proxy)) {
-      print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url . "?" . $digest . "'\n";
+      if ( ! $pathparams) {
+        print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url . $signing_signature . $digest . "'\n\n";
+      } else {
+        my $index = rindex($url, '/');
+        $url = substr($url,0,$index);
+        print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url . $signing_signature . $digest . "/$file" . "'\n\n";
+      }
     } else {
-      print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy 'http://" . $url . "?" . $qstring . $digest . "'\n";
+      if ( ! $pathparams) {
+        print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy 'http://" . $url . $signing_signature . $digest .
+          "'\n\n";
+      } else {
+        my $index = rindex($url, '/');
+        $url = substr($url,0,$index);
+        print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy 'http://" . $url . $signing_signature . $digest .
+          "/$file" . "'\n\n";
+      }
     }
-  } else { # use path parameters.
-    my ($dat,@q) = split( /\;/, $string);
-    $qstring = join(';', @q);
-    if ( ! defined($proxy)) {
-      print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url . ";" . $qstring . $digest . "'\n";
-    } else {
-      print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy 'http://" . $url . ";" . $qstring . $digest . "'\n";
-    }
-  }
 } else { # has application parameters.
-  my $url_noparams = ( split( /\?/, $url ) )[0];
-  my $qstring = ( split( /\?/, $string) )[1];
-  if (! $pathparams) { # using only query params.
-    if (! defined($proxy)) {
-      print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url_noparams . "?" . $qstring . $digest . "'\n";
+    $url = (split(/\?/, $url))[0];
+    if ( ! defined($proxy)) {
+      if ( ! $pathparams) {
+        print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url . $signing_signature . $digest . "'\n\n";
+      } else {
+        my $index = rindex($url, '/');
+        $url = substr($url,0,$index);
+        print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url . $signing_signature . "/" . $digest . $file . "?$query_params"
+        . "'\n\n";
+      }
     } else {
-      print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy 'http://" . $url_noparams . "?" . $qstring . $digest . "'\n";
+      if ( ! $pathparams) {
+        print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy 'http://" . $url . $signing_signature . $digest .
+         "'\n\n";
+      } else {
+        my $index = rindex($url, '/');
+        $url = substr($url,0,$index);
+        print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy 'http://" . $url . $signing_signature . $digest .
+         "/$file?$query_params" . "'\n\n";
+      }
     }
-  } else {
-    my $qstring = ( split(/\?/, $url))[1];
-    if (! defined($proxy)) {
-      print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $string . $digest . "?" . $qstring . "'\n";
-    } else {
-      print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy 'http://" . $string . $digest . "?" . $qstring . "'\n";
-    }
-  }
 }
 
 sub help {
