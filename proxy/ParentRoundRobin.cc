@@ -242,7 +242,7 @@ ParentRoundRobin::markParentDown(const ParentSelectionPolicy *policy, ParentResu
     new_fail_count = old_count + 1;
   }
 
-  if (new_fail_count > 0 && new_fail_count == policy->FailThreshold) {
+  if (new_fail_count > 0 && new_fail_count >= policy->FailThreshold) {
     Note("Failure threshold met, http parent proxy %s:%d marked down", pRec->hostname, pRec->port);
     pRec->available = false;
     Debug("parent_select", "Parent marked unavailable, pRec->available=%d", pRec->available);
