@@ -178,7 +178,7 @@ if ($urlHasParams == -1) { # no application query parameters.
       } else {
         my $index = rindex($url, '/');
         $url = substr($url,0,$index);
-        print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url . $signing_signature . "/" . $digest . $file . "?$query_params"
+        print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url . $signing_signature . $digest . "/" . $file . "?$query_params"
         . "'\n\n";
       }
     } else {
@@ -205,7 +205,7 @@ sub help {
 	print "             [--client <value>] \\ \n";
 	print "             --key <value>  \\ \n";
 	print "             [--verbose] \n";
-	print "             [--pathparms] \n";
+	print "             [--pathparams] \n";
 	print "             [--proxy <url:port value>] ex value: http://myproxy:80\n";
 	print "\n";
 }
