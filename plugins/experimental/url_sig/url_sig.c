@@ -294,13 +294,90 @@ getAppQueryString(char *query_string, int query_length)
   }
 }
 
+static char *
+urlParse(char *url, char *new_path_seg, int new_path_seg_len, char *signed_seg, int signed_seg_len) 
+{
+  char *segment[MAX_SEGMENTS]; 
+  unsigned char decoded_string[1024] = {'\0'};
+  char new_url[8192] = {'\0'};
+  char *p = NULL, *saveptr = NULL;
+  int i = 0, numtoks = 0, cp_len = 0, l, decoded_len = 0;
+  
+  if ( (p = strtok_r(url, "/", &saveptr)) != NULL) {
+    numtoks++;
+    segment[i++] = p;
+
+    do {
+      p = strtok_r(NULL, "/", &saveptr);
+      if (p != NULL) {
+        numtoks++;
+        segment[i++] = p;
+      }
+    } while (p != NULL && i < MAX_SEGMENTS);
+  } else {
+    return NULL;
+  }
+  
+  if (i >= MAX_SEGMENTS) {
+    return NULL;
+  }
+  
+  // skip the scheme fqdn, and base64 encoded signed part  when creating the new path.
+  cp_len = strlen(segment[2]);
+  strncpy (new_path_seg, segment[2], cp_len);
+  for (i = 3; i < numtoks-2; i++) {
+    l = strlen(segment[i]);    
+    if (l + cp_len + 1> new_path_seg_len) {
+      TSError("insuficient space to copy into new_path_seg buffer.");
+      return NULL; 
+    } else {
+      strncat(new_path_seg, "/", 1);
+      strncat(new_path_seg, segment[i], l);
+      cp_len += l + 1;
+    }
+  }    
+  // copy the file segment
+  if (cp_len + strlen(segment[numtoks-1]) + 1 < new_path_seg_len) {
+    strncat(new_path_seg, "/", 1);
+    strncat(new_path_seg, segment[numtoks-1], strlen(segment[numtoks-1]));
+  } else {
+    TSError("insuficient space to copy into new_path_seg buffer.");
+    return NULL;
+  }
+
+  if (strlen(segment[numtoks-2]) < signed_seg_len) {
+    strncpy (signed_seg, segment[numtoks-2], strlen(segment[numtoks-2]));
+  } else {
+    TSError("insuficient space to copy into new_path_seg buffer.");
+    return NULL;
+  }
+  TSDebug(PLUGIN_NAME, "segment[numtoks-2]: %s", segment[numtoks-2]);
+  if (TSBase64Decode(segment[numtoks-2], strlen(segment[numtoks-2]), decoded_string, sizeof(decoded_string), (size_t *)&decoded_len) != TS_SUCCESS) {
+    TSDebug(PLUGIN_NAME, "Unable to decode the  path parameter string.");
+  }
+  TSDebug(PLUGIN_NAME, "decoded_string: %s", decoded_string);
+
+  strncat(new_url, "http://", 7);
+  for (i = 1; i < numtoks; i++) {
+    // cp the base64 decoded string.
+    if (i == numtoks-2) {
+      strncat(new_url, (char *)decoded_string, strlen((char *)decoded_string));
+      strncat(new_url, "/", 1);
+      continue;
+    }
+    strncat(new_url, segment[i], strlen(segment[i]));
+    if (i < numtoks-1) strncat(new_url, "/", 1);
+  }
+  return TSstrndup(new_url, strlen(new_url));
+}
+
 TSRemapStatus
 TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
 {
   struct config *cfg;
   cfg = (struct config *)ih;
 
-  int url_len = 0, path_params_len = 0, path_len = 0;
+  int url_len = 0;
   time_t expiration = 0;
   int algorithm = -1;
   int keyindex = -1;
@@ -313,8 +390,8 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   bool has_path_params = false;
 
   /* all strings are locally allocated except url... about 25k per instance */
-  char *url;
-  char path_params[8192] = {'\0'}, file[8192] = {'\0'}, new_path[8192] = {'\0'};
+  char *url, *new_url;
+  char path_params[8192] = {'\0'}, new_path[8192] = {'\0'};
   char signed_part[8192] = {'\0'}; // this initializes the whole array and is needed
   char urltokstr[8192] = {'\0'};
   char client_ip[CIP_STRLEN] = {'\0'};
@@ -327,7 +404,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   char *parts = NULL;
   char *part = NULL;
   char *p = NULL, *pp = NULL;
-  char *query = NULL, *app_qry = NULL, *path_query;
+  char *query = NULL, *app_qry = NULL;
 
   int retval, sockfd;
   socklen_t peer_len;
@@ -340,7 +417,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
     goto deny;
   }
 
-  TSDebug(PLUGIN_NAME, "%s", url);
+  TSDebug(PLUGIN_NAME, "url: %s", url);
 
   query = strstr(url, "?");
 
@@ -361,35 +438,21 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
     }
   }
 
+  // check for path params.
   if (query == NULL || strstr(query, "E=") == NULL) {
-    // check to see if path parameters are in use.
-    path_query = (char *)TSUrlHttpParamsGet(rri->requestBufp, rri->requestUrl, &path_params_len);
-    // if using path params, need to fix up the request url later as the file part of the request comes
-    // after the signing path params.
-    if (path_query != NULL) {
-      has_path_params = true;
-      if ( (p = strstr(path_query,"/")) != NULL) {
-        // 'p' and 'path_query' are pointers into the same array. calculates the new lenghth(s)
-        // required to truncate the 'file' part of the query from the signed path parameters
-        // and to copy the 'file' part so that it may be used to fix up the request.
-        int file_length = (path_params_len - (p - path_query));
-        strncpy(path_params, path_query, (path_params_len - file_length));
-        strncpy(file, p, file_length);
-        p = (char *) TSUrlPathGet(rri->requestBufp, rri->requestUrl, &path_len);
-        if (p) {
-          strncpy(new_path, p, path_len);
-          strncat(new_path, file, file_length);
-        }
-        TSDebug(PLUGIN_NAME, "has_path_params: %d, path_params: %s, file: %s, new_path: %s", has_path_params, path_params, file, new_path);
-      } else {
-        strncpy(path_params, path_query, path_params_len);
+      if ( (new_url = urlParse(url, new_path, 8192, path_params, 8192)) == NULL) {
+        err_log(url, "Has no signing query string or signing path parameters.");
+        goto deny;
       }
-      TSDebug(PLUGIN_NAME, "path_query: %s, length: %d", path_query, (int)strlen(path_params));
-      query = path_params;
-    } else {
-      err_log(url, "Has no query string.");
-      goto deny;
-    }
+      has_path_params = true;
+      TSfree(url);
+      url = new_url;
+      query = strstr(url, ";");
+
+      if (query == NULL) {
+        err_log(url, "Has no signing query string or signing path parameters.");
+        goto deny;
+      }
   }
 
   if (strncmp(url, "http://", strlen("http://")) != 0) {
@@ -517,7 +580,10 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   }
 
   // chop off the last /, replace with '?' or ';' as appropriate.
-  has_path_params == false ? (signed_part[strlen(signed_part) - 1] = '?') : (signed_part[strlen(signed_part) - 1] = ';');
+  if (! has_path_params) {
+    //has_path_params == false ? (signed_part[strlen(signed_part) - 1] = '?') : (signed_part[strlen(signed_part) - 1] = ';');
+    signed_part[strlen(signed_part) - 1] = '?';
+  }
   p = strstr(query, SIG_QSTRING "=");
   TSDebug(PLUGIN_NAME, "p: %s, query: %s, signed_part: %s", p, query, signed_part);
   strncat(signed_part, query, (p - query) + strlen(SIG_QSTRING) + 1);
@@ -592,8 +658,10 @@ deny:
 
 /* ********* Allow ********* */
 allow:
+  TSDebug(PLUGIN_NAME, "URL: %s", url);
   query = strstr(url, "?");
-  if (query != NULL) {
+  // app query parameters aren't affected if we've used signed path params.
+  if (query != NULL && ! has_path_params) {
     query++; // get rid of the '?'
     app_qry = getAppQueryString(query, strlen(query));
   }

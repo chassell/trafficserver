@@ -19,6 +19,7 @@
 use Digest::SHA qw(hmac_sha1 hmac_sha1_hex);
 use Digest::HMAC_MD5 qw(hmac_md5 hmac_md5_hex);
 use Getopt::Long;
+use MIME::Base64::URLSafe ();
 use strict;
 use warnings;
 my $key       = undef;
@@ -110,11 +111,11 @@ my $signing_signature = undef;
 chop($string);
 if ($pathparams) {
   if ( defined($client) ) {
-    $signing_signature = ";C=" . $client . ";E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
+    $signing_signature = "/;C=" . $client . ";E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
     $string .= $signing_signature;
   }
   else {
-    $signing_signature = ";E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
+    $signing_signature = "/;E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
     $string .= $signing_signature;
   }
 } else {
@@ -149,6 +150,9 @@ else {
 }
 
 $verbose && print "\nSigned String: $string\n\n";
+$verbose && print "\nUrl: $url\n";
+$verbose && print "\nsigning_signature: $signing_signature\n";
+$verbose && print "\ndigest: $digest\n";
 
 if ($urlHasParams == -1) { # no application query parameters.
     if ( ! defined($proxy)) {
@@ -157,7 +161,8 @@ if ($urlHasParams == -1) { # no application query parameters.
       } else {
         my $index = rindex($url, '/');
         $url = substr($url,0,$index);
-        print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url . $signing_signature . $digest . "/$file" . "'\n\n";
+        my $encoded = MIME::Base64::URLSafe::encode($signing_signature . $digest);
+        print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url . "/" . $encoded . "/$file" . "'\n\n";
       }
     } else {
       if ( ! $pathparams) {
@@ -166,8 +171,8 @@ if ($urlHasParams == -1) { # no application query parameters.
       } else {
         my $index = rindex($url, '/');
         $url = substr($url,0,$index);
-        print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy 'http://" . $url . $signing_signature . $digest .
-          "/$file" . "'\n\n";
+        my $encoded = MIME::Base64::URLSafe::encode($signing_signature . $digest);
+        print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy 'http://" . $url . "/" . $encoded .  "/$file" . "'\n\n";
       }
     }
 } else { # has application parameters.
@@ -178,7 +183,8 @@ if ($urlHasParams == -1) { # no application query parameters.
       } else {
         my $index = rindex($url, '/');
         $url = substr($url,0,$index);
-        print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url . $signing_signature . $digest . "/" . $file . "?$query_params"
+        my $encoded = MIME::Base64::URLSafe::encode($signing_signature . $digest);
+        print "curl -s -o /dev/null -v --max-redirs 0 'http://" . $url . "/" . $encoded  . "/" . $file . "?$query_params"
         . "'\n\n";
       }
     } else {
@@ -188,8 +194,8 @@ if ($urlHasParams == -1) { # no application query parameters.
       } else {
         my $index = rindex($url, '/');
         $url = substr($url,0,$index);
-        print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy 'http://" . $url . $signing_signature . $digest .
-         "/$file?$query_params" . "'\n\n";
+        my $encoded = MIME::Base64::URLSafe::encode($signing_signature . $digest);
+        print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy 'http://" . $url . "/" . $encoded .  "/$file?$query_params" . "'\n\n";
       }
     }
 }
