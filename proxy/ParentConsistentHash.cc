@@ -199,7 +199,7 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
   }
 
   // use the available parent.
-  if ((pRec && pRec->available) || result->retry) {
+  if (pRec && (pRec->available || result->retry)) {
     if (!result->rec->parent_is_proxy) {
       result->r = PARENT_ORIGIN;
     } else {
