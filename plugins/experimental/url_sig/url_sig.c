@@ -295,7 +295,7 @@ getAppQueryString(char *query_string, int query_length)
 }
 
 static char *
-urlParse(char *url, char *new_path_seg, int new_path_seg_len, char *signed_seg, int signed_seg_len) 
+urlParse(bool *https, char *url, char *new_path_seg, int new_path_seg_len, char *signed_seg, int signed_seg_len) 
 {
   char *segment[MAX_SEGMENTS]; 
   unsigned char decoded_string[1024] = {'\0'};
@@ -357,7 +357,12 @@ urlParse(char *url, char *new_path_seg, int new_path_seg_len, char *signed_seg, 
   }
   TSDebug(PLUGIN_NAME, "decoded_string: %s", decoded_string);
 
-  strncat(new_url, "http://", 7);
+  if (https) {
+    strncat(new_url, "https://", 8);
+  } else {
+    strncat(new_url, "http://", 7);
+  }
+
   for (i = 1; i < numtoks; i++) {
     // cp the base64 decoded string.
     if (i == numtoks-2) {
@@ -388,6 +393,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   unsigned int sig_len = 0;
 
   bool has_path_params = false;
+  bool https_scheme = false;
 
   /* all strings are locally allocated except url... about 25k per instance */
   char *url, *new_url;
@@ -440,7 +446,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
 
   // check for path params.
   if (query == NULL || strstr(query, "E=") == NULL) {
-      if ( (new_url = urlParse(url, new_path, 8192, path_params, 8192)) == NULL) {
+      if ( (new_url = urlParse(&https_scheme, url, new_path, 8192, path_params, 8192)) == NULL) {
         err_log(url, "Has no signing query string or signing path parameters.");
         goto deny;
       }
@@ -455,9 +461,8 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
       }
   }
 
-  if (strncmp(url, "http://", strlen("http://")) != 0) {
-    err_log(url, "Invalid URL scheme - only http supported.");
-    goto deny;
+  if (strncmp(url, "https://", strlen("https://")) == 0) {
+    https_scheme = true;
   }
 
   /* first, parse the query string */
@@ -566,7 +571,11 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
 
   /* find the string that was signed - cycle through the parts letters, adding the part of the fqdn/path if it is 1 */
   has_path_params == false ? (p = strstr(url, "?")) : (p = strstr(url, ";"));
-  memcpy(urltokstr, &url[strlen("http://")], p - url - strlen("http://"));
+  if (https_scheme) {
+    memcpy(urltokstr, &url[strlen("https://")], p - url - strlen("https://"));
+  } else {
+    memcpy(urltokstr, &url[strlen("http://")], p - url - strlen("http://"));
+  }
   part = strtok_r(urltokstr, "/", &p);
   while (part != NULL) {
     if (parts[j] == '1') {
