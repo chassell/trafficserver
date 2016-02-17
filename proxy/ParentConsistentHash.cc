@@ -94,15 +94,15 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
   ATSConsistentHash *fhash;
   HttpRequestData *request_info = static_cast<HttpRequestData *>(rdata);
   bool firstCall = first_call;
-  bool parentRetry = false;
   bool wrap_around[2] = {false, false};
   uint64_t path_hash = 0;
   uint32_t last_lookup;
   pRecord *prtmp = NULL, *pRec = NULL;
+  URL *url = request_info->hdr->url_get();
 
   Debug("parent_select", "ParentConsistentHash::%s(): Using a consistent hash parent selection strategy.", __func__);
   ink_assert(numParents(result) > 0 || result->rec->go_direct == true);
-
+  //
   // Should only get into this state if we are supposed to go direct.
   if (parents[PRIMARY] == NULL && parents[SECONDARY] == NULL) {
     if (result->rec->go_direct == true) {
@@ -152,17 +152,16 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
         Debug("parent_select", "Parent.failedAt = %u, retry = %u, xact_start = %u", (unsigned int)pRec->failedAt,
               (unsigned int)policy->ParentRetryTime, (unsigned int)request_info->xact_start);
         if ((pRec->failedAt + policy->ParentRetryTime) < request_info->xact_start) {
-          parentRetry = true;
           // make sure that the proper state is recorded in the result structure
           result->last_parent = pRec->idx;
           result->last_lookup = last_lookup;
-          result->retry = parentRetry;
+          result->retry = true;
           if (!result->rec->parent_is_proxy) {
             result->r = PARENT_ORIGIN;
           } else {
             result->r = PARENT_SPECIFIED;
           }
-          Debug("parent_select", "Down parent %s is now retryable, marked it available.", pRec->hostname);
+          Debug("parent_select", "Down parent %s is now retryable, pRec: %p, result->retry: %d.", pRec->hostname, pRec, result->retry);
           break;
         }
       }
@@ -188,11 +187,27 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
         }
       }
       if (wrap_around[PRIMARY] && chash[SECONDARY] == NULL) {
-        Debug("parent_select", "No available parents.");
+        if (pRec && pRec->available) {
+          Debug("parent_select", "Wrapped but %s is available.", pRec->hostname);
+        } else if (pRec) {
+          int len = 0;
+          char *request_str = url->string_get_ref(&len);
+          if (request_str) {
+            Note("No available parents for request: %*s.", len, request_str);
+          }
+        }
         break;
       }
       if (wrap_around[PRIMARY] && chash[SECONDARY] != NULL && wrap_around[SECONDARY]) {
-        Debug("parent_select", "No available parents.");
+        if (pRec && pRec->available) {
+          Debug("parent_select", "Wrapped but %s is available.", pRec->hostname);
+        } else if (pRec) {
+          int len = 0;
+          char *request_str = url->string_get_ref(&len);
+          if (request_str) {
+            Note("No available parents for request: %*s.", len, request_str);
+          }
+        }
         break;
       }
     } while (!prtmp || !pRec->available);
@@ -209,7 +224,6 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
     result->port = pRec->port;
     result->last_parent = pRec->idx;
     result->last_lookup = last_lookup;
-    result->retry = parentRetry;
     ink_assert(result->hostname != NULL);
     ink_assert(result->port != 0);
     Debug("parent_select", "Chosen parent: %s.%d", result->hostname, result->port);

@@ -58,8 +58,8 @@ ParentRoundRobin::selectParent(const ParentSelectionPolicy *policy, bool first_c
   bool parentUp = false;
   bool parentRetry = false;
   bool bypass_ok = (result->rec->go_direct == true && policy->DNS_ParentOnly == 0);
-
   HttpRequestData *request_info = static_cast<HttpRequestData *>(rdata);
+  URL *url = request_info->hdr->url_get();
 
   ink_assert(numParents(result) > 0 || result->rec->go_direct == true);
 
@@ -175,6 +175,11 @@ ParentRoundRobin::selectParent(const ParentSelectionPolicy *policy, bool first_c
   if (result->rec->go_direct == true && result->rec->parent_is_proxy) {
     result->r = PARENT_DIRECT;
   } else {
+    int len = 0;
+    char *request_str = url->string_get_ref(&len);
+    if (request_str) {
+      Note("No available parents for request: %*s.", len, request_str);
+    }
     result->r = PARENT_FAIL;
   }
 
