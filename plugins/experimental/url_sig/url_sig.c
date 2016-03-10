@@ -304,21 +304,19 @@ urlParse(bool *https, char *url, char *new_path_seg, int new_path_seg_len, char 
   int i = 0, numtoks = 0, cp_len = 0, l, decoded_len = 0;
 
   if ((p = strtok_r(url, "/", &saveptr)) != NULL) {
-    numtoks++;
-    segment[i++] = p;
+    segment[numtoks++] = p;
 
     do {
       p = strtok_r(NULL, "/", &saveptr);
       if (p != NULL) {
-        numtoks++;
-        segment[i++] = p;
+        segment[numtoks++] = p;
       }
-    } while (p != NULL && i < MAX_SEGMENTS);
+    } while (p != NULL && numtoks < MAX_SEGMENTS);
   } else {
     return NULL;
   }
 
-  if (i >= MAX_SEGMENTS) {
+  if ((numtoks >= MAX_SEGMENTS) || (numtoks < 3)) {
     return NULL;
   }
 
