@@ -161,7 +161,8 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
           } else {
             result->r = PARENT_SPECIFIED;
           }
-          Debug("parent_select", "Down parent %s is now retryable, pRec: %p, result->retry: %d.", pRec->hostname, pRec, result->retry);
+          Debug("parent_select", "Down parent %s is now retryable, pRec: %p, result->retry: %d.", pRec->hostname, pRec,
+                result->retry);
           break;
         }
       }

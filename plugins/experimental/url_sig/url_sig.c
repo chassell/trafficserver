@@ -295,15 +295,15 @@ getAppQueryString(char *query_string, int query_length)
 }
 
 static char *
-urlParse(bool *https, char *url, char *new_path_seg, int new_path_seg_len, char *signed_seg, int signed_seg_len) 
+urlParse(bool *https, char *url, char *new_path_seg, int new_path_seg_len, char *signed_seg, int signed_seg_len)
 {
-  char *segment[MAX_SEGMENTS]; 
+  char *segment[MAX_SEGMENTS];
   unsigned char decoded_string[1024] = {'\0'};
   char new_url[8192] = {'\0'};
   char *p = NULL, *saveptr = NULL;
   int i = 0, numtoks = 0, cp_len = 0, l, decoded_len = 0;
-  
-  if ( (p = strtok_r(url, "/", &saveptr)) != NULL) {
+
+  if ((p = strtok_r(url, "/", &saveptr)) != NULL) {
     numtoks++;
     segment[i++] = p;
 
@@ -317,42 +317,43 @@ urlParse(bool *https, char *url, char *new_path_seg, int new_path_seg_len, char 
   } else {
     return NULL;
   }
-  
+
   if (i >= MAX_SEGMENTS) {
     return NULL;
   }
-  
+
   // skip the scheme fqdn, and base64 encoded signed part  when creating the new path.
   cp_len = strlen(segment[2]);
-  strncpy (new_path_seg, segment[2], cp_len);
-  for (i = 3; i < numtoks-2; i++) {
-    l = strlen(segment[i]);    
-    if (l + cp_len + 1> new_path_seg_len) {
+  strncpy(new_path_seg, segment[2], cp_len);
+  for (i = 3; i < numtoks - 2; i++) {
+    l = strlen(segment[i]);
+    if (l + cp_len + 1 > new_path_seg_len) {
       TSError("insuficient space to copy into new_path_seg buffer.");
-      return NULL; 
+      return NULL;
     } else {
       strncat(new_path_seg, "/", 1);
       strncat(new_path_seg, segment[i], l);
       cp_len += l + 1;
     }
-  }    
+  }
   // copy the file segment
-  if (cp_len + strlen(segment[numtoks-1]) + 1 < new_path_seg_len) {
+  if (cp_len + strlen(segment[numtoks - 1]) + 1 < new_path_seg_len) {
     strncat(new_path_seg, "/", 1);
-    strncat(new_path_seg, segment[numtoks-1], strlen(segment[numtoks-1]));
+    strncat(new_path_seg, segment[numtoks - 1], strlen(segment[numtoks - 1]));
   } else {
     TSError("insuficient space to copy into new_path_seg buffer.");
     return NULL;
   }
 
-  if (strlen(segment[numtoks-2]) < signed_seg_len) {
-    strncpy (signed_seg, segment[numtoks-2], strlen(segment[numtoks-2]));
+  if (strlen(segment[numtoks - 2]) < signed_seg_len) {
+    strncpy(signed_seg, segment[numtoks - 2], strlen(segment[numtoks - 2]));
   } else {
     TSError("insuficient space to copy into new_path_seg buffer.");
     return NULL;
   }
-  TSDebug(PLUGIN_NAME, "segment[numtoks-2]: %s", segment[numtoks-2]);
-  if (TSBase64Decode(segment[numtoks-2], strlen(segment[numtoks-2]), decoded_string, sizeof(decoded_string), (size_t *)&decoded_len) != TS_SUCCESS) {
+  TSDebug(PLUGIN_NAME, "segment[numtoks-2]: %s", segment[numtoks - 2]);
+  if (TSBase64Decode(segment[numtoks - 2], strlen(segment[numtoks - 2]), decoded_string, sizeof(decoded_string),
+                     (size_t *)&decoded_len) != TS_SUCCESS) {
     TSDebug(PLUGIN_NAME, "Unable to decode the  path parameter string.");
   }
   TSDebug(PLUGIN_NAME, "decoded_string: %s", decoded_string);
@@ -365,13 +366,14 @@ urlParse(bool *https, char *url, char *new_path_seg, int new_path_seg_len, char 
 
   for (i = 1; i < numtoks; i++) {
     // cp the base64 decoded string.
-    if (i == numtoks-2) {
+    if (i == numtoks - 2) {
       strncat(new_url, (char *)decoded_string, strlen((char *)decoded_string));
       strncat(new_url, "/", 1);
       continue;
     }
     strncat(new_url, segment[i], strlen(segment[i]));
-    if (i < numtoks-1) strncat(new_url, "/", 1);
+    if (i < numtoks - 1)
+      strncat(new_url, "/", 1);
   }
   return TSstrndup(new_url, strlen(new_url));
 }
@@ -446,19 +448,19 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
 
   // check for path params.
   if (query == NULL || strstr(query, "E=") == NULL) {
-      if ( (new_url = urlParse(&https_scheme, url, new_path, 8192, path_params, 8192)) == NULL) {
-        err_log(url, "Has no signing query string or signing path parameters.");
-        goto deny;
-      }
-      has_path_params = true;
-      TSfree(url);
-      url = new_url;
-      query = strstr(url, ";");
+    if ((new_url = urlParse(&https_scheme, url, new_path, 8192, path_params, 8192)) == NULL) {
+      err_log(url, "Has no signing query string or signing path parameters.");
+      goto deny;
+    }
+    has_path_params = true;
+    TSfree(url);
+    url = new_url;
+    query = strstr(url, ";");
 
-      if (query == NULL) {
-        err_log(url, "Has no signing query string or signing path parameters.");
-        goto deny;
-      }
+    if (query == NULL) {
+      err_log(url, "Has no signing query string or signing path parameters.");
+      goto deny;
+    }
   }
 
   if (strncmp(url, "https://", strlen("https://")) == 0) {
@@ -589,8 +591,8 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   }
 
   // chop off the last /, replace with '?' or ';' as appropriate.
-  if (! has_path_params) {
-    //has_path_params == false ? (signed_part[strlen(signed_part) - 1] = '?') : (signed_part[strlen(signed_part) - 1] = ';');
+  if (!has_path_params) {
+    // has_path_params == false ? (signed_part[strlen(signed_part) - 1] = '?') : (signed_part[strlen(signed_part) - 1] = ';');
     signed_part[strlen(signed_part) - 1] = '?';
   }
   p = strstr(query, SIG_QSTRING "=");
@@ -670,7 +672,7 @@ allow:
   TSDebug(PLUGIN_NAME, "URL: %s", url);
   query = strstr(url, "?");
   // app query parameters aren't affected if we've used signed path params.
-  if (query != NULL && ! has_path_params) {
+  if (query != NULL && !has_path_params) {
     query++; // get rid of the '?'
     app_qry = getAppQueryString(query, strlen(query));
   }
