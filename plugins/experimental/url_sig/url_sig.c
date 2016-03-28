@@ -50,6 +50,7 @@ struct config {
   char keys[MAX_KEY_NUM][MAX_KEY_LEN];
   pcre *regex;
   pcre_extra *regex_extra;
+  char *sig_anchor;
 };
 
 static void
@@ -57,6 +58,7 @@ free_cfg(struct config *cfg)
 {
   TSError("Cleaning up...");
   TSfree(cfg->err_url);
+  TSfree(cfg->sig_anchor);
 
   if (cfg->regex_extra)
 #ifndef PCRE_STUDY_JIT_COMPILE
@@ -174,6 +176,9 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char *errbuf, int errbuf_s
         cfg->err_url = TSstrndup(value, strlen(value));
       else
         cfg->err_url = NULL;
+    } else if (strncmp(line, "sig_anchor", 10) == 0) { 
+        cfg->sig_anchor = TSstrndup(value, strlen(value));
+        TSDebug(PLUGIN_NAME, "sig_anchor: %s", cfg->sig_anchor);
     } else if (strncmp(line, "excl_regex", 10) == 0) {
       // compile and study regex
       const char *errptr;
@@ -295,64 +300,96 @@ getAppQueryString(char *query_string, int query_length)
 }
 
 static char *
-urlParse(bool *https, char *url, char *new_path_seg, int new_path_seg_len, char *signed_seg, int signed_seg_len)
+urlParse(bool *https, char *anchor, char *url, char *new_path_seg, int new_path_seg_len, char *signed_seg, int signed_seg_len)
 {
   char *segment[MAX_SEGMENTS];
-  unsigned char decoded_string[1024] = {'\0'};
+  unsigned char decoded_string[2048] = {'\0'};
   char new_url[8192] = {'\0'};
-  char *p = NULL, *saveptr = NULL;
-  int i = 0, numtoks = 0, cp_len = 0, l, decoded_len = 0;
+  char *p = NULL, *sig_anchor = NULL, *saveptr = NULL;
+  int i = 0, numtoks = 0, cp_len = 0, l, decoded_len = 0, sig_anchor_seg = 0;
 
+  // parse the url.
   if ((p = strtok_r(url, "/", &saveptr)) != NULL) {
     segment[numtoks++] = p;
-
     do {
       p = strtok_r(NULL, "/", &saveptr);
       if (p != NULL) {
-        segment[numtoks++] = p;
+        segment[numtoks] = p;
+        if (anchor != NULL && sig_anchor_seg == 0) {
+          // look for the signed anchor string.
+          if ((sig_anchor = strcasestr(segment[numtoks],anchor)) != NULL) {
+            // null terminate this segment just before he signing anchor, this should be a ';'.
+            *(sig_anchor - 1) = '\0';
+            if ((sig_anchor = strstr(sig_anchor, "=")) != NULL) {
+              *sig_anchor = '\0';
+              sig_anchor++;
+              sig_anchor_seg = numtoks;
+            }
+          }
+        }
+        numtoks++;
       }
     } while (p != NULL && numtoks < MAX_SEGMENTS);
   } else {
     return NULL;
   }
-
   if ((numtoks >= MAX_SEGMENTS) || (numtoks < 3)) {
     return NULL;
   }
 
-  // skip the scheme fqdn, and base64 encoded signed part  when creating the new path.
-  cp_len = strlen(segment[2]);
-  strncpy(new_path_seg, segment[2], cp_len);
-  for (i = 3; i < numtoks - 2; i++) {
+  // create a new path string for later use when dealing with query parameters.
+  // this string will not contain the signing parameters.  skips the scheme
+  // and fqdn by starting with 2.
+  for (i = 2; i < numtoks; i++) {
+    // if no signing anchor is found, skip the signed parameters segment.
+    if (sig_anchor == NULL && i == numtoks - 2) {
+      // the signing parameters when no signature anchor is found, should be in the 
+      // last path segment so skip them.
+      continue;
+    }
     l = strlen(segment[i]);
-    if (l + cp_len + 1 > new_path_seg_len) {
+    if (l + 1 > new_path_seg_len) {
       TSError("insuficient space to copy into new_path_seg buffer.");
       return NULL;
     } else {
-      strncat(new_path_seg, "/", 1);
       strncat(new_path_seg, segment[i], l);
+      if (i != numtoks - 1) {
+        strncat(new_path_seg, "/", 1);
+      }
       cp_len += l + 1;
     }
   }
-  // copy the file segment
-  if (cp_len + strlen(segment[numtoks - 1]) + 1 < new_path_seg_len) {
-    strncat(new_path_seg, "/", 1);
-    strncat(new_path_seg, segment[numtoks - 1], strlen(segment[numtoks - 1]));
-  } else {
-    TSError("insuficient space to copy into new_path_seg buffer.");
-    return NULL;
-  }
+  TSDebug(PLUGIN_NAME, "new_path_seg: %s", new_path_seg);
 
-  if (strlen(segment[numtoks - 2]) < signed_seg_len) {
-    strncpy(signed_seg, segment[numtoks - 2], strlen(segment[numtoks - 2]));
-  } else {
-    TSError("insuficient space to copy into new_path_seg buffer.");
-    return NULL;
+  // save the encoded signing parameter data
+  if (sig_anchor != NULL) { // a signature anchor string was found.
+    if (strlen(sig_anchor) < signed_seg_len) {
+      strncpy(signed_seg, sig_anchor, strlen(sig_anchor));
+    } else {
+      TSError("insuficient space to copy into new_path_seg buffer.");
+    }
+  } else { // no signature anchor string was found, assum it is in the last path segment.
+    if (strlen(segment[numtoks - 2]) < signed_seg_len) {
+      strncpy(signed_seg, segment[numtoks - 2], strlen(segment[numtoks - 2]));
+    } else {
+      TSError("insuficient space to copy into new_path_seg buffer.");
+      return NULL;
+    }
   }
-  TSDebug(PLUGIN_NAME, "segment[numtoks-2]: %s", segment[numtoks - 2]);
-  if (TSBase64Decode(segment[numtoks - 2], strlen(segment[numtoks - 2]), decoded_string, sizeof(decoded_string),
-                     (size_t *)&decoded_len) != TS_SUCCESS) {
-    TSDebug(PLUGIN_NAME, "Unable to decode the  path parameter string.");
+  TSDebug(PLUGIN_NAME, "signed_seg: %s", signed_seg);
+
+  // no signature anchor was found so decode and save the signing parameters assumed
+  // to be in the last path segment.
+  if (sig_anchor == NULL) {
+    if (TSBase64Decode(segment[numtoks - 2], strlen(segment[numtoks - 2]), decoded_string, sizeof(decoded_string),
+                      (size_t *)&decoded_len) != TS_SUCCESS) {
+      TSDebug(PLUGIN_NAME, "Unable to decode the  path parameter string.");
+    }
+  } else {
+    if (TSBase64Decode(sig_anchor, strlen(sig_anchor), decoded_string, sizeof(decoded_string),
+                      (size_t *)&decoded_len) != TS_SUCCESS) {
+      TSDebug(PLUGIN_NAME, "Unable to decode the  path parameter string.");
+    }
   }
   TSDebug(PLUGIN_NAME, "decoded_string: %s", decoded_string);
 
@@ -364,14 +401,20 @@ urlParse(bool *https, char *url, char *new_path_seg, int new_path_seg_len, char 
 
   for (i = 1; i < numtoks; i++) {
     // cp the base64 decoded string.
-    if (i == numtoks - 2) {
+    if (i == sig_anchor_seg && sig_anchor != NULL) {
+      strncat(new_url, segment[i], strlen(segment[i]));
+      strncat(new_url, (char *)decoded_string, strlen((char *)decoded_string));
+      strncat(new_url, "/", 1);
+      continue;
+    } else if (i == numtoks - 2 && sig_anchor == NULL) {
       strncat(new_url, (char *)decoded_string, strlen((char *)decoded_string));
       strncat(new_url, "/", 1);
       continue;
     }
     strncat(new_url, segment[i], strlen(segment[i]));
-    if (i < numtoks - 1)
+    if (i < numtoks - 1) { 
       strncat(new_url, "/", 1);
+    }
   }
   return TSstrndup(new_url, strlen(new_url));
 }
@@ -446,10 +489,11 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
 
   // check for path params.
   if (query == NULL || strstr(query, "E=") == NULL) {
-    if ((new_url = urlParse(&https_scheme, url, new_path, 8192, path_params, 8192)) == NULL) {
+    if ((new_url = urlParse(&https_scheme, cfg->sig_anchor, url, new_path, 8192, path_params, 8192)) == NULL) {
       err_log(url, "Has no signing query string or signing path parameters.");
       goto deny;
     }
+    TSDebug(PLUGIN_NAME, "new_url: %s", new_url);
     has_path_params = true;
     TSfree(url);
     url = new_url;
@@ -589,10 +633,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   }
 
   // chop off the last /, replace with '?' or ';' as appropriate.
-  if (!has_path_params) {
-    // has_path_params == false ? (signed_part[strlen(signed_part) - 1] = '?') : (signed_part[strlen(signed_part) - 1] = ';');
-    signed_part[strlen(signed_part) - 1] = '?';
-  }
+  has_path_params == false ? (signed_part[strlen(signed_part) - 1] = '?') : (signed_part[strlen(signed_part) - 1] = '\0');
   p = strstr(query, SIG_QSTRING "=");
   TSDebug(PLUGIN_NAME, "p: %s, query: %s, signed_part: %s", p, query, signed_part);
   strncat(signed_part, query, (p - query) + strlen(SIG_QSTRING) + 1);

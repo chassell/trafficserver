@@ -33,6 +33,7 @@ my $url       = undef;
 my $client    = undef;
 my $algorithm = 1;
 my $pathparams = 0;
+my $sig_anchor = undef;
 my $proxy = undef;
 my $scheme = "http://";
 
@@ -46,7 +47,8 @@ $result = GetOptions(
 	"keyindex=i"  => \$keyindex,
 	"verbose"     => \$verbose,
 	"pathparams"  => \$pathparams,
-  "proxy=s"     => \$proxy
+  "proxy=s"     => \$proxy,
+  "siganchor=s"  => \$sig_anchor
 );
 
 if ( !defined($key) || !defined($url) || !defined($duration) || !defined($keyindex) ) {
@@ -117,11 +119,11 @@ my $signing_signature = undef;
 chop($string);
 if ($pathparams) {
   if ( defined($client) ) {
-    $signing_signature = "/;C=" . $client . ";E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
+    $signing_signature = ";C=" . $client . ";E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
     $string .= $signing_signature;
   }
   else {
-    $signing_signature = "/;E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
+    $signing_signature = ";E=" . ( time() + $duration ) . ";A=" . $algorithm . ";K=" . $keyindex . ";P=" . $useparts . ";S=";
     $string .= $signing_signature;
   }
 } else {
@@ -168,7 +170,11 @@ if ($urlHasParams == -1) { # no application query parameters.
         my $index = rindex($url, '/');
         $url = substr($url,0,$index);
         my $encoded = MIME::Base64::URLSafe::encode($signing_signature . $digest);
-        print "curl -s -o /dev/null -v --max-redirs 0 '$scheme" . $url . "/" . $encoded . "/$file" . "'\n\n";
+        if (defined($sig_anchor)) {
+          print "curl -s -o /dev/null -v --max-redirs 0 '$scheme" . $url . ";${sig_anchor}=" . $encoded . "/$file" . "'\n\n";
+        } else {
+          print "curl -s -o /dev/null -v --max-redirs 0 '$scheme" . $url . "/" . $encoded . "/$file" . "'\n\n";
+        }
       }
     } else {
       if ( ! $pathparams) {
@@ -178,7 +184,11 @@ if ($urlHasParams == -1) { # no application query parameters.
         my $index = rindex($url, '/');
         $url = substr($url,0,$index);
         my $encoded = MIME::Base64::URLSafe::encode($signing_signature . $digest);
-        print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy '$scheme" . $url . "/" . $encoded .  "/$file" . "'\n\n";
+        if (defined($sig_anchor)) {
+          print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy '$scheme" . $url . ";${sig_anchor}=" . $encoded .  "/$file" . "'\n\n";
+        } else {
+          print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy '$scheme" . $url . "/" . $encoded .  "/$file" . "'\n\n";
+        }
       }
     }
 } else { # has application parameters.
@@ -190,8 +200,13 @@ if ($urlHasParams == -1) { # no application query parameters.
         my $index = rindex($url, '/');
         $url = substr($url,0,$index);
         my $encoded = MIME::Base64::URLSafe::encode($signing_signature . $digest);
-        print "curl -s -o /dev/null -v --max-redirs 0 '$scheme" . $url . "/" . $encoded  . "/" . $file . "?$query_params"
-        . "'\n\n";
+        if (defined($sig_anchor)) {
+          print "curl -s -o /dev/null -v --max-redirs 0 '$scheme" . $url . ";${sig_anchor}=" . $encoded  . "/" . $file . "?$query_params"
+          . "'\n\n";
+        } else {
+          print "curl -s -o /dev/null -v --max-redirs 0 '$scheme" . $url . "/" . $encoded  . "/" . $file . "?$query_params"
+          . "'\n\n";
+        }
       }
     } else {
       if ( ! $pathparams) {
@@ -201,7 +216,12 @@ if ($urlHasParams == -1) { # no application query parameters.
         my $index = rindex($url, '/');
         $url = substr($url,0,$index);
         my $encoded = MIME::Base64::URLSafe::encode($signing_signature . $digest);
-        print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy '$scheme" . $url . "/" . $encoded .  "/$file?$query_params" . "'\n\n";
+        if (defined($sig_anchor)) {
+          print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy '$scheme" . $url . ";${sig_anchor}=" . $encoded  . "/" . $file . "?$query_params"
+          . "'\n\n";
+        } else {
+          print "curl -s -o /dev/null -v --max-redirs 0 --proxy $proxy '$scheme" . $url . "/" . $encoded .  "/$file?$query_params" . "'\n\n";
+        }
       }
     }
 }
