@@ -1960,6 +1960,7 @@ AS_IF([test "x$enable_experimental_plugins" = xyes], [
     plugins/experimental/hipes/Makefile
     plugins/experimental/metalink/Makefile
     plugins/experimental/mysql_remap/Makefile
+    plugins/experimental/money_trace/Makefile
     plugins/experimental/regex_revalidate/Makefile
     plugins/experimental/remap_stats/Makefile
     plugins/experimental/s3_auth/Makefile

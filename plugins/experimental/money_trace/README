@@ -1,0 +1,8 @@
+
+Author: John J. Rushford, John_Rushford@cable.comcast.com
+
+Money trace plugin 
+  This is a remap plugin used to add and update a "X-MoneyTrace" used to trace and monitor http transactions in support system logs.
+
+See the documentation on this header at https://github.com/Comcast/money/wiki.
+
