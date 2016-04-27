@@ -31,7 +31,6 @@
   "S" /* S=9e2828d570a4bee3c964f698b0985ee58b9f6b64 means 9e2828d570a4bee3c964f698b0985ee58b9f6b64 is the sig \
          This one has to be the last one of the string */
 
-#define CIP_STRLEN 20
 #define EXP_STRLEN 16
 #define PAR_STRLEN 16
 #define MAX_PARTS 32

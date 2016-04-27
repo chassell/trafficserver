@@ -437,14 +437,17 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
 
   bool has_path_params = false;
   bool https_scheme = false;
+  bool isClient_ipv6 = false;
 
   /* all strings are locally allocated except url... about 25k per instance */
   char *url, *new_url;
   char path_params[8192] = {'\0'}, new_path[8192] = {'\0'};
   char signed_part[8192] = {'\0'}; // this initializes the whole array and is needed
   char urltokstr[8192] = {'\0'};
-  char client_ip[CIP_STRLEN] = {'\0'};
-  char ipstr[CIP_STRLEN] = {'\0'};
+  char client_ipv4[INET_ADDRSTRLEN] = {'\0'};
+  char ipstr_v4[INET_ADDRSTRLEN] = {'\0'};
+  char client_ipv6[INET6_ADDRSTRLEN] = {'\0'};
+  char ipstr_v6[INET6_ADDRSTRLEN] = {'\0'};
   unsigned char sig[MAX_SIG_SIZE + 1];
   char sig_string[2 * MAX_SIG_SIZE + 1];
 
@@ -454,10 +457,6 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   char *part = NULL;
   char *p = NULL, *pp = NULL;
   char *query = NULL, *app_qry = NULL;
-
-  int retval, sockfd;
-  socklen_t peer_len;
-  struct sockaddr_in peer;
 
   url = TSUrlStringGet(rri->requestBufp, rri->requestUrl, &url_len);
 
@@ -518,32 +517,56 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   // Client IP - this one is optional
   p = strstr(query, CIP_QSTRING "=");
   if (p != NULL) {
-    p += strlen(CIP_QSTRING + 1);
-    has_path_params == false ? (pp = strstr(p, "&")) : (pp = strstr(p, ";"));
-    if ((pp - p) > CIP_STRLEN - 1 || (pp - p) < 4) {
-      err_log(url, "IP address string too long or short.");
+    struct sockaddr const *ip = TSHttpTxnClientAddrGet(txnp); 
+    if (ip == NULL) {
+      TSError("Can't get client ip address.");
       goto deny;
-    }
-    strncpy(client_ip, p + strlen(CIP_QSTRING) + 1, (pp - p - (strlen(CIP_QSTRING) + 1)));
-    client_ip[pp - p - (strlen(CIP_QSTRING) + 1)] = '\0';
-    TSDebug(PLUGIN_NAME, "CIP: -%s-", client_ip);
-    retval = TSHttpTxnClientFdGet(txnp, &sockfd);
-    if (retval != TS_SUCCESS) {
-      err_log(url, "Error getting sockfd.");
-      goto deny;
-    }
-    peer_len = sizeof(peer);
-    if (getpeername(sockfd, (struct sockaddr *)&peer, &peer_len) != 0) {
-      perror("Can't get peer address:");
-    }
-    struct sockaddr_in *s = (struct sockaddr_in *)&peer;
-    inet_ntop(AF_INET, &s->sin_addr, ipstr, sizeof ipstr);
-    TSDebug(PLUGIN_NAME, "Peer address: -%s-", ipstr);
-    if (strcmp(ipstr, client_ip) != 0) {
-      err_log(url, "Client IP doesn't match signature.");
-      goto deny;
+    } else {
+      switch (ip->sa_family) {
+        case AF_INET:
+          isClient_ipv6 = false;
+          p += strlen(CIP_QSTRING + 1);
+          has_path_params == false ? (pp = strstr(p, "&")) : (pp = strstr(p, ";"));
+          if ((pp - p) > INET_ADDRSTRLEN - 1 || (pp - p) < 4) {
+            err_log(url, "IP address string too long or short.");
+            goto deny;
+          }
+          strncpy(client_ipv4, p + strlen(CIP_QSTRING) + 1, (pp - p - (strlen(CIP_QSTRING) + 1)));
+          client_ipv4[pp - p - (strlen(CIP_QSTRING) + 1)] = '\0';
+          TSDebug(PLUGIN_NAME, "CIP: -%s-", client_ipv4);
+          inet_ntop(AF_INET, &(((struct sockaddr_in *)ip)->sin_addr), ipstr_v4, sizeof ipstr_v4);
+          TSDebug(PLUGIN_NAME, "Peer address: -%s-", ipstr_v4);
+          if (strcmp(ipstr_v4, client_ipv4) != 0) {
+            err_log(url, "Client IP doesn't match signature.");
+            goto deny;
+          }
+          break;
+        case AF_INET6:
+          isClient_ipv6 = true;
+          p += strlen(CIP_QSTRING + 1);
+          has_path_params == false ? (pp = strstr(p, "&")) : (pp = strstr(p, ";"));
+          if ((pp - p) > INET6_ADDRSTRLEN - 1 || (pp - p) < 4) {
+            err_log(url, "IP address string too long or short.");
+            goto deny;
+          }
+          strncpy(client_ipv6, p + strlen(CIP_QSTRING) + 1, (pp - p - (strlen(CIP_QSTRING) + 1)));
+          client_ipv6[pp - p - (strlen(CIP_QSTRING) + 1)] = '\0';
+          TSDebug(PLUGIN_NAME, "CIP: -%s-", client_ipv6);
+          inet_ntop(AF_INET6, &(((struct sockaddr_in6 *)ip)->sin6_addr), ipstr_v6, sizeof ipstr_v6);
+          TSDebug(PLUGIN_NAME, "Peer address: -%s-", ipstr_v6);
+          if (strcmp(ipstr_v6, client_ipv6) != 0) {
+            err_log(url, "Client IP doesn't match signature.");
+            goto deny;
+          }
+          break;
+        default:
+          TSError("%s: Unknown address family %d", PLUGIN_NAME, ip->sa_family);
+          goto deny;
+          break;
+      }
     }
   }
+
   // Expiration
   p = strstr(query, EXP_QSTRING "=");
   if (p != NULL) {
@@ -610,9 +633,13 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   }
 
   /* have the query string, and parameters passed initial checks */
-  TSDebug(PLUGIN_NAME, "Found all needed parameters: C=%s E=%d A=%d K=%d P=%s S=%s", client_ip, (int)expiration, algorithm,
+  if (isClient_ipv6 == true) {
+    TSDebug(PLUGIN_NAME, "Found all needed parameters: C=%s E=%d A=%d K=%d P=%s S=%s", client_ipv6, (int)expiration, algorithm,
+            keyindex, parts, signature);
+  } else {
+    TSDebug(PLUGIN_NAME, "Found all needed parameters: C=%s E=%d A=%d K=%d P=%s S=%s", client_ipv4, (int)expiration, algorithm,
           keyindex, parts, signature);
-
+  }
   /* find the string that was signed - cycle through the parts letters, adding the part of the fqdn/path if it is 1 */
   has_path_params == false ? (p = strstr(url, "?")) : (p = strstr(url, ";"));
   if (https_scheme) {
