@@ -49,6 +49,8 @@ ParentConsistentHash::ParentConsistentHash(ParentRecord *parent_record)
   } else {
     chash[SECONDARY] = NULL;
   }
+  last_unavailable = time(NULL);
+
   Debug("parent_select", "Using a consistent hash parent selection strategy.");
 }
 
@@ -99,6 +101,7 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
   uint32_t last_lookup;
   pRecord *prtmp = NULL, *pRec = NULL;
   URL *url = request_info->hdr->url_get();
+  time_t now;
 
   Debug("parent_select", "ParentConsistentHash::%s(): Using a consistent hash parent selection strategy.", __func__);
   ink_assert(numParents(result) > 0 || result->rec->go_direct == true);
@@ -147,71 +150,37 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
 
   // didn't find a parent or the parent is marked unavailable.
   if (!pRec || (pRec && !pRec->available)) {
-    do {
-      if (pRec && !pRec->available) {
-        Debug("parent_select", "Parent.failedAt = %u, retry = %u, xact_start = %u", (unsigned int)pRec->failedAt,
-              (unsigned int)policy->ParentRetryTime, (unsigned int)request_info->xact_start);
-        if ((pRec->failedAt + policy->ParentRetryTime) < request_info->xact_start) {
-          // make sure that the proper state is recorded in the result structure
-          result->last_parent = pRec->idx;
-          result->last_lookup = last_lookup;
-          result->retry = true;
-          if (!result->rec->parent_is_proxy) {
-            result->r = PARENT_ORIGIN;
-          } else {
-            result->r = PARENT_SPECIFIED;
-          }
-          Debug("parent_select", "Down parent %s is now retryable, pRec: %p, result->retry: %d.", pRec->hostname, pRec,
-                result->retry);
-          break;
-        }
-      }
-      Debug("parent_select", "wrap_around[PRIMARY]: %d, wrap_around[SECONDARY]: %d", wrap_around[PRIMARY], wrap_around[SECONDARY]);
-      if (!wrap_around[PRIMARY] || (chash[SECONDARY] != NULL)) {
-        Debug("parent_select", "Selected parent %s is not available, looking up another parent.", pRec->hostname);
-        if (chash[SECONDARY] != NULL && !wrap_around[SECONDARY]) {
-          fhash = chash[SECONDARY];
-          last_lookup = SECONDARY;
+    // check to see if it is retryable.
+    if (pRec && !pRec->available) {
+      Debug("parent_select", "Parent.failedAt = %u, retry = %u, xact_start = %u", (unsigned int)pRec->failedAt,
+        (unsigned int)policy->ParentRetryTime, (unsigned int)request_info->xact_start);
+      if ((pRec->failedAt + policy->ParentRetryTime) < request_info->xact_start) {
+        // make sure that the proper state is recorded in the result structure
+        result->last_parent = pRec->idx;
+        result->last_lookup = last_lookup;
+        result->retry = true;
+        if (!result->rec->parent_is_proxy) {
+          result->r = PARENT_ORIGIN;
         } else {
-          fhash = chash[PRIMARY];
-          last_lookup = PRIMARY;
+          result->r = PARENT_SPECIFIED;
         }
-        if (firstCall) {
-          prtmp = (pRecord *)fhash->lookup_by_hashval(path_hash, &chashIter[last_lookup], &wrap_around[last_lookup]);
-          firstCall = false;
-        } else {
-          prtmp = (pRecord *)fhash->lookup(NULL, &chashIter[last_lookup], &wrap_around[last_lookup], &hash);
-        }
+        Debug("parent_select", "Down parent %s is now retryable, pRec: %p, result->retry: %d.", pRec->hostname, pRec, result->retry);
+      } else { // if not retryable find an available host on the primary ring.
+        last_lookup = PRIMARY;
+        fhash = chash[PRIMARY];
+        prtmp = (pRecord *)fhash->lookup_available(NULL, &chashIter[last_lookup], &wrap_around[last_lookup], &hash);
         if (prtmp) {
           pRec = (parents[last_lookup] + prtmp->idx);
-          Debug("parent_select", "Selected a new parent: %s.", pRec->hostname);
-        }
-      }
-      if (wrap_around[PRIMARY] && chash[SECONDARY] == NULL) {
-        if (pRec && pRec->available) {
-          Debug("parent_select", "Wrapped but %s is available.", pRec->hostname);
-        } else if (pRec) {
-          int len = 0;
-          char *request_str = url->string_get_ref(&len);
-          if (request_str) {
-            Note("No available parents for request: %*s.", len, request_str);
+        } else if (chash[SECONDARY] != NULL) { // search the secondary if if available.
+          last_lookup = SECONDARY;
+          fhash = chash[SECONDARY];
+          prtmp = (pRecord *)fhash->lookup_available(NULL, &chashIter[last_lookup], &wrap_around[last_lookup], &hash);
+          if (prtmp) {
+            pRec = (parents[last_lookup] + prtmp->idx);
           }
         }
-        break;
       }
-      if (wrap_around[PRIMARY] && chash[SECONDARY] != NULL && wrap_around[SECONDARY]) {
-        if (pRec && pRec->available) {
-          Debug("parent_select", "Wrapped but %s is available.", pRec->hostname);
-        } else if (pRec) {
-          int len = 0;
-          char *request_str = url->string_get_ref(&len);
-          if (request_str) {
-            Note("No available parents for request: %*s.", len, request_str);
-          }
-        }
-        break;
-      }
-    } while (!prtmp || !pRec->available);
+    }
   }
 
   // use the available parent.
@@ -232,6 +201,16 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
     if (result->rec->go_direct == true && result->rec->parent_is_proxy) {
       result->r = PARENT_DIRECT;
     } else {
+      now = time(NULL);
+      // limit logging to no more than one message per second.
+      if (now > last_unavailable) {
+        int len = 0;
+        char *request_str = url->string_get_ref(&len);
+        if(request_str) {
+            Note("No available parents for request: %*s.", len, request_str);
+        }
+       ink_atomic_swap(&last_unavailable, now);
+      }
       result->r = PARENT_FAIL;
     }
     result->hostname = NULL;
