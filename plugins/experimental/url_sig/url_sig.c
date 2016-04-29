@@ -524,7 +524,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
     } else {
       switch (ip->sa_family) {
         case AF_INET:
-          TSDebug(PLUGIN_NAME, "ip->sa_family: AF_INET");;
+          TSDebug(PLUGIN_NAME, "ip->sa_family: AF_INET");
           isClient_ipv6 = false;
           has_path_params == false ? (pp = strstr(p, "&")) : (pp = strstr(p, ";"));
           if ((pp - p) > INET_ADDRSTRLEN - 1 || (pp - p) < 4) {
@@ -542,7 +542,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
           }
           break;
         case AF_INET6:
-          TSDebug(PLUGIN_NAME, "ip->sa_family: AF_INET6");;
+          TSDebug(PLUGIN_NAME, "ip->sa_family: AF_INET6");
           isClient_ipv6 = true;
           has_path_params == false ? (pp = strstr(p, "&")) : (pp = strstr(p, ";"));
           if ((pp - p) > INET6_ADDRSTRLEN - 1 || (pp - p) < 4) {
