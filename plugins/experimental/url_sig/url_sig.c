@@ -515,7 +515,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   TSDebug(PLUGIN_NAME, "Query string is:%s", query);
 
   // Client IP - this one is optional
-  p = strstr(query, CIP_QSTRING "=");
+  p = (strchr(query, '=') + 1);
   if (p != NULL) {
     struct sockaddr const *ip = TSHttpTxnClientAddrGet(txnp); 
     if (ip == NULL) {
@@ -524,15 +524,15 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
     } else {
       switch (ip->sa_family) {
         case AF_INET:
+          TSDebug(PLUGIN_NAME, "ip->sa_family: AF_INET");;
           isClient_ipv6 = false;
-          p += strlen(CIP_QSTRING + 1);
           has_path_params == false ? (pp = strstr(p, "&")) : (pp = strstr(p, ";"));
           if ((pp - p) > INET_ADDRSTRLEN - 1 || (pp - p) < 4) {
             err_log(url, "IP address string too long or short.");
             goto deny;
           }
-          strncpy(client_ipv4, p + strlen(CIP_QSTRING) + 1, (pp - p - (strlen(CIP_QSTRING) + 1)));
-          client_ipv4[pp - p - (strlen(CIP_QSTRING) + 1)] = '\0';
+          strncpy(client_ipv4, p, (pp - p));
+          client_ipv4[pp - p] = '\0';
           TSDebug(PLUGIN_NAME, "CIP: -%s-", client_ipv4);
           inet_ntop(AF_INET, &(((struct sockaddr_in *)ip)->sin_addr), ipstr_v4, sizeof ipstr_v4);
           TSDebug(PLUGIN_NAME, "Peer address: -%s-", ipstr_v4);
@@ -542,15 +542,15 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
           }
           break;
         case AF_INET6:
+          TSDebug(PLUGIN_NAME, "ip->sa_family: AF_INET6");;
           isClient_ipv6 = true;
-          p += strlen(CIP_QSTRING + 1);
           has_path_params == false ? (pp = strstr(p, "&")) : (pp = strstr(p, ";"));
           if ((pp - p) > INET6_ADDRSTRLEN - 1 || (pp - p) < 4) {
             err_log(url, "IP address string too long or short.");
             goto deny;
           }
-          strncpy(client_ipv6, p + strlen(CIP_QSTRING) + 1, (pp - p - (strlen(CIP_QSTRING) + 1)));
-          client_ipv6[pp - p - (strlen(CIP_QSTRING) + 1)] = '\0';
+          strncpy(client_ipv6, p, (pp - p));
+          client_ipv6[pp - p] = '\0';
           TSDebug(PLUGIN_NAME, "CIP: -%s-", client_ipv6);
           inet_ntop(AF_INET6, &(((struct sockaddr_in6 *)ip)->sin6_addr), ipstr_v6, sizeof ipstr_v6);
           TSDebug(PLUGIN_NAME, "Peer address: -%s-", ipstr_v6);
