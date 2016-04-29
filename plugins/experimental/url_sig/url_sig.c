@@ -515,7 +515,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   TSDebug(PLUGIN_NAME, "Query string is:%s", query);
 
   // Client IP - this one is optional
-  p = (strchr(query, '=') + 1);
+  p = (strstr(query, CIP_QSTRING "=") + strlen(CIP_QSTRING) + 1);
   if (p != NULL) {
     struct sockaddr const *ip = TSHttpTxnClientAddrGet(txnp); 
     if (ip == NULL) {
