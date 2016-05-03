@@ -153,6 +153,7 @@ struct ParentResult {
   uint32_t start_parent;
   bool wrap_around;
   int last_lookup; // state for for consistent hash.
+  ATSConsistentHashIter chashIter[2];
 };
 
 struct ParentSelectionPolicy {

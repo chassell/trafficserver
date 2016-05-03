@@ -124,7 +124,7 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
     path_hash = getPathHash(request_info, (ATSHash64 *)&hash);
     fhash = chash[PRIMARY];
     if (path_hash) {
-      prtmp = (pRecord *)fhash->lookup_by_hashval(path_hash, &chashIter[last_lookup], &wrap_around[last_lookup]);
+      prtmp = (pRecord *)fhash->lookup_by_hashval(path_hash, &result->chashIter[last_lookup], &wrap_around[last_lookup]);
       if (prtmp)
         pRec = (parents[last_lookup] + prtmp->idx);
     }
@@ -134,14 +134,14 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
       last_lookup = SECONDARY;
       fhash = chash[SECONDARY];
       path_hash = getPathHash(request_info, (ATSHash64 *)&hash);
-      prtmp = (pRecord *)fhash->lookup_by_hashval(path_hash, &chashIter[last_lookup], &wrap_around[last_lookup]);
+      prtmp = (pRecord *)fhash->lookup_by_hashval(path_hash, &result->chashIter[last_lookup], &wrap_around[last_lookup]);
       if (prtmp)
         pRec = (parents[last_lookup] + prtmp->idx);
     } else {
       last_lookup = PRIMARY;
       fhash = chash[PRIMARY];
       do { // search until we've selected a different parent.
-        prtmp = (pRecord *)fhash->lookup(NULL, &chashIter[last_lookup], &wrap_around[last_lookup], &hash);
+        prtmp = (pRecord *)fhash->lookup(NULL, &result->chashIter[last_lookup], &wrap_around[last_lookup], &hash);
         if (prtmp)
           pRec = (parents[last_lookup] + prtmp->idx);
       } while (prtmp && strcmp(prtmp->hostname, result->hostname) == 0);
@@ -168,13 +168,13 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
       } else { // if not retryable find an available host on the primary ring.
         last_lookup = PRIMARY;
         fhash = chash[PRIMARY];
-        prtmp = (pRecord *)fhash->lookup_available(NULL, &chashIter[last_lookup], &wrap_around[last_lookup], &hash);
+        prtmp = (pRecord *)fhash->lookup_available(NULL, &result->chashIter[last_lookup], &wrap_around[last_lookup], &hash);
         if (prtmp) {
           pRec = (parents[last_lookup] + prtmp->idx);
         } else if (chash[SECONDARY] != NULL) { // search the secondary if if available.
           last_lookup = SECONDARY;
           fhash = chash[SECONDARY];
-          prtmp = (pRecord *)fhash->lookup_available(NULL, &chashIter[last_lookup], &wrap_around[last_lookup], &hash);
+          prtmp = (pRecord *)fhash->lookup_available(NULL, &result->chashIter[last_lookup], &wrap_around[last_lookup], &hash);
           if (prtmp) {
             pRec = (parents[last_lookup] + prtmp->idx);
           }
