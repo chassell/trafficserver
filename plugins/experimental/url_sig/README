@@ -209,3 +209,7 @@ Generating a signed URL with path parameters:
 
   curl -s -o /dev/null -v --max-redirs 0 'http://test-remap.domain.com/vod/t;E=1454015105;A=1;K=3;P=1;S=/173f2ff3667371e666fa17be6c37bfdfe6e89eccprog_index.m3u8?appid=2&t=1'
 
+Client IP in the Signing Script
+	Below is an example of how to include client ip in the signing script
+	Works for both IPv4 and IPv6
+	--client 10.10.10.10
