@@ -29,7 +29,6 @@ git clone git@github.comcast.com:cdneng/trafficserver.git %{name}
 git checkout build-master
 git checkout %{commit} .
 autoreconf -vfi
-#id ats &>/dev/null || /usr/sbin/useradd -u 176 -r ats -s /sbin/nologin -d /
 
 %build
 ./configure --prefix=%{install_prefix}/%{name} --with-user=ats --with-group=ats --with-build-number=%{release} --enable-experimental-plugins --with-max-api-stats=%{api_stats}
@@ -42,24 +41,26 @@ make DESTDIR=$RPM_BUILD_ROOT install
 # ..so why haven't we fixed them? VSSCDNENG-767
 
 mkdir -p $RPM_BUILD_ROOT/opt/trafficserver/etc/trafficserver/snapshots
-mkdir -p $RPM_BUILD_ROOT/etc/init.d
-cp $RPM_BUILD_DIR/%{name}/rc/trafficserver $RPM_BUILD_ROOT/etc/init.d/
+mkdir -p $RPM_BUILD_ROOT/opt/trafficserver/rc
+cp $RPM_BUILD_DIR/%{name}/rc/trafficserver $RPM_BUILD_ROOT/opt/trafficserver/rc/
+cp $RPM_BUILD_DIR/%{name}/rc/trafficserver.service $RPM_BUILD_ROOT/opt/trafficserver/rc/
+cp $RPM_BUILD_DIR/%{name}/tools/rc_admin.pl $RPM_BUILD_ROOT/opt/trafficserver/rc/
 
 %clean
 rm -rf $RPM_BUILD_ROOT
 
 %pre
-id ats &>/dev/null || /usr/sbin/useradd -u 176 -r ats -s /sbin/nologin -d /
+/bin/id ats &>/dev/null || /usr/sbin/useradd -u 176 -r ats -s /sbin/nologin -d /
 
 %post
-chkconfig --add %{name}
+/opt/trafficserver/rc/rc_admin.pl post-install install /opt/trafficserver
 
 %preun
-/etc/init.d/%{name} stop
-
 # if 0 uninstall, if 1 upgrade
 if [ "$1" = "0" ]; then
-	chkconfig --del %{name}
+	/opt/trafficserver/rc/rc_admin.pl pre-uninstall uninstall /opt/trafficserver
+elif [ "$1" = "1" ]; then
+	/opt/trafficserver/rc/rc_admin.pl pre-uninstall upgrade /opt/trafficserver
 fi
 
 %postun
@@ -67,12 +68,11 @@ fi
 #     http://www.ibm.com/developerworks/library/l-rpm2/
 # if 0 uninstall, if 1 upgrade
 if [ "$1" = "0" ]; then
-	id ats &>/dev/null && /usr/sbin/userdel ats
+	/bin/id ats &>/dev/null && /usr/sbin/userdel ats
 fi
 
 %files
 %defattr(-,root,root)
-%attr(755,-,-) /etc/init.d/trafficserver
 %dir /opt/trafficserver
 /opt/trafficserver/bin
 /opt/trafficserver/include
@@ -80,6 +80,7 @@ fi
 /opt/trafficserver/lib64
 /opt/trafficserver/libexec
 /opt/trafficserver/share
+/opt/trafficserver/rc
 %dir /opt/trafficserver/var
 %attr(-,ats,ats) /opt/trafficserver/var/trafficserver
 %dir /opt/trafficserver/var/log
@@ -112,6 +113,9 @@ fi
 %config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/stats.config.xml
 
 %changelog
+* Wed Jun 8 2016 John Rushford <john_rushford(at)cable.comcast.com>
+- Added tools/rc_admin.pl to complete rpm tasks under both Enterprise Linux 6 or 7 using either chkconfig or systemd commands.
+- Modified this spec file to use rc_admin.pl
 * Wed Aug 7 2013 Jeff Elsloo <jeffrey_elsloo(at)cable.comcast.com>
 - Modified to support building 3.3.x
 - Modified to support upgrades
