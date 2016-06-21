@@ -153,7 +153,7 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
     // check to see if it is retryable.
     if (pRec && !pRec->available) {
       Debug("parent_select", "Parent.failedAt = %u, retry = %u, xact_start = %u", (unsigned int)pRec->failedAt,
-        (unsigned int)policy->ParentRetryTime, (unsigned int)request_info->xact_start);
+            (unsigned int)policy->ParentRetryTime, (unsigned int)request_info->xact_start);
       if ((pRec->failedAt + policy->ParentRetryTime) < request_info->xact_start) {
         // make sure that the proper state is recorded in the result structure
         result->last_parent = pRec->idx;
@@ -164,7 +164,8 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
         } else {
           result->r = PARENT_SPECIFIED;
         }
-        Debug("parent_select", "Down parent %s is now retryable, pRec: %p, result->retry: %d.", pRec->hostname, pRec, result->retry);
+        Debug("parent_select", "Down parent %s is now retryable, pRec: %p, result->retry: %d.", pRec->hostname, pRec,
+              result->retry);
       } else { // if not retryable find an available host on the primary ring.
         last_lookup = PRIMARY;
         fhash = chash[PRIMARY];
@@ -206,10 +207,10 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
       if (now > last_unavailable) {
         int len = 0;
         char *request_str = url->string_get_ref(&len);
-        if(request_str) {
-            Note("No available parents for request: %*s.", len, request_str);
+        if (request_str) {
+          Note("No available parents for request: %*s.", len, request_str);
         }
-       ink_atomic_swap(&last_unavailable, now);
+        ink_atomic_swap(&last_unavailable, now);
       }
       result->r = PARENT_FAIL;
     }

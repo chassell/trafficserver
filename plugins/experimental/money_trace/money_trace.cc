@@ -71,7 +71,7 @@ freeTransactionData(struct txndata *txn_data)
 
 /**
  * The TS_EVENT_HTTP_CACHE_LOOKUP_COMPLETE event callback.
- * 
+ *
  * If there is a cache hit only schedule a TS_HTTP_SEND_RESPONSE_HDR_HOOK
  * continuation to send back the money trace header in the response to the
  * client.
@@ -79,7 +79,7 @@ freeTransactionData(struct txndata *txn_data)
  * If there is a cache miss, a new money trace header is created and a
  * TS_HTTP_SEND_REQUES_HDR_HOOK continuation is scheduled to add the
  * new money trace header to the parent request.
- */ 
+ */
 static void
 mt_cache_lookup_check(TSCont contp, TSHttpTxn txnp, struct txndata *txn_data)
 {
@@ -157,10 +157,10 @@ mt_check_request_header(TSHttpTxn txnp)
 
 /**
  * The TS_EVENT_HTTP_SEND_RESPONSE_HDR callback.
- * 
+ *
  * Adds the money trace header received in the client request to the
  * client response headers.
- */ 
+ */
 static void
 mt_send_client_response(TSHttpTxn txnp, struct txndata *txn_data)
 {

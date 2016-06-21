@@ -176,9 +176,9 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char *errbuf, int errbuf_s
         cfg->err_url = TSstrndup(value, strlen(value));
       else
         cfg->err_url = NULL;
-    } else if (strncmp(line, "sig_anchor", 10) == 0) { 
-        cfg->sig_anchor = TSstrndup(value, strlen(value));
-        TSDebug(PLUGIN_NAME, "sig_anchor: %s", cfg->sig_anchor);
+    } else if (strncmp(line, "sig_anchor", 10) == 0) {
+      cfg->sig_anchor = TSstrndup(value, strlen(value));
+      TSDebug(PLUGIN_NAME, "sig_anchor: %s", cfg->sig_anchor);
     } else if (strncmp(line, "excl_regex", 10) == 0) {
       // compile and study regex
       const char *errptr;
@@ -317,7 +317,7 @@ urlParse(bool *https, char *anchor, char *url, char *new_path_seg, int new_path_
         segment[numtoks] = p;
         if (anchor != NULL && sig_anchor_seg == 0) {
           // look for the signed anchor string.
-          if ((sig_anchor = strcasestr(segment[numtoks],anchor)) != NULL) {
+          if ((sig_anchor = strcasestr(segment[numtoks], anchor)) != NULL) {
             // null terminate this segment just before he signing anchor, this should be a ';'.
             *(sig_anchor - 1) = '\0';
             if ((sig_anchor = strstr(sig_anchor, "=")) != NULL) {
@@ -343,7 +343,7 @@ urlParse(bool *https, char *anchor, char *url, char *new_path_seg, int new_path_
   for (i = 2; i < numtoks; i++) {
     // if no signing anchor is found, skip the signed parameters segment.
     if (sig_anchor == NULL && i == numtoks - 2) {
-      // the signing parameters when no signature anchor is found, should be in the 
+      // the signing parameters when no signature anchor is found, should be in the
       // last path segment so skip them.
       continue;
     }
@@ -382,12 +382,12 @@ urlParse(bool *https, char *anchor, char *url, char *new_path_seg, int new_path_
   // to be in the last path segment.
   if (sig_anchor == NULL) {
     if (TSBase64Decode(segment[numtoks - 2], strlen(segment[numtoks - 2]), decoded_string, sizeof(decoded_string),
-                      (size_t *)&decoded_len) != TS_SUCCESS) {
+                       (size_t *)&decoded_len) != TS_SUCCESS) {
       TSDebug(PLUGIN_NAME, "Unable to decode the  path parameter string.");
     }
   } else {
-    if (TSBase64Decode(sig_anchor, strlen(sig_anchor), decoded_string, sizeof(decoded_string),
-                      (size_t *)&decoded_len) != TS_SUCCESS) {
+    if (TSBase64Decode(sig_anchor, strlen(sig_anchor), decoded_string, sizeof(decoded_string), (size_t *)&decoded_len) !=
+        TS_SUCCESS) {
       TSDebug(PLUGIN_NAME, "Unable to decode the  path parameter string.");
     }
   }
@@ -412,7 +412,7 @@ urlParse(bool *https, char *anchor, char *url, char *new_path_seg, int new_path_
       continue;
     }
     strncat(new_url, segment[i], strlen(segment[i]));
-    if (i < numtoks - 1) { 
+    if (i < numtoks - 1) {
       strncat(new_url, "/", 1);
     }
   }
@@ -518,52 +518,52 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   p = strstr(query, CIP_QSTRING "=");
   if (p != NULL) {
     p += (strlen(CIP_QSTRING) + 1);
-    struct sockaddr const *ip = TSHttpTxnClientAddrGet(txnp); 
+    struct sockaddr const *ip = TSHttpTxnClientAddrGet(txnp);
     if (ip == NULL) {
       TSError("Can't get client ip address.");
       goto deny;
     } else {
       switch (ip->sa_family) {
-        case AF_INET:
-          TSDebug(PLUGIN_NAME, "ip->sa_family: AF_INET");
-          isClient_ipv6 = false;
-          has_path_params == false ? (pp = strstr(p, "&")) : (pp = strstr(p, ";"));
-          if ((pp - p) > INET_ADDRSTRLEN - 1 || (pp - p) < 4) {
-            err_log(url, "IP address string too long or short.");
-            goto deny;
-          }
-          strncpy(client_ipv4, p, (pp - p));
-          client_ipv4[pp - p] = '\0';
-          TSDebug(PLUGIN_NAME, "CIP: -%s-", client_ipv4);
-          inet_ntop(AF_INET, &(((struct sockaddr_in *)ip)->sin_addr), ipstr_v4, sizeof ipstr_v4);
-          TSDebug(PLUGIN_NAME, "Peer address: -%s-", ipstr_v4);
-          if (strcmp(ipstr_v4, client_ipv4) != 0) {
-            err_log(url, "Client IP doesn't match signature.");
-            goto deny;
-          }
-          break;
-        case AF_INET6:
-          TSDebug(PLUGIN_NAME, "ip->sa_family: AF_INET6");
-          isClient_ipv6 = true;
-          has_path_params == false ? (pp = strstr(p, "&")) : (pp = strstr(p, ";"));
-          if ((pp - p) > INET6_ADDRSTRLEN - 1 || (pp - p) < 4) {
-            err_log(url, "IP address string too long or short.");
-            goto deny;
-          }
-          strncpy(client_ipv6, p, (pp - p));
-          client_ipv6[pp - p] = '\0';
-          TSDebug(PLUGIN_NAME, "CIP: -%s-", client_ipv6);
-          inet_ntop(AF_INET6, &(((struct sockaddr_in6 *)ip)->sin6_addr), ipstr_v6, sizeof ipstr_v6);
-          TSDebug(PLUGIN_NAME, "Peer address: -%s-", ipstr_v6);
-          if (strcmp(ipstr_v6, client_ipv6) != 0) {
-            err_log(url, "Client IP doesn't match signature.");
-            goto deny;
-          }
-          break;
-        default:
-          TSError("%s: Unknown address family %d", PLUGIN_NAME, ip->sa_family);
+      case AF_INET:
+        TSDebug(PLUGIN_NAME, "ip->sa_family: AF_INET");
+        isClient_ipv6 = false;
+        has_path_params == false ? (pp = strstr(p, "&")) : (pp = strstr(p, ";"));
+        if ((pp - p) > INET_ADDRSTRLEN - 1 || (pp - p) < 4) {
+          err_log(url, "IP address string too long or short.");
           goto deny;
-          break;
+        }
+        strncpy(client_ipv4, p, (pp - p));
+        client_ipv4[pp - p] = '\0';
+        TSDebug(PLUGIN_NAME, "CIP: -%s-", client_ipv4);
+        inet_ntop(AF_INET, &(((struct sockaddr_in *)ip)->sin_addr), ipstr_v4, sizeof ipstr_v4);
+        TSDebug(PLUGIN_NAME, "Peer address: -%s-", ipstr_v4);
+        if (strcmp(ipstr_v4, client_ipv4) != 0) {
+          err_log(url, "Client IP doesn't match signature.");
+          goto deny;
+        }
+        break;
+      case AF_INET6:
+        TSDebug(PLUGIN_NAME, "ip->sa_family: AF_INET6");
+        isClient_ipv6 = true;
+        has_path_params == false ? (pp = strstr(p, "&")) : (pp = strstr(p, ";"));
+        if ((pp - p) > INET6_ADDRSTRLEN - 1 || (pp - p) < 4) {
+          err_log(url, "IP address string too long or short.");
+          goto deny;
+        }
+        strncpy(client_ipv6, p, (pp - p));
+        client_ipv6[pp - p] = '\0';
+        TSDebug(PLUGIN_NAME, "CIP: -%s-", client_ipv6);
+        inet_ntop(AF_INET6, &(((struct sockaddr_in6 *)ip)->sin6_addr), ipstr_v6, sizeof ipstr_v6);
+        TSDebug(PLUGIN_NAME, "Peer address: -%s-", ipstr_v6);
+        if (strcmp(ipstr_v6, client_ipv6) != 0) {
+          err_log(url, "Client IP doesn't match signature.");
+          goto deny;
+        }
+        break;
+      default:
+        TSError("%s: Unknown address family %d", PLUGIN_NAME, ip->sa_family);
+        goto deny;
+        break;
       }
     }
   }
@@ -639,7 +639,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
             keyindex, parts, signature);
   } else {
     TSDebug(PLUGIN_NAME, "Found all needed parameters: C=%s E=%d A=%d K=%d P=%s S=%s", client_ipv4, (int)expiration, algorithm,
-          keyindex, parts, signature);
+            keyindex, parts, signature);
   }
   /* find the string that was signed - cycle through the parts letters, adding the part of the fqdn/path if it is 1 */
   has_path_params == false ? (p = strstr(url, "?")) : (p = strstr(url, ";"));
