@@ -15,7 +15,7 @@ my $phase;
 
 # returns the enterprise linux version.
 sub el_version {
-	my @el_version = split(/\./, `/usr/bin/uname -r`);
+	my @el_version = split(/\./, `/bin/uname -r`);
 	exists $el_versions{uc $el_version[3]} ? return uc $el_version[3] 
 		: die("unsupported el_version: $el_version[3]");
 }
