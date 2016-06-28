@@ -50,7 +50,7 @@ cp $RPM_BUILD_DIR/%{name}/tools/rc_admin.pl $RPM_BUILD_ROOT/opt/trafficserver/rc
 rm -rf $RPM_BUILD_ROOT
 
 %pre
-/bin/id ats &>/dev/null || /usr/sbin/useradd -u 176 -r ats -s /sbin/nologin -d /
+id ats &>/dev/null || /usr/sbin/useradd -u 176 -r ats -s /sbin/nologin -d /
 
 %post
 /opt/trafficserver/rc/rc_admin.pl post-install install /opt/trafficserver
@@ -68,7 +68,7 @@ fi
 #     http://www.ibm.com/developerworks/library/l-rpm2/
 # if 0 uninstall, if 1 upgrade
 if [ "$1" = "0" ]; then
-	/bin/id ats &>/dev/null && /usr/sbin/userdel ats
+	id ats &>/dev/null && /usr/sbin/userdel ats
 fi
 
 %files
