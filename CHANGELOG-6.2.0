@@ -134,10 +134,16 @@ Bug:
   *) [TS-4527] vc error messages in 6.2.0 release
   *) [TS-4529] HttpSM doesn't assign the right continuation when adjusting threads
   *) [TS-4534] hostdb `showall` endpoint with format=json is invalid json
+  *) [TS-4542] ASAN error with HTTP/2
   *) [TS-4543] Crash due to shutdown race in HttpSM::tunnel_handler_post
   *) [TS-4560] C++ API should not depend on ink_autoconf.h
   *) [TS-4568] Milestones where changed from seconds to milliseconds
   *) [TS-4571] Fix "pointer to local outside scope" (CID 1356978)
+  *) [TS-4608] Memory leak in ProxyAllocator.cc
+  *) [TS-4610] Fix HTTP and HTTP2 stats
+  *) [TS-4625] 6.2 RC2 crashes immediately with Epic plugin installed
+  *) [TS-4632] Fix ParentSelection regressions on 6.2.x
+  *) [TS-4633] Fix an erroneous warning message when reading the parent.config file.
 
 Improvement:
   *) [TS-1775] Cleanup of ink_hrtime.{cc,h}
@@ -184,6 +190,7 @@ Improvement:
   *) [TS-4401] Make some more configurations overridable
   *) [TS-4418] Change .clang-format to allow ConstructorInitializerAllOnOneLineOrOnePerLine
   *) [TS-4486] Add release method to MutexLock
+  *) [TS-4512] Error when building with gcc 6.1.1
   *) [TS-4565] clang_format: Align assignment on the =
 
 New Feature:
