@@ -558,6 +558,8 @@ ParentRecord::Init(matcher_line *line_info)
         round_robin = P_NO_ROUND_ROBIN;
       } else if (strcasecmp(val, "consistent_hash") == 0) {
         round_robin = P_CONSISTENT_HASH;
+      } else if (strcasecmp(val, "latched") == 0) {
+        round_robin = P_LATCHED_ROUND_ROBIN;
       } else {
         round_robin = P_NO_ROUND_ROBIN;
         errPtr      = "invalid argument to round_robin directive";
@@ -696,6 +698,7 @@ ParentRecord::Init(matcher_line *line_info)
   case P_NO_ROUND_ROBIN:
   case P_STRICT_ROUND_ROBIN:
   case P_HASH_ROUND_ROBIN:
+  case P_LATCHED_ROUND_ROBIN:
     TSDebug("parent_select", "allocating ParentRoundRobin() lookup strategy.");
     selection_strategy = new ParentRoundRobin(this, round_robin);
     break;

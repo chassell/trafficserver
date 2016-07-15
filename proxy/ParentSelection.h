@@ -59,12 +59,7 @@ enum ParentResultType {
   PARENT_FAIL,
 };
 
-enum ParentRR_t {
-  P_NO_ROUND_ROBIN = 0,
-  P_STRICT_ROUND_ROBIN,
-  P_HASH_ROUND_ROBIN,
-  P_CONSISTENT_HASH,
-};
+enum ParentRR_t { P_NO_ROUND_ROBIN = 0, P_STRICT_ROUND_ROBIN, P_HASH_ROUND_ROBIN, P_CONSISTENT_HASH, P_LATCHED_ROUND_ROBIN };
 
 enum ParentRetry_t {
   PARENT_RETRY_NONE               = 0,
