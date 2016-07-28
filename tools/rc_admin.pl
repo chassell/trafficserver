@@ -54,7 +54,7 @@ if ($phase eq "post-install") {
 		if ($? != 0) {
 			print "Failed to copy trafficsever to /etc/init.d/ : $!";
 		} else {
-			chmod(0755, "/etc/int.d/trafficserver");
+			chmod(0755, "/etc/init.d/trafficserver");
 		}
 		`/sbin/chkconfig --add trafficserver`;
 		if ($? != 0) {
