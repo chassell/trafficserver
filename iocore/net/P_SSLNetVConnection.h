@@ -32,11 +32,11 @@
 #if !defined(_SSLNetVConnection_h_)
 #define _SSLNetVConnection_h_
 
-#include "libts.h"
+#include "ts/ink_platform.h"
 #include "P_EventSystem.h"
 #include "P_UnixNetVConnection.h"
 #include "P_UnixNet.h"
-#include "apidefs.h"
+#include "ts/apidefs.h"
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -84,7 +84,7 @@ public:
   virtual void
   enableRead()
   {
-    read.enabled = 1;
+    read.enabled  = 1;
     write.enabled = 1;
   };
   virtual bool
@@ -107,6 +107,16 @@ public:
   {
     sslClientConnection = state;
   };
+  virtual void
+  setSSLSessionCacheHit(bool state)
+  {
+    sslSessionCacheHit = state;
+  };
+  virtual bool
+  getSSLSessionCacheHit()
+  {
+    return sslSessionCacheHit;
+  };
   int sslServerHandShakeEvent(int &err);
   int sslClientHandShakeEvent(int &err);
   virtual void net_read_io(NetHandler *nh, EThread *lthread);
@@ -122,7 +132,6 @@ public:
   ////////////////////////////////////////////////////////////
   SSLNetVConnection();
   virtual ~SSLNetVConnection() {}
-
   SSL *ssl;
   ink_hrtime sslHandshakeBeginTime;
   ink_hrtime sslLastWriteTime;
@@ -162,6 +171,18 @@ public:
     transparentPassThrough = val;
   };
 
+  void
+  set_session_accept_pointer(SessionAccept *acceptPtr)
+  {
+    sessionAcceptPtr = acceptPtr;
+  };
+
+  SessionAccept *
+  get_session_accept_pointer(void) const
+  {
+    return sessionAcceptPtr;
+  };
+
   // Copy up here so we overload but don't override
   using super::reenable;
 
@@ -178,9 +199,9 @@ public:
   void
   initialize_handshake_buffers()
   {
-    this->handShakeBuffer = new_MIOBuffer();
-    this->handShakeReader = this->handShakeBuffer->alloc_reader();
-    this->handShakeHolder = this->handShakeReader->clone();
+    this->handShakeBuffer    = new_MIOBuffer();
+    this->handShakeReader    = this->handShakeBuffer->alloc_reader();
+    this->handShakeHolder    = this->handShakeReader->clone();
     this->handShakeBioStored = 0;
   }
   void
@@ -195,9 +216,9 @@ public:
     if (this->handShakeBuffer) {
       free_MIOBuffer(this->handShakeBuffer);
     }
-    this->handShakeReader = NULL;
-    this->handShakeHolder = NULL;
-    this->handShakeBuffer = NULL;
+    this->handShakeReader    = NULL;
+    this->handShakeHolder    = NULL;
+    this->handShakeBuffer    = NULL;
     this->handShakeBioStored = 0;
   }
   // Returns true if all the hooks reenabled
@@ -206,6 +227,48 @@ public:
   // Returns true if we have already called at
   // least some of the hooks
   bool calledHooks(TSHttpHookID /* eventId */) { return (this->sslHandshakeHookState != HANDSHAKE_HOOKS_PRE); }
+  bool
+  isEosRcvd()
+  {
+    return eosRcvd;
+  }
+
+  bool
+  getSSLTrace() const
+  {
+    return sslTrace || super::origin_trace;
+  };
+
+  void
+  setSSLTrace(bool state)
+  {
+    sslTrace = state;
+  };
+
+  bool computeSSLTrace();
+
+  const char *
+  getSSLProtocol(void) const
+  {
+    if (ssl == NULL)
+      return NULL;
+    return SSL_get_version(ssl);
+  };
+
+  const char *
+  getSSLCipherSuite(void) const
+  {
+    if (ssl == NULL)
+      return NULL;
+    return SSL_get_cipher_name(ssl);
+  }
+
+  /**
+   * Populate the current object based on the socket information in in the
+   * con parameter and the ssl object in the arg parameter
+   * This is logic is invoked when the NetVC object is created in a new thread context
+   */
+  virtual int populate(Connection &con, Continuation *c, void *arg);
 
 private:
   SSLNetVConnection(const SSLNetVConnection &);
@@ -214,6 +277,7 @@ private:
   bool sslHandShakeComplete;
   bool sslClientConnection;
   bool sslClientRenegotiationAbort;
+  bool sslSessionCacheHit;
   MIOBuffer *handShakeBuffer;
   IOBufferReader *handShakeHolder;
   IOBufferReader *handShakeReader;
@@ -243,6 +307,9 @@ private:
 
   const SSLNextProtocolSet *npnSet;
   Continuation *npnEndpoint;
+  SessionAccept *sessionAcceptPtr;
+  bool eosRcvd;
+  bool sslTrace;
 };
 
 typedef int (SSLNetVConnection::*SSLNetVConnHandler)(int, void *);

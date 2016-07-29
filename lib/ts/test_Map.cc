@@ -21,7 +21,7 @@
   limitations under the License.
 */
 #include <stdint.h>
-#include "Map.h"
+#include "ts/Map.h"
 
 typedef const char cchar;
 
@@ -209,7 +209,6 @@ main(int /* argc ATS_UNUSED */, char ** /*argv ATS_UNUSED */)
   Vec<cchar *> chars;
   ssh.get_keys(chars);
   ink_assert(chars.n == 8);
-
 
   test_TSHashTable();
 

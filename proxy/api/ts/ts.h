@@ -30,7 +30,7 @@
 #ifndef __TS_API_H__
 #define __TS_API_H__
 
-#include "apidefs.h"
+#include <ts/apidefs.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -148,14 +148,12 @@ int TSTrafficServerVersionGetPatch(void);
     Traffic Server version currently running also supports your plugin.
     See the SDK sample code for usage.
 
-    @param sdk_version earliest version of the Traffic Server SDK that
-      supports your plugin.
     @param plugin_info contains registration information about your
       plugin. See TSPluginRegistrationInfo.
     @return TS_ERROR if the plugin registration failed.
 
  */
-tsapi TSReturnCode TSPluginRegister(TSSDKVersion sdk_version, TSPluginRegistrationInfo *plugin_info);
+tsapi TSReturnCode TSPluginRegister(TSPluginRegistrationInfo *plugin_info);
 
 /* --------------------------------------------------------------------------
    Files */
@@ -699,8 +697,8 @@ tsapi TSReturnCode TSUrlHttpFragmentSet(TSMBuffer bufp, TSMLoc offset, const cha
    @param map optional (can be NULL) map of characters to encode.
 
 */
-tsapi TSReturnCode
-TSStringPercentEncode(const char *str, int str_len, char *dst, size_t dst_size, size_t *length, const unsigned char *map);
+tsapi TSReturnCode TSStringPercentEncode(const char *str, int str_len, char *dst, size_t dst_size, size_t *length,
+                                         const unsigned char *map);
 
 /**
    Similar to TSStringPercentEncode(), but works on a URL object.
@@ -713,8 +711,8 @@ TSStringPercentEncode(const char *str, int str_len, char *dst, size_t dst_size, 
    @param map optional (can be NULL) map of characters to encode.
 
 */
-tsapi TSReturnCode
-TSUrlPercentEncode(TSMBuffer bufp, TSMLoc offset, char *dst, size_t dst_size, size_t *length, const unsigned char *map);
+tsapi TSReturnCode TSUrlPercentEncode(TSMBuffer bufp, TSMLoc offset, char *dst, size_t dst_size, size_t *length,
+                                      const unsigned char *map);
 
 /**
    Perform percent-decoding of the string in the buffer, writing
@@ -730,7 +728,6 @@ TSUrlPercentEncode(TSMBuffer bufp, TSMLoc offset, char *dst, size_t dst_size, si
 
 */
 tsapi TSReturnCode TSStringPercentDecode(const char *str, size_t str_len, char *dst, size_t dst_size, size_t *length);
-
 
 /* --------------------------------------------------------------------------
    MIME headers */
@@ -981,10 +978,10 @@ tsapi TSReturnCode TSMimeHdrFieldCreateNamed(TSMBuffer bufp, TSMLoc mh_mloc, con
  */
 tsapi TSReturnCode TSMimeHdrFieldDestroy(TSMBuffer bufp, TSMLoc hdr, TSMLoc field);
 
-tsapi TSReturnCode
-TSMimeHdrFieldClone(TSMBuffer dest_bufp, TSMLoc dest_hdr, TSMBuffer src_bufp, TSMLoc src_hdr, TSMLoc src_field, TSMLoc *locp);
-tsapi TSReturnCode
-TSMimeHdrFieldCopy(TSMBuffer dest_bufp, TSMLoc dest_hdr, TSMLoc dest_field, TSMBuffer src_bufp, TSMLoc src_hdr, TSMLoc src_field);
+tsapi TSReturnCode TSMimeHdrFieldClone(TSMBuffer dest_bufp, TSMLoc dest_hdr, TSMBuffer src_bufp, TSMLoc src_hdr, TSMLoc src_field,
+                                       TSMLoc *locp);
+tsapi TSReturnCode TSMimeHdrFieldCopy(TSMBuffer dest_bufp, TSMLoc dest_hdr, TSMLoc dest_field, TSMBuffer src_bufp, TSMLoc src_hdr,
+                                      TSMLoc src_field);
 tsapi TSReturnCode TSMimeHdrFieldCopyValues(TSMBuffer dest_bufp, TSMLoc dest_hdr, TSMLoc dest_field, TSMBuffer src_bufp,
                                             TSMLoc src_hdr, TSMLoc src_field);
 tsapi TSMLoc TSMimeHdrFieldNext(TSMBuffer bufp, TSMLoc hdr, TSMLoc field);
@@ -1009,8 +1006,8 @@ tsapi TSReturnCode TSMimeHdrFieldValueDateSet(TSMBuffer bufp, TSMLoc hdr, TSMLoc
 
 tsapi TSReturnCode TSMimeHdrFieldValueAppend(TSMBuffer bufp, TSMLoc hdr, TSMLoc field, int idx, const char *value, int length);
 /* These Insert() APIs should be considered. Use the corresponding Set() API instead */
-tsapi TSReturnCode
-TSMimeHdrFieldValueStringInsert(TSMBuffer bufp, TSMLoc hdr, TSMLoc field, int idx, const char *value, int length);
+tsapi TSReturnCode TSMimeHdrFieldValueStringInsert(TSMBuffer bufp, TSMLoc hdr, TSMLoc field, int idx, const char *value,
+                                                   int length);
 tsapi TSReturnCode TSMimeHdrFieldValueIntInsert(TSMBuffer bufp, TSMLoc hdr, TSMLoc field, int idx, int value);
 tsapi TSReturnCode TSMimeHdrFieldValueUintInsert(TSMBuffer bufp, TSMLoc hdr, TSMLoc field, int idx, unsigned int value);
 tsapi TSReturnCode TSMimeHdrFieldValueDateInsert(TSMBuffer bufp, TSMLoc hdr, TSMLoc field, time_t value);
@@ -1185,7 +1182,6 @@ tsapi void *TSConfigDataGet(TSConfig configp);
 /* --------------------------------------------------------------------------
    Management */
 tsapi void TSMgmtUpdateRegister(TSCont contp, const char *plugin_name);
-tsapi void TSMgmtUnRegister(const char *plugin_name);
 tsapi TSReturnCode TSMgmtIntGet(const char *var_name, TSMgmtInt *result);
 tsapi TSReturnCode TSMgmtCounterGet(const char *var_name, TSMgmtCounter *result);
 tsapi TSReturnCode TSMgmtFloatGet(const char *var_name, TSMgmtFloat *result);
@@ -1287,6 +1283,10 @@ tsapi TSReturnCode TSHttpTxnCacheLookupStatusGet(TSHttpTxn txnp, int *lookup_sta
 
 tsapi TSReturnCode TSHttpTxnTransformRespGet(TSHttpTxn txnp, TSMBuffer *bufp, TSMLoc *offset);
 
+/** Set the @a port value for the inbound (user agent) connection in the transaction @a txnp.
+    This is used primarily where the conection is synthetic and therefore does not have a port.
+    @note @a port is in @b host @b order.
+*/
 tsapi void TSHttpTxnClientIncomingPortSet(TSHttpTxn txnp, int port);
 
 /** Get SSL object of this session.
@@ -1359,6 +1359,7 @@ tsapi struct sockaddr const *TSHttpTxnNextHopAddrGet(TSHttpTxn txnp);
 tsapi TSReturnCode TSHttpTxnClientFdGet(TSHttpTxn txnp, int *fdp);
 tsapi TSReturnCode TSHttpTxnOutgoingAddrSet(TSHttpTxn txnp, struct sockaddr const *addr);
 tsapi TSReturnCode TSHttpTxnOutgoingTransparencySet(TSHttpTxn txnp, int flag);
+tsapi TSReturnCode TSHttpTxnServerFdGet(TSHttpTxn txnp, int *fdp);
 
 /* TS-1008: the above TXN calls for the Client conn should work with SSN */
 tsapi struct sockaddr const *TSHttpSsnClientAddrGet(TSHttpSsn ssnp);
@@ -1454,7 +1455,7 @@ tsapi void TSHttpTxnErrorBodySet(TSHttpTxn txnp, char *buf, size_t buflength, ch
     @param port parent proxy's port.
 
  */
-tsapi TSReturnCode TSHttpTxnParentProxyGet(TSHttpTxn txnp, char **hostname, int *port);
+tsapi TSReturnCode TSHttpTxnParentProxyGet(TSHttpTxn txnp, const char **hostname, int *port);
 
 /**
     Sets the parent proxy name and port. The string hostname is copied
@@ -1466,7 +1467,7 @@ tsapi TSReturnCode TSHttpTxnParentProxyGet(TSHttpTxn txnp, char **hostname, int 
     @param port parent proxy port to set.
 
  */
-tsapi void TSHttpTxnParentProxySet(TSHttpTxn txnp, char *hostname, int port);
+tsapi void TSHttpTxnParentProxySet(TSHttpTxn txnp, const char *hostname, int port);
 
 tsapi void TSHttpTxnUntransformedRespCache(TSHttpTxn txnp, int on);
 tsapi void TSHttpTxnTransformedRespCache(TSHttpTxn txnp, int on);
@@ -1657,8 +1658,13 @@ tsapi void TSFetchUrl(const char *request, int request_len, struct sockaddr cons
 tsapi void TSFetchPages(TSFetchUrlParams_t *params);
 
 /* Check if HTTP State machine is internal or not */
-tsapi TSReturnCode TSHttpIsInternalRequest(TSHttpTxn txnp);
-tsapi TSReturnCode TSHttpIsInternalSession(TSHttpSsn ssnp);
+/** @deprecated to be renamed as TSHttpTxnIsInternal **/
+tsapi TS_DEPRECATED TSReturnCode TSHttpIsInternalRequest(TSHttpTxn txnp);
+/** @deprecated to be renamed as TSHttpSsnIsInternal **/
+tsapi TS_DEPRECATED TSReturnCode TSHttpIsInternalSession(TSHttpSsn ssnp);
+
+tsapi TSReturnCode TSHttpTxnIsInternal(TSHttpTxn txnp);
+tsapi TSReturnCode TSHttpSsnIsInternal(TSHttpSsn ssnp);
 
 /* --------------------------------------------------------------------------
    HTTP alternate selection */
@@ -1719,10 +1725,10 @@ tsapi struct sockaddr const *TSNetVConnRemoteAddrGet(TSVConn vc);
       or cancel the attempt to connect.
 
  */
-tsapi TSAction
-TSNetConnect(TSCont contp, /**< continuation that is called back when the attempted net connection either succeeds or fails. */
-             struct sockaddr const *to /**< Address to which to connect. */
-             );
+tsapi TSAction TSNetConnect(
+  TSCont contp,             /**< continuation that is called back when the attempted net connection either succeeds or fails. */
+  struct sockaddr const *to /**< Address to which to connect. */
+  );
 
 tsapi TSAction TSNetAccept(TSCont contp, int port, int domain, int accept_threads);
 
@@ -2027,7 +2033,7 @@ extern int diags_on_for_plugins;
 enum {
   TS_LOG_MODE_ADD_TIMESTAMP = 1,
   TS_LOG_MODE_DO_NOT_RENAME = 2,
-  TS_LOG_MODE_INVALID_FLAG = 4,
+  TS_LOG_MODE_INVALID_FLAG  = 4,
 };
 
 /**
@@ -2237,7 +2243,6 @@ tsapi void TSVConnActiveTimeoutCancel(TSVConn connp);
 */
 tsapi void TSSkipRemappingSet(TSHttpTxn txnp, int flag);
 
-
 /*
   Set or get various overridable configurations, for a transaction. This should
   probably be done as early as possible, e.g. TS_HTTP_READ_REQUEST_HDR_HOOK.
@@ -2316,6 +2321,7 @@ tsapi int TSHttpCurrentServerConnectionsGet(void);
 tsapi TSReturnCode TSHttpTxnCachedRespModifiableGet(TSHttpTxn txnp, TSMBuffer *bufp, TSMLoc *offset);
 tsapi TSReturnCode TSHttpTxnCacheLookupStatusSet(TSHttpTxn txnp, int cachelookup);
 tsapi TSReturnCode TSHttpTxnCacheLookupUrlGet(TSHttpTxn txnp, TSMBuffer bufp, TSMLoc obj);
+tsapi TSReturnCode TSHttpTxnCacheLookupUrlSet(TSHttpTxn txnp, TSMBuffer bufp, TSMLoc obj);
 tsapi TSReturnCode TSHttpTxnPrivateSessionSet(TSHttpTxn txnp, int private_session);
 tsapi int TSHttpTxnBackgroundFillStarted(TSHttpTxn txnp);
 

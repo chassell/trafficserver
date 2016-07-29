@@ -59,14 +59,14 @@ public:
 
     if (needed >= avail) {
       ptrdiff_t bufsz = ebuf - start;
-      ptrdiff_t used = buf - start;
+      ptrdiff_t used  = buf - start;
 
       Debug("cache_inspector", "needed %d bytes, reallocating to %d bytes", (int)needed, (int)bufsz + (int)needed);
 
       bufsz += ROUNDUP(needed, ats_pagesize());
       start = (char *)ats_realloc(start, bufsz);
-      ebuf = start + bufsz;
-      buf = start + used;
+      ebuf  = start + bufsz;
+      buf   = start + used;
       avail = ebuf - buf;
 
       needed = vsnprintf(buf, avail, s, aap);
@@ -87,9 +87,8 @@ public:
     return complete_error(event, e);
 
   int
-  complete(int event, Event *e)
+  finishConn(int event, Event *e)
   {
-    CHECK_SHOW(show("</BODY>\n</HTML>\n"));
     if (!action.cancelled) {
       StatPageData data(start, buf - start);
       action.continuation->handleEvent(STAT_PAGE_SUCCESS, &data);
@@ -99,6 +98,19 @@ public:
       start = NULL;
     }
     return done(VIO::CLOSE, event, e);
+  }
+
+  int
+  complete(int event, Event *e)
+  {
+    CHECK_SHOW(show("</BODY>\n</HTML>\n"));
+    return finishConn(event, e);
+  }
+
+  int
+  completeJson(int event, Event *e)
+  {
+    return finishConn(event, e);
   }
 
   int
@@ -137,11 +149,11 @@ public:
   {
     size_t sz = ats_pagesize();
 
-    mutex = c->mutex;
+    mutex  = c->mutex;
     action = c;
-    buf = (char *)ats_malloc(sz);
-    start = buf;
-    ebuf = buf + sz;
+    buf    = (char *)ats_malloc(sz);
+    start  = buf;
+    ebuf   = buf + sz;
   }
 
   ~ShowCont()
@@ -150,6 +162,5 @@ public:
     ats_free(start);
   }
 };
-
 
 #endif

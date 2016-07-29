@@ -38,10 +38,9 @@ OperatorSetConfig::initialize(Parser &p)
     _value.set_value(p.get_value());
   } else {
     _key = TS_CONFIG_NULL;
-    TSError("%s: no such records config: %s", PLUGIN_NAME, _config.c_str());
+    TSError("[%s] no such records config: %s", PLUGIN_NAME, _config.c_str());
   }
 }
-
 
 void
 OperatorSetConfig::exec(const Resources &res) const
@@ -64,12 +63,11 @@ OperatorSetConfig::exec(const Resources &res) const
       }
       break;
     default:
-      TSError("%s: unknown data type, whut?", PLUGIN_NAME);
+      TSError("[%s] unknown data type, whut?", PLUGIN_NAME);
       break;
     }
   }
 }
-
 
 // OperatorSetStatus
 void
@@ -80,7 +78,7 @@ OperatorSetStatus::initialize(Parser &p)
   _status.set_value(p.get_arg());
 
   if (NULL == (_reason = TSHttpHdrReasonLookup((TSHttpStatus)_status.get_int_value()))) {
-    TSError("%s: unknown status %d", PLUGIN_NAME, _status.get_int_value());
+    TSError("[%s] unknown status %d", PLUGIN_NAME, _status.get_int_value());
     _reason_len = 0;
   } else {
     _reason_len = strlen(_reason);
@@ -91,25 +89,36 @@ OperatorSetStatus::initialize(Parser &p)
   require_resources(RSRC_RESPONSE_STATUS);
 }
 
-
 void
 OperatorSetStatus::initialize_hooks()
 {
   add_allowed_hook(TS_HTTP_READ_RESPONSE_HDR_HOOK);
   add_allowed_hook(TS_HTTP_SEND_RESPONSE_HDR_HOOK);
+  add_allowed_hook(TS_HTTP_READ_REQUEST_HDR_HOOK);
+  add_allowed_hook(TS_HTTP_READ_REQUEST_PRE_REMAP_HOOK);
+  add_allowed_hook(TS_REMAP_PSEUDO_HOOK);
 }
-
 
 void
 OperatorSetStatus::exec(const Resources &res) const
 {
-  if (res.bufp && res.hdr_loc) {
-    TSHttpHdrStatusSet(res.bufp, res.hdr_loc, (TSHttpStatus)_status.get_int_value());
-    if (_reason && _reason_len > 0)
-      TSHttpHdrReasonSet(res.bufp, res.hdr_loc, _reason, _reason_len);
+  switch (get_hook()) {
+  case TS_HTTP_READ_RESPONSE_HDR_HOOK:
+  case TS_HTTP_SEND_RESPONSE_HDR_HOOK:
+    if (res.bufp && res.hdr_loc) {
+      TSHttpHdrStatusSet(res.bufp, res.hdr_loc, (TSHttpStatus)_status.get_int_value());
+      if (_reason && _reason_len > 0) {
+        TSHttpHdrReasonSet(res.bufp, res.hdr_loc, _reason, _reason_len);
+      }
+    }
+    break;
+  default:
+    TSHttpTxnSetHttpRetStatus(res.txnp, (TSHttpStatus)_status.get_int_value());
+    break;
   }
-}
 
+  TSDebug(PLUGIN_NAME, "OperatorSetStatus::exec() invoked with status=%d", _status.get_int_value());
+}
 
 // OperatorSetStatusReason
 void
@@ -121,7 +130,6 @@ OperatorSetStatusReason::initialize(Parser &p)
   require_resources(RSRC_CLIENT_RESPONSE_HEADERS);
   require_resources(RSRC_SERVER_RESPONSE_HEADERS);
 }
-
 
 void
 OperatorSetStatusReason::initialize_hooks()
@@ -144,7 +152,6 @@ OperatorSetStatusReason::exec(const Resources &res) const
   }
 }
 
-
 // OperatorSetDestination
 void
 OperatorSetDestination::initialize(Parser &p)
@@ -157,7 +164,6 @@ OperatorSetDestination::initialize(Parser &p)
   require_resources(RSRC_SERVER_REQUEST_HEADERS);
 }
 
-
 void
 OperatorSetDestination::exec(const Resources &res) const
 {
@@ -168,7 +174,7 @@ OperatorSetDestination::exec(const Resources &res) const
     TSMBuffer bufp;
     TSMLoc url_m_loc;
     if (res._rri) {
-      bufp = res._rri->requestBufp;
+      bufp      = res._rri->requestBufp;
       url_m_loc = res._rri->requestUrl;
     } else {
       bufp = res.bufp;
@@ -209,7 +215,7 @@ OperatorSetDestination::exec(const Resources &res) const
       } else {
         // 1.6.4--Support for preserving QSA in case of set-destination
         if (get_oper_modifiers() & OPER_QSA) {
-          int query_len = 0;
+          int query_len     = 0;
           const char *query = TSUrlHttpQueryGet(bufp, url_m_loc, &query_len);
           TSDebug(PLUGIN_NAME, "QSA mode, append original query string: %.*s", query_len, query);
           // std::string connector = (value.find("?") == std::string::npos)? "?" : "&";
@@ -237,7 +243,7 @@ OperatorSetDestination::exec(const Resources &res) const
         TSDebug(PLUGIN_NAME, "Would set destination URL to an empty value, skipping");
       } else {
         const char *start = _value.get_value().c_str();
-        const char *end = _value.get_value().size() + start;
+        const char *end   = _value.get_value().size() + start;
         TSMLoc new_url_loc;
         if (TSUrlCreate(bufp, &new_url_loc) == TS_SUCCESS && TSUrlParse(bufp, new_url_loc, &start, end) == TS_PARSE_DONE &&
             TSHttpHdrUrlSet(bufp, res.hdr_loc, new_url_loc) == TS_SUCCESS) {
@@ -265,8 +271,6 @@ OperatorSetDestination::exec(const Resources &res) const
   }
 }
 
-
-/// TODO and XXX: These currently only support when running as remap plugin.
 // OperatorSetRedirect
 void
 OperatorSetRedirect::initialize(Parser &p)
@@ -278,69 +282,117 @@ OperatorSetRedirect::initialize(Parser &p)
 
   if ((_status.get_int_value() != (int)TS_HTTP_STATUS_MOVED_PERMANENTLY) &&
       (_status.get_int_value() != (int)TS_HTTP_STATUS_MOVED_TEMPORARILY)) {
-    TSError("%s: unsupported redirect status %d", PLUGIN_NAME, _status.get_int_value());
+    TSError("[%s] unsupported redirect status %d", PLUGIN_NAME, _status.get_int_value());
   }
 
   require_resources(RSRC_SERVER_RESPONSE_HEADERS);
   require_resources(RSRC_CLIENT_RESPONSE_HEADERS);
+  require_resources(RSRC_CLIENT_REQUEST_HEADERS);
   require_resources(RSRC_RESPONSE_STATUS);
 }
-
 
 void
 OperatorSetRedirect::exec(const Resources &res) const
 {
-  if (res._rri) {
-    if (res.bufp && res.hdr_loc) {
-      std::string value;
+  if (res.bufp && res.hdr_loc && res.client_bufp && res.client_hdr_loc) {
+    std::string value;
 
-      _location.append_value(value, res);
+    _location.append_value(value, res);
 
-      if (_location.need_expansion()) {
-        VariableExpander ve(value);
-        value = ve.expand(res);
-      }
-
-      // Replace %{PATH} to original path
-      size_t pos_path = 0;
-
-      if ((pos_path = value.find("%{PATH}")) != std::string::npos) {
-        value.erase(pos_path, 7); // erase %{PATH} from the rewritten to url
-        int path_len = 0;
-        const char *path = TSUrlPathGet(res._rri->requestBufp, res._rri->requestUrl, &path_len);
-        if (path_len > 0) {
-          TSDebug(PLUGIN_NAME, "Find %%{PATH} in redirect url, replace it with: %.*s", path_len, path);
-          value.insert(pos_path, path, path_len);
-        }
-      }
-
-      // Append the original query string
-      int query_len = 0;
-      const char *query = TSUrlHttpQueryGet(res._rri->requestBufp, res._rri->requestUrl, &query_len);
-      if ((get_oper_modifiers() & OPER_QSA) && (query_len > 0)) {
-        TSDebug(PLUGIN_NAME, "QSA mode, append original query string: %.*s", query_len, query);
-        std::string connector = (value.find("?") == std::string::npos) ? "?" : "&";
-        value.append(connector);
-        value.append(query, query_len);
-      }
-
-      TSHttpTxnSetHttpRetStatus(res.txnp, (TSHttpStatus)_status.get_int_value());
-      const_cast<Resources &>(res).changed_url = true;
-      res._rri->redirect = 1;
-
-      // TSHttpHdrStatusSet(res.bufp, res.hdr_loc, (TSHttpStatus)_status.get_int_value());
-      const char *start = value.c_str();
-      const char *end = value.size() + start;
-      TSUrlParse(res._rri->requestBufp, res._rri->requestUrl, &start, end);
-      TSDebug(PLUGIN_NAME, "OperatorSetRedirect::exec() invoked with destination=%s and status code=%d", value.c_str(),
-              _status.get_int_value());
+    if (_location.need_expansion()) {
+      VariableExpander ve(value);
+      value = ve.expand(res);
     }
 
-  } else {
-    // TODO: Handle the non-remap case here (InkAPI hooks)
+    bool remap = false;
+    if (NULL != res._rri) {
+      remap = true;
+      TSDebug(PLUGIN_NAME, "OperatorSetRedirect:exec() invoked from remap plugin");
+    } else {
+      TSDebug(PLUGIN_NAME, "OperatorSetRedirect:exec() not invoked from remap plugin");
+    }
+
+    TSMBuffer bufp;
+    TSMLoc url_loc;
+    if (remap) {
+      // Handle when called from remap plugin.
+      bufp    = res._rri->requestBufp;
+      url_loc = res._rri->requestUrl;
+    } else {
+      // Handle when not called from remap plugin.
+      bufp = res.client_bufp;
+      if (TS_SUCCESS != TSHttpHdrUrlGet(res.client_bufp, res.client_hdr_loc, &url_loc)) {
+        TSDebug(PLUGIN_NAME, "Could not get client URL");
+      }
+    }
+
+    // Replace %{PATH} to original path
+    size_t pos_path = 0;
+    if ((pos_path = value.find("%{PATH}")) != std::string::npos) {
+      value.erase(pos_path, 7); // erase %{PATH} from the rewritten to url
+      int path_len     = 0;
+      const char *path = NULL;
+      path             = TSUrlPathGet(bufp, url_loc, &path_len);
+      if (path_len > 0) {
+        TSDebug(PLUGIN_NAME, "Find %%{PATH} in redirect url, replace it with: %.*s", path_len, path);
+        value.insert(pos_path, path, path_len);
+      }
+    }
+
+    // Append the original query string
+    int query_len     = 0;
+    const char *query = NULL;
+    query             = TSUrlHttpQueryGet(bufp, url_loc, &query_len);
+    if ((get_oper_modifiers() & OPER_QSA) && (query_len > 0)) {
+      TSDebug(PLUGIN_NAME, "QSA mode, append original query string: %.*s", query_len, query);
+      std::string connector = (value.find("?") == std::string::npos) ? "?" : "&";
+      value.append(connector);
+      value.append(query, query_len);
+    }
+
+    // Prepare the destination URL for the redirect.
+    const char *start = value.c_str();
+    const char *end   = value.size() + start;
+    if (remap) {
+      // Set new location.
+      TSUrlParse(bufp, url_loc, &start, end);
+      // Set the new status.
+      TSHttpTxnSetHttpRetStatus(res.txnp, (TSHttpStatus)_status.get_int_value());
+      const_cast<Resources &>(res).changed_url = true;
+      res._rri->redirect                       = 1;
+    } else {
+      // Set new location.
+      TSMLoc field_loc;
+      std::string header("Location");
+      if (TS_SUCCESS == TSMimeHdrFieldCreateNamed(res.bufp, res.hdr_loc, header.c_str(), header.size(), &field_loc)) {
+        if (TS_SUCCESS == TSMimeHdrFieldValueStringSet(res.bufp, res.hdr_loc, field_loc, -1, value.c_str(), value.size())) {
+          TSDebug(PLUGIN_NAME, "   Adding header %s", header.c_str());
+          TSMimeHdrFieldAppend(res.bufp, res.hdr_loc, field_loc);
+        }
+        TSHandleMLocRelease(res.bufp, res.hdr_loc, field_loc);
+      }
+
+      // Set the new status code and reason.
+      TSHttpStatus status = (TSHttpStatus)_status.get_int_value();
+      const char *reason  = TSHttpHdrReasonLookup(status);
+      size_t len          = strlen(reason);
+      TSHttpHdrStatusSet(res.bufp, res.hdr_loc, status);
+      TSHttpHdrReasonSet(res.bufp, res.hdr_loc, reason, len);
+
+      // Set the body.
+      std::string msg = "<HTML>\n<HEAD>\n<TITLE>Document Has Moved</TITLE>\n</HEAD>\n"
+                        "<BODY BGCOLOR=\"white\" FGCOLOR=\"black\">\n"
+                        "<H1>Document Has Moved</H1>\n<HR>\n<FONT FACE=\"Helvetica,Arial\"><B>\n"
+                        "Description: The document you requested has moved to a new location."
+                        " The new location is \"" +
+                        value + "\".\n</B></FONT>\n<HR>\n</BODY>\n";
+      TSHttpTxnErrorBodySet(res.txnp, TSstrdup(msg.c_str()), msg.length(), TSstrdup("text/html"));
+    }
+
+    TSDebug(PLUGIN_NAME, "OperatorSetRedirect::exec() invoked with destination=%s and status code=%d", value.c_str(),
+            _status.get_int_value());
   }
 }
-
 
 // OperatorSetTimeoutOut
 void
@@ -358,12 +410,11 @@ OperatorSetTimeoutOut::initialize(Parser &p)
     _type = TO_OUT_DNS;
   } else {
     _type = TO_OUT_UNDEFINED;
-    TSError("%s: unsupported timeout qualifier: %s", PLUGIN_NAME, p.get_arg().c_str());
+    TSError("[%s] unsupported timeout qualifier: %s", PLUGIN_NAME, p.get_arg().c_str());
   }
 
   _timeout.set_value(p.get_value());
 }
-
 
 void
 OperatorSetTimeoutOut::exec(const Resources &res) const
@@ -389,7 +440,7 @@ OperatorSetTimeoutOut::exec(const Resources &res) const
     TSHttpTxnDNSTimeoutSet(res.txnp, _timeout.get_int_value());
     break;
   default:
-    TSError("%s: unsupported timeout", PLUGIN_NAME);
+    TSError("[%s] unsupported timeout", PLUGIN_NAME);
     break;
   }
 }
@@ -412,7 +463,6 @@ OperatorSkipRemap::exec(const Resources &res) const
   TSSkipRemappingSet(res.txnp, _skip_remap ? 1 : 0);
 }
 
-
 // OperatorRMHeader
 void
 OperatorRMHeader::exec(const Resources &res) const
@@ -431,7 +481,6 @@ OperatorRMHeader::exec(const Resources &res) const
     }
   }
 }
-
 
 // OperatorAddHeader
 void
@@ -474,7 +523,6 @@ OperatorAddHeader::exec(const Resources &res) const
     }
   }
 }
-
 
 // OperatorSetHeader
 void
@@ -543,7 +591,7 @@ OperatorCounter::initialize(Parser &p)
 
   // Sanity
   if (_counter_name.length() == 0) {
-    TSError("%s: counter name is empty", PLUGIN_NAME);
+    TSError("[%s] counter name is empty", PLUGIN_NAME);
     return;
   }
 
@@ -551,7 +599,7 @@ OperatorCounter::initialize(Parser &p)
   if (TSStatFindName(_counter_name.c_str(), &_counter) == TS_ERROR) {
     _counter = TSStatCreate(_counter_name.c_str(), TS_RECORDDATATYPE_INT, TS_STAT_NON_PERSISTENT, TS_STAT_SYNC_COUNT);
     if (_counter == TS_ERROR) {
-      TSError("%s: TSStatCreate() failed. Can't create counter: %s", PLUGIN_NAME, _counter_name.c_str());
+      TSError("[%s] TSStatCreate() failed. Can't create counter: %s", PLUGIN_NAME, _counter_name.c_str());
       return;
     }
     TSDebug(PLUGIN_NAME, "OperatorCounter::initialize(%s) created counter with id: %d", _counter_name.c_str(), _counter);
@@ -593,35 +641,25 @@ OperatorSetConnDSCP::exec(const Resources &res) const
 {
   if (res.txnp) {
     TSHttpTxnClientPacketDscpSet(res.txnp, _ds_value.get_int_value());
+    TSDebug(PLUGIN_NAME, "   Setting DSCP to %d", _ds_value.get_int_value());
   }
 }
 
-// OperatorSetMethod
+// OperatorSetDebug
 void
-OperatorSetMethod::initialize(Parser &p)
+OperatorSetDebug::initialize(Parser &p)
 {
-  OperatorHeaders::initialize(p);
-
-  _method.set_value(p.get_arg());
+  Operator::initialize(p);
 }
 
 void
-OperatorSetMethod::initialize_hooks()
+OperatorSetDebug::initialize_hooks()
 {
   add_allowed_hook(TS_HTTP_READ_REQUEST_HDR_HOOK);
-  add_allowed_hook(TS_HTTP_SEND_REQUEST_HDR_HOOK);
-  add_allowed_hook(TS_REMAP_PSEUDO_HOOK);
 }
 
 void
-OperatorSetMethod::exec(const Resources &res) const
+OperatorSetDebug::exec(const Resources &res) const
 {
-  std::string method;
-
-  _method.append_value(method, res);
-
-  if (res.bufp && res.hdr_loc) {
-    TSDebug(PLUGIN_NAME, "OperatorSetMethod::exec() invoked setting METHOD(%s)", method.c_str());
-    TSHttpHdrMethodSet(res.bufp, res.hdr_loc, method.c_str(), method.size());
-  }
+  TSHttpTxnDebugSet(res.txnp, 1);
 }

@@ -53,6 +53,8 @@ if [ -e /etc/SuSE-release ]; then
     DISTRIB_ID="suse"
 elif [ -e /etc/fedora-release ]; then
     DISTRIB_ID="fedora"
+elif [ -e /etc/gentoo-release ]; then
+    DISTRIB_ID="gentoo"
 elif [ -e /etc/redhat-release ]; then
     DISTRIB_ID="redhat" # also exists on Fedora
 elif [ -e /etc/lsb-release ]; then
@@ -146,6 +148,9 @@ test -r /etc/default/$NAME && . /etc/default/$NAME
 # RHEL/Fedora: Read configuration variable file if it is present
 test -r /etc/sysconfig/$NAME && . /etc/sysconfig/$NAME
 
+# Gentoo: Read configuration variable file if it is present
+test -r /etc/conf.d/$NAME && . /etc/conf.d/$NAME
+
 # Ubuntu: Load the VERBOSE setting and other rcS variables
 test -f /etc/default/rcS && . /etc/default/rcS
 
@@ -154,6 +159,9 @@ test -f /etc/rc.status && . /etc/rc.status
 
 # Fedora: make avail helper functions 'action', 'killproc', 'status', etc
 test -f /etc/rc.d/init.d/functions && . /etc/rc.d/init.d/functions
+
+# Gentoo: make avail helper function 'ebegin', 'eend', etc
+test -f /etc/init.d/functions.sh && . /etc/init.d/functions.sh
 
 # Ubuntu: Define LSB log_* functions.
 #         Depend on lsb-base (>= 3.0-6) to ensure that this file is present.
@@ -235,7 +243,7 @@ do_stop()
   #   1 if daemon was already stopped
   #   2 if daemon could not be stopped
   #   other if a failure occurred
-    start-stop-daemon --stop --quiet --retry=TERM/30/KILL/5 --pidfile $TC_PIDFILE --name $TC_NAME
+    start-stop-daemon --stop --quiet --retry=QUIT/30/KILL/5 --pidfile $TC_PIDFILE --name $TC_NAME
     RETVAL="$?"
     test "$RETVAL" != 0 && return $RETVAL
   # Wait for children to finish too if this is a daemon that forks
@@ -244,14 +252,14 @@ do_stop()
   # that waits for the process to drop all resources that could be
   # needed by services started subsequently.  A last resort is to
   # sleep for some time.
-    start-stop-daemon --stop --quiet --oknodo --retry=TERM/30/KILL/5 --exec $TC_DAEMON
+    start-stop-daemon --stop --quiet --oknodo --retry=0/30/KILL/5 --exec $TC_DAEMON
     RETVAL="$?"
     test "$RETVAL" != 0 && return $RETVAL
   # Need to stop the TM and TS also
-    start-stop-daemon --stop --quiet --oknodo --retry=TERM/30/KILL/5 --pidfile $TM_PIDFILE --name $TM_NAME
+    start-stop-daemon --stop --quiet --oknodo --retry=QUIT/30/KILL/5 --pidfile $TM_PIDFILE --name $TM_NAME
     RETVAL="$?"
     test "$RETVAL" != 0 && return $RETVAL
-    start-stop-daemon --stop --quiet --oknodo --retry=TERM/30/KILL/5 --pidfile $TS_PIDFILE --name $TS_NAME
+    start-stop-daemon --stop --quiet --oknodo --retry=QUIT/30/KILL/5 --pidfile $TS_PIDFILE --name $TS_NAME
     RETVAL="$?"
     test "$RETVAL" != 0 && return $RETVAL
   # Many daemons don't delete their pidfiles when they exit.
@@ -271,6 +279,10 @@ case "$1" in
             test "$?" -ne 0 -a "$?" -ne 1 && retval=1
             test "x$VERBOSE" != "xno" && log_end_msg "$retval"
             exit "$retval"
+        elif [ "$DISTRIB_ID" = "gentoo" ]; then
+	    ebegin "Starting ${TS_PACKAGE_NAME}"
+	    do_start
+	    eend $?
         elif [ "$DISTRIB_ID" = "fedora" -o "$DISTRIB_ID" = "redhat" ]; then
             action "Starting ${TS_PACKAGE_NAME}:" forkdaemon $TC_DAEMON $TC_DAEMON_ARGS
         elif [ "$DISTRIB_ID" = "suse" ]; then
@@ -305,6 +317,10 @@ case "$1" in
             action "Stopping ${TC_NAME}:" killproc -p $TC_PIDFILE $TC_DAEMON
             action "Stopping ${TM_NAME}:" killproc -p $TM_PIDFILE $TM_DAEMON
             action "Stopping ${TS_NAME}:" killproc -p $TS_PIDFILE $TS_DAEMON
+        elif [ "$DISTRIB_ID" = "gentoo" ]; then
+	    ebegin "Starting ${TS_PACKAGE_NAME}"
+	    do_stop
+	    eend $?
         elif [ "$DISTRIB_ID" = "suse" ]; then
             echo -n "Stopping ${TC_NAME}"
             killproc -p $TC_PIDFILE $TC_DAEMON
@@ -352,6 +368,10 @@ case "$1" in
             exit "$retval"
         elif [ "$DISTRIB_ID" = "fedora" -o "$DISTRIB_ID" = "redhat" ]; then
             action "Reloading ${NAME}:" $TL_BINARY -x
+        elif [ "$DISTRIB_ID" = "gentoo" ]; then
+	    ebegin "Reloading ${NAME}"
+            $TL_BINARY -x
+	    eend $?
         elif [ "$DISTRIB_ID" = "suse" ]; then
             echo -n "Reloading ${NAME}"
             $TL_BINARY -x
@@ -412,7 +432,7 @@ case "$1" in
             status=$?
             [ $status -eq 0 ] || /bin/echo -n "not "
             echo "running."
-        elif [ "$DISTRIB_ID" = "FreeBSD" ]; then
+        elif [ "$DISTRIB_ID" = "FreeBSD" -o "$DISTRIB_ID" = "gentoo" ]; then
             if pgrep $TM_NAME > /dev/null ; then 
                 echo "$TM_NAME running as pid `cat $TM_PIDFILE`" ; else 
                 echo "$TM_NAME not running" 
@@ -448,6 +468,8 @@ case "$1" in
             echo "Usage: $SCRIPTNAME {start|stop|status|restart}" >&2
         elif [ "$DISTRIB_ID" = "fedora" -o "$DISTRIB_ID" = "redhat" ]; then
             echo "Usage: $0 {start|stop|status|restart|condrestart}"
+        elif [ "$DISTRIB_ID" = "gentoo" ]; then
+            echo "Usage: $0 {start|stop|reload|restart|status}"
         elif [ "$DISTRIB_ID" = "suse" ]; then
             echo "Usage: $0 {start|stop|restart|status}"
         elif [ "$DISTRIB_ID" = "Darwin" ]; then

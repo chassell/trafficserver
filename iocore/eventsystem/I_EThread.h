@@ -25,7 +25,9 @@
 #ifndef _EThread_h_
 #define _EThread_h_
 
-#include "libts.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_rand.h"
+#include "ts/I_Version.h"
 #include "I_Thread.h"
 #include "I_PriorityEventQueue.h"
 #include "I_ProtectedQueue.h"
@@ -54,6 +56,7 @@ enum ThreadType {
   DEDICATED,
 };
 
+extern bool shutdown_event_system;
 
 /**
   Event System specific type of thread.
@@ -329,7 +332,8 @@ class ink_dummy_for_new
 {
 };
 
-inline void *operator new(size_t, ink_dummy_for_new *p)
+inline void *
+operator new(size_t, ink_dummy_for_new *p)
 {
   return (void *)p;
 }

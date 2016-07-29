@@ -16,7 +16,6 @@
   limitations under the License.
  */
 
-
 #include <iostream>
 #include <atscppapi/GlobalPlugin.h>
 #include <atscppapi/TransactionPlugin.h>
@@ -65,5 +64,6 @@ public:
 void
 TSPluginInit(int argc ATSCPPAPI_UNUSED, const char *argv[] ATSCPPAPI_UNUSED)
 {
+  RegisterGlobalPlugin("CPP_Example_TransactionHook", "apache", "dev@trafficserver.apache.org");
   new GlobalHookPlugin();
 }

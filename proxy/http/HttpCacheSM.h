@@ -34,7 +34,6 @@
 #define _HTTP_CACHE_SM_H_
 
 #include "P_Cache.h"
-#include "StatSystem.h"
 #include "ProxyConfig.h"
 #include "URL.h"
 #include "HTTP.h"
@@ -64,13 +63,14 @@ public:
   init(HttpSM *sm_arg, ProxyMutex *amutex)
   {
     master_sm = sm_arg;
-    mutex = amutex;
+    mutex     = amutex;
     captive_action.init(this);
   }
 
-  Action *open_read(URL *url, HTTPHdr *hdr, CacheLookupHttpConfig *params, time_t pin_in_cache);
+  Action *open_read(const HttpCacheKey *key, URL *url, HTTPHdr *hdr, CacheLookupHttpConfig *params, time_t pin_in_cache);
 
-  Action *open_write(URL *url, HTTPHdr *request, CacheHTTPInfo *old_info, time_t pin_in_cache, bool retry, bool allow_multiple);
+  Action *open_write(const HttpCacheKey *key, URL *url, HTTPHdr *request, CacheHTTPInfo *old_info, time_t pin_in_cache, bool retry,
+                     bool allow_multiple);
 
   CacheVConnection *cache_read_vc;
   CacheVConnection *cache_write_vc;
@@ -95,6 +95,48 @@ public:
   is_readwhilewrite_inprogress()
   {
     return readwhilewrite_inprogress;
+  }
+
+  bool
+  is_ram_cache_hit()
+  {
+    return cache_read_vc ? (cache_read_vc->is_ram_cache_hit()) : 0;
+  }
+
+  bool
+  is_compressed_in_ram()
+  {
+    return cache_read_vc ? (cache_read_vc->is_compressed_in_ram()) : 0;
+  }
+
+  inline void
+  set_open_read_tries(int value)
+  {
+    open_read_tries = value;
+  }
+
+  int
+  get_open_read_tries()
+  {
+    return open_read_tries;
+  }
+
+  inline void
+  set_open_write_tries(int value)
+  {
+    open_write_tries = value;
+  }
+
+  int
+  get_open_write_tries()
+  {
+    return open_write_tries;
+  }
+
+  int
+  get_volume_number()
+  {
+    return cache_read_vc ? (cache_read_vc->get_volume_number()) : -1;
   }
 
   inline void
@@ -141,20 +183,10 @@ public:
     close_read();
     abort_write();
   }
-  inline URL *
-  get_lookup_url()
-  {
-    return lookup_url;
-  }
-  inline void
-  set_lookup_url(URL *url)
-  {
-    lookup_url = url;
-  }
 
 private:
   void do_schedule_in();
-  Action *do_cache_open_read();
+  Action *do_cache_open_read(const HttpCacheKey &);
 
   int state_cache_open_read(int event, void *data);
   int state_cache_open_write(int event, void *data);
@@ -175,6 +207,7 @@ private:
 
   // Common parameters
   URL *lookup_url;
+  HttpCacheKey cache_key;
 
   // to keep track of multiple cache lookups
   int lookup_max_recursive;

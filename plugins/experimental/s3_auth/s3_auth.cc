@@ -24,6 +24,7 @@
 #include <string.h>
 #include <getopt.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <limits.h>
 #include <ctype.h>
 
@@ -33,13 +34,11 @@
 #include <ts/ts.h>
 #include <ts/remap.h>
 
-
 ///////////////////////////////////////////////////////////////////////////////
 // Some constants.
 //
 static const char PLUGIN_NAME[] = "s3_auth";
-static const char DATE_FMT[] = "%a, %d %b %Y %H:%M:%S %z";
-
+static const char DATE_FMT[]    = "%a, %d %b %Y %H:%M:%S %z";
 
 ///////////////////////////////////////////////////////////////////////////////
 // One configuration setup
@@ -102,14 +101,14 @@ public:
   set_secret(const char *s)
   {
     TSfree(_secret);
-    _secret = TSstrdup(s);
+    _secret     = TSstrdup(s);
     _secret_len = strlen(s);
   }
   void
   set_keyid(const char *s)
   {
     TSfree(_keyid);
-    _keyid = TSstrdup(s);
+    _keyid     = TSstrdup(s);
     _keyid_len = strlen(s);
   }
   void
@@ -144,12 +143,11 @@ private:
   TSCont _cont;
 };
 
-
 bool
 S3Config::parse_config(const char *config)
 {
   if (!config) {
-    TSError("%s: called without a config file, this is broken", PLUGIN_NAME);
+    TSError("[%s] called without a config file, this is broken", PLUGIN_NAME);
     return false;
   } else {
     char filename[PATH_MAX + 1];
@@ -163,7 +161,7 @@ S3Config::parse_config(const char *config)
     FILE *file = fopen(config, "r");
 
     if (NULL == file) {
-      TSError("%s: unable to open %s", PLUGIN_NAME, config);
+      TSError("[%s] unable to open %s", PLUGIN_NAME, config);
       return false;
     }
 
@@ -207,7 +205,6 @@ S3Config::parse_config(const char *config)
   return true;
 }
 
-
 ///////////////////////////////////////////////////////////////////////////////
 // This class is used to perform the S3 auth generation.
 //
@@ -215,7 +212,6 @@ class S3Request
 {
 public:
   S3Request(TSHttpTxn txnp) : _txnp(txnp), _bufp(NULL), _hdr_loc(TS_NULL_MLOC), _url_loc(TS_NULL_MLOC) {}
-
   ~S3Request()
   {
     TSHandleMLocRelease(_bufp, _hdr_loc, _url_loc);
@@ -244,7 +240,6 @@ private:
   TSMLoc _hdr_loc, _url_loc;
 };
 
-
 ///////////////////////////////////////////////////////////////////////////
 // Set a header to a specific value. This will avoid going to through a
 // remove / add sequence in case of an existing header.
@@ -256,7 +251,7 @@ S3Request::set_header(const char *header, int header_len, const char *val, int v
     return false;
   }
 
-  bool ret = false;
+  bool ret         = false;
   TSMLoc field_loc = TSMimeHdrFieldFind(_bufp, _hdr_loc, header, header_len);
 
   if (!field_loc) {
@@ -294,6 +289,18 @@ S3Request::set_header(const char *header, int header_len, const char *val, int v
   return ret;
 }
 
+// dst poinsts to starting offset of dst buffer
+// dst_len remaining space in buffer
+static size_t
+str_concat(char *dst, size_t dst_len, const char *src, size_t src_len)
+{
+  size_t to_copy = (src_len < dst_len) ? src_len : dst_len;
+
+  if (to_copy > 0)
+    (void)strncat(dst, src, to_copy);
+
+  return to_copy;
+}
 
 // Method to authorize the S3 request:
 //
@@ -316,9 +323,9 @@ TSHttpStatus
 S3Request::authorize(S3Config *s3)
 {
   TSHttpStatus status = TS_HTTP_STATUS_INTERNAL_SERVER_ERROR;
-  TSMLoc host_loc = TS_NULL_MLOC;
-  int method_len = 0, path_len = 0, host_len = 0, date_len = 0;
-  const char *method = NULL, *path = NULL, *host = NULL, *host_endp = NULL;
+  TSMLoc host_loc = TS_NULL_MLOC, md5_loc = TS_NULL_MLOC, contype_loc = TS_NULL_MLOC;
+  int method_len = 0, path_len = 0, param_len = 0, host_len = 0, con_md5_len = 0, con_type_len = 0, date_len = 0;
+  const char *method = NULL, *path = NULL, *param = NULL, *host = NULL, *con_md5 = NULL, *con_type = NULL, *host_endp = NULL;
   char date[128]; // Plenty of space for a Date value
   time_t now = time(NULL);
   struct tm now_tm;
@@ -330,6 +337,9 @@ S3Request::authorize(S3Config *s3)
   if (NULL == (path = TSUrlPathGet(_bufp, _url_loc, &path_len))) {
     return TS_HTTP_STATUS_INTERNAL_SERVER_ERROR;
   }
+
+  // get matrix parameters
+  param = TSUrlHttpParamsGet(_bufp, _url_loc, &param_len);
 
   // Next, setup the Date: header, it's required.
   if (NULL == gmtime_r(&now, &now_tm)) {
@@ -347,24 +357,57 @@ S3Request::authorize(S3Config *s3)
   if (s3->virt_host()) {
     host_loc = TSMimeHdrFieldFind(_bufp, _hdr_loc, TS_MIME_FIELD_HOST, TS_MIME_LEN_HOST);
     if (host_loc) {
-      host = TSMimeHdrFieldValueStringGet(_bufp, _hdr_loc, host_loc, -1, &host_len);
+      host      = TSMimeHdrFieldValueStringGet(_bufp, _hdr_loc, host_loc, -1, &host_len);
       host_endp = static_cast<const char *>(memchr(host, '.', host_len));
     } else {
       return TS_HTTP_STATUS_INTERNAL_SERVER_ERROR;
     }
   }
 
+  // Just in case we add Content-MD5 if present
+  md5_loc = TSMimeHdrFieldFind(_bufp, _hdr_loc, TS_MIME_FIELD_CONTENT_MD5, TS_MIME_LEN_CONTENT_MD5);
+  if (md5_loc) {
+    con_md5 = TSMimeHdrFieldValueStringGet(_bufp, _hdr_loc, md5_loc, -1, &con_md5_len);
+  }
+
+  // get the Content-Type if available - (buggy) clients may send it
+  // for GET requests too
+  contype_loc = TSMimeHdrFieldFind(_bufp, _hdr_loc, TS_MIME_FIELD_CONTENT_TYPE, TS_MIME_LEN_CONTENT_TYPE);
+  if (contype_loc) {
+    con_type = TSMimeHdrFieldValueStringGet(_bufp, _hdr_loc, contype_loc, -1, &con_type_len);
+  }
+
   // For debugging, lets produce some nice output
   if (TSIsDebugTagSet(PLUGIN_NAME)) {
     TSDebug(PLUGIN_NAME, "Signature string is:");
     // ToDo: This should include the Content-MD5 and Content-Type (for POST)
-    fprintf(stderr, "%.*s\n\n\n%.*s\n/", method_len, method, date_len, date);
+    TSDebug(PLUGIN_NAME, "%.*s", method_len, method);
+    if (con_md5)
+      TSDebug(PLUGIN_NAME, "%.*s", con_md5_len, con_md5);
+
+    if (con_type)
+      TSDebug(PLUGIN_NAME, "%.*s", con_type_len, con_type);
+
+    TSDebug(PLUGIN_NAME, "%.*s", date_len, date);
+
+    const size_t left_size   = 1024;
+    char left[left_size + 1] = "/";
+    size_t loff              = 1;
 
     // ToDo: What to do with the CanonicalizedAmzHeaders ...
     if (host && host_endp) {
-      fprintf(stderr, "%.*s/", static_cast<int>(host_endp - host), host);
+      loff += str_concat(&left[loff], (left_size - loff), host, static_cast<int>(host_endp - host));
+      loff += str_concat(&left[loff], (left_size - loff), "/", 1);
     }
-    fprintf(stderr, "%.*s\n", path_len, path);
+
+    loff += str_concat(&left[loff], (left_size - loff), path, path_len);
+
+    if (param) {
+      loff += str_concat(&left[loff], (left_size - loff), ";", 1);
+      str_concat(&left[loff], (left_size - loff), param, param_len);
+    }
+
+    TSDebug(PLUGIN_NAME, "%s", left);
   }
 
   // Produce the SHA1 MAC digest
@@ -377,7 +420,11 @@ S3Request::authorize(S3Config *s3)
   HMAC_CTX_init(&ctx);
   HMAC_Init_ex(&ctx, s3->secret(), s3->secret_len(), EVP_sha1(), NULL);
   HMAC_Update(&ctx, (unsigned char *)method, method_len);
-  HMAC_Update(&ctx, (unsigned char *)"\n\n\n", 3); // ToDo: This should be POST info (see above)
+  HMAC_Update(&ctx, (unsigned char *)"\n", 1);
+  HMAC_Update(&ctx, (unsigned char *)con_md5, con_md5_len);
+  HMAC_Update(&ctx, (unsigned char *)"\n", 1);
+  HMAC_Update(&ctx, (unsigned char *)con_type, con_type_len);
+  HMAC_Update(&ctx, (unsigned char *)"\n", 1);
   HMAC_Update(&ctx, (unsigned char *)date, date_len);
   HMAC_Update(&ctx, (unsigned char *)"\n/", 2);
 
@@ -387,6 +434,11 @@ S3Request::authorize(S3Config *s3)
   }
 
   HMAC_Update(&ctx, (unsigned char *)path, path_len);
+  if (param) {
+    HMAC_Update(&ctx, (unsigned char *)";", 1); // TSUrlHttpParamsGet() does not include ';'
+    HMAC_Update(&ctx, (unsigned char *)param, param_len);
+  }
+
   HMAC_Final(&ctx, hmac, &hmac_len);
   HMAC_CTX_cleanup(&ctx);
 
@@ -402,11 +454,12 @@ S3Request::authorize(S3Config *s3)
   }
 
   // Cleanup
+  TSHandleMLocRelease(_bufp, _hdr_loc, contype_loc);
+  TSHandleMLocRelease(_bufp, _hdr_loc, md5_loc);
   TSHandleMLocRelease(_bufp, _hdr_loc, host_loc);
 
   return status;
 }
-
 
 ///////////////////////////////////////////////////////////////////////////////
 // This is the main continuation.
@@ -433,7 +486,6 @@ event_handler(TSCont cont, TSEvent /* event */, void *edata)
   return 0;
 }
 
-
 ///////////////////////////////////////////////////////////////////////////////
 // Initialize the plugin.
 //
@@ -455,19 +507,16 @@ TSRemapInit(TSRemapInterface *api_info, char *errbuf, int errbuf_size)
   return TS_SUCCESS;
 }
 
-
 ///////////////////////////////////////////////////////////////////////////////
 // One instance per remap.config invocation.
 //
 TSReturnCode
 TSRemapNewInstance(int argc, char *argv[], void **ih, char * /* errbuf ATS_UNUSED */, int /* errbuf_size ATS_UNUSED */)
 {
-  static const struct option longopt[] = {{const_cast<char *>("access_key"), required_argument, NULL, 'a'},
-                                          {const_cast<char *>("config"), required_argument, NULL, 'c'},
-                                          {const_cast<char *>("secret_key"), required_argument, NULL, 's'},
-                                          {const_cast<char *>("version"), required_argument, NULL, 'v'},
-                                          {const_cast<char *>("virtual_host"), no_argument, NULL, 'h'},
-                                          {NULL, no_argument, NULL, '\0'}};
+  static const struct option longopt[] = {
+    {const_cast<char *>("access_key"), required_argument, NULL, 'a'}, {const_cast<char *>("config"), required_argument, NULL, 'c'},
+    {const_cast<char *>("secret_key"), required_argument, NULL, 's'}, {const_cast<char *>("version"), required_argument, NULL, 'v'},
+    {const_cast<char *>("virtual_host"), no_argument, NULL, 'h'},     {NULL, no_argument, NULL, '\0'}};
 
   S3Config *s3 = new S3Config();
 
@@ -505,7 +554,7 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char * /* errbuf ATS_UNUSE
 
   // Make sure we got both the shared secret and the AWS secret
   if (!s3->valid()) {
-    TSError("%s: requires both shared and AWS secret configuration", PLUGIN_NAME);
+    TSError("[%s] requires both shared and AWS secret configuration", PLUGIN_NAME);
     delete s3;
     *ih = NULL;
     return TS_ERROR;
@@ -526,7 +575,6 @@ TSRemapDeleteInstance(void *ih)
   delete s3;
 }
 
-
 ///////////////////////////////////////////////////////////////////////////////
 // This is the main "entry" point for the plugin, called for every request.
 //
@@ -535,8 +583,8 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo * /* rri */)
 {
   S3Config *s3 = static_cast<S3Config *>(ih);
 
-  TSAssert(s3->valid());
   if (s3) {
+    TSAssert(s3->valid());
     // Now schedule the continuation to update the URL when going to origin.
     // Note that in most cases, this is a No-Op, assuming you have reasonable
     // cache hit ratio. However, the scheduling is next to free (very cheap).
@@ -545,26 +593,10 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo * /* rri */)
     s3->schedule(txnp);
   } else {
     TSDebug(PLUGIN_NAME, "Remap context is invalid");
-    TSError("%s: No remap context available, check code / config", PLUGIN_NAME);
+    TSError("[%s] No remap context available, check code / config", PLUGIN_NAME);
     TSHttpTxnSetHttpRetStatus(txnp, TS_HTTP_STATUS_INTERNAL_SERVER_ERROR);
   }
 
   // This plugin actually doesn't do anything with remapping. Ever.
   return TSREMAP_NO_REMAP;
 }
-
-
-/*
-  local variables:
-  mode: C++
-  indent-tabs-mode: nil
-  c-basic-offset: 2
-  c-comment-only-line-offset: 0
-  c-file-offsets: ((statement-block-intro . +)
-  (label . 0)
-  (statement-cont . +)
-  (innamespace . 0))
-  end:
-
-  Indent with: /usr/bin/indent -ncs -nut -npcs -l 120 logstats.cc
-*/

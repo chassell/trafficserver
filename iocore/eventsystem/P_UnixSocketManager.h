@@ -32,9 +32,9 @@
 #ifndef _P_UnixSocketManager_h_
 #define _P_UnixSocketManager_h_
 
-#include "libts.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_sock.h"
 #include "I_SocketManager.h"
-
 
 //
 // These limits are currently disabled
@@ -54,7 +54,6 @@ transient_error()
 #endif
   return transient;
 }
-
 
 //
 // Timing done in the connectionManager
@@ -235,7 +234,6 @@ SocketManager::write_vector(int fd, struct iovec *vector, size_t count, void *pO
 {
   return vector_io(fd, vector, count, 0, pOLP);
 }
-
 
 TS_INLINE int
 SocketManager::send(int fd, void *buf, int size, int flags)
@@ -456,7 +454,6 @@ SocketManager::port_getn(int port, port_event_t *list, uint_t max, uint_t *nget,
 }
 #endif /* TS_USE_PORT */
 
-
 TS_INLINE int
 SocketManager::get_sndbuf_size(int s)
 {
@@ -464,7 +461,7 @@ SocketManager::get_sndbuf_size(int s)
   int bszsz, r;
 
   bszsz = sizeof(bsz);
-  r = safe_getsockopt(s, SOL_SOCKET, SO_SNDBUF, (char *)&bsz, &bszsz);
+  r     = safe_getsockopt(s, SOL_SOCKET, SO_SNDBUF, (char *)&bsz, &bszsz);
   return (r == 0 ? bsz : r);
 }
 
@@ -475,7 +472,7 @@ SocketManager::get_rcvbuf_size(int s)
   int bszsz, r;
 
   bszsz = sizeof(bsz);
-  r = safe_getsockopt(s, SOL_SOCKET, SO_RCVBUF, (char *)&bsz, &bszsz);
+  r     = safe_getsockopt(s, SOL_SOCKET, SO_RCVBUF, (char *)&bsz, &bszsz);
   return (r == 0 ? bsz : r);
 }
 

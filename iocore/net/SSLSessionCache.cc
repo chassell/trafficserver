@@ -52,10 +52,9 @@ SSLSessionCache::~SSLSessionCache()
 bool
 SSLSessionCache::getSession(const SSLSessionID &sid, SSL_SESSION **sess) const
 {
-  uint64_t hash = sid.hash();
-  uint64_t target_bucket = hash % nbuckets;
+  uint64_t hash            = sid.hash();
+  uint64_t target_bucket   = hash % nbuckets;
   SSLSessionBucket *bucket = &session_bucket[target_bucket];
-  bool ret = false;
 
   if (is_debug_tag_set("ssl.session_cache")) {
     char buf[sid.len * 2 + 1];
@@ -64,21 +63,14 @@ SSLSessionCache::getSession(const SSLSessionID &sid, SSL_SESSION **sess) const
           target_bucket, bucket, buf, hash);
   }
 
-  ret = bucket->getSession(sid, sess);
-
-  if (ret)
-    SSL_INCREMENT_DYN_STAT(ssl_session_cache_hit);
-  else
-    SSL_INCREMENT_DYN_STAT(ssl_session_cache_miss);
-
-  return ret;
+  return bucket->getSession(sid, sess);
 }
 
 void
 SSLSessionCache::removeSession(const SSLSessionID &sid)
 {
-  uint64_t hash = sid.hash();
-  uint64_t target_bucket = hash % nbuckets;
+  uint64_t hash            = sid.hash();
+  uint64_t target_bucket   = hash % nbuckets;
   SSLSessionBucket *bucket = &session_bucket[target_bucket];
 
   if (is_debug_tag_set("ssl.session_cache")) {
@@ -95,8 +87,8 @@ SSLSessionCache::removeSession(const SSLSessionID &sid)
 void
 SSLSessionCache::insertSession(const SSLSessionID &sid, SSL_SESSION *sess)
 {
-  uint64_t hash = sid.hash();
-  uint64_t target_bucket = hash % nbuckets;
+  uint64_t hash            = sid.hash();
+  uint64_t target_bucket   = hash % nbuckets;
   SSLSessionBucket *bucket = &session_bucket[target_bucket];
 
   if (is_debug_tag_set("ssl.session_cache")) {
@@ -180,7 +172,7 @@ SSLSessionBucket::getSession(const SSLSessionID &id, SSL_SESSION **sess)
   while (node) {
     if (node->session_id == id) {
       const unsigned char *loc = reinterpret_cast<const unsigned char *>(node->asn1_data->data());
-      *sess = d2i_SSL_SESSION(NULL, &loc, node->len_asn1_data);
+      *sess                    = d2i_SSL_SESSION(NULL, &loc, node->len_asn1_data);
 
       return true;
     }
@@ -233,7 +225,7 @@ void inline SSLSessionBucket::removeOldestSession()
 void
 SSLSessionBucket::removeSession(const SSLSessionID &id)
 {
-  MUTEX_LOCK(lock, mutex, this_ethread()); // We can't bail on contention here because this session MUST be removed.
+  SCOPED_MUTEX_LOCK(lock, mutex, this_ethread()); // We can't bail on contention here because this session MUST be removed.
   SSLSession *node = queue.head;
   while (node) {
     if (node->session_id == id) {

@@ -39,9 +39,8 @@
 #ifndef __P_NETACCEPT_H__
 #define __P_NETACCEPT_H__
 
-#include "libts.h"
+#include "ts/ink_platform.h"
 #include "P_Connection.h"
-
 
 struct NetAccept;
 class Event;
@@ -67,11 +66,14 @@ struct NetAcceptAction : public Action, public RefCountObj {
     server->close();
   }
 
-  Continuation *operator=(Continuation *acont) { return Action::operator=(acont); }
+  Continuation *
+  operator=(Continuation *acont)
+  {
+    return Action::operator=(acont);
+  }
 
   ~NetAcceptAction() { Debug("net_accept", "NetAcceptAction dying\n"); }
 };
-
 
 //
 // NetAccept
@@ -80,7 +82,6 @@ struct NetAcceptAction : public Action, public RefCountObj {
 struct NetAccept : public Continuation {
   ink_hrtime period;
   Server server;
-  void *alloc_cache;
   AcceptFunctionPtr accept_fn;
   int ifd;
   bool callback_on_open;
@@ -99,8 +100,8 @@ struct NetAccept : public Continuation {
   virtual NetProcessor *getNetProcessor() const;
 
   void init_accept_loop(const char *);
-  virtual void init_accept(EThread *t = NULL);
-  virtual void init_accept_per_thread();
+  virtual void init_accept(EThread *t = NULL, bool isTransparent = false);
+  virtual void init_accept_per_thread(bool isTransparent);
   virtual NetAccept *clone() const;
   // 0 == success
   int do_listen(bool non_blocking, bool transparent = false);
@@ -114,6 +115,5 @@ struct NetAccept : public Continuation {
   NetAccept();
   virtual ~NetAccept() { action_ = NULL; };
 };
-
 
 #endif

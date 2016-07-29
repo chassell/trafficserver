@@ -26,13 +26,13 @@
 #include <cstring>
 
 #include "ts/ts.h"
+#include "ts/ink_string.h"
 
 #include "condition.h"
 #include "matcher.h"
 #include "value.h"
 #include "lulu.h"
 //#include <mdbm.h>
-
 
 ///////////////////////////////////////////////////////////////////////////////
 // Condition declarations.
@@ -43,7 +43,6 @@ class ConditionTrue : public Condition
 {
 public:
   ConditionTrue() { TSDebug(PLUGIN_NAME_DBG, "Calling CTOR for ConditionTrue"); }
-
   void
   append_value(std::string &s, const Resources & /* res ATS_UNUSED */)
   {
@@ -61,7 +60,6 @@ protected:
 private:
   DISALLOW_COPY_AND_ASSIGN(ConditionTrue);
 };
-
 
 // Always false
 class ConditionFalse : public Condition
@@ -86,7 +84,6 @@ private:
   DISALLOW_COPY_AND_ASSIGN(ConditionFalse);
 };
 
-
 // Check the HTTP return status
 class ConditionStatus : public Condition
 {
@@ -103,7 +100,6 @@ private:
   DISALLOW_COPY_AND_ASSIGN(ConditionStatus);
 };
 
-
 // Check the HTTP method
 class ConditionMethod : public Condition
 {
@@ -118,7 +114,6 @@ protected:
 private:
   DISALLOW_COPY_AND_ASSIGN(ConditionMethod);
 };
-
 
 // Random 0 to (N-1)
 class ConditionRandom : public Condition
@@ -138,7 +133,6 @@ private:
   unsigned int _max;
 };
 
-
 // access(file)
 class ConditionAccess : public Condition
 {
@@ -156,7 +150,6 @@ private:
   time_t _next;
   bool _last;
 };
-
 
 // cookie(name)
 class ConditionCookie : public Condition
@@ -184,7 +177,7 @@ private:
       return TS_ERROR;
 
     start = buf;
-    end = buf + buf_len;
+    end   = buf + buf_len;
 
     while (start < end) {
       if (strncasecmp(start, name, name_len) != 0)
@@ -203,7 +196,7 @@ private:
         ;
 
       *value_len = last - start;
-      *value = start;
+      *value     = start;
       return TS_SUCCESS;
     skip:
       while (start < end) {
@@ -245,7 +238,6 @@ class ConditionPath : public Condition
 {
 public:
   explicit ConditionPath() { TSDebug(PLUGIN_NAME_DBG, "Calling CTOR for ConditionPath"); };
-
   void initialize(Parser &p);
   void append_value(std::string &s, const Resources &res);
 
@@ -256,13 +248,11 @@ private:
   DISALLOW_COPY_AND_ASSIGN(ConditionPath);
 };
 
-
 // query
 class ConditionQuery : public Condition
 {
 public:
   explicit ConditionQuery() { TSDebug(PLUGIN_NAME_DBG, "Calling CTOR for ConditionQuery"); };
-
   void initialize(Parser &p);
   void append_value(std::string &s, const Resources &res);
 
@@ -273,12 +263,13 @@ private:
   DISALLOW_COPY_AND_ASSIGN(ConditionQuery);
 };
 
-
 // url
 class ConditionUrl : public Condition
 {
 public:
-  explicit ConditionUrl(bool client = false) : _url_qual(URL_QUAL_NONE), _client(client)
+  enum UrlType { CLIENT, URL, FROM, TO };
+
+  explicit ConditionUrl(const UrlType type) : _url_qual(URL_QUAL_NONE), _type(type)
   {
     TSDebug(PLUGIN_NAME_DBG, "Calling CTOR for ConditionUrl");
   };
@@ -294,9 +285,8 @@ private:
   DISALLOW_COPY_AND_ASSIGN(ConditionUrl);
 
   UrlQualifiers _url_qual;
-  bool _client;
+  UrlType _type;
 };
-
 
 // DBM lookups
 class ConditionDBM : public Condition
@@ -333,7 +323,7 @@ private:
   TSMutex _mutex;
 };
 
-class ConditionInternalTransaction : public Condition
+class ConditionInternalTxn : public Condition
 {
 public:
   void
@@ -359,7 +349,6 @@ class ConditionIncomingPort : public Condition
 {
 public:
   ConditionIncomingPort() { TSDebug(PLUGIN_NAME_DBG, "Calling CTOR for ConditionIncomingPort"); }
-
   void initialize(Parser &p);
   void append_value(std::string &s, const Resources &res);
 
@@ -368,6 +357,80 @@ protected:
 
 private:
   DISALLOW_COPY_AND_ASSIGN(ConditionIncomingPort);
+};
+
+// Transact Count
+class ConditionTransactCount : public Condition
+{
+  typedef Matchers<int> MatcherType;
+
+public:
+  ConditionTransactCount() { TSDebug(PLUGIN_NAME_DBG, "Calling CTOR for ConditionTransactCount"); }
+  void initialize(Parser &p);
+  void append_value(std::string &s, const Resources &res);
+
+protected:
+  bool eval(const Resources &res);
+
+private:
+  DISALLOW_COPY_AND_ASSIGN(ConditionTransactCount);
+};
+
+// now: Keeping track of current time / day / hour etc.
+class ConditionNow : public Condition
+{
+public:
+  explicit ConditionNow() : _now_qual(NOW_QUAL_EPOCH) { TSDebug(PLUGIN_NAME_DBG, "Calling CTOR for ConditionNow"); };
+  void initialize(Parser &p);
+  void set_qualifier(const std::string &q);
+  void append_value(std::string &s, const Resources &res);
+
+protected:
+  bool eval(const Resources &res);
+
+private:
+  int64_t get_now_qualified(NowQualifiers qual) const;
+
+  DISALLOW_COPY_AND_ASSIGN(ConditionNow);
+  NowQualifiers _now_qual;
+};
+
+// GeoIP class for the "integer" based Geo information pieces
+class ConditionGeo : public Condition
+{
+public:
+  explicit ConditionGeo() : _geo_qual(GEO_QUAL_COUNTRY), _int_type(false)
+  {
+    TSDebug(PLUGIN_NAME_DBG, "Calling CTOR for ConditionGeo");
+  };
+
+  void initialize(Parser &p);
+  void set_qualifier(const std::string &q);
+  void append_value(std::string &s, const Resources &res);
+
+  // These are special for this sub-class
+  bool
+  is_int_type() const
+  {
+    return _int_type;
+  }
+  void
+  is_int_type(bool flag)
+  {
+    _int_type = flag;
+  }
+
+protected:
+  bool eval(const Resources &res);
+
+private:
+  int64_t get_geo_int(const sockaddr *addr) const;
+  const char *get_geo_string(const sockaddr *addr) const;
+
+  DISALLOW_COPY_AND_ASSIGN(ConditionGeo);
+
+  GeoQualifiers _geo_qual;
+  bool _int_type;
 };
 
 #endif // __CONDITIONS_H

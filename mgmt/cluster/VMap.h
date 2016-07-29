@@ -24,23 +24,22 @@
 #ifndef _VMAP_H
 #define _VMAP_H
 
-#include "libts.h"
+#include "ts/ink_platform.h"
+#include "ts/I_Version.h"
+#include "ts/ink_string.h"
 
 #define MAX_INTERFACE 16
 #define MAX_SUB_ID 8
-
 
 typedef struct _vip_info {
   char interface[MAX_INTERFACE];
   char sub_interface_id[MAX_SUB_ID];
 } VIPInfo;
 
-
 typedef struct _realip_info {
   struct in_addr real_ip;
   bool mappings_for_interface;
 } RealIPInfo;
-
 
 /*
  * class VMap

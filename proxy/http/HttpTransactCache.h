@@ -31,7 +31,11 @@
 #if !defined(_HttpTransactCache_h_)
 #define _HttpTransactCache_h_
 
-#include "libts.h"
+#include "ts/ink_platform.h"
+
+// This is needed since txn_conf->cache_guaranteed_max_lifetime is currently not
+// readily available in the cache. ToDo: We should fix this with TS-1919
+static const time_t CacheHighAgeWatermark = UINT_MAX;
 
 struct CacheHTTPInfoVector;
 
@@ -53,9 +57,15 @@ public:
   int unmarshal(Arena *arena, const char *buf, int length);
 
   CacheLookupHttpConfig()
-    : cache_global_user_agent_header(false), cache_enable_default_vary_headers(false), ignore_accept_mismatch(0),
-      ignore_accept_language_mismatch(0), ignore_accept_encoding_mismatch(0), ignore_accept_charset_mismatch(0),
-      cache_vary_default_text(NULL), cache_vary_default_images(NULL), cache_vary_default_other(NULL)
+    : cache_global_user_agent_header(false),
+      cache_enable_default_vary_headers(false),
+      ignore_accept_mismatch(0),
+      ignore_accept_language_mismatch(0),
+      ignore_accept_encoding_mismatch(0),
+      ignore_accept_charset_mismatch(0),
+      cache_vary_default_text(NULL),
+      cache_vary_default_images(NULL),
+      cache_vary_default_other(NULL)
   {
   }
 
@@ -67,13 +77,15 @@ extern ClassAllocator<CacheLookupHttpConfig> CacheLookupHttpConfigAllocator;
 // this is a global CacheLookupHttpConfig used to bypass SelectFromAlternates
 extern CacheLookupHttpConfig global_cache_lookup_config;
 
-inline void *CacheLookupHttpConfig::operator new(size_t size, void *mem)
+inline void *
+CacheLookupHttpConfig::operator new(size_t size, void *mem)
 {
   (void)size;
   return mem;
 }
 
-inline void CacheLookupHttpConfig::operator delete(void *mem)
+inline void
+CacheLookupHttpConfig::operator delete(void *mem)
 {
   CacheLookupHttpConfigAllocator.free((CacheLookupHttpConfig *)mem);
 }
@@ -88,7 +100,6 @@ enum ContentEncoding {
   NO_GZIP = 0,
   GZIP,
 };
-
 
 class HttpTransactCache
 {

@@ -21,7 +21,7 @@
   limitations under the License.
  */
 
-#include "libts.h"
+#include "ts/ink_platform.h"
 #include "P_Net.h"
 #include "Show.h"
 #include "I_Tasks.h"
@@ -53,14 +53,14 @@ struct ShowNet : public ShowCont {
   showConnectionsOnThread(int event, Event *e)
   {
     EThread *ethread = e->ethread;
-    NetHandler *nh = get_NetHandler(ethread);
+    NetHandler *nh   = get_NetHandler(ethread);
     MUTEX_TRY_LOCK(lock, nh->mutex, ethread);
     if (!lock.is_locked()) {
-      ethread->schedule_in(this, NET_RETRY_DELAY);
+      ethread->schedule_in(this, HRTIME_MSECONDS(net_retry_delay));
       return EVENT_DONE;
     }
 
-    ink_hrtime now = ink_get_hrtime();
+    ink_hrtime now = Thread::get_hrtime();
     forl_LL(UnixNetVConnection, vc, nh->open_list)
     {
       //      uint16_t port = ats_ip_port_host_order(&addr.sa);
@@ -145,12 +145,12 @@ struct ShowNet : public ShowCont {
   int
   showSingleThread(int event, Event *e)
   {
-    EThread *ethread = e->ethread;
-    NetHandler *nh = get_NetHandler(ethread);
+    EThread *ethread               = e->ethread;
+    NetHandler *nh                 = get_NetHandler(ethread);
     PollDescriptor *pollDescriptor = get_PollDescriptor(ethread);
     MUTEX_TRY_LOCK(lock, nh->mutex, ethread);
     if (!lock.is_locked()) {
-      ethread->schedule_in(this, NET_RETRY_DELAY);
+      ethread->schedule_in(this, HRTIME_MSECONDS(net_retry_delay));
       return EVENT_DONE;
     }
 
@@ -218,8 +218,8 @@ register_ShowNet(Continuation *c, HTTPHdr *h)
   } else if (STREQ_PREFIX(path, path_len, "ips")) {
     int query_len;
     const char *query = h->url_get()->query_get(&query_len);
-    s->sarg = ats_strndup(query, query_len);
-    char *gn = NULL;
+    s->sarg           = ats_strndup(query, query_len);
+    char *gn          = NULL;
     if (s->sarg)
       gn = (char *)memchr(s->sarg, '=', strlen(s->sarg));
     if (gn)
@@ -228,8 +228,8 @@ register_ShowNet(Continuation *c, HTTPHdr *h)
   } else if (STREQ_PREFIX(path, path_len, "ports")) {
     int query_len;
     const char *query = h->url_get()->query_get(&query_len);
-    s->sarg = ats_strndup(query, query_len);
-    char *gn = NULL;
+    s->sarg           = ats_strndup(query, query_len);
+    char *gn          = NULL;
     if (s->sarg)
       gn = (char *)memchr(s->sarg, '=', strlen(s->sarg));
     if (gn)

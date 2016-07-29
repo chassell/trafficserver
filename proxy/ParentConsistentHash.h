@@ -30,6 +30,7 @@
 #ifndef _PARENT_CONSISTENT_HASH_H
 #define _PARENT_CONSISTENT_HASH_H
 
+#include "ts/HashSip.h"
 #include "ParentSelection.h"
 
 //
@@ -48,7 +49,7 @@ class ParentConsistentHash : public ParentSelectionStrategy
   time_t last_unavailable;
 
 public:
-  static const int PRIMARY = 0;
+  static const int PRIMARY   = 0;
   static const int SECONDARY = 1;
   ParentConsistentHash(ParentRecord *_parent_record);
   ~ParentConsistentHash();

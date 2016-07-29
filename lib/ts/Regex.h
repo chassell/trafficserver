@@ -24,7 +24,7 @@
 #ifndef __TS_REGEX_H__
 #define __TS_REGEX_H__
 
-#include "ink_config.h"
+#include "ts/ink_config.h"
 
 #ifdef HAVE_PCRE_PCRE_H
 #include <pcre/pcre.h>
@@ -34,18 +34,20 @@
 
 enum REFlags {
   RE_CASE_INSENSITIVE = 0x0001, // default is case sensitive
-  RE_UNANCHORED = 0x0002,       // default (for DFA) is to anchor at the first matching position
-  RE_ANCHORED = 0x0004,         // default (for Regex) is unanchored
+  RE_UNANCHORED       = 0x0002, // default (for DFA) is to anchor at the first matching position
+  RE_ANCHORED         = 0x0004, // default (for Regex) is unanchored
 };
 
 class Regex
 {
 public:
   Regex() : regex(NULL), regex_extra(NULL) {}
-  bool compile(const char *pattern, unsigned flags = 0);
+  bool compile(const char *pattern, const unsigned flags = 0);
   // It is safe to call exec() concurrently on the same object instance
   bool exec(const char *str);
   bool exec(const char *str, int length);
+  bool exec(const char *str, int length, int *ovector, int ovecsize);
+  int get_capture_count();
   ~Regex();
 
 private:
@@ -64,7 +66,6 @@ class DFA
 {
 public:
   DFA() : _my_patterns(0) {}
-
   ~DFA();
 
   int compile(const char *pattern, unsigned flags = 0);

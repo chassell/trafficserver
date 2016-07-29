@@ -24,7 +24,7 @@
 #ifndef _I_CACHE_H__
 #define _I_CACHE_H__
 
-#include "libts.h"
+#include "ts/ink_platform.h"
 #include "I_EventSystem.h"
 #include "I_AIO.h"
 #include "I_CacheDefs.h"
@@ -49,6 +49,8 @@
 #define CACHE_COMPRESSION_LIBZ 2
 #define CACHE_COMPRESSION_LIBLZMA 3
 
+enum { RAM_HIT_COMPRESS_NONE = 1, RAM_HIT_COMPRESS_FASTLZ, RAM_HIT_COMPRESS_LIBZ, RAM_HIT_COMPRESS_LIBLZMA, RAM_HIT_LAST_ENTRY };
+
 struct CacheVC;
 struct CacheDisk;
 #ifdef HTTP_CACHE
@@ -65,7 +67,9 @@ typedef HTTPInfo CacheHTTPInfo;
 struct CacheProcessor : public Processor {
   CacheProcessor()
     : min_stripe_version(CACHE_DB_MAJOR_VERSION, CACHE_DB_MINOR_VERSION),
-      max_stripe_version(CACHE_DB_MAJOR_VERSION, CACHE_DB_MINOR_VERSION), cb_after_init(0)
+      max_stripe_version(CACHE_DB_MAJOR_VERSION, CACHE_DB_MINOR_VERSION),
+      cb_after_init(0),
+      wait_for_cache(0)
   {
   }
 
@@ -76,29 +80,27 @@ struct CacheProcessor : public Processor {
   int dir_check(bool fix);
   int db_check(bool fix);
 
-  inkcoreapi Action *lookup(Continuation *cont, CacheKey *key, bool cluster_cache_local, bool local_only = false,
-                            CacheFragType frag_type = CACHE_FRAG_TYPE_NONE, char *hostname = 0, int host_len = 0);
-  inkcoreapi Action *open_read(Continuation *cont, CacheKey *key, bool cluster_cache_local,
-                               CacheFragType frag_type = CACHE_FRAG_TYPE_NONE, char *hostname = 0, int host_len = 0);
+  inkcoreapi Action *lookup(Continuation *cont, const CacheKey *key, bool cluster_cache_local, bool local_only = false,
+                            CacheFragType frag_type = CACHE_FRAG_TYPE_NONE, const char *hostname = 0, int host_len = 0);
+  inkcoreapi Action *open_read(Continuation *cont, const CacheKey *key, bool cluster_cache_local,
+                               CacheFragType frag_type = CACHE_FRAG_TYPE_NONE, const char *hostname = 0, int host_len = 0);
   inkcoreapi Action *open_write(Continuation *cont, CacheKey *key, bool cluster_cache_local,
                                 CacheFragType frag_type = CACHE_FRAG_TYPE_NONE, int expected_size = CACHE_EXPECTED_SIZE,
                                 int options = 0, time_t pin_in_cache = (time_t)0, char *hostname = 0, int host_len = 0);
-  inkcoreapi Action *remove(Continuation *cont, CacheKey *key, bool cluster_cache_local,
-                            CacheFragType frag_type = CACHE_FRAG_TYPE_NONE, bool rm_user_agents = true, bool rm_link = false,
-                            char *hostname = 0, int host_len = 0);
+  inkcoreapi Action *remove(Continuation *cont, const CacheKey *key, bool cluster_cache_local,
+                            CacheFragType frag_type = CACHE_FRAG_TYPE_NONE, const char *hostname = 0, int host_len = 0);
   Action *scan(Continuation *cont, char *hostname = 0, int host_len = 0, int KB_per_second = SCAN_KB_PER_SECOND);
 #ifdef HTTP_CACHE
-  Action *lookup(Continuation *cont, URL *url, bool cluster_cache_local, bool local_only = false,
+  Action *lookup(Continuation *cont, const HttpCacheKey *key, bool cluster_cache_local, bool local_only = false,
                  CacheFragType frag_type = CACHE_FRAG_TYPE_HTTP);
-  inkcoreapi Action *open_read(Continuation *cont, URL *url, bool cluster_cache_local, CacheHTTPHdr *request,
+  inkcoreapi Action *open_read(Continuation *cont, const HttpCacheKey *key, bool cluster_cache_local, CacheHTTPHdr *request,
                                CacheLookupHttpConfig *params, time_t pin_in_cache = (time_t)0,
                                CacheFragType frag_type = CACHE_FRAG_TYPE_HTTP);
-  Action *open_write(Continuation *cont, int expected_size, URL *url, bool cluster_cache_local, CacheHTTPHdr *request,
-                     CacheHTTPInfo *old_info, time_t pin_in_cache = (time_t)0, CacheFragType frag_type = CACHE_FRAG_TYPE_HTTP);
-  Action *remove(Continuation *cont, URL *url, bool cluster_cache_local, CacheFragType frag_type = CACHE_FRAG_TYPE_HTTP);
-
-  Action *open_read_internal(int, Continuation *, MIOBuffer *, CacheURL *, CacheHTTPHdr *, CacheLookupHttpConfig *, CacheKey *,
-                             time_t, CacheFragType type, char *hostname, int host_len);
+  Action *open_write(Continuation *cont, int expected_size, const HttpCacheKey *key, bool cluster_cache_local,
+                     CacheHTTPHdr *request, CacheHTTPInfo *old_info, time_t pin_in_cache = (time_t)0,
+                     CacheFragType frag_type = CACHE_FRAG_TYPE_HTTP);
+  Action *remove(Continuation *cont, const HttpCacheKey *key, bool cluster_cache_local,
+                 CacheFragType frag_type = CACHE_FRAG_TYPE_HTTP);
 #endif
   Action *link(Continuation *cont, CacheKey *from, CacheKey *to, bool cluster_cache_local,
                CacheFragType frag_type = CACHE_FRAG_TYPE_HTTP, char *hostname = 0, int host_len = 0);
@@ -142,18 +144,25 @@ struct CacheProcessor : public Processor {
       to specific the callback type and passed to the callback
       function.
   */
-  void set_after_init_callback(CALLBACK_FUNC cb);
+  void afterInitCallbackSet(CALLBACK_FUNC cb);
 
   // private members
   void diskInitialized();
 
   void cacheInitialized();
 
+  int
+  waitForCache() const
+  {
+    return wait_for_cache;
+  }
+
   static volatile uint32_t cache_ready;
   static volatile int initialized;
   static volatile int start_done;
-  static int clear;
-  static int fix;
+  static bool clear;
+  static bool fix;
+  static bool check;
   static int start_internal_flags;
   static int auto_clear_flag;
 
@@ -161,10 +170,11 @@ struct CacheProcessor : public Processor {
   VersionNumber max_stripe_version;
 
   CALLBACK_FUNC cb_after_init;
+  int wait_for_cache;
 };
 
 inline void
-CacheProcessor::set_after_init_callback(CALLBACK_FUNC cb)
+CacheProcessor::afterInitCallbackSet(CALLBACK_FUNC cb)
 {
   cb_after_init = cb;
 }
@@ -174,8 +184,8 @@ struct CacheVConnection : public VConnection {
   virtual VIO *do_io_pread(Continuation *c, int64_t nbytes, MIOBuffer *buf, int64_t offset) = 0;
   VIO *do_io_write(Continuation *c, int64_t nbytes, IOBufferReader *buf, bool owner = false) = 0;
   void do_io_close(int lerrno = -1) = 0;
-  void reenable(VIO *avio) = 0;
-  void reenable_re(VIO *avio) = 0;
+  void reenable(VIO *avio)          = 0;
+  void reenable_re(VIO *avio)       = 0;
   void
   do_io_shutdown(ShutdownHowTo_t howto)
   {
@@ -183,21 +193,32 @@ struct CacheVConnection : public VConnection {
     ink_assert(!"CacheVConnection::do_io_shutdown unsupported");
   }
 
-  virtual int get_header(void **ptr, int *len) = 0;
-  virtual int set_header(void *ptr, int len) = 0;
+  virtual int get_header(void **ptr, int *len)      = 0;
+  virtual int set_header(void *ptr, int len)        = 0;
   virtual int get_single_data(void **ptr, int *len) = 0;
 
 #ifdef HTTP_CACHE
-  virtual void set_http_info(CacheHTTPInfo *info) = 0;
+  virtual void set_http_info(CacheHTTPInfo *info)  = 0;
   virtual void get_http_info(CacheHTTPInfo **info) = 0;
 #endif
 
-  virtual bool is_ram_cache_hit() const = 0;
+  virtual bool is_ram_cache_hit() const           = 0;
   virtual bool set_disk_io_priority(int priority) = 0;
-  virtual int get_disk_io_priority() = 0;
-  virtual bool set_pin_in_cache(time_t t) = 0;
-  virtual time_t get_pin_in_cache() = 0;
-  virtual int64_t get_object_size() = 0;
+  virtual int get_disk_io_priority()              = 0;
+  virtual bool set_pin_in_cache(time_t t)         = 0;
+  virtual time_t get_pin_in_cache()               = 0;
+  virtual int64_t get_object_size()               = 0;
+  virtual bool
+  is_compressed_in_ram() const
+  {
+    return false;
+  }
+
+  virtual int
+  get_volume_number() const
+  {
+    return -1;
+  }
 
   /** Test if the VC can support pread.
       @return @c true if @c do_io_pread will work, @c false if not.

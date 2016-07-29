@@ -30,7 +30,8 @@
 #include "atscppapi/shared_ptr.h"
 #include "atscppapi/ClientRequest.h"
 #include "atscppapi/Response.h"
-
+#include "atscppapi/HttpStatus.h"
+#include <ts/apidefs.h>
 namespace atscppapi
 {
 // forward declarations
@@ -135,6 +136,25 @@ public:
   void setErrorBody(const std::string &content);
 
   /**
+   * Sets the error body page with mimetype.
+   * This method does not advance the state machine to the error state.
+   * To do that you must explicitally call error().
+   *
+   * @param content the error page content.
+   * @param mimetype the error page's content-type.
+   */
+  void setErrorBody(const std::string &content, const std::string &mimetype);
+
+  /**
+   * Sets the status code.
+   * This is usable before transaction has the response of client like a remap state.
+   * A remap logic may advance the state machine to the error state depending on status code.
+   *
+   * @param code the status code.
+   */
+  void setStatusCode(HttpStatus code);
+
+  /**
    * Get the clients address
    * @return The sockaddr structure representing the client's address
    * @see atscppapi::utils::getIpString() in atscppapi/utils.h
@@ -169,7 +189,6 @@ public:
    * @see atscppapi::utils::getIpPortString in atscppapi/utils.h
    */
   const sockaddr *getNextHopAddress() const;
-
 
   /**
    * Set the incoming port on the Transaction
@@ -225,6 +244,20 @@ public:
   Response &getClientResponse();
 
   /**
+   * Returns a Request object which is the cached request
+   *
+   * @return Request object
+   */
+  Request &getCachedRequest();
+
+  /**
+   * Returns a Response object which is the cached response
+   *
+   * @return Response object
+   */
+  Response &getCachedResponse();
+
+  /**
    * Returns the Effective URL for this transaction taking into account host.
    */
   std::string getEffectiveUrl();
@@ -234,6 +267,12 @@ public:
    * @param url is the url to use in the cache.
    */
   bool setCacheUrl(const std::string &);
+
+  /**
+   * Ability to skip the remap phase of the State Machine
+   * This only really makes sense in TS_HTTP_READ_REQUEST_HDR_HOOK
+   */
+  void setSkipRemapping(int);
 
   /**
    * The available types of timeouts you can set on a Transaction.
@@ -255,6 +294,19 @@ public:
   void setTimeout(TimeoutType type, int time_ms);
 
   /**
+   * Represents different states of an object served out of the cache
+   */
+  enum CacheStatus {
+    CACHE_LOOKUP_MISS = 0,  /**< The object was not found in the cache */
+    CACHE_LOOKUP_HIT_STALE, /**< The object was found in cache but stale */
+    CACHE_LOOKUP_HIT_FRESH, /**< The object was found in cache and was fresh */
+    CACHE_LOOKUP_SKIPED,    /**< Cache lookup was not performed */
+    CACHE_LOOKUP_NONE
+  };
+
+  CacheStatus getCacheStatus();
+
+  /**
    * Returns the TSHttpTxn related to the current Transaction
    *
    * @return a void * which can be cast back to a TSHttpTxn.
@@ -268,7 +320,6 @@ public:
    * @param TransactionPlugin* the TransactionPlugin that will be now bound to the current Transaction.
    */
   void addPlugin(TransactionPlugin *);
-
 
   /*
    * Note: The following methods cannot be attached to a Response
@@ -308,6 +359,14 @@ public:
    */
   void redirectTo(std::string const &url);
 
+  bool configIntSet(TSOverridableConfigKey conf, int value);
+  bool configIntGet(TSOverridableConfigKey conf, int *value);
+  bool configFloatSet(TSOverridableConfigKey conf, float value);
+  bool configFloatGet(TSOverridableConfigKey conf, float *value);
+  bool configStringSet(TSOverridableConfigKey conf, std::string const &value);
+  bool configStringGet(TSOverridableConfigKey conf, std::string &value);
+  bool configFind(std::string const &name, TSOverridableConfigKey *conf, TSRecordDataType *type);
+
 private:
   TransactionState *state_;          //!< The internal TransactionState object tied to the current Transaction
   friend class TransactionPlugin;    //!< TransactionPlugin is a friend so it can call addPlugin()
@@ -325,21 +384,37 @@ private:
    *
    * @private
    */
-  void initServerRequest();
+  void initServerRequest(TSEvent event);
 
   /**
    * Used to initialize the Response object for the Server.
    *
    * @private
    */
-  void initServerResponse();
+  void initServerResponse(TSEvent event);
 
   /**
    * Used to initialize the Response object for the Client.
    *
    * @private
    */
-  void initClientResponse();
+  void initClientResponse(TSEvent event);
+
+  /**
+   * Used to initialize the Request object for the cache.
+   *
+   * @private
+   */
+
+  void initCachedRequest(TSEvent event);
+
+  /**
+   * Used to initialize the Response object for the cache.
+   *
+   * @private
+   */
+
+  void initCachedResponse(TSEvent event);
 
   /**
    * Returns a list of TransactionPlugin pointers bound to the current Transaction

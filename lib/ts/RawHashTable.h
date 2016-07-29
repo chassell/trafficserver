@@ -31,9 +31,8 @@
 #ifndef _RawHashTable_h_
 #define _RawHashTable_h_
 
-#include "libts.h"
-
-#include "ink_apidefs.h"
+#include "ts/ink_apidefs.h"
+#include "ts/ink_hash_table.h"
 
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -43,7 +42,7 @@
 
 typedef enum {
   RawHashTable_KeyType_String = InkHashTableKeyType_String,
-  RawHashTable_KeyType_Word = InkHashTableKeyType_Word
+  RawHashTable_KeyType_Word   = InkHashTableKeyType_Word
 } RawHashTable_KeyType;
 
 typedef InkHashTableKey RawHashTable_Key;
@@ -218,7 +217,7 @@ RawHashTable::getOrCreateBinding(RawHashTable_Key key, bool *was_new)
   int _was_new;
   InkHashTableEntry *he_ptr;
 
-  he_ptr = ink_hash_table_get_entry(ht, (InkHashTableKey)key, &_was_new);
+  he_ptr   = ink_hash_table_get_entry(ht, (InkHashTableKey)key, &_was_new);
   *was_new = (_was_new ? true : false);
   return ((RawHashTable_Binding *)he_ptr);
 }
@@ -282,9 +281,9 @@ RawHashTable::firstBinding(RawHashTable_IteratorState *state_ptr)
 
 inline RawHashTable::RawHashTable(RawHashTable_KeyType akey_type, bool adeallocate_values_on_destruct)
 {
-  RawHashTable::key_type = akey_type;
+  RawHashTable::key_type                      = akey_type;
   RawHashTable::deallocate_values_on_destruct = adeallocate_values_on_destruct;
-  ht = ink_hash_table_create((InkHashTableKeyType)key_type);
+  ht                                          = ink_hash_table_create((InkHashTableKeyType)key_type);
 }
 
 inline RawHashTable::~RawHashTable()
@@ -329,7 +328,6 @@ public:
   RawHashTable_Value &value() const; // get current value
   const char *key() const;           // get current key
 
-
 private:
   RawHashTable &m_ht;
   RawHashTable_Binding *m_currentBinding;
@@ -342,7 +340,8 @@ private:
 //
 //////////////////////////////////////////////////////////////////////////////
 
-inline RawHashTable_Value &RawHashTableIter::operator()() const
+inline RawHashTable_Value &
+RawHashTableIter::operator()() const
 {
   return (m_currentBinding->clientData);
 }

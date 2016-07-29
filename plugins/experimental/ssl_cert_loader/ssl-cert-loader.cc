@@ -26,15 +26,16 @@
 #include <memory.h>
 #include <inttypes.h>
 #include <ts/ts.h>
-#include <ink_config.h>
 #include <tsconfig/TsValue.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
-#include <ts/ink_inet.h>
 #include <getopt.h>
-#include <ts/IpMap.h>
 #include "domain-tree.h"
+
+#include "ts/ink_inet.h"
+#include "ts/ink_config.h"
+#include "ts/IpMap.h"
 
 using ts::config::Configuration;
 using ts::config::Value;
@@ -57,9 +58,7 @@ class SslEntry
 {
 public:
   SslEntry() : ctx(NULL), op(TS_SSL_HOOK_OP_DEFAULT) { this->mutex = TSMutexCreate(); }
-
   ~SslEntry() {}
-
   SSL_CTX *ctx;
   TSSslVConnOp op;
   // If the CTX is not already created, use these
@@ -91,7 +90,7 @@ Parse_Addr_String(ts::ConstBuffer const &text, IpRange &range)
     range.second.load(ts::ConstBuffer(addr2.c_str(), addr2.length()));
   } else { // Assume it is a single address
     newAddr.load(text);
-    range.first = newAddr;
+    range.first  = newAddr;
     range.second = newAddr;
   }
 }
@@ -123,7 +122,6 @@ struct ParsedSslValues {
   IpRangeQueue server_ips;
 };
 
-
 void Parse_Config_Rules(Value &parent, ParsedSslValues &orig_values);
 
 int
@@ -136,7 +134,7 @@ Load_Configuration()
   }
 
   Value root = Config.getRoot();
-  Value val = root["runtime-table-size"];
+  Value val  = root["runtime-table-size"];
   if (val.isLiteral()) {
     // Not evicting yet
   }
@@ -153,12 +151,12 @@ SSL_CTX *
 Load_Certificate(SslEntry const *entry, std::deque<std::string> &names)
 {
   SSL_CTX *retval = SSL_CTX_new(SSLv23_client_method());
-  X509 *cert = NULL;
+  X509 *cert      = NULL;
 
   if (entry->certFileName.length() > 0) {
     // Must load the cert file to fetch the names out later
     BIO *cert_bio = BIO_new_file(entry->certFileName.c_str(), "r");
-    cert = PEM_read_bio_X509_AUX(cert_bio, NULL, NULL, NULL);
+    cert          = PEM_read_bio_X509_AUX(cert_bio, NULL, NULL, NULL);
     BIO_free(cert_bio);
 
     if (SSL_CTX_use_certificate(retval, cert) < 1) {
@@ -205,7 +203,6 @@ Load_Certificate(SslEntry const *entry, std::deque<std::string> &names)
   // Do we need to free cert? Did assigning to SSL_CTX increment its ref count
   return retval;
 }
-
 
 /*
  * Load the config information about the terminal config.
@@ -339,7 +336,7 @@ Load_Certificate_Thread(void *arg)
       TSVConn vc = entry->waitingVConns.back();
       entry->waitingVConns.pop_back();
       TSSslConnection sslobj = TSVConnSSLConnectionGet(vc);
-      SSL *ssl = reinterpret_cast<SSL *>(sslobj);
+      SSL *ssl               = reinterpret_cast<SSL *>(sslobj);
       SSL_set_SSL_CTX(ssl, entry->ctx);
       TSVConnReenable(vc);
     }
@@ -385,8 +382,8 @@ CB_Pre_Accept(TSCont /*contp*/, TSEvent event, void *edata)
   if (Lookup.ipmap.contains(&key_endpoint, &payload)) {
     // Set the stored cert on this SSL object
     TSSslConnection sslobj = TSVConnSSLConnectionGet(ssl_vc);
-    SSL *ssl = reinterpret_cast<SSL *>(sslobj);
-    SslEntry *entry = reinterpret_cast<SslEntry *>(payload);
+    SSL *ssl               = reinterpret_cast<SSL *>(sslobj);
+    SslEntry *entry        = reinterpret_cast<SslEntry *>(payload);
     TSMutexLock(entry->mutex);
     if (entry->op == TS_SSL_HOOK_OP_TUNNEL || entry->op == TS_SSL_HOOK_OP_TERMINATE) {
       // Push everything to blind tunnel, or terminate
@@ -424,9 +421,9 @@ CB_Pre_Accept(TSCont /*contp*/, TSEvent event, void *edata)
 int
 CB_servername(TSCont /*contp*/, TSEvent /*event*/, void *edata)
 {
-  TSVConn ssl_vc = reinterpret_cast<TSVConn>(edata);
+  TSVConn ssl_vc         = reinterpret_cast<TSVConn>(edata);
   TSSslConnection sslobj = TSVConnSSLConnectionGet(ssl_vc);
-  SSL *ssl = reinterpret_cast<SSL *>(sslobj);
+  SSL *ssl               = reinterpret_cast<SSL *>(sslobj);
   const char *servername = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
 
   TSDebug(PN, "SNI callback %s", servername);
@@ -478,16 +475,14 @@ TSPluginInit(int argc, const char *argv[])
 {
   bool success = false;
   TSPluginRegistrationInfo info;
-  TSCont cb_pa = 0;   // pre-accept callback continuation
-  TSCont cb_lc = 0;   // life cycle callback continuuation
-  TSCont cb_sni = 0;  // SNI callback continuuation
-  TSCont cb_sni2 = 0; // SNI callback continuuation
+  TSCont cb_pa                         = 0; // pre-accept callback continuation
+  TSCont cb_lc                         = 0; // life cycle callback continuuation
+  TSCont cb_sni                        = 0; // SNI callback continuuation
   static const struct option longopt[] = {{const_cast<char *>("config"), required_argument, NULL, 'c'},
                                           {NULL, no_argument, NULL, '\0'}};
 
-
-  info.plugin_name = const_cast<char *>("SSL Certificate Loader");
-  info.vendor_name = const_cast<char *>("Network Geographics");
+  info.plugin_name   = const_cast<char *>("SSL Certificate Loader");
+  info.vendor_name   = const_cast<char *>("Network Geographics");
   info.support_email = const_cast<char *>("shinrich@network-geographics.com");
 
   int opt = 0;
@@ -502,11 +497,11 @@ TSPluginInit(int argc, const char *argv[])
   }
   if (ConfigPath.length() == 0) {
     static char const *const DEFAULT_CONFIG_PATH = "ssl_start.cfg";
-    ConfigPath = std::string(TSConfigDirGet()) + '/' + std::string(DEFAULT_CONFIG_PATH);
+    ConfigPath                                   = std::string(TSConfigDirGet()) + '/' + std::string(DEFAULT_CONFIG_PATH);
     TSDebug(PN, "No config path set in arguments, using default: %s", DEFAULT_CONFIG_PATH);
   }
 
-  if (TS_SUCCESS != TSPluginRegister(TS_SDK_VERSION_2_0, &info)) {
+  if (TS_SUCCESS != TSPluginRegister(&info)) {
     TSError(PCP "registration failed.");
   } else if (TSTrafficServerVersionGetMajor() < 5) {
     TSError(PCP "requires Traffic Server 5.0 or later.");
@@ -520,7 +515,6 @@ TSPluginInit(int argc, const char *argv[])
     TSLifecycleHookAdd(TS_LIFECYCLE_PORTS_INITIALIZED_HOOK, cb_lc);
     TSHttpHookAdd(TS_VCONN_PRE_ACCEPT_HOOK, cb_pa);
     TSHttpHookAdd(TS_SSL_SNI_HOOK, cb_sni);
-    TSHttpHookAdd(TS_SSL_SNI_HOOK, cb_sni2);
     success = true;
   }
 

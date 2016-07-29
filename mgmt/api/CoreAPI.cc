@@ -29,15 +29,17 @@
  *
  ***************************************************************************/
 
-#include "libts.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_file.h"
+#include "ts/ParseRules.h"
 #include "MgmtUtils.h"
 #include "LocalManager.h"
 #include "ClusterCom.h"
 #include "FileManager.h"
 #include "Rollback.h"
 #include "WebMgmtUtils.h"
-#include "Diags.h"
-#include "ink_hash_table.h"
+#include "ts/Diags.h"
+#include "ts/ink_hash_table.h"
 #include "ExpandingArray.h"
 //#include "I_AccCrypto.h"
 
@@ -45,8 +47,8 @@
 #include "CoreAPIShared.h"
 #include "CfgContextUtils.h"
 #include "EventCallback.h"
-#include "I_Layout.h"
-#include "ink_cap.h"
+#include "ts/I_Layout.h"
+#include "ts/ink_cap.h"
 
 // global variable
 CallbackTable *local_event_callbacks;
@@ -194,7 +196,7 @@ ProxyStateSet(TSProxyStateT state, TSCacheClearT clear)
     case TS_CACHE_CLEAR_OFF:
       // use default tsargs in records.config
       int rec_err = RecGetRecordString_Xmalloc("proxy.config.proxy_binary_opts", &proxy_options);
-      found = (rec_err == REC_ERR_OKAY);
+      found       = (rec_err == REC_ERR_OKAY);
       if (!found)
         goto Lerror;
 
@@ -239,7 +241,7 @@ typedef Vec<pid_t> threadlist;
 static threadlist
 threads_for_process(pid_t proc)
 {
-  DIR *dir = NULL;
+  DIR *dir             = NULL;
   struct dirent *entry = NULL;
 
   char path[64];
@@ -268,7 +270,6 @@ threads_for_process(pid_t proc)
     }
   }
 
-
 done:
   if (dir) {
     closedir(dir);
@@ -283,8 +284,8 @@ backtrace_for_thread(pid_t threadid, textBuffer &text)
   int status;
   unw_addr_space_t addr_space = NULL;
   unw_cursor_t cursor;
-  void *ap = NULL;
-  pid_t target = -1;
+  void *ap       = NULL;
+  pid_t target   = -1;
   unsigned level = 0;
 
   // First, attach to the child, causing it to stop.
@@ -360,7 +361,7 @@ ServerBacktrace(unsigned /* options */, char **trace)
   // Unfortunately, we need to be privileged here. We either need to be root or to be holding
   // the CAP_SYS_PTRACE capability. Even though we are the parent traffic_manager, it is not
   // traceable without privilege because the process credentials do not match.
-  ElevateAccess access(true, ElevateAccess::TRACE_PRIVILEGE);
+  ElevateAccess access(ElevateAccess::TRACE_PRIVILEGE);
   threadlist threads(threads_for_process(lmgmt->watched_process_pid));
   textBuffer text(0);
 
@@ -534,7 +535,7 @@ MgmtRecordGet(const char *rec_name, TSRecordEle *rec_ele)
       str_val = ats_strdup("NULL");
     }
 
-    rec_ele->rec_type = TS_REC_STRING;
+    rec_ele->rec_type          = TS_REC_STRING;
     rec_ele->valueT.string_val = str_val;
     Debug("RecOp", "[MgmtRecordGet] Get String Var %s = %s\n", rec_ele->rec_name, rec_ele->valueT.string_val);
     break;
@@ -559,6 +560,12 @@ MgmtRecordGetMatching(const char * /* regex */, TSList /* rec_vals */)
 
 TSMgmtError
 MgmtConfigRecordDescribe(const char * /* rec_name */, unsigned /* flags */, TSConfigRecordDescription * /* val */)
+{
+  return TS_ERR_NOT_SUPPORTED;
+}
+
+TSMgmtError
+MgmtConfigRecordDescribeMatching(const char *, unsigned, TSList)
 {
   return TS_ERR_NOT_SUPPORTED;
 }
@@ -741,7 +748,7 @@ ReadFile(TSFileNameT file, char **text, int *size, int *version)
 
   // don't need to allocate memory b/c "getVersion" allocates memory
   old_file_lines = old_file_content->bufPtr();
-  old_file_len = strlen(old_file_lines);
+  old_file_len   = strlen(old_file_lines);
 
   *text = ats_strdup(old_file_lines); // make copy before deleting textBuffer
   *size = old_file_len;
@@ -794,7 +801,7 @@ WriteFile(TSFileNameT file, const char *text, int size, int version)
   }
   // use rollback object to update file with new content
   file_content = new textBuffer(size + 1);
-  ret = file_content->copyFrom(text, size);
+  ret          = file_content->copyFrom(text, size);
   if (ret < 0) {
     delete file_content;
     return TS_ERR_WRITE_FILE;
@@ -885,7 +892,7 @@ ActiveEventGetMlt(LLQ *active_events)
     char *key = (char *)ink_hash_table_entry_key(event_ht, entry);
 
     // convert key to int; insert into llQ
-    event_id = ink_atoi(key);
+    event_id   = ink_atoi(key);
     event_name = get_event_name(event_id);
     if (event_name) {
       if (!enqueue(active_events, event_name)) // returns true if successful

@@ -24,7 +24,6 @@
 #include "operators.h"
 #include "conditions.h"
 
-
 ///////////////////////////////////////////////////////////////////////////////
 // "Factory" functions, processing the parsed lines
 //
@@ -59,16 +58,15 @@ operator_factory(const std::string &op)
     o = new OperatorCounter();
   } else if (op == "set-conn-dscp") {
     o = new OperatorSetConnDSCP();
-  } else if (op == "set-method") {
-    o = new OperatorSetMethod();
+  } else if (op == "set-debug") {
+    o = new OperatorSetDebug();
   } else {
-    TSError("%s: unknown operator: %s", PLUGIN_NAME, op.c_str());
+    TSError("[%s] Unknown operator: %s", PLUGIN_NAME, op.c_str());
     return NULL;
   }
 
   return o;
 }
-
 
 Condition *
 condition_factory(const std::string &cond)
@@ -105,27 +103,40 @@ condition_factory(const std::string &cond)
     c = new ConditionHeader(true);
   } else if (c_name == "QUERY") {
     c = new ConditionQuery();
-  } else if (c_name == "URL") { // This condition adapts to the hook
-    c = new ConditionUrl();
-  } else if (c_name == "CLIENT-URL") {
-    c = new ConditionUrl(true);
+  } else if (c_name == "CLIENT-URL") { // This condition adapts to the hook
+    c = new ConditionUrl(ConditionUrl::CLIENT);
+  } else if (c_name == "URL") {
+    c = new ConditionUrl(ConditionUrl::URL);
+  } else if (c_name == "FROM-URL") {
+    c = new ConditionUrl(ConditionUrl::FROM);
+  } else if (c_name == "TO-URL") {
+    c = new ConditionUrl(ConditionUrl::TO);
   } else if (c_name == "DBM") {
     c = new ConditionDBM();
   } else if (c_name == "INTERNAL-TRANSACTION") {
-    c = new ConditionInternalTransaction();
+    c = new ConditionInternalTxn();
+  } else if (c_name == "INTERNAL-TXN") {
+    c = new ConditionInternalTxn();
   } else if (c_name == "CLIENT-IP") {
     c = new ConditionClientIp();
   } else if (c_name == "INCOMING-PORT") {
     c = new ConditionIncomingPort();
   } else if (c_name == "METHOD") {
     c = new ConditionMethod();
+  } else if (c_name == "TXN-COUNT") {
+    c = new ConditionTransactCount();
+  } else if (c_name == "NOW") {
+    c = new ConditionNow();
+  } else if (c_name == "GEO") {
+    c = new ConditionGeo();
   } else {
-    TSError("%s: unknown condition: %s", PLUGIN_NAME, c_name.c_str());
+    TSError("[%s] Unknown condition: %s", PLUGIN_NAME, c_name.c_str());
     return NULL;
   }
 
-  if (c_qual != "")
+  if (c_qual != "") {
     c->set_qualifier(c_qual);
+  }
 
   return c;
 }

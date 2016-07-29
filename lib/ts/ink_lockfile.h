@@ -24,8 +24,8 @@
 #ifndef __INK_LOCKFILE_H__
 #define __INK_LOCKFILE_H__
 
-#include "ink_defs.h"
-#include "ink_string.h"
+#include "ts/ink_defs.h"
+#include "ts/ink_string.h"
 
 #define COP_LOCK "cop.lock"
 #define MANAGER_LOCK "manager.lock"
@@ -35,12 +35,9 @@ class Lockfile
 {
 public:
   Lockfile(void) : fd(0) { fname[0] = '\0'; }
-
   // coverity[uninit_member]
   Lockfile(const char *filename) : fd(0) { ink_strlcpy(fname, filename, sizeof(fname)); }
-
   ~Lockfile(void) {}
-
   void
   SetLockfileName(const char *filename)
   {

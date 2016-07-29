@@ -29,8 +29,8 @@
 
 A simple linked list queue.
 ****************************************************************************/
-#include "ink_mutex.h"
-#include "ink_thread.h"
+#include "ts/ink_mutex.h"
+#include "ts/ink_thread.h"
 
 typedef struct llqrec_s {
   struct llqrec_s *next;
@@ -52,6 +52,5 @@ uint64_t queue_len(LLQ *Q);
 uint64_t queue_highwater(LLQ *Q);
 void delete_queue(LLQ *Q); /* only deletes an empty queue but
                               provides symmetry. */
-
 
 #endif

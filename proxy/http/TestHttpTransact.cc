@@ -23,7 +23,7 @@
 
 #include "HttpNet.h"
 #include <iostream.h>
-#include "ink_assert.h"
+#include "ts/ink_assert.h"
 #include "DebugStream.h"
 #include "IOBuffer.h"
 #include "Main.h"
@@ -36,7 +36,6 @@
 HttpNetProcessor httpNetProcessor;
 HttpConfigParams httpConfigParams;
 DebugStream debug_out("debug.txt", 1, 1, "DebugStreamLevels.txt", "http.stops");
-
 
 typedef struct {
   char *accept;

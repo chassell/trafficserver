@@ -53,13 +53,12 @@ void
 ParentRoundRobin::selectParent(const ParentSelectionPolicy *policy, bool first_call, ParentResult *result, RequestData *rdata)
 {
   Debug("parent_select", "In ParentRoundRobin::selectParent(): Using a round robin parent selection strategy.");
-
-  int cur_index = 0;
-  bool parentUp = false;
+  int cur_index    = 0;
+  bool parentUp    = false;
   bool parentRetry = false;
-  bool bypass_ok = (result->rec->go_direct == true && policy->DNS_ParentOnly == 0);
+  bool bypass_ok   = (result->rec->go_direct == true && policy->DNS_ParentOnly == 0);
+
   HttpRequestData *request_info = static_cast<HttpRequestData *>(rdata);
-  URL *url = request_info->hdr->url_get();
 
   ink_assert(numParents(result) > 0 || result->rec->go_direct == true);
 
@@ -69,17 +68,16 @@ ParentRoundRobin::selectParent(const ParentSelectionPolicy *policy, bool first_c
       //   if we are supposed to go direct
       ink_assert(result->rec->go_direct == true);
       // Could not find a parent
-      if (result->rec->go_direct == true && result->rec->parent_is_proxy) {
-        result->r = PARENT_DIRECT;
+      if (result->rec->go_direct == true && result->rec->parent_is_proxy == true) {
+        result->result = PARENT_DIRECT;
       } else {
-        result->r = PARENT_FAIL;
+        result->result = PARENT_FAIL;
       }
 
       result->hostname = NULL;
-      result->port = 0;
+      result->port     = 0;
       return;
     } else {
-      Debug("parent_select", "round_robin: %d", round_robin_type);
       switch (round_robin_type) {
       case P_HASH_ROUND_ROBIN:
         // INKqa12817 - make sure to convert to host byte order
@@ -113,13 +111,13 @@ ParentRoundRobin::selectParent(const ParentSelectionPolicy *policy, bool first_c
       // We've wrapped around so bypass if we can
       if (bypass_ok == true) {
         // Could not find a parent
-        if (result->rec->go_direct == true && result->rec->parent_is_proxy) {
-          result->r = PARENT_DIRECT;
+        if (result->rec->go_direct == true && result->rec->parent_is_proxy == true) {
+          result->result = PARENT_DIRECT;
         } else {
-          result->r = PARENT_FAIL;
+          result->result = PARENT_FAIL;
         }
         result->hostname = NULL;
-        result->port = 0;
+        result->port     = 0;
         return;
       } else {
         // Bypass disabled so keep trying, ignoring whether we think
@@ -131,11 +129,11 @@ ParentRoundRobin::selectParent(const ParentSelectionPolicy *policy, bool first_c
   // Loop through the array of parent seeing if any are up or
   //   should be retried
   do {
+    Debug("parent_select", "cur_index: %d, result->start_parent: %d", cur_index, result->start_parent);
     // DNS ParentOnly inhibits bypassing the parent so always return that t
     if ((result->rec->parents[cur_index].failedAt == 0) || (result->rec->parents[cur_index].failCount < policy->FailThreshold)) {
       Debug("parent_select", "FailThreshold = %d", policy->FailThreshold);
-      Debug("parent_select", "Selecting a parent due to little failCount"
-                             "(faileAt: %u failCount: %d)",
+      Debug("parent_select", "Selecting a parent due to little failCount (faileAt: %u failCount: %d)",
             (unsigned)result->rec->parents[cur_index].failedAt, result->rec->parents[cur_index].failCount);
       parentUp = true;
     } else {
@@ -145,7 +143,7 @@ ParentRoundRobin::selectParent(const ParentSelectionPolicy *policy, bool first_c
               (unsigned)result->rec->parents[cur_index].failedAt, policy->ParentRetryTime, (int64_t)request_info->xact_start,
               result->wrap_around);
         // Reuse the parent
-        parentUp = true;
+        parentUp    = true;
         parentRetry = true;
         Debug("parent_select", "Parent marked for retry %s:%d", result->rec->parents[cur_index].hostname,
               result->rec->parents[cur_index].port);
@@ -155,15 +153,11 @@ ParentRoundRobin::selectParent(const ParentSelectionPolicy *policy, bool first_c
     }
 
     if (parentUp == true) {
-      if (!result->rec->parent_is_proxy) {
-        result->r = PARENT_ORIGIN;
-      } else {
-        result->r = PARENT_SPECIFIED;
-      }
-      result->hostname = result->rec->parents[cur_index].hostname;
-      result->port = result->rec->parents[cur_index].port;
+      result->result      = PARENT_SPECIFIED;
+      result->hostname    = result->rec->parents[cur_index].hostname;
+      result->port        = result->rec->parents[cur_index].port;
       result->last_parent = cur_index;
-      result->retry = parentRetry;
+      result->retry       = parentRetry;
       ink_assert(result->hostname != NULL);
       ink_assert(result->port != 0);
       Debug("parent_select", "Chosen parent = %s.%d", result->hostname, result->port);
@@ -172,19 +166,14 @@ ParentRoundRobin::selectParent(const ParentSelectionPolicy *policy, bool first_c
     cur_index = (cur_index + 1) % result->rec->num_parents;
   } while ((unsigned int)cur_index != result->start_parent);
 
-  if (result->rec->go_direct == true && result->rec->parent_is_proxy) {
-    result->r = PARENT_DIRECT;
+  if (result->rec->go_direct == true && result->rec->parent_is_proxy == true) {
+    result->result = PARENT_DIRECT;
   } else {
-    int len = 0;
-    char *request_str = url->string_get_ref(&len);
-    if (request_str) {
-      Note("No available parents for request: %*s.", len, request_str);
-    }
-    result->r = PARENT_FAIL;
+    result->result = PARENT_FAIL;
   }
 
   result->hostname = NULL;
-  result->port = 0;
+  result->port     = 0;
 }
 
 uint32_t
@@ -203,13 +192,13 @@ ParentRoundRobin::markParentDown(const ParentSelectionPolicy *policy, ParentResu
   Debug("parent_select", "Starting ParentRoundRobin::markParentDown()");
   //  Make sure that we are being called back with with a
   //   result structure with a parent
-  ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
-  if (result->r != PARENT_SPECIFIED && result->r != PARENT_ORIGIN) {
+  ink_assert(result->result == PARENT_SPECIFIED);
+  if (result->result != PARENT_SPECIFIED) {
     return;
   }
   // If we were set through the API we currently have not failover
   //   so just return fail
-  if (result->rec == extApiRecord) {
+  if (result->is_api_result()) {
     return;
   }
 
@@ -262,13 +251,13 @@ ParentRoundRobin::markParentUp(ParentResult *result)
   //  Make sure that we are being called back with with a
   //   result structure with a parent that is being retried
   ink_release_assert(result->retry == true);
-  ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
-  if (result->r != PARENT_SPECIFIED && result->r != PARENT_ORIGIN) {
+  ink_assert(result->result == PARENT_SPECIFIED);
+  if (result->result != PARENT_SPECIFIED) {
     return;
   }
   // If we were set through the API we currently have not failover
   //   so just return fail
-  if (result->rec == extApiRecord) {
+  if (result->is_api_result()) {
     ink_assert(0);
     return;
   }

@@ -21,10 +21,10 @@
     limitations under the License.
 */
 
-#include "ink_config.h"
-#include "Diags.h"
-#include "ink_cap.h"
-#include "ink_thread.h"
+#include "ts/ink_config.h"
+#include "ts/Diags.h"
+#include "ts/ink_cap.h"
+#include "ts/ink_thread.h"
 
 #include <grp.h>
 
@@ -61,7 +61,7 @@ ink_mutex ElevateAccess::lock = INK_MUTEX_INIT;
 #define DEBUG_PRIVILEGES(tag)                                                                                    \
   do {                                                                                                           \
     if (is_debug_tag_set(tag)) {                                                                                 \
-      cap_t caps = cap_get_proc();                                                                               \
+      cap_t caps      = cap_get_proc();                                                                          \
       char *caps_text = cap_to_text(caps, NULL);                                                                 \
       Debug(tag, "caps='%s', core=%s, death signal=%d, thread=0x%llx", caps_text, is_dumpable(), death_signal(), \
             (unsigned long long)pthread_self());                                                                 \
@@ -86,7 +86,7 @@ ink_mutex ElevateAccess::lock = INK_MUTEX_INIT;
 static int
 getresuid(uid_t *uid, uid_t *euid, uid_t *suid)
 {
-  *uid = getuid();
+  *uid  = getuid();
   *euid = geteuid();
   return 0;
 }
@@ -96,7 +96,7 @@ getresuid(uid_t *uid, uid_t *euid, uid_t *suid)
 static int
 getresgid(gid_t *gid, gid_t *egid, gid_t *sgid)
 {
-  *gid = getgid();
+  *gid  = getgid();
   *egid = getegid();
   return 0;
 }
@@ -147,7 +147,7 @@ DebugCapabilities(char const *tag)
 static void
 impersonate(const struct passwd *pwd, ImpersonationLevel level)
 {
-  int deathsig = death_signal();
+  int deathsig  = death_signal();
   bool dumpable = false;
 
   DEBUG_CREDENTIALS("privileges");
@@ -262,10 +262,10 @@ RestrictCapabilities()
 #if TS_USE_POSIX_CAP
   cap_t caps = cap_init(); // start with nothing.
   // Capabilities we need.
-  cap_value_t perm_list[] = {CAP_NET_ADMIN, CAP_NET_BIND_SERVICE, CAP_IPC_LOCK, CAP_DAC_OVERRIDE};
+  cap_value_t perm_list[]         = {CAP_NET_ADMIN, CAP_NET_BIND_SERVICE, CAP_IPC_LOCK, CAP_DAC_OVERRIDE};
   static int const PERM_CAP_COUNT = sizeof(perm_list) / sizeof(*perm_list);
-  cap_value_t eff_list[] = {CAP_NET_ADMIN, CAP_NET_BIND_SERVICE, CAP_IPC_LOCK};
-  static int const EFF_CAP_COUNT = sizeof(eff_list) / sizeof(*eff_list);
+  cap_value_t eff_list[]          = {CAP_NET_ADMIN, CAP_NET_BIND_SERVICE, CAP_IPC_LOCK};
+  static int const EFF_CAP_COUNT  = sizeof(eff_list) / sizeof(*eff_list);
 
   cap_set_flag(caps, CAP_PERMITTED, PERM_CAP_COUNT, perm_list, CAP_SET);
   cap_set_flag(caps, CAP_EFFECTIVE, EFF_CAP_COUNT, eff_list, CAP_SET);
@@ -307,69 +307,119 @@ EnableDeathSignal(int signum)
 #endif
 }
 
-#if TS_USE_POSIX_CAP
-/** Control file access privileges to bypass DAC.
-    @parm state Use @c true to enable elevated privileges,
-    @c false to disable.
-    @return @c true if successful, @c false otherwise.
-
-    @internal After some pondering I decided that the file access
-    privilege was worth the effort of restricting. Unlike the network
-    privileges this can protect a host system from programming errors
-    by not (usually) permitting such errors to access arbitrary
-    files. This is particularly true since none of the config files
-    current enable this feature so it's not actually called. Still,
-    best to program defensively and have it available.
- */
-static void
-elevateFileAccess(unsigned level, bool state)
+int
+elevating_open(char const *path, unsigned int flags, unsigned int fperms)
 {
-  Debug("privileges", "[elevateFileAccess] state : %d\n", state);
+  int fd = open(path, flags, fperms);
+  if (fd < 0 && (EPERM == errno || EACCES == errno)) {
+    ElevateAccess access(ElevateAccess::FILE_PRIVILEGE);
+    fd = open(path, flags, fperms);
+  }
+  return fd;
+}
 
-  cap_t cap_state = cap_get_proc(); // current capabilities
+int
+elevating_open(char const *path, unsigned int flags)
+{
+  int fd = open(path, flags);
+  if (fd < 0 && (EPERM == errno || EACCES == errno)) {
+    ElevateAccess access(ElevateAccess::FILE_PRIVILEGE);
+    fd = open(path, flags);
+  }
+  return fd;
+}
 
+FILE *
+elevating_fopen(char const *path, const char *mode)
+{
+  FILE *f = fopen(path, mode);
+  if (NULL == f && (EPERM == errno || EACCES == errno)) {
+    ElevateAccess access(ElevateAccess::FILE_PRIVILEGE);
+    f = fopen(path, mode);
+  }
+  return f;
+}
+
+#if TS_USE_POSIX_CAP
+/** Acquire file access privileges to bypass DAC.
+    @a level is a mask of the specific file access capabilities to acquire.
+ */
+void
+ElevateAccess::acquirePrivilege(unsigned priv_mask)
+{
   unsigned cap_count = 0;
   cap_value_t cap_list[2];
+  cap_t new_cap_state;
 
-  if (level & ElevateAccess::FILE_PRIVILEGE) {
+  Debug("privileges", "[acquirePrivilege] level= %x\n", level);
+
+  ink_assert(NULL == cap_state);
+
+  // Some privs aren't checked or used here because they are kept permanently in the
+  // the capability list. See @a eff_list in @c RestrictCapabilities
+  // It simplifies things elsewhere to be able to specify them so that the cases for
+  // POSIX capabilities and user impersonation have the same interface.
+
+  if (priv_mask & ElevateAccess::FILE_PRIVILEGE) {
     cap_list[cap_count] = CAP_DAC_OVERRIDE;
     ++cap_count;
   }
 
-  if (level & ElevateAccess::TRACE_PRIVILEGE) {
+  if (priv_mask & ElevateAccess::TRACE_PRIVILEGE) {
     cap_list[cap_count] = CAP_SYS_PTRACE;
     ++cap_count;
   }
 
   ink_release_assert(cap_count <= sizeof(cap_list));
 
-  cap_set_flag(cap_state, CAP_EFFECTIVE, cap_count, cap_list, state ? CAP_SET : CAP_CLEAR);
-  if (cap_set_proc(cap_state) != 0) {
-    Fatal("failed to %s privileged capabilities: %s", state ? "acquire" : "release", strerror(errno));
-  }
+  if (cap_count > 0) {
+    this->cap_state = cap_get_proc(); // save current capabilities
+    new_cap_state   = cap_get_proc(); // and another instance to modify.
+    cap_set_flag(new_cap_state, CAP_EFFECTIVE, cap_count, cap_list, CAP_SET);
 
-  cap_free(cap_state);
+    if (cap_set_proc(new_cap_state) != 0) {
+      Fatal("failed to acquire privileged capabilities: %s", strerror(errno));
+    }
+
+    cap_free(new_cap_state);
+    elevated = true;
+  }
+}
+/** Restore previous capabilities.
+ */
+void
+ElevateAccess::releasePrivilege()
+{
+  Debug("privileges", "[releaseFileAccessCap]");
+
+  if (this->cap_state) {
+    if (cap_set_proc(static_cast<cap_t>(cap_state)) != 0) {
+      Fatal("failed to restore privileged capabilities: %s", strerror(errno));
+    }
+    cap_state = NULL;
+  }
 }
 #endif
 
-ElevateAccess::ElevateAccess(const bool state, unsigned lvl) : elevated(false), saved_uid(geteuid()), level(lvl)
-{
-  // XXX Squash a clang [-Wunused-private-field] warning. The right solution is probably to extract
-  // the capabilities into a policy class.
-  (void)level;
-
-  if (state == true) {
-    elevate();
-#if !TS_USE_POSIX_CAP
-    DEBUG_CREDENTIALS("privileges");
+ElevateAccess::ElevateAccess(unsigned lvl)
+  : elevated(false),
+    saved_uid(geteuid()),
+    level(lvl)
+#if TS_USE_POSIX_CAP
+    ,
+    cap_state(0)
 #endif
-    DEBUG_PRIVILEGES("privileges");
-  }
+{
+  elevate(level);
+#if !TS_USE_POSIX_CAP
+  DEBUG_CREDENTIALS("privileges");
+#endif
+  DEBUG_PRIVILEGES("privileges");
 }
 
 ElevateAccess::~ElevateAccess()
 {
-  if (elevated == true) {
+  if (elevated) {
     demote();
 #if !TS_USE_POSIX_CAP
     DEBUG_CREDENTIALS("privileges");
@@ -379,27 +429,31 @@ ElevateAccess::~ElevateAccess()
 }
 
 void
-ElevateAccess::elevate()
+ElevateAccess::elevate(unsigned priv_mask)
 {
 #if TS_USE_POSIX_CAP
-  elevateFileAccess(level, true);
+  acquirePrivilege(priv_mask);
 #else
-  // Since we are setting a process-wide credential, we have to block any other thread
-  // attempting to elevate until this one demotes.
-  ink_mutex_acquire(&lock);
-  ImpersonateUserID(0, IMPERSONATE_EFFECTIVE);
+  if (priv_mask) {
+    // Since we are setting a process-wide credential, we have to block any other thread
+    // attempting to elevate until this one demotes.
+    ink_mutex_acquire(&lock);
+    ImpersonateUserID(0, IMPERSONATE_EFFECTIVE);
+    elevated = true;
+  }
 #endif
-  elevated = true;
 }
 
 void
 ElevateAccess::demote()
 {
+  if (elevated) {
 #if TS_USE_POSIX_CAP
-  elevateFileAccess(level, false);
+    releasePrivilege();
 #else
-  ImpersonateUserID(saved_uid, IMPERSONATE_EFFECTIVE);
-  ink_mutex_release(&lock);
+    ImpersonateUserID(saved_uid, IMPERSONATE_EFFECTIVE);
+    ink_mutex_release(&lock);
 #endif
-  elevated = false;
+    elevated = false;
+  }
 }

@@ -197,7 +197,6 @@ sub _do_read {
 sub get_stat {
     my ($self, $stat) = @_;
     my $res               = "";
-    my $max_read_attempts = 25;
 
     return undef unless defined($self->{_socket});
     return undef unless $self->{_select}->can_write(10);
@@ -210,15 +209,17 @@ sub get_stat {
     my $msg = pack("ll/Z", TS_RECORD_GET, $stat);
     $self->{_socket}->print(pack("l/a", $msg));
     $res = $self->_do_read();
+    return undef unless defined($res); # Don't proceed on read failure.
 
     # The response format is:
     #   MGMT_MARSHALL_INT: message length
     #   MGMT_MARSHALL_INT: error code
+    #   MGMT_MARSHALL_INT: record class
     #   MGMT_MARSHALL_INT: record type
     #   MGMT_MARSHALL_STRING: record name
     #   MGMT_MARSHALL_DATA: record data
     ($msg) = unpack("l/a", $res);
-    my ($ecode, $type, $name, $value) = unpack("l l l/Z l/a", $msg);
+    my ($ecode, $rclass, $type, $name, $value) = unpack("l l l l/Z l/a", $msg);
 
     if ($ecode == TS_ERR_OKAY) {
         if ($type == TS_REC_INT || $type == TS_REC_COUNTER) {
@@ -310,10 +311,7 @@ The Apache Traffic Server Administration Manual will explain what these strings 
  proxy.config.accept_threads
  proxy.config.task_threads
  proxy.config.admin.admin_user
- proxy.config.admin.autoconf.localhost_only
- proxy.config.admin.autoconf.pac_filename
- proxy.config.admin.autoconf_port
- proxy.config.admin.autoconf.doc_root
+ proxy.config.admin.synthetic_port
  proxy.config.admin.cli_path
  proxy.config.admin.number_config_bak
  proxy.config.admin.user_id
@@ -348,7 +346,6 @@ The Apache Traffic Server Administration Manual will explain what these strings 
  proxy.config.cache.select_alternate
  proxy.config.cache.storage_filename
  proxy.config.cache.threads_per_disk
- proxy.config.cache.url_hash_method
  proxy.config.cache.mutex_retry_delay
  proxy.config.cluster.cluster_configuration
  proxy.config.cluster.cluster_load_clear_duration
@@ -553,7 +550,6 @@ The Apache Traffic Server Administration Manual will explain what these strings 
  proxy.config.http.send_http11_requests
  proxy.config.http.server_max_connections
  proxy.config.http.server_port
- proxy.config.http.share_server_sessions
  proxy.config.http.slow.log.threshold
  proxy.config.http.connect_ports
  proxy.config.http.transaction_active_timeout_in
@@ -575,7 +571,6 @@ The Apache Traffic Server Administration Manual will explain what these strings 
  proxy.config.io.max_buffer_size
  proxy.config.lm.pserver_timeout_msecs
  proxy.config.lm.pserver_timeout_secs
- proxy.config.lm.sem_id
  proxy.config.local_state_dir
  proxy.config.log.ascii_buffer_size
  proxy.config.log.auto_delete_rolled_files
@@ -585,19 +580,7 @@ The Apache Traffic Server Administration Manual will explain what these strings 
  proxy.config.log.collation_port
  proxy.config.log.collation_retry_sec
  proxy.config.log.collation_secret
- proxy.config.log.common_log_enabled
- proxy.config.log.common_log_header
- proxy.config.log.common_log_is_ascii
- proxy.config.log.common_log_name
  proxy.config.log.custom_logs_enabled
- proxy.config.log.extended2_log_enabled
- proxy.config.log.extended2_log_header
- proxy.config.log.extended2_log_is_ascii
- proxy.config.log.extended2_log_name
- proxy.config.log.extended_log_enabled
- proxy.config.log.extended_log_header
- proxy.config.log.extended_log_is_ascii
- proxy.config.log.extended_log_name
  proxy.config.log.file_stat_frequency
  proxy.config.log.hostname
  proxy.config.log.hosts_config_file
@@ -616,20 +599,7 @@ The Apache Traffic Server Administration Manual will explain what these strings 
  proxy.config.log.rolling_offset_hr
  proxy.config.log.rolling_size_mb
  proxy.config.log.sampling_frequency
- proxy.config.log.search_log_enabled
- proxy.config.log.search_log_filters
- proxy.config.log.search_rolling_interval_sec
- proxy.config.log.search_server_ip_addr
- proxy.config.log.search_server_port
- proxy.config.log.search_top_sites
- proxy.config.log.search_url_filter
- proxy.config.log.separate_host_logs
- proxy.config.log.separate_icp_logs
  proxy.config.log.space_used_frequency
- proxy.config.log.squid_log_enabled
- proxy.config.log.squid_log_header
- proxy.config.log.squid_log_is_ascii
- proxy.config.log.squid_log_name
  proxy.config.log.xml_config_file
  proxy.config.manager_binary
  proxy.config.net.connections_throttle
@@ -646,18 +616,6 @@ The Apache Traffic Server Administration Manual will explain what these strings 
  proxy.config.ping.npacks_to_trans
  proxy.config.ping.timeout_sec
  proxy.config.plugin.plugin_dir
- proxy.config.prefetch.child_port
- proxy.config.prefetch.config_file
- proxy.config.prefetch.default_data_proto
- proxy.config.prefetch.default_url_proto
- proxy.config.prefetch.keepalive_timeout
- proxy.config.prefetch.max_object_size
- proxy.config.prefetch.max_recursion
- proxy.config.prefetch.prefetch_enabled
- proxy.config.prefetch.push_cached_objects
- proxy.config.prefetch.redirection
- proxy.config.prefetch.url_buffer_size
- proxy.config.prefetch.url_buffer_timeout
  proxy.config.process_manager.enable_mgmt_port
  proxy.config.process_manager.mgmt_port
  proxy.config.process_manager.timeout
@@ -710,13 +668,9 @@ The Apache Traffic Server Administration Manual will explain what these strings 
  proxy.config.ssl.TLSv1
  proxy.config.ssl.compression
  proxy.config.ssl.server.multicert.filename
- proxy.config.ssl.server_port
  proxy.config.ssl.server.private_key.path
  proxy.config.stat_collector.interval
  proxy.config.stat_collector.port
- proxy.config.stats.config_file
- proxy.config.stats.snap_file
- proxy.config.stats.snap_frequency
  proxy.config.syslog_facility
  proxy.config.system.mmap_max
  proxy.config.system.file_max_pct
@@ -724,20 +678,9 @@ The Apache Traffic Server Administration Manual will explain what these strings 
  proxy.config.udp.free_cancelled_pkts_sec
  proxy.config.udp.periodic_cleanup
  proxy.config.udp.send_retries
- proxy.config.update.concurrent_updates
- proxy.config.update.enabled
- proxy.config.update.force
- proxy.config.update.max_update_state_machines
- proxy.config.update.memory_use_mb
- proxy.config.update.retry_count
- proxy.config.update.retry_interval
- proxy.config.update.update_configuration
- proxy.config.url_remap.default_to_server_pac
- proxy.config.url_remap.default_to_server_pac_port
  proxy.config.url_remap.filename
  proxy.config.url_remap.pristine_host_hdr
  proxy.config.url_remap.remap_required
- proxy.config.user_name
  proxy.config.vmap.addr_file
  proxy.config.vmap.down_up_timeout
  proxy.config.vmap.enabled

@@ -55,4 +55,8 @@ port\.h
 ^HashSip.cc$
 ^TsConfigGrammar[.][ch]$
 ^luajit$
-^ck$
+^.*crt$
+^.*key$
+^.pr$
+^protocol_binary.h$
+^override.css$

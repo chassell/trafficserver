@@ -50,6 +50,9 @@ extern "C" {
 #define TS_RES_MEM_PATH TS_RES_PATH("memory/")
 #endif
 
+#define TM_OPT_BIND_STDOUT "bind_stdout"
+#define TM_OPT_BIND_STDERR "bind_stderr"
+
 /***************************************************************************
  * Error and Return Values
  ***************************************************************************/
@@ -313,14 +316,12 @@ typedef enum {
   TS_FNAME_SOCKS,           /* socks.config */
   TS_FNAME_SPLIT_DNS,       /* splitdns.config */
   TS_FNAME_STORAGE,         /* storage.config */
-  TS_FNAME_UPDATE_URL,      /* update.config */
   TS_FNAME_VADDRS,          /* vaddrs.config */
   TS_FNAME_VSCAN,           /* vscan.config */
   TS_FNAME_VS_TRUSTED_HOST, /* trusted-host.config */
   TS_FNAME_VS_EXTENSION,    /* extensions.config */
   TS_FNAME_UNDEFINED
 } TSFileNameT;
-
 
 /* Each rule type within a file has its own enumeration.
  * Need this enumeration because it's possible there are different Ele's used
@@ -354,10 +355,9 @@ typedef enum {
   TS_SOCKS_BYPASS, /* socks.config */
   TS_SOCKS_AUTH,
   TS_SOCKS_MULTIPLE,
-  TS_SPLIT_DNS,  /* splitdns.config */
-  TS_STORAGE,    /* storage.config */
-  TS_UPDATE_URL, /* update.config */
-  TS_VADDRS,     /* vaddrs.config */
+  TS_SPLIT_DNS, /* splitdns.config */
+  TS_STORAGE,   /* storage.config */
+  TS_VADDRS,    /* vaddrs.config */
   TS_TYPE_UNDEFINED,
   TS_TYPE_COMMENT /* for internal use only */
 } TSRuleTypeT;
@@ -370,9 +370,9 @@ typedef enum {
 } TSInitOptionT;
 
 typedef enum {
-  TS_RESTART_OPT_NONE = 0x0,
+  TS_RESTART_OPT_NONE    = 0x0,
   TS_RESTART_OPT_CLUSTER = 0x01, /* Restart across the cluster */
-  TS_RESTART_OPT_DRAIN = 0x02,   /* Wait for traffic to drain before restarting. */
+  TS_RESTART_OPT_DRAIN   = 0x02, /* Wait for traffic to drain before restarting. */
 } TSRestartOptionT;
 
 /***************************************************************************
@@ -390,7 +390,7 @@ typedef struct {
 
 /*--- records -------------------------------------------------------------*/
 
-typedef union {/* record value */
+typedef union { /* record value */
   TSInt int_val;
   TSCounter counter_val;
   TSFloat float_val;
@@ -399,6 +399,7 @@ typedef union {/* record value */
 
 typedef struct {
   char *rec_name;        /* record name */
+  TSInt rec_class;       /* record class (RecT) */
   TSRecordT rec_type;    /* record type {TS_REC_INT...} */
   TSRecordValueT valueT; /* record value */
 } TSRecordEle;
@@ -426,6 +427,11 @@ typedef struct {
 /* Free (the contents of) a TSConfigRecordDescription */
 tsapi void TSConfigRecordDescriptionFree(TSConfigRecordDescription *val);
 
+/* Heap-allocate a TSConfigRecordDescription. */
+tsapi TSConfigRecordDescription *TSConfigRecordDescriptionCreate(void);
+/* Free and destroy a heap-allocated TSConfigRecordDescription. */
+tsapi void TSConfigRecordDescriptionDestroy(TSConfigRecordDescription *);
+
 /*--- events --------------------------------------------------------------*/
 
 /* Note: Each event has a format String associated with it from which the
@@ -447,7 +453,6 @@ typedef struct {
   /*int signalCount; */         /* 0 is inactive, >= 1 is active event */
   /*unsigned long timestamp; */ /* only applies to active events */
 } TSActiveEvent;
-
 
 /*--- abstract file operations --------------------------------------------*/
 
@@ -499,7 +504,6 @@ typedef struct {
                            be found in a URL  */
   TSSspec sec_spec;     /* secondary specifier */
 } TSPdSsFormat;         /* PdSs = Primary Destination Secondary Specifier */
-
 
 /* Generic Ele struct which is used as first member in all other Ele structs.
  * The TSCfgContext operations deal with TSCfgEle* type, so must typecast
@@ -679,16 +683,6 @@ typedef struct {
   int size;       /* size of the named pathname (in bytes); optional if raw disk partitions */
 } TSStorageEle;
 
-/* update.config */
-typedef struct {
-  TSCfgEle cfg_ele;
-  char *url;            /* url to update (HTTP based URLs) */
-  TSStringList headers; /* list of headers, separated by semicolons (can be NULL) */
-  int offset_hour;      /* offset hour to start update; must be 00-23 hrs  */
-  int interval;         /* in secs, frequency of updates starting at offset_hour */
-  int recursion_depth;  /* starting at given URL, the depth to which referenced URLs are recursively updated */
-} TSUpdateEle;
-
 /* vaddrs.config */
 typedef struct {
   TSCfgEle cfg_ele;
@@ -849,8 +843,6 @@ tsapi TSSplitDnsEle *TSSplitDnsEleCreate();
 tsapi void TSSplitDnsEleDestroy(TSSplitDnsEle *ele);
 tsapi TSStorageEle *TSStorageEleCreate();
 tsapi void TSStorageEleDestroy(TSStorageEle *ele);
-tsapi TSUpdateEle *TSUpdateEleCreate();
-tsapi void TSUpdateEleDestroy(TSUpdateEle *ele);
 tsapi TSVirtIpAddrEle *TSVirtIpAddrEleCreate();
 tsapi void TSVirtIpAddrEleDestroy(TSVirtIpAddrEle *ele);
 /*--- Ele helper operations -------------------------------------*/
@@ -899,7 +891,6 @@ tsapi TSMgmtError TSDisconnectCbRegister(TSDisconnectFunc *func, void *data);
 tsapi TSMgmtError TSDisconnectRetrySet(int retries, int retry_sleep_msec);
 tsapi TSMgmtError TSDisconnect();
 
-
 /*--- control operations --------------------------------------------------*/
 /* TSProxyStateGet: get the proxy state (on/off)
  * Input:  <none>
@@ -947,7 +938,7 @@ tsapi TSMgmtError TSActionDo(TSActionNeedT action);
  */
 tsapi TSMgmtError TSBounce(unsigned options);
 
-/* TSStorageDeviceOp: Request an operation on a storage device.
+/* TSStorageDeviceCmdOffline: Request to make a cache storage device offline.
  * @arg dev Target device, specified by path to device.
  * @return Success.
  */
@@ -1058,14 +1049,12 @@ tsapi TSMgmtError TSSnapshotRemove(char *snapshot_name);
  */
 tsapi TSMgmtError TSSnapshotGetMlt(TSStringList snapshots);
 
-
 /*--- statistics operations -----------------------------------------------*/
 /* TSStatsReset: sets all the statistics variables to their default values
  * Input: cluster - Reset the stats clusterwide or not
  * Outpue: TSErrr
  */
 tsapi TSMgmtError TSStatsReset(bool cluster, const char *name);
-
 
 /*--- variable operations -------------------------------------------------*/
 /* TSRecordGet: gets a record
@@ -1121,6 +1110,7 @@ tsapi TSMgmtError TSRecordSetString(const char *rec_name, const char *string_val
  * Output: TSMgmtError
  */
 tsapi TSMgmtError TSConfigRecordDescribe(const char *rec_name, unsigned flags, TSConfigRecordDescription *val);
+tsapi TSMgmtError TSConfigRecordDescribeMatchMlt(const char *rec_regex, unsigned flags, TSList list);
 
 /* TSRecordSetMlt: sets a set of records
  * Input:  rec_list     - list of record names the user wants to set;
@@ -1145,7 +1135,6 @@ tsapi TSMgmtError TSRecordSetMlt(TSList rec_list, TSActionNeedT *action_need);
  * Output: TSMgmtError
  */
 /*tsapi TSMgmtError               TSEventSignal (char *event_name, ...); */
-
 
 /* TSEventResolve: enables the user to resolve an event
  * Input:  event_name - event to resolve
@@ -1189,7 +1178,6 @@ tsapi TSMgmtError TSEventSignalCbRegister(char *event_name, TSEventSignalFunc fu
  */
 tsapi TSMgmtError TSEventSignalCbUnregister(char *event_name, TSEventSignalFunc func);
 
-
 /*--- abstracted file operations ------------------------------------------*/
 /* TSCfgContextCreate: allocates memory for an empty TSCfgContext for the specified file
  * Input:  file - the file
@@ -1216,7 +1204,6 @@ tsapi TSMgmtError TSCfgContextDestroy(TSCfgContext ctx);
  */
 tsapi TSMgmtError TSCfgContextCommit(TSCfgContext ctx, TSActionNeedT *action_need, TSIntList errRules);
 
-
 /* TSCfgContextGet: retrieves all the Ele's for the file specified in the ctx and
  *                puts them into ctx; note that the ele's in the TSCfgContext don't
  *                all have to be of the same ele type
@@ -1225,7 +1212,6 @@ tsapi TSMgmtError TSCfgContextCommit(TSCfgContext ctx, TSActionNeedT *action_nee
  *
  */
 tsapi TSMgmtError TSCfgContextGet(TSCfgContext ctx);
-
 
 /*--- TSCfgContext Operations --------------------------------------------*/
 /*

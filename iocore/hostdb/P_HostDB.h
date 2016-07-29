@@ -31,7 +31,7 @@
 #ifndef _P_HostDB_h_
 #define _P_HostDB_h_
 
-#include "libts.h"
+#include "ts/ink_platform.h"
 
 #ifdef SPLIT_DNS
 #include "P_SplitDNS.h"
@@ -46,7 +46,6 @@
 #include "P_DNS.h"
 #include "P_MultiCache.h"
 #include "P_HostDBProcessor.h"
-
 
 #undef HOSTDB_MODULE_VERSION
 #define HOSTDB_MODULE_VERSION makeModuleVersion(HOSTDB_MODULE_MAJOR_VERSION, HOSTDB_MODULE_MINOR_VERSION, PRIVATE_MODULE_HEADER)

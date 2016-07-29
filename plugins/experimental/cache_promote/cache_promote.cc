@@ -32,10 +32,10 @@
 #include "ts/remap.h"
 #include "ts/ink_config.h"
 
+#define MINIMUM_BUCKET_SIZE 10
 
 static const char *PLUGIN_NAME = "cache_promote";
 TSCont gNocacheCont;
-
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 // Note that all options for all policies has to go here. Not particularly pretty...
@@ -48,7 +48,6 @@ static const struct option longopt[] = {{const_cast<char *>("policy"), required_
                                         {const_cast<char *>("hits"), required_argument, NULL, 'h'},
                                         // EOF
                                         {NULL, no_argument, NULL, '\0'}};
-
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 // Abstract base class for all policies.
@@ -103,12 +102,11 @@ public:
   // These are pure virtual
   virtual bool doPromote(TSHttpTxn txnp) = 0;
   virtual const char *policyName() const = 0;
-  virtual void usage() const = 0;
+  virtual void usage() const             = 0;
 
 private:
   float _sample;
 };
-
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 // This is the simplest of all policies, just give each request a (small)
@@ -136,7 +134,6 @@ public:
   }
 };
 
-
 //////////////////////////////////////////////////////////////////////////////////////////////
 // The LRU based policy keeps track of <bucket> number of URLs, with a counter for each slot.
 // Objects are not promoted unless the counter reaches <hits> before it gets evicted. An
@@ -149,10 +146,9 @@ class LRUHash
 
 public:
   LRUHash() { TSDebug(PLUGIN_NAME, "In LRUHash()"); }
-
   ~LRUHash() { TSDebug(PLUGIN_NAME, "In ~LRUHash()"); }
-
-  LRUHash &operator=(const LRUHash &h)
+  LRUHash &
+  operator=(const LRUHash &h)
   {
     TSDebug(PLUGIN_NAME, "copying an LRUHash object");
     memcpy(_hash, h._hash, sizeof(_hash));
@@ -174,9 +170,17 @@ private:
 };
 
 struct LRUHashHasher {
-  bool operator()(const LRUHash *s1, const LRUHash *s2) const { return 0 == memcmp(s1->_hash, s2->_hash, sizeof(s2->_hash)); }
+  bool
+  operator()(const LRUHash *s1, const LRUHash *s2) const
+  {
+    return 0 == memcmp(s1->_hash, s2->_hash, sizeof(s2->_hash));
+  }
 
-  size_t operator()(const LRUHash *s) const { return *((size_t *)s->_hash) ^ *((size_t *)(s->_hash + 9)); }
+  size_t
+  operator()(const LRUHash *s) const
+  {
+    return *((size_t *)s->_hash) ^ *((size_t *)(s->_hash + 9));
+  }
 };
 
 typedef std::pair<LRUHash, unsigned> LRUEntry;
@@ -189,7 +193,6 @@ class LRUPolicy : public PromotionPolicy
 {
 public:
   LRUPolicy() : PromotionPolicy(), _buckets(1000), _hits(10), _lock(TSMutexCreate()) {}
-
   ~LRUPolicy()
   {
     TSDebug(PLUGIN_NAME, "deleting LRUPolicy object");
@@ -209,6 +212,11 @@ public:
     switch (opt) {
     case 'b':
       _buckets = static_cast<unsigned>(strtol(optarg, NULL, 10));
+      if (_buckets < MINIMUM_BUCKET_SIZE) {
+        TSError("%s: Enforcing minimum LRU bucket size of %d", PLUGIN_NAME, MINIMUM_BUCKET_SIZE);
+        TSDebug(PLUGIN_NAME, "Enforcing minimum bucket size of %d", MINIMUM_BUCKET_SIZE);
+        _buckets = MINIMUM_BUCKET_SIZE;
+      }
       break;
     case 'h':
       _hits = static_cast<unsigned>(strtol(optarg, NULL, 10));
@@ -230,16 +238,32 @@ public:
   {
     LRUHash hash;
     LRUMap::iterator map_it;
+    char *url   = NULL;
     int url_len = 0;
-    char *url = TSHttpTxnEffectiveUrlStringGet(txnp, &url_len);
-    bool ret = false;
+    bool ret    = false;
+    TSMBuffer request;
+    TSMLoc req_hdr;
+
+    if (TS_SUCCESS == TSHttpTxnClientReqGet(txnp, &request, &req_hdr)) {
+      TSMLoc c_url = TS_NULL_MLOC;
+
+      // Get the cache key URL (for now), since this has better lookup behavior when using
+      // e.g. the cachekey plugin.
+      if (TS_SUCCESS == TSUrlCreate(request, &c_url)) {
+        if (TS_SUCCESS == TSHttpTxnCacheLookupUrlGet(txnp, request, c_url)) {
+          url = TSUrlStringGet(request, c_url, &url_len);
+          TSHandleMLocRelease(request, TS_NULL_MLOC, c_url);
+        }
+      }
+      TSHandleMLocRelease(request, TS_NULL_MLOC, req_hdr);
+    }
 
     // Generally shouldn't happen ...
     if (!url) {
       return false;
     }
 
-    TSDebug(PLUGIN_NAME, "LRUPolicy::doPromote(%.*s ...)", url_len > 30 ? 30 : url_len, url);
+    TSDebug(PLUGIN_NAME, "LRUPolicy::doPromote(%.*s%s)", url_len > 100 ? 100 : url_len, url, url_len > 100 ? "..." : "");
     hash.init(url, url_len);
     TSfree(url);
 
@@ -249,6 +273,7 @@ public:
     map_it = _map.find(&hash);
     if (_map.end() != map_it) {
       // We have an entry in the LRU
+      TSAssert(_list.size() > 0); // mismatch in the LRUs hash and list, shouldn't happen
       if (++(map_it->second->second) >= _hits) {
         // Promoted! Cleanup the LRU, and signal success. Save the promoted entry on the freelist.
         TSDebug(PLUGIN_NAME, "saving the LRUEntry to the freelist");
@@ -274,8 +299,8 @@ public:
         _list.push_front(NULL_LRU_ENTRY);
       }
       // Update the "new" LRUEntry and add it to the hash
-      _list.begin()->first = hash;
-      _list.begin()->second = 1;
+      _list.begin()->first          = hash;
+      _list.begin()->second         = 1;
       _map[&(_list.begin()->first)] = _list.begin();
     }
 
@@ -306,7 +331,6 @@ private:
   LRUList _list, _freelist;
 };
 
-
 //////////////////////////////////////////////////////////////////////////////////////////////
 // This holds the configuration for a remap rule, as well as parses the configurations.
 //
@@ -314,9 +338,7 @@ class PromotionConfig
 {
 public:
   PromotionConfig() : _policy(NULL) {}
-
   ~PromotionConfig() { delete _policy; }
-
   PromotionPolicy *
   getPolicy() const
   {
@@ -372,7 +394,6 @@ private:
   PromotionPolicy *_policy;
 };
 
-
 //////////////////////////////////////////////////////////////////////////////////////////////
 // Little helper continuation, to turn off writing to the cache. ToDo: when we have proper
 // APIs to make requests / responses, we can remove this completely.
@@ -398,13 +419,13 @@ cont_nocache_response(TSCont contp, TSEvent event, void *edata)
 static int
 cont_handle_policy(TSCont contp, TSEvent event, void *edata)
 {
-  TSHttpTxn txnp = static_cast<TSHttpTxn>(edata);
+  TSHttpTxn txnp          = static_cast<TSHttpTxn>(edata);
   PromotionConfig *config = static_cast<PromotionConfig *>(TSContDataGet(contp));
 
   switch (event) {
   // Main HOOK
   case TS_EVENT_HTTP_CACHE_LOOKUP_COMPLETE:
-    if (TS_SUCCESS != TSHttpIsInternalRequest(txnp)) {
+    if (TS_SUCCESS != TSHttpTxnIsInternal(txnp)) {
       int obj_status;
 
       if (TS_ERROR != TSHttpTxnCacheLookupStatusGet(txnp, &obj_status)) {
@@ -440,7 +461,6 @@ cont_handle_policy(TSCont contp, TSEvent event, void *edata)
   return 0;
 }
 
-
 //////////////////////////////////////////////////////////////////////////////////////////////
 // Initialize the plugin as a remap plugin.
 //
@@ -463,7 +483,6 @@ TSRemapInit(TSRemapInterface *api_info, char *errbuf, int errbuf_size)
   TSDebug(PLUGIN_NAME, "remap plugin is successfully initialized");
   return TS_SUCCESS; /* success */
 }
-
 
 TSReturnCode
 TSRemapNewInstance(int argc, char *argv[], void **ih, char * /* errbuf */, int /* errbuf_size */)
@@ -488,13 +507,12 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char * /* errbuf */, int /
 void
 TSRemapDeleteInstance(void *ih)
 {
-  TSCont contp = static_cast<TSCont>(ih);
+  TSCont contp            = static_cast<TSCont>(ih);
   PromotionConfig *config = static_cast<PromotionConfig *>(TSContDataGet(contp));
 
   delete config;
   TSContDestroy(contp);
 }
-
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 // Schedule the cache-read continuation for this remap rule.

@@ -30,16 +30,17 @@
  *
  ****************************************************************************/
 
-#include "libts.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_string.h"
 #include "StatProcessor.h"
 #include "FileManager.h"
 
 #define STAT_CONFIG_FILE "stats.config.xml"
 
 StatObjectList statObjectList;
-StatXMLTag currentTag = INVALID_TAG;
-StatObject *statObject = NULL;
-char *exprContent = NULL;
+StatXMLTag currentTag     = INVALID_TAG;
+StatObject *statObject    = NULL;
+char *exprContent         = NULL;
 static unsigned statCount = 0; // global statistics object counter
 bool nodeVar;
 bool sumClusterVar;
@@ -63,7 +64,6 @@ xml_strcmp(const xmlchar *s1, const char *s2)
 {
   return strcmp((const char *)s1, s2);
 }
-
 
 static void
 elementStart(void * /* userData ATS_UNUSED */, const xmlchar *name, const xmlchar **atts)
@@ -92,10 +92,10 @@ elementStart(void * /* userData ATS_UNUSED */, const xmlchar *name, const xmlcha
 
         if (!xml_strcmp(atts[i], "minimum")) {
           statObject->m_stats_min = (MgmtFloat)xml_atof(atts[i + 1]);
-          statObject->m_has_min = true;
+          statObject->m_has_min   = true;
         } else if (!xml_strcmp(atts[i], "maximum")) {
           statObject->m_stats_max = (MgmtFloat)xml_atof(atts[i + 1]);
-          statObject->m_has_max = true;
+          statObject->m_has_max   = true;
         } else if (!xml_strcmp(atts[i], "interval")) {
           statObject->m_update_interval = (ink_hrtime)xml_atoi(atts[i + 1]);
         } else if (!xml_strcmp(atts[i], "debug")) {
@@ -112,7 +112,7 @@ elementStart(void * /* userData ATS_UNUSED */, const xmlchar *name, const xmlcha
     break;
 
   case DST_TAG:
-    nodeVar = true;
+    nodeVar       = true;
     sumClusterVar = true; // Should only be used with cluster variable
 
     if (atts)
@@ -138,7 +138,6 @@ elementStart(void * /* userData ATS_UNUSED */, const xmlchar *name, const xmlcha
   }
 }
 
-
 static void
 elementEnd(void * /* userData ATS_UNUSED */, const xmlchar * /* name ATS_UNUSED */)
 {
@@ -157,7 +156,6 @@ elementEnd(void * /* userData ATS_UNUSED */, const xmlchar * /* name ATS_UNUSED 
     break;
   }
 }
-
 
 static void
 charDataHandler(void * /* userData ATS_UNUSED */, const xmlchar *name, int /* len ATS_UNUSED */)
@@ -179,19 +177,17 @@ charDataHandler(void * /* userData ATS_UNUSED */, const xmlchar *name, int /* le
   }
 }
 
-
 StatProcessor::StatProcessor(FileManager *configFiles) : m_lmgmt(NULL), m_overviewGenerator(NULL)
 {
   rereadConfig(configFiles);
 }
 
-
 void
 StatProcessor::rereadConfig(FileManager *configFiles)
 {
   textBuffer *fileContent = NULL;
-  Rollback *fileRB = NULL;
-  char *fileBuffer = NULL;
+  Rollback *fileRB        = NULL;
+  char *fileBuffer        = NULL;
   version_t fileVersion;
   int fileLen;
 
@@ -205,7 +201,7 @@ StatProcessor::rereadConfig(FileManager *configFiles)
   fileVersion = fileRB->getCurrentVersion();
   fileRB->getVersion(fileVersion, &fileContent);
   fileBuffer = fileContent->bufPtr();
-  fileLen = strlen(fileBuffer);
+  fileLen    = strlen(fileBuffer);
 
 #if HAVE_LIBEXPAT
   /*
@@ -242,10 +238,10 @@ StatProcessor::rereadConfig(FileManager *configFiles)
   /* Parse XML with libxml2 */
   xmlSAXHandler sax;
   memset(&sax, 0, sizeof(xmlSAXHandler));
-  sax.startElement = elementStart;
-  sax.endElement = elementEnd;
-  sax.characters = charDataHandler;
-  sax.initialized = 1;
+  sax.startElement        = elementStart;
+  sax.endElement          = elementEnd;
+  sax.characters          = charDataHandler;
+  sax.initialized         = 1;
   xmlParserCtxtPtr parser = xmlCreatePushParserCtxt(&sax, NULL, NULL, 0, NULL);
 
   int status = xmlParseChunk(parser, fileBuffer, fileLen, 1);
@@ -256,18 +252,15 @@ StatProcessor::rereadConfig(FileManager *configFiles)
   xmlFreeParserCtxt(parser);
 #endif
 
-
   delete fileContent;
 
   Debug(MODULE_INIT, "\n\n---------- END OF PARSING & INITIALIZING ---------\n\n");
 }
 
-
 StatProcessor::~StatProcessor()
 {
   Debug(MODULE_INIT, "[StatProcessor] Destructing Statistics Processor\n");
 }
-
 
 void
 setTest()
@@ -286,7 +279,6 @@ setTest()
     }
   }
 }
-
 
 void
 verifyTest()
@@ -319,7 +311,6 @@ verifyTest()
   }
 }
 
-
 /**
  * Updating the statistics NOW.
  **/
@@ -336,7 +327,6 @@ StatProcessor::processStat()
 
   return (result);
 }
-
 
 /**
  * ExpressionEval

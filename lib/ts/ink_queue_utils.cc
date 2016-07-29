@@ -21,11 +21,11 @@
   limitations under the License.
  */
 
-#include "ink_config.h"
+#include "ts/ink_config.h"
 #include <assert.h>
 
-#include "ink_atomic.h"
-#include "ink_queue.h"
+#include "ts/ink_atomic.h"
+#include "ts/ink_queue.h"
 
 /*
  * This file was added during the debugging of Bug 50475.
@@ -70,7 +70,7 @@ ink_queue_load_64(void *dst, void *src)
 {
 #if (defined(__i386__) || defined(__arm__) || defined(__mips__)) && (SIZEOF_VOIDP == 4)
   volatile int32_t src_version = (*(head_p *)src).s.version;
-  void *src_pointer = (*(head_p *)src).s.pointer;
+  void *src_pointer            = (*(head_p *)src).s.pointer;
 
   (*(head_p *)dst).s.version = src_version;
   (*(head_p *)dst).s.pointer = src_pointer;

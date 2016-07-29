@@ -45,7 +45,7 @@ const string Variables::SPECIAL_HEADERS[] = {string("ACCEPT-LANGUAGE"), string("
 const string Variables::NORM_SIMPLE_HEADERS[] = {string("HTTP_HOST"), string("HTTP_REFERER"), string("")};
 
 const string Variables::NORM_SPECIAL_HEADERS[] = {string("HTTP_ACCEPT_LANGUAGE"), string("HTTP_COOKIE"), string("HTTP_USER_AGENT"),
-                                                  string("QUERY_STRING"), string("")};
+                                                  string("QUERY_STRING"),         string("HTTP_HEADER"), string("")};
 
 inline string &
 Variables::_toUpperCase(string &str) const
@@ -84,7 +84,7 @@ Variables::populate(const HttpHeader &header)
 {
   if (header.name && header.name_len && header.value && header.value_len) {
     // doing this because we can't change our const input arg
-    int name_len = (header.name_len == -1) ? strlen(header.name) : header.name_len;
+    int name_len  = (header.name_len == -1) ? strlen(header.name) : header.name_len;
     int value_len = (header.value_len == -1) ? strlen(header.value) : header.value_len;
 
     // we need to save the cookie string to build the jar from
@@ -106,11 +106,10 @@ Variables::populate(const HttpHeader &header)
         match_index = _searchHeaders(SPECIAL_HEADERS, header.name, name_len);
         if (match_index != -1) {
           _cached_special_headers[match_index].push_back(string(header.value, value_len));
-        } else {
-          _debugLog(_debug_tag, "[%s] Not retaining header [%.*s]", __FUNCTION__, name_len, header.name);
         }
       }
     }
+    _insert(_dict_data[HTTP_HEADER], string(header.name, name_len), string(header.value, value_len));
   }
 }
 
@@ -268,7 +267,7 @@ Variables::_parseSubCookies()
 {
   StringHash &cookies = _dict_data[HTTP_COOKIE];
   for (StringHash::const_iterator it_cookie = cookies.begin(); it_cookie != cookies.end(); ++it_cookie) {
-    const std::string &name = it_cookie->first;
+    const std::string &name  = it_cookie->first;
     const std::string &value = it_cookie->second;
     if (strchr(value.c_str(), '=') == NULL) {
       continue;
@@ -305,9 +304,9 @@ Variables::_getSubCookieValue(const string &cookie_str, size_t cookie_part_divid
   string &non_const_cookie_str = const_cast<string &>(cookie_str);
   StringHash::const_iterator it_part;
 
-  non_const_cookie_str[cookie_part_divider] = '\0';      // make sure cookie name is NULL terminated
-  const char *cookie_name = non_const_cookie_str.data(); /* above NULL will take effect */
-  const char *part_name = non_const_cookie_str.c_str() + cookie_part_divider + 1;
+  non_const_cookie_str[cookie_part_divider] = '\0';                        // make sure cookie name is NULL terminated
+  const char *cookie_name                   = non_const_cookie_str.data(); /* above NULL will take effect */
+  const char *part_name                     = non_const_cookie_str.c_str() + cookie_part_divider + 1;
 
   StringKeyHash<StringHash>::const_iterator it_cookie = _sub_cookies.find(cookie_name);
   if (it_cookie == _sub_cookies.end()) {
@@ -405,7 +404,7 @@ Variables::_parseDictVariable(const std::string &variable, const char *&header, 
                               int &attr_len) const
 {
   const char *var_ptr = variable.data();
-  int var_size = variable.size();
+  int var_size        = variable.size();
   if ((var_size <= 4) || (variable[var_size - 1] != '}')) {
     return false;
   }
@@ -435,9 +434,9 @@ Variables::_parseDictVariable(const std::string &variable, const char *&header, 
     _debugLog(_debug_tag, "[%s] Dict variable has no attribute name [%.*s]", __FUNCTION__, var_size, var_ptr);
     return false;
   }
-  header = var_ptr;
+  header     = var_ptr;
   header_len = paranth_index;
-  attr = var_ptr + paranth_index + 1;
-  attr_len = var_size - header_len - 2;
+  attr       = var_ptr + paranth_index + 1;
+  attr_len   = var_size - header_len - 2;
   return true;
 }

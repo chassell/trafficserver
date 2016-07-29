@@ -21,10 +21,10 @@
   limitations under the License.
  */
 
-#include "ink_config.h"
-#include "ink_defs.h"
-#include "ink_assert.h"
-#include "ink_memory.h"
+#include "ts/ink_config.h"
+#include "ts/ink_defs.h"
+#include "ts/ink_assert.h"
+#include "ts/ink_memory.h"
 #include "mgmtapi.h"
 #include "NetworkMessage.h"
 
@@ -74,7 +74,9 @@ static const struct NetCmdOperation responses[] = {
   /* FILE_READ                  */ {3, {MGMT_MARSHALL_INT, MGMT_MARSHALL_INT, MGMT_MARSHALL_DATA}},
   /* FILE_WRITE                 */ {1, {MGMT_MARSHALL_INT}},
   /* RECORD_SET                 */ {2, {MGMT_MARSHALL_INT, MGMT_MARSHALL_INT}},
-  /* RECORD_GET                 */ {4, {MGMT_MARSHALL_INT, MGMT_MARSHALL_INT, MGMT_MARSHALL_STRING, MGMT_MARSHALL_DATA}},
+  /* RECORD_GET                 */ {5,
+                                    {MGMT_MARSHALL_INT, MGMT_MARSHALL_INT, MGMT_MARSHALL_INT, MGMT_MARSHALL_STRING,
+                                     MGMT_MARSHALL_DATA}},
   /* PROXY_STATE_GET            */ {2, {MGMT_MARSHALL_INT, MGMT_MARSHALL_INT}},
   /* PROXY_STATE_SET            */ {1, {MGMT_MARSHALL_INT}},
   /* RECONFIGURE                */ {1, {MGMT_MARSHALL_INT}},
@@ -94,7 +96,9 @@ static const struct NetCmdOperation responses[] = {
   /* STATS_RESET_NODE           */ {1, {MGMT_MARSHALL_INT}},
   /* STATS_RESET_CLUSTER        */ {1, {MGMT_MARSHALL_INT}},
   /* STORAGE_DEVICE_CMD_OFFLINE */ {1, {MGMT_MARSHALL_INT}},
-  /* RECORD_MATCH_GET           */ {4, {MGMT_MARSHALL_INT, MGMT_MARSHALL_INT, MGMT_MARSHALL_STRING, MGMT_MARSHALL_DATA}},
+  /* RECORD_MATCH_GET           */ {5,
+                                    {MGMT_MARSHALL_INT, MGMT_MARSHALL_INT, MGMT_MARSHALL_INT, MGMT_MARSHALL_STRING,
+                                     MGMT_MARSHALL_DATA}},
   /* API_PING                   */ {0, {}}, // no reply
   /* SERVER_BACKTRACE           */ {2, {MGMT_MARSHALL_INT, MGMT_MARSHALL_STRING}},
   /* RECORD_DESCRIBE_CONFIG     */ {15,
@@ -153,7 +157,7 @@ send_mgmt_request(int fd, OpType optype, ...)
 {
   va_list ap;
   MgmtMarshallInt msglen;
-  MgmtMarshallData req = {NULL, 0};
+  MgmtMarshallData req            = {NULL, 0};
   const MgmtMarshallType fields[] = {MGMT_MARSHALL_DATA};
   const NetCmdOperation *cmd;
 
@@ -192,9 +196,9 @@ send_mgmt_request(int fd, OpType optype, ...)
 TSMgmtError
 send_mgmt_error(int fd, OpType optype, TSMgmtError error)
 {
-  MgmtMarshallInt ecode = error;
-  MgmtMarshallInt intval = 0;
-  MgmtMarshallData dataval = {NULL, 0};
+  MgmtMarshallInt ecode     = error;
+  MgmtMarshallInt intval    = 0;
+  MgmtMarshallData dataval  = {NULL, 0};
   MgmtMarshallString strval = NULL;
 
   // Switch on operations, grouped by response format.
@@ -232,8 +236,8 @@ send_mgmt_error(int fd, OpType optype, TSMgmtError error)
 
   case RECORD_GET:
   case RECORD_MATCH_GET:
-    ink_release_assert(responses[optype].nfields == 4);
-    return send_mgmt_response(fd, optype, &ecode, &intval, &strval, &dataval);
+    ink_release_assert(responses[optype].nfields == 5);
+    return send_mgmt_response(fd, optype, &ecode, &intval, &intval, &strval, &dataval);
 
   case RECORD_DESCRIBE_CONFIG:
     ink_release_assert(responses[optype].nfields == 15);
@@ -270,7 +274,7 @@ send_mgmt_response(int fd, OpType optype, ...)
 {
   va_list ap;
   MgmtMarshallInt msglen;
-  MgmtMarshallData reply = {NULL, 0};
+  MgmtMarshallData reply          = {NULL, 0};
   const MgmtMarshallType fields[] = {MGMT_MARSHALL_DATA};
   const NetCmdOperation *cmd;
 
@@ -307,7 +311,7 @@ send_mgmt_response(int fd, OpType optype, ...)
 
 template <unsigned N>
 static TSMgmtError
-recv_x(const struct NetCmdOperation(&ops)[N], void *buf, size_t buflen, OpType optype, va_list ap)
+recv_x(const struct NetCmdOperation (&ops)[N], void *buf, size_t buflen, OpType optype, va_list ap)
 {
   ssize_t msglen;
   const NetCmdOperation *cmd;

@@ -24,12 +24,16 @@
 #ifndef _TRAFFIC_CTRL_H_
 #define _TRAFFIC_CTRL_H_
 
-#include "libts.h"
+#include "ts/ink_platform.h"
+#include "ts/Diags.h"
+#include "ts/ink_memory.h"
 #include "mgmtapi.h"
-#include "ink_args.h"
-#include "I_Version.h"
+#include "ts/ink_args.h"
+#include "ts/I_Version.h"
+#include "ts/BaseLogFile.h"
 
 #include <vector>
+#include <string>
 
 struct subcommand {
   int (*handler)(unsigned, const char **);
@@ -62,9 +66,7 @@ int CtrlGenericSubcommand(const char *, const subcommand *cmds, unsigned ncmds, 
 
 struct CtrlMgmtRecord {
   explicit CtrlMgmtRecord(TSRecordEle *e) : ele(e) {}
-
   CtrlMgmtRecord() : ele(TSRecordEleCreate()) {}
-
   ~CtrlMgmtRecord()
   {
     if (this->ele) {
@@ -76,6 +78,7 @@ struct CtrlMgmtRecord {
 
   const char *name() const;
   TSRecordT type() const;
+  int rclass() const;
   int64_t as_int() const;
 
 private:
@@ -106,48 +109,24 @@ private:
   } fmt;
 };
 
-struct CtrlMgmtRecordList {
-  CtrlMgmtRecordList() : list(TSListCreate()) {}
+struct RecordListPolicy {
+  typedef TSRecordEle *entry_type;
 
-  ~CtrlMgmtRecordList()
+  static void
+  free(entry_type e)
   {
-    this->clear();
-    TSListDestroy(this->list);
+    TSRecordEleDestroy(e);
   }
 
-  bool
-  empty() const
+  static entry_type
+  cast(void *ptr)
   {
-    return TSListIsEmpty(this->list);
+    return (entry_type)ptr;
   }
-
-  void
-  clear() const
-  {
-    while (!this->empty()) {
-      TSRecordEleDestroy((TSRecordEle *)TSListDequeue(this->list));
-    }
-  }
-
-  // Return (ownership of) the next list entry.
-  TSRecordEle *
-  next()
-  {
-    return (TSRecordEle *)TSListDequeue(this->list);
-  }
-
-  TSMgmtError match(const char *);
-
-private:
-  CtrlMgmtRecordList(const CtrlMgmtRecordList &);            // disabled
-  CtrlMgmtRecordList &operator=(const CtrlMgmtRecordList &); // disabled
-
-  TSList list;
 };
 
 template <typename T> struct CtrlMgmtList {
   CtrlMgmtList() : list(TSListCreate()) {}
-
   ~CtrlMgmtList()
   {
     this->clear();
@@ -182,9 +161,12 @@ private:
   CtrlMgmtList &operator=(const CtrlMgmtList &); // disabled
 };
 
+struct CtrlMgmtRecordList : CtrlMgmtList<RecordListPolicy> {
+  TSMgmtError match(const char *);
+};
+
 struct CtrlCommandLine {
   CtrlCommandLine() { this->args.push_back(NULL); }
-
   void
   init(unsigned argc, const char **argv)
   {

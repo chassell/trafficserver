@@ -40,10 +40,12 @@
 #ifndef _Allocator_h_
 #define _Allocator_h_
 
+#include <new>
 #include <stdlib.h>
-#include "ink_queue.h"
-#include "ink_defs.h"
-#include "ink_resource.h"
+#include "ts/ink_queue.h"
+#include "ts/ink_defs.h"
+#include "ts/ink_resource.h"
+#include <execinfo.h>
 
 #define RND16(_x) (((_x) + 15) & ~15)
 
@@ -76,7 +78,6 @@ public:
   }
 
   Allocator() { fl = NULL; }
-
   /**
     Creates a new allocator.
 
@@ -192,60 +193,63 @@ public:
   */
   ClassAllocator(const char *name, unsigned int chunk_size = 128, unsigned int alignment = 16)
   {
+    ::new ((void *)&proto.typeObject) C();
     ink_freelist_init(&this->fl, name, RND16(sizeof(C)), chunk_size, RND16(alignment));
   }
 
   struct {
-    C typeObject;
+    uint8_t typeObject[sizeof(C)];
     int64_t space_holder;
   } proto;
 };
 
-/**
-  Allocator for space class, a class with a lot of uninitialized
-  space/members. It uses an instantiate function do initialization
-  of objects. This is particularly useful if most of the space in
-  the objects does not need to be initialized. The initialization function passed
-  can be used to initialize a few fields selectively. Using
-  ClassAllocator for space objects would unnecessarily initialized
-  all of the members.
-
-*/
-template <class C> class SparseClassAllocator : public ClassAllocator<C>
+template <class C> class TrackerClassAllocator : public ClassAllocator<C>
 {
 public:
-  /** Allocates objects of the templated type. */
+  TrackerClassAllocator(const char *name, unsigned int chunk_size = 128, unsigned int alignment = 16)
+    : ClassAllocator<C>(name, chunk_size, alignment), allocations(0), trackerLock(PTHREAD_MUTEX_INITIALIZER)
+  {
+  }
+
   C *
   alloc()
   {
-    void *ptr = ink_freelist_new(this->fl);
+    void *callstack[3];
+    int frames = backtrace(callstack, 3);
+    C *ptr     = ClassAllocator<C>::alloc();
 
-    if (!_instantiate) {
-      memcpy(ptr, (void *)&this->proto.typeObject, sizeof(C));
-    } else
-      (*_instantiate)((C *)&this->proto.typeObject, (C *)ptr);
-    return (C *)ptr;
+    const void *symbol = NULL;
+    if (frames == 3 && callstack[2] != NULL) {
+      symbol = callstack[2];
+    }
+
+    tracker.increment(symbol, (int64_t)sizeof(C), this->fl->name);
+    ink_mutex_acquire(&trackerLock);
+    reverse_lookup[ptr] = symbol;
+    ++allocations;
+    ink_mutex_release(&trackerLock);
+
+    return ptr;
   }
 
-
-  /**
-    Create a new class specific SparseClassAllocator.
-
-    @param name some identifying name, used for mem tracking purposes.
-    @param chunk_size number of units to be allocated if free pool is empty.
-    @param alignment of objects must be a power of 2.
-    @param instantiate_func
-
-  */
-  SparseClassAllocator(const char *name, unsigned int chunk_size = 128, unsigned int alignment = 16,
-                       void (*instantiate_func)(C *proto, C *instance) = NULL)
-    : ClassAllocator<C>(name, chunk_size, alignment)
+  void
+  free(C *ptr)
   {
-    _instantiate = instantiate_func; // NULL by default
+    ink_mutex_acquire(&trackerLock);
+    std::map<void *, const void *>::iterator it = reverse_lookup.find(ptr);
+    if (it != reverse_lookup.end()) {
+      tracker.increment((const void *)it->second, (int64_t)sizeof(C) * -1, NULL);
+      reverse_lookup.erase(it);
+    }
+    ink_mutex_release(&trackerLock);
+    ClassAllocator<C>::free(ptr);
   }
 
 private:
-  void (*_instantiate)(C *proto, C *instance);
+  ResourceTracker tracker;
+  std::map<void *, const void *> reverse_lookup;
+  uint64_t allocations;
+  ink_mutex trackerLock;
 };
 
 #endif // _Allocator_h_

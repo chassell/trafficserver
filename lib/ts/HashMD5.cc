@@ -19,12 +19,12 @@
   limitations under the License.
  */
 
-#include "HashMD5.h"
+#include "ts/HashMD5.h"
 
 ATSHashMD5::ATSHashMD5(void)
 {
   EVP_DigestInit(&ctx, EVP_md5());
-  md_len = 0;
+  md_len    = 0;
   finalized = false;
 }
 
@@ -66,7 +66,7 @@ ATSHashMD5::clear(void)
 {
   EVP_MD_CTX_cleanup(&ctx);
   EVP_DigestInit(&ctx, EVP_md5());
-  md_len = 0;
+  md_len    = 0;
   finalized = false;
 }
 

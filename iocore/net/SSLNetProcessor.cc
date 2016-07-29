@@ -19,10 +19,10 @@
   limitations under the License.
  */
 
-#include "ink_config.h"
+#include "ts/ink_config.h"
 
 #include "P_Net.h"
-#include "I_Layout.h"
+#include "ts/I_Layout.h"
 #include "I_RecHttp.h"
 #include "P_SSLUtils.h"
 #include "P_OCSPStapling.h"
@@ -93,7 +93,6 @@ SSLNetProcessor::start(int number_of_ssl_threads, size_t stacksize)
     eventProcessor.schedule_every(new OCSPContinuation(), HRTIME_SECONDS(SSLConfigParams::ssl_ocsp_update_period), ET_OCSP);
   }
 #endif /* HAVE_OPENSSL_OCSP_STAPLING */
-
 
   if (number_of_ssl_threads == -1) {
     // We've disabled ET_SSL threads, so we will mark all ET_NET threads as having

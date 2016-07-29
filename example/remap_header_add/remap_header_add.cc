@@ -47,7 +47,6 @@ struct remap_line {
 #define NOWARN_UNUSED __attribute__((unused))
 #define EXTERN extern "C"
 
-
 EXTERN void
 ParseArgIntoNv(const char *arg, char **n, char **v)
 {
@@ -61,7 +60,7 @@ ParseArgIntoNv(const char *arg, char **n, char **v)
   }
 
   size_t name_len = colon_pos - arg;
-  *n = (char *)TSmalloc(name_len + 1);
+  *n              = (char *)TSmalloc(name_len + 1);
   memcpy(*n, arg, colon_pos - arg);
   (*n)[name_len] = '\0';
 
@@ -80,13 +79,11 @@ ParseArgIntoNv(const char *arg, char **n, char **v)
   TSDebug(TAG, "\t name_len=%zu, val_len=%zu, %s=%s", name_len, val_len, *n, *v);
 }
 
-
 TSReturnCode
 TSRemapInit(NOWARN_UNUSED TSRemapInterface *api_info, NOWARN_UNUSED char *errbuf, NOWARN_UNUSED int errbuf_size)
 {
   return TS_SUCCESS;
 }
-
 
 TSReturnCode
 TSRemapNewInstance(int argc, char *argv[], void **ih, NOWARN_UNUSED char *errbuf, NOWARN_UNUSED int errbuf_size)
@@ -96,19 +93,19 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, NOWARN_UNUSED char *errbuf
   TSDebug(TAG, "TSRemapNewInstance()");
 
   if (!argv || !ih) {
-    TSError(TAG ": Unable to load plugin because missing argv or ih.");
+    TSError("[remap_header_add] Unable to load plugin because missing argv or ih.");
     return TS_ERROR;
   }
 
   // print all arguments for this particular remapping
 
-  rl = (remap_line *)TSmalloc(sizeof(remap_line));
+  rl       = (remap_line *)TSmalloc(sizeof(remap_line));
   rl->argc = argc;
   rl->argv = argv;
-  rl->nvc = argc - 2; // the first two are the remap from and to
+  rl->nvc  = argc - 2; // the first two are the remap from and to
   if (rl->nvc) {
     rl->name = (char **)TSmalloc(sizeof(char *) * rl->nvc);
-    rl->val = (char **)TSmalloc(sizeof(char *) * rl->nvc);
+    rl->val  = (char **)TSmalloc(sizeof(char *) * rl->nvc);
   }
 
   TSDebug(TAG, "NewInstance:");
@@ -120,7 +117,6 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, NOWARN_UNUSED char *errbuf
 
   return TS_SUCCESS;
 }
-
 
 void
 TSRemapDeleteInstance(void *ih)
@@ -140,14 +136,13 @@ TSRemapDeleteInstance(void *ih)
   }
 }
 
-
 TSRemapStatus
 TSRemapDoRemap(void *ih, NOWARN_UNUSED TSHttpTxn txn, NOWARN_UNUSED TSRemapRequestInfo *rri)
 {
   remap_line *rl = (remap_line *)ih;
 
   if (!rl || !rri) {
-    TSError(TAG ": rl or rri is null.");
+    TSError("[remap_header_add] rl or rri is null.");
     return TSREMAP_NO_REMAP;
   }
 
@@ -156,7 +151,7 @@ TSRemapDoRemap(void *ih, NOWARN_UNUSED TSHttpTxn txn, NOWARN_UNUSED TSRemapReque
   TSMBuffer req_bufp;
   TSMLoc req_loc;
   if (TSHttpTxnClientReqGet(txn, &req_bufp, &req_loc) != TS_SUCCESS) {
-    TSError(TAG ": Error while retrieving client request header");
+    TSError("[remap_header_add] Error while retrieving client request header");
     return TSREMAP_NO_REMAP;
   }
 
@@ -169,7 +164,7 @@ TSRemapDoRemap(void *ih, NOWARN_UNUSED TSHttpTxn txn, NOWARN_UNUSED TSRemapReque
       TSMimeHdrFieldAppend(req_bufp, req_loc, field_loc);
       TSMimeHdrFieldValueStringInsert(req_bufp, req_loc, field_loc, 0, rl->val[i], strlen(rl->val[i]));
     } else {
-      TSError(TAG ": Failure on TSMimeHdrFieldCreate");
+      TSError("[remap_header_add] Failure on TSMimeHdrFieldCreate");
     }
   }
 

@@ -27,7 +27,8 @@
 #include <climits>
 #include <cstdio>
 
-std::ostream &operator<<(std::ostream &os, ATSConsistentHashNode &thing)
+std::ostream &
+operator<<(std::ostream &os, ATSConsistentHashNode &thing)
 {
   return os << thing.name;
 }
@@ -106,7 +107,6 @@ ATSConsistentHash::lookup(const char *url, ATSConsistentHashIter *i, bool *w, AT
       *wptr = true;
       *iter = NodeMap.begin();
     }
-
   } else {
     (*iter)++;
   }

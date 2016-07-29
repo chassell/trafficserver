@@ -24,7 +24,7 @@
 #include "P_Cache.h"
 
 Action *
-Cache::link(Continuation *cont, CacheKey *from, CacheKey *to, CacheFragType type, char *hostname, int host_len)
+Cache::link(Continuation *cont, const CacheKey *from, const CacheKey *to, CacheFragType type, const char *hostname, int host_len)
 {
   if (!CacheProcessor::IsCacheReady(type)) {
     cont->handleEvent(CACHE_EVENT_LINK_FAILED, 0);
@@ -33,12 +33,12 @@ Cache::link(Continuation *cont, CacheKey *from, CacheKey *to, CacheFragType type
 
   ink_assert(caches[type] == this);
 
-  CacheVC *c = new_CacheVC(cont);
-  c->vol = key_to_vol(from, hostname, host_len);
-  c->write_len = sizeof(*to); // so that the earliest_key will be used
+  CacheVC *c         = new_CacheVC(cont);
+  c->vol             = key_to_vol(from, hostname, host_len);
+  c->write_len       = sizeof(*to); // so that the earliest_key will be used
   c->f.use_first_key = 1;
-  c->first_key = *from;
-  c->earliest_key = *to;
+  c->first_key       = *from;
+  c->earliest_key    = *to;
 
   c->buf = new_IOBufferData(BUFFER_SIZE_INDEX_512);
 #ifdef DEBUG
@@ -71,7 +71,7 @@ Ldone:
 }
 
 Action *
-Cache::deref(Continuation *cont, CacheKey *key, CacheFragType type, char *hostname, int host_len)
+Cache::deref(Continuation *cont, const CacheKey *key, CacheFragType type, const char *hostname, int host_len)
 {
   if (!CacheProcessor::IsCacheReady(type)) {
     cont->handleEvent(CACHE_EVENT_DEREF_FAILED, 0);
@@ -83,7 +83,7 @@ Cache::deref(Continuation *cont, CacheKey *key, CacheFragType type, char *hostna
   Vol *vol = key_to_vol(key, hostname, host_len);
   Dir result;
   Dir *last_collision = NULL;
-  CacheVC *c = NULL;
+  CacheVC *c          = NULL;
   {
     MUTEX_TRY_LOCK(lock, vol->mutex, cont->mutex->thread_holding);
     if (lock.is_locked()) {
@@ -95,9 +95,9 @@ Cache::deref(Continuation *cont, CacheKey *key, CacheFragType type, char *hostna
     c = new_CacheVC(cont);
     SET_CONTINUATION_HANDLER(c, &CacheVC::derefRead);
     c->first_key = c->key = *key;
-    c->vol = vol;
-    c->dir = result;
-    c->last_collision = last_collision;
+    c->vol                = vol;
+    c->dir                = result;
+    c->last_collision     = last_collision;
 
     if (!lock.is_locked()) {
       c->mutex->thread_holding->schedule_in_local(c, HRTIME_MSECONDS(cache_config_mutex_retry_delay));

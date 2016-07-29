@@ -16,7 +16,6 @@
   limitations under the License.
 */
 
-
 //////////////////////////////////////////////////////////////////////////////////////////////
 //
 // Implement the classes for the various types of hash keys we support.
@@ -26,26 +25,10 @@
 
 #include <sys/types.h>
 
-#include "ink_defs.h"
-#include "ink_atomic.h"
+#include "ts/ink_defs.h"
+#include "ts/ink_atomic.h"
 
 // Used for Debug etc.
 static const char *PLUGIN_NAME = "geoip_acl";
 
 #endif // __LULU_H__
-
-
-/*
-  local variables:
-  mode: C++
-  indent-tabs-mode: nil
-  c-basic-offset: 2
-  c-comment-only-line-offset: 0
-  c-file-offsets: ((statement-block-intro . +)
-  (label . 0)
-  (statement-cont . +)
-  (innamespace . 0))
-  end:
-
-  Indent with: /usr/bin/indent -ncs -nut -npcs -l 120 logstats.cc
-*/

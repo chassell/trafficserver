@@ -37,12 +37,11 @@
 #ifndef _P_NET_VC_TEST_H_
 #define _P_NET_VC_TEST_H_
 
-#include "libts.h"
+#include "ts/ink_platform.h"
 
 class VIO;
 class MIOBuffer;
 class IOBufferReader;
-
 
 enum NetVcTestType_t {
   NET_VC_TEST_ACTIVE,
@@ -80,7 +79,6 @@ protected:
   RegressionTest *r;
   int *pstatus;
 };
-
 
 class NetVCTest : public Continuation
 {
@@ -143,6 +141,5 @@ public:
   const char *module_name;
   const char *debug_tag;
 };
-
 
 #endif

@@ -27,9 +27,9 @@
   Generic event notify mechanism among threads.
 **************************************************************************/
 
-#include "EventNotify.h"
-#include "ink_hrtime.h"
-#include "ink_defs.h"
+#include "ts/EventNotify.h"
+#include "ts/ink_hrtime.h"
+#include "ts/ink_defs.h"
 
 #ifdef HAVE_EVENTFD
 #include <sys/eventfd.h>
@@ -53,7 +53,7 @@ EventNotify::EventNotify()
   }
   ink_release_assert(m_event_fd != -1);
 
-  ev.events = EPOLLIN;
+  ev.events  = EPOLLIN;
   ev.data.fd = m_event_fd;
 
   m_epoll_fd = epoll_create(1);
@@ -92,7 +92,7 @@ EventNotify::wait(void)
   struct epoll_event ev;
 
   do {
-    nr_fd = epoll_wait(m_epoll_fd, &ev, 1, -1);
+    nr_fd = epoll_wait(m_epoll_fd, &ev, 1, 500000);
   } while (nr_fd == -1 && errno == EINTR);
 
   if (nr_fd == -1)

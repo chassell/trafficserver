@@ -28,7 +28,6 @@ using std::endl;
 using std::list;
 using std::string;
 
-
 class ClientRedirectTransactionPlugin : public atscppapi::TransactionPlugin
 {
 public:
@@ -53,17 +52,14 @@ public:
   }
 
   virtual ~ClientRedirectTransactionPlugin() {}
-
 private:
   string location_;
 };
-
 
 class ClientRedirectGlobalPlugin : public GlobalPlugin
 {
 public:
   ClientRedirectGlobalPlugin() { registerHook(HOOK_SEND_REQUEST_HEADERS); }
-
   void
   handleSendRequestHeaders(Transaction &transaction)
   {
@@ -78,5 +74,6 @@ public:
 void
 TSPluginInit(int argc ATSCPPAPI_UNUSED, const char *argv[] ATSCPPAPI_UNUSED)
 {
+  RegisterGlobalPlugin("CPP_Example_ClientDirect", "apache", "dev@trafficserver.apache.org");
   new ClientRedirectGlobalPlugin();
 }

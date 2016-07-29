@@ -22,18 +22,20 @@
  */
 
 #include "traffic_crashlog.h"
-#include "ink_args.h"
-#include "ink_cap.h"
-#include "I_Version.h"
-#include "I_Layout.h"
+#include "ts/ink_args.h"
+#include "ts/ink_cap.h"
+#include "ts/I_Version.h"
+#include "ts/I_Layout.h"
+#include "ts/ink_syslog.h"
 #include "I_RecProcess.h"
 #include "RecordsConfig.h"
+#include "ts/BaseLogFile.h"
 
-static int syslog_mode = false;
-static int debug_mode = false;
-static int wait_mode = false;
+static int syslog_mode    = false;
+static int debug_mode     = false;
+static int wait_mode      = false;
 static char *host_triplet = NULL;
-static int target_pid = getppid();
+static int target_pid     = getppid();
 
 // If pid_t is not sizeof(int), we will have to jiggle argument parsing.
 extern char __pid_size_static_assert[sizeof(pid_t) == sizeof(int) ? 0 : -1];
@@ -88,8 +90,9 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   char *logname;
   TSMgmtError mgmterr;
   crashlog_target target;
+  pid_t parent = getppid();
 
-  diags = new Diags("" /* tags */, "" /* actions */, stderr);
+  diags = new Diags("" /* tags */, "" /* actions */, new BaseLogFile("stderr"));
 
   appVersionInfo.setup(PACKAGE_NAME, "traffic_crashlog", PACKAGE_VERSION, __DATE__, __TIME__, BUILD_MACHINE, BUILD_PERSON, "");
 
@@ -99,6 +102,12 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   if (wait_mode) {
     EnableDeathSignal(SIGKILL);
     kill(getpid(), SIGSTOP);
+  }
+
+  // If our parent changed, then we were woken after traffic_server exited. There's no point trying to
+  // emit a crashlog because traffic_server is gone.
+  if (getppid() != parent) {
+    return 0;
   }
 
   // XXX This is a hack. traffic_manager starts traffic_server with the euid of the admin user. We are still
@@ -126,13 +135,13 @@ main(int /* argc ATS_UNUSED */, const char **argv)
     }
 
     openlog(appVersionInfo.AppStr, LOG_PID | LOG_NDELAY | LOG_NOWAIT, facility);
-    diags->config.outputs[DL_Debug].to_syslog = true;
-    diags->config.outputs[DL_Status].to_syslog = true;
-    diags->config.outputs[DL_Note].to_syslog = true;
-    diags->config.outputs[DL_Warning].to_syslog = true;
-    diags->config.outputs[DL_Error].to_syslog = true;
-    diags->config.outputs[DL_Fatal].to_syslog = true;
-    diags->config.outputs[DL_Alert].to_syslog = true;
+    diags->config.outputs[DL_Debug].to_syslog     = true;
+    diags->config.outputs[DL_Status].to_syslog    = true;
+    diags->config.outputs[DL_Note].to_syslog      = true;
+    diags->config.outputs[DL_Warning].to_syslog   = true;
+    diags->config.outputs[DL_Error].to_syslog     = true;
+    diags->config.outputs[DL_Fatal].to_syslog     = true;
+    diags->config.outputs[DL_Alert].to_syslog     = true;
     diags->config.outputs[DL_Emergency].to_syslog = true;
   }
 
@@ -147,7 +156,7 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   }
 
   ink_zero(target);
-  target.pid = (pid_t)target_pid;
+  target.pid       = (pid_t)target_pid;
   target.timestamp = timestamp();
 
   if (host_triplet && strncmp(host_triplet, "x86_64-unknown-linux", sizeof("x86_64-unknown-linux") - 1) == 0) {

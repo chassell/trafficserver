@@ -24,10 +24,10 @@
 #ifndef __HTTP_COMPAT_H__
 #define __HTTP_COMPAT_H__
 
-#include "ink_string++.h"
+#include "ts/ink_string++.h"
 #include "MIME.h"
-#include "RawHashTable.h"
-#include "Diags.h"
+#include "ts/RawHashTable.h"
+#include "ts/Diags.h"
 
 struct HttpBodySetRawData {
   unsigned int magic;
@@ -36,7 +36,6 @@ struct HttpBodySetRawData {
   char *content_charset;
   RawHashTable *table_of_pages;
 };
-
 
 class HttpCompat
 {

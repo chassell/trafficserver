@@ -42,14 +42,14 @@ do_mysql_remap(TSCont contp, TSHttpTxn txnp)
   int request_host_length = 0;
   const char *request_scheme;
   int request_scheme_length = 0;
-  int request_port = 80;
+  int request_port          = 80;
   char *query;
 
   MYSQL_ROW row;
   MYSQL_RES *res;
 
   my_data *data = (my_data *)TSContDataGet(contp);
-  query = data->query;
+  query         = data->query;
 
   if (TSHttpTxnClientReqGet(txnp, &reqp, &hdr_loc) != TS_SUCCESS) {
     TSDebug(PLUGIN_NAME, "could not get request data");
@@ -77,7 +77,7 @@ do_mysql_remap(TSCont contp, TSHttpTxn txnp)
   }
 
   request_scheme = TSUrlSchemeGet(reqp, url_loc, &request_scheme_length);
-  request_port = TSUrlPortGet(reqp, url_loc);
+  request_port   = TSUrlPortGet(reqp, url_loc);
 
   TSDebug(PLUGIN_NAME, "      +++++MYSQL REMAP+++++      ");
 
@@ -152,7 +152,7 @@ release_hdr:
 static int
 mysql_remap(TSCont contp, TSEvent event, void *edata)
 {
-  TSHttpTxn txnp = (TSHttpTxn)edata;
+  TSHttpTxn txnp   = (TSHttpTxn)edata;
   TSEvent reenable = TS_EVENT_HTTP_CONTINUE;
 
   switch (event) {
@@ -186,40 +186,40 @@ TSPluginInit(int argc, const char *argv[])
   TSPluginRegistrationInfo info;
   my_bool reconnect = 1;
 
-  info.plugin_name = const_cast<char *>(PLUGIN_NAME);
-  info.vendor_name = const_cast<char *>("Apache Software Foundation");
+  info.plugin_name   = const_cast<char *>(PLUGIN_NAME);
+  info.vendor_name   = const_cast<char *>("Apache Software Foundation");
   info.support_email = const_cast<char *>("dev@trafficserver.apache.org");
 
-  if (TSPluginRegister(TS_SDK_VERSION_2_0, &info) != TS_SUCCESS) {
-    TSError("mysql_remap: plugin registration failed.\n");
+  if (TSPluginRegister(&info) != TS_SUCCESS) {
+    TSError("[mysql_remap] Plugin registration failed.");
   }
 
   if (argc != 2) {
-    TSError("usage: %s /path/to/sample.ini\n", argv[0]);
+    TSError("[mysql_remap] Usage: %s /path/to/sample.ini", argv[0]);
     return;
   }
 
   ini = iniparser_load(argv[1]);
   if (!ini) {
-    TSError("Error with ini file (1)");
+    TSError("[mysql_remap] Error with ini file (1)");
     TSDebug(PLUGIN_NAME, "Error parsing ini file(1)");
     return;
   }
 
-  host = iniparser_getstring(ini, "mysql_remap:mysql_host", (char *)"localhost");
-  port = iniparser_getint(ini, "mysql_remap:mysql_port", 3306);
+  host     = iniparser_getstring(ini, "mysql_remap:mysql_host", (char *)"localhost");
+  port     = iniparser_getint(ini, "mysql_remap:mysql_port", 3306);
   username = iniparser_getstring(ini, "mysql_remap:mysql_username", NULL);
   password = iniparser_getstring(ini, "mysql_remap:mysql_password", NULL);
-  db = iniparser_getstring(ini, "mysql_remap:mysql_database", (char *)"mysql_remap");
+  db       = iniparser_getstring(ini, "mysql_remap:mysql_database", (char *)"mysql_remap");
 
   if (mysql_library_init(0, NULL, NULL)) {
-    TSError("Error initializing mysql client library");
+    TSError("[mysql_remap] Error initializing mysql client library");
     TSDebug(PLUGIN_NAME, "Error initializing mysql client library");
     return;
   }
 
   if (!mysql_init(&mysql)) {
-    TSError("Could not initialize MySQL");
+    TSError("[mysql_remap] Could not initialize MySQL");
     TSDebug(PLUGIN_NAME, "Could not initialize MySQL");
     return;
   }
@@ -227,7 +227,7 @@ TSPluginInit(int argc, const char *argv[])
   mysql_options(&mysql, MYSQL_OPT_RECONNECT, &reconnect);
 
   if (!mysql_real_connect(&mysql, host, username, password, db, port, NULL, 0)) {
-    TSError("Could not connect to mysql");
+    TSError("[mysql_remap] Could not connect to mysql");
     TSDebug(PLUGIN_NAME, "Could not connect to mysql: %s", mysql_error(&mysql));
     return;
   }

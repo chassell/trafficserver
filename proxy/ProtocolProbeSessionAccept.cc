@@ -42,7 +42,7 @@ proto_is_http2(IOBufferReader *reader)
   char *end;
   ptrdiff_t nbytes;
 
-  end = reader->memcpy(buf, sizeof(buf), 0 /* offset */);
+  end    = reader->memcpy(buf, sizeof(buf), 0 /* offset */);
   nbytes = end - buf;
 
   // Client must send at least 4 bytes to get a reasonable match.
@@ -55,15 +55,16 @@ proto_is_http2(IOBufferReader *reader)
 }
 
 struct ProtocolProbeTrampoline : public Continuation, public ProtocolProbeSessionAcceptEnums {
-  static const size_t minimum_read_size = 1;
+  static const size_t minimum_read_size   = 1;
   static const unsigned buffer_size_index = CLIENT_CONNECTION_FIRST_READ_BUFFER_SIZE_INDEX;
   IOBufferReader *reader;
 
-  explicit ProtocolProbeTrampoline(const ProtocolProbeSessionAccept *probe, ProxyMutex *mutex)
+  explicit ProtocolProbeTrampoline(const ProtocolProbeSessionAccept *probe, ProxyMutex *mutex, MIOBuffer *buffer,
+                                   IOBufferReader *reader)
     : Continuation(mutex), probeParent(probe)
   {
-    this->iobuf = new_MIOBuffer(buffer_size_index);
-    reader = iobuf->alloc_reader(); // reader must be allocated only on a new MIOBuffer.
+    this->iobuf  = buffer ? buffer : new_MIOBuffer(buffer_size_index);
+    this->reader = reader ? reader : iobuf->alloc_reader(); // reader must be allocated only on a new MIOBuffer.
     SET_HANDLER(&ProtocolProbeTrampoline::ioCompletionEvent);
   }
 
@@ -74,7 +75,7 @@ struct ProtocolProbeTrampoline : public Continuation, public ProtocolProbeSessio
     NetVConnection *netvc;
     ProtoGroupKey key = N_PROTO_GROUPS; // use this as an invalid value.
 
-    vio = static_cast<VIO *>(edata);
+    vio   = static_cast<VIO *>(edata);
     netvc = static_cast<NetVConnection *>(vio->vc_server);
 
     switch (event) {
@@ -125,6 +126,7 @@ struct ProtocolProbeTrampoline : public Continuation, public ProtocolProbeSessio
 
   done:
     free_MIOBuffer(this->iobuf);
+    this->iobuf = NULL;
     delete this;
     return EVENT_CONT;
   }
@@ -140,13 +142,20 @@ ProtocolProbeSessionAccept::mainEvent(int event, void *data)
     ink_assert(data);
 
     VIO *vio;
-    NetVConnection *netvc = static_cast<NetVConnection *>(data);
-    ProtocolProbeTrampoline *probe = new ProtocolProbeTrampoline(this, netvc->mutex);
+    NetVConnection *netvc          = (NetVConnection *)data;
+    ProtocolProbeTrampoline *probe = new ProtocolProbeTrampoline(this, netvc->mutex, NULL, NULL);
 
     // XXX we need to apply accept inactivity timeout here ...
 
-    vio = netvc->do_io_read(probe, BUFFER_SIZE_FOR_INDEX(ProtocolProbeTrampoline::buffer_size_index), probe->iobuf);
-    vio->reenable();
+    if (!probe->reader->is_read_avail_more_than(0)) {
+      Debug("http", "probe needs data, read..");
+      vio = netvc->do_io_read(probe, BUFFER_SIZE_FOR_INDEX(ProtocolProbeTrampoline::buffer_size_index), probe->iobuf);
+      vio->reenable();
+    } else {
+      Debug("http", "probe already has data, call ioComplete directly..");
+      vio = netvc->do_io_read(NULL, 0, NULL);
+      probe->ioCompletionEvent(VC_EVENT_READ_COMPLETE, (void *)vio);
+    }
     return EVENT_CONT;
   }
 

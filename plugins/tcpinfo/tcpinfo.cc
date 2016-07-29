@@ -37,7 +37,7 @@
 #include <sys/time.h>
 #include <arpa/inet.h>
 
-#include "ink_defs.h"
+#include "ts/ink_defs.h"
 
 #if defined(TCP_INFO) && defined(HAVE_STRUCT_TCP_INFO)
 #define TCPI_PLUGIN_SUPPORTED 1
@@ -63,7 +63,6 @@ struct Config {
   TSTextLogObject log;
 
   Config() : sample(1000), log_level(1), log(NULL) {}
-
   ~Config()
   {
     if (log) {
@@ -107,8 +106,12 @@ log_tcp_info(Config *config, const char *event_name, TSHttpSsn ssnp)
 
   TSReleaseAssert(config->log != NULL);
 
-  if (TSHttpSsnClientFdGet(ssnp, &fd) != TS_SUCCESS) {
-    TSDebug("tcpinfo", "error getting the client socket fd");
+  if (ssnp != NULL && (TSHttpSsnClientFdGet(ssnp, &fd) != TS_SUCCESS || fd <= 0)) {
+    TSDebug("tcpinfo", "error getting the client socket fd from ssn");
+    return;
+  }
+  if (ssnp == NULL) {
+    TSDebug("tcpinfo", "ssn is not specified");
     return;
   }
 
@@ -167,32 +170,32 @@ tcp_info_hook(TSCont contp, TSEvent event, void *edata)
 {
   TSHttpSsn ssnp = NULL;
   TSHttpTxn txnp = NULL;
-  int random = 0;
+  int random     = 0;
   Config *config = (Config *)TSContDataGet(contp);
 
   const char *event_name;
   switch (event) {
   case TS_EVENT_HTTP_SSN_START:
-    ssnp = (TSHttpSsn)edata;
+    ssnp       = (TSHttpSsn)edata;
     event_name = "ssn_start";
     break;
   case TS_EVENT_HTTP_TXN_START:
-    txnp = (TSHttpTxn)edata;
-    ssnp = TSHttpTxnSsnGet(txnp);
+    txnp       = (TSHttpTxn)edata;
+    ssnp       = TSHttpTxnSsnGet(txnp);
     event_name = "txn_start";
     break;
   case TS_EVENT_HTTP_TXN_CLOSE:
-    txnp = (TSHttpTxn)edata;
-    ssnp = TSHttpTxnSsnGet(txnp);
+    txnp       = (TSHttpTxn)edata;
+    ssnp       = TSHttpTxnSsnGet(txnp);
     event_name = "txn_close";
     break;
   case TS_EVENT_HTTP_SEND_RESPONSE_HDR:
-    txnp = (TSHttpTxn)edata;
-    ssnp = TSHttpTxnSsnGet(txnp);
+    txnp       = (TSHttpTxn)edata;
+    ssnp       = TSHttpTxnSsnGet(txnp);
     event_name = "send_resp_hdr";
     break;
   case TS_EVENT_HTTP_SSN_CLOSE:
-    ssnp = (TSHttpSsn)edata;
+    ssnp       = (TSHttpSsn)edata;
     event_name = "ssn_close";
     break;
   default:
@@ -206,7 +209,7 @@ tcp_info_hook(TSCont contp, TSEvent event, void *edata)
   }
 
   // Don't try to sample internal requests. TCP metrics for loopback are not interesting.
-  if (TSHttpIsInternalSession(ssnp) == TS_SUCCESS) {
+  if (TSHttpSsnIsInternal(ssnp) == TS_SUCCESS) {
     goto done;
   }
 
@@ -267,12 +270,8 @@ parse_hook_list(const char *hook_list)
   const struct hookmask {
     const char *name;
     unsigned mask;
-  } hooks[] = {{"ssn_start", TCPI_HOOK_SSN_START},
-               {"txn_start", TCPI_HOOK_TXN_START},
-               {"send_resp_hdr", TCPI_HOOK_SEND_RESPONSE},
-               {"ssn_close", TCPI_HOOK_SSN_CLOSE},
-               {"txn_close", TCPI_HOOK_TXN_CLOSE},
-               {NULL, 0u}};
+  } hooks[] = {{"ssn_start", TCPI_HOOK_SSN_START}, {"txn_start", TCPI_HOOK_TXN_START}, {"send_resp_hdr", TCPI_HOOK_SEND_RESPONSE},
+               {"ssn_close", TCPI_HOOK_SSN_CLOSE}, {"txn_close", TCPI_HOOK_TXN_CLOSE}, {NULL, 0u}};
 
   str = TSstrdup(hook_list);
 
@@ -299,7 +298,7 @@ parse_hook_list(const char *hook_list)
 void
 TSPluginInit(int argc, const char *argv[])
 {
-  static const char usage[] = "tcpinfo.so [--log-file=PATH] [--log-level=LEVEL] [--hooks=LIST] [--sample-rate=COUNT]";
+  static const char usage[]             = "tcpinfo.so [--log-file=PATH] [--log-level=LEVEL] [--hooks=LIST] [--sample-rate=COUNT]";
   static const struct option longopts[] = {{const_cast<char *>("sample-rate"), required_argument, NULL, 'r'},
                                            {const_cast<char *>("log-file"), required_argument, NULL, 'f'},
                                            {const_cast<char *>("log-level"), required_argument, NULL, 'l'},
@@ -307,16 +306,16 @@ TSPluginInit(int argc, const char *argv[])
                                            {NULL, 0, NULL, 0}};
 
   TSPluginRegistrationInfo info;
-  Config *config = new Config();
+  Config *config       = new Config();
   const char *filename = "tcpinfo";
   TSCont cont;
   unsigned hooks = 0;
 
-  info.plugin_name = (char *)"tcpinfo";
-  info.vendor_name = (char *)"Apache Software Foundation";
+  info.plugin_name   = (char *)"tcpinfo";
+  info.vendor_name   = (char *)"Apache Software Foundation";
   info.support_email = (char *)"dev@trafficserver.apache.org";
 
-  if (TSPluginRegister(TS_SDK_VERSION_3_0, &info) != TS_SUCCESS) {
+  if (TSPluginRegister(&info) != TS_SUCCESS) {
     TSError("[tcpinfo] plugin registration failed");
   }
 

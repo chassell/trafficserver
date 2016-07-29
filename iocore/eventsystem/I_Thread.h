@@ -64,7 +64,8 @@
 -- - include I_Event.h or
   P_Event.h
 #endif
-#include "libts.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_thread.h"
 #include "I_ProxyAllocator.h"
   class Thread;
 class ProxyMutex;
@@ -76,8 +77,7 @@ typedef THREADAPI_RETURN_TYPE(THREADAPI *ThreadFunction)(void *arg);
 extern ProxyMutex *global_mutex;
 
 static const int MAX_THREAD_NAME_LENGTH = 16;
-static const int DEFAULT_STACKSIZE = 1048576; // 1MB
-
+static const int DEFAULT_STACKSIZE      = 1048576; // 1MB
 
 /**
   Base class for the threads in the Event System. Thread is the base
@@ -130,7 +130,9 @@ public:
   ProxyAllocator eventAllocator;
   ProxyAllocator netVCAllocator;
   ProxyAllocator sslNetVCAllocator;
-  ProxyAllocator httpClientSessionAllocator;
+  ProxyAllocator http1ClientSessionAllocator;
+  ProxyAllocator http2ClientSessionAllocator;
+  ProxyAllocator http2StreamAllocator;
   ProxyAllocator httpServerSessionAllocator;
   ProxyAllocator hdrHeapAllocator;
   ProxyAllocator strHeapAllocator;
@@ -155,10 +157,38 @@ public:
   execute()
   {
   }
+
+  /** Get the current ATS high resolution time.
+      This gets a cached copy of the time so it is very fast and reasonably accurate.
+      The cached time is updated every time the actual operating system time is fetched which is
+      at least every 10ms and generally more frequently.
+      @note The cached copy shared among threads which means the cached copy is udpated
+      for all threads if any thread updates it.
+  */
+  static ink_hrtime get_hrtime();
+
+  /** Get the operating system high resolution time.
+
+      Get the current time at high resolution from the operating system.  This is more expensive
+      than @c get_hrtime and should be used only where very precise timing is required.
+
+      @note This also updates the cached time.
+  */
+  static ink_hrtime get_hrtime_updated();
 };
 
-extern ink_hrtime ink_get_hrtime();
-extern ink_hrtime ink_get_based_hrtime();
 extern Thread *this_thread();
+
+TS_INLINE ink_hrtime
+Thread::get_hrtime()
+{
+  return cur_time;
+}
+
+TS_INLINE ink_hrtime
+Thread::get_hrtime_updated()
+{
+  return cur_time = ink_get_hrtime_internal();
+}
 
 #endif /*_I_Thread_h*/

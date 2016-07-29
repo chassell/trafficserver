@@ -28,7 +28,7 @@
 #if !defined(_REMAPPLUGINS_h_)
 #define _REMAPPLUGINS_h_
 
-#include "libts.h"
+#include "ts/ink_platform.h"
 #include "I_EventSystem.h"
 #include "RemapProcessor.h"
 #include "api/ts/ts.h"
@@ -42,14 +42,12 @@
 **/
 struct RemapPlugins : public Continuation {
   RemapPlugins() : _cur(0) {}
-
   RemapPlugins(HttpTransact::State *s, URL *u, HTTPHdr *h, host_hdr_info *hi)
     : _cur(0), _s(s), _request_url(u), _request_header(h), _hh_ptr(hi)
   {
   }
 
   ~RemapPlugins() { _cur = 0; }
-
   // Some basic setters
   void
   setState(HttpTransact::State *state)

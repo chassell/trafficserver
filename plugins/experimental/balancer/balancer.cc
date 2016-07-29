@@ -30,21 +30,21 @@
 #include <iterator>
 
 // Using ink_inet API is cheating, but I was too lazy to write new IPv6 address parsing routines ;)
-#include "ink_inet.h"
+#include "ts/ink_inet.h"
 
 // The policy type is the first comma-separated token.
 static BalancerInstance *
 MakeBalancerInstance(const char *opt)
 {
   const char *end = strchr(opt, ',');
-  size_t len = end ? std::distance(opt, end) : strlen(opt);
+  size_t len      = end ? std::distance(opt, end) : strlen(opt);
 
   if (len == lengthof("hash") && strncmp(opt, "hash", len) == 0) {
     return MakeHashBalancer(end ? end + 1 : NULL);
   } else if (len == lengthof("roundrobin") && strncmp(opt, "roundrobin", len) == 0) {
     return MakeRoundRobinBalancer(end ? end + 1 : NULL);
   } else {
-    TSError("balancer: invalid balancing policy '%.*s'", (int)len, opt);
+    TSError("[balancer] Invalid balancing policy '%.*s'", (int)len, opt);
     return NULL;
   }
 }
@@ -82,7 +82,7 @@ MakeBalancerTarget(const char *strval)
   }
 
   if (target.port > INT16_MAX) {
-    TSError("balancer: ignoring invalid port number for target '%s'", strval);
+    TSError("[balancer] Ignoring invalid port number for target '%s'", strval);
     target.port = 0;
   }
 
@@ -163,7 +163,7 @@ TSRemapDeleteInstance(void *instance)
 TSRemapStatus
 TSRemapDoRemap(void *instance, TSHttpTxn txn, TSRemapRequestInfo *rri)
 {
-  BalancerInstance *balancer = (BalancerInstance *)instance;
+  BalancerInstance *balancer   = (BalancerInstance *)instance;
   const BalancerTarget &target = balancer->balance(txn, rri);
 
   if (TSIsDebugTagSet("balancer")) {

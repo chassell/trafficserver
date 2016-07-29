@@ -38,17 +38,17 @@ extern "C" {
 
 typedef enum {
   TS_FETCH_EVENT_EXT_HEAD_READY = -1,
-  TS_FETCH_EVENT_EXT_HEAD_DONE = -2,
+  TS_FETCH_EVENT_EXT_HEAD_DONE  = -2,
   TS_FETCH_EVENT_EXT_BODY_READY = -3,
-  TS_FETCH_EVENT_EXT_BODY_DONE = -4,
+  TS_FETCH_EVENT_EXT_BODY_DONE  = -4,
 } TSFetchEventExt;
 
 typedef enum {
-  TS_FETCH_FLAGS_NONE = 0,                     // do nothing
-  TS_FETCH_FLAGS_STREAM = 1 << 1,              // enable stream IO
-  TS_FETCH_FLAGS_DECHUNK = 1 << 2,             // dechunk body content
-  TS_FETCH_FLAGS_NEWLOCK = 1 << 3,             // allocate new lock for fetch sm
-  TS_FETCH_FLAGS_NOT_INTERNAL_REQUEST = 1 << 4 // Allow this fetch to be created as a non-internal request.
+  TS_FETCH_FLAGS_NONE                 = 0,      // do nothing
+  TS_FETCH_FLAGS_STREAM               = 1 << 1, // enable stream IO
+  TS_FETCH_FLAGS_DECHUNK              = 1 << 2, // dechunk body content
+  TS_FETCH_FLAGS_NEWLOCK              = 1 << 3, // allocate new lock for fetch sm
+  TS_FETCH_FLAGS_NOT_INTERNAL_REQUEST = 1 << 4  // Allow this fetch to be created as a non-internal request.
 } TSFetchFlags;
 
 typedef struct tsapi_fetchsm *TSFetchSM;
@@ -76,7 +76,7 @@ int64_t TSCacheHttpInfoSizeGet(TSCacheHttpInfo infop);
 tsapi int TSMimeHdrFieldEqual(TSMBuffer bufp, TSMLoc hdr_obj, TSMLoc field1, TSMLoc field2);
 tsapi TSReturnCode TSHttpTxnHookRegisteredFor(TSHttpTxn txnp, TSHttpHookID id, TSEventFunc funcp);
 
-/* for Media-IXT mms over http */
+/* Various HTTP "control" modes */
 typedef enum {
   TS_HTTP_CNTL_GET_LOGGING_MODE,
   TS_HTTP_CNTL_SET_LOGGING_MODE,
@@ -93,7 +93,6 @@ typedef enum {
 */
 tsapi TSReturnCode TSHttpTxnCntl(TSHttpTxn txnp, TSHttpCntlType cntl, void *data);
 
-
 /* Protocols APIs */
 tsapi void TSVConnCacheHttpInfoSet(TSVConn connp, TSCacheHttpInfo infop);
 
@@ -103,7 +102,6 @@ tsapi void TSICPFreshnessFuncSet(TSPluginFreshnessCalcFunc funcp);
 
 tsapi TSReturnCode TSICPCachedReqGet(TSCont contp, TSMBuffer *bufp, TSMLoc *obj);
 tsapi TSReturnCode TSICPCachedRespGet(TSCont contp, TSMBuffer *bufp, TSMLoc *obj);
-
 
 /* The rest is from the old "froze" private API include, we should consider
    moving some of these over to ts/ts.h as well. TODO */
@@ -162,7 +160,6 @@ tsapi TSReturnCode TSHttpTxnCachedRespTimeGet(TSHttpTxn txnp, time_t *resp_time)
 /* ===== Cache ===== */
 tsapi TSReturnCode TSCacheKeyDataTypeSet(TSCacheKey key, TSCacheDataType type);
 
-
 /* ===== Utility ===== */
 /****************************************************************************
  *  Create a random number
@@ -188,6 +185,18 @@ tsapi void TSCacheHttpInfoReqGet(TSCacheHttpInfo infop, TSMBuffer *bufp, TSMLoc 
 tsapi void TSCacheHttpInfoRespGet(TSCacheHttpInfo infop, TSMBuffer *bufp, TSMLoc *offset);
 tsapi void TSCacheHttpInfoDestroy(TSCacheHttpInfo infop);
 
+/* Get Arbitrary Txn info such as cache lookup details etc as defined in TSHttpTxnInfoKey */
+/**
+   Return the particular txn info requested.
+
+   @param txnp the transaction pointer
+   @param key the requested txn info.
+   @param TSMgmtInt a pointer to a integer where the return value is stored
+
+   @return @c TS_SUCCESS if the requested info is supported, TS_ERROR otherwise
+
+*/
+tsapi TSReturnCode TSHttpTxnInfoIntGet(TSHttpTxn txnp, TSHttpTxnInfoKey key, TSMgmtInt *value);
 
 /* =====  ICP =====  */
 tsapi void TSHttpIcpDynamicSet(int value);
@@ -246,7 +255,6 @@ tsapi int TSHttpTxnLookingUpTypeGet(TSHttpTxn txnp);
  */
 tsapi TSReturnCode TSPluginDescriptorAccept(TSCont contp);
 
-
 /**
     Opens a network connection to the host specified by the 'to' sockaddr
     spoofing the client addr to equal the 'from' sockaddr.
@@ -274,7 +282,6 @@ tsapi TSAction TSNetConnectTransparent(
   struct sockaddr const *from, /**< Address to spoof as connection origin */
   struct sockaddr const *to    /**< Address to which to connect. */
   );
-
 
 /* =====  Matcher Utils =====  */
 #define TS_MATCHER_LINE_INVALID 0
@@ -487,124 +494,6 @@ tsapi TSClusterRPCMsg_t *TSAllocClusterRPCMsg(TSClusterRPCHandle_t *h, int data_
  *  contact: OXY, DY
  ****************************************************************************/
 tsapi int TSSendClusterRPC(TSNodeHandle_t *nh, TSClusterRPCMsg_t *msg);
-
-
-/*
-  This is for the prefetch APIs, this really has to be cleaned out. This is
-  some pretty seriously broken stuff, and we should decide whether it should
-  die and be redone properly. A few of the issues include:
-
-     * The hooks are not normal ATS continuations, just plain callbacks.
-     * The hooks are therefore not registered the normal way either...
-     * And thusly, there can only be one callback for each of the three
-       Prefetch "hooks".
-     * The example plugins don't compile, there are old / missing pieces.
-*/
-
-typedef enum {
-  TS_PREFETCH_UDP_BLAST = 0,
-  TS_PREFETCH_TCP_BLAST,
-  TS_PREFETCH_MULTICAST_BLAST,
-} TSPrefetchBlastType;
-
-typedef struct {
-  TSPrefetchBlastType type;
-  struct sockaddr_storage ip;
-} TSPrefetchBlastData;
-
-typedef enum {
-  TS_PREFETCH_OBJ_BUF_NOT_NEEDED = 0,
-  TS_PREFETCH_OBJ_BUF_NEEDED,              /* The user wants the buffer but does not
-                                              want it to be transmitted to the child */
-  TS_PREFETCH_OBJ_BUF_NEEDED_N_TRANSMITTED /* The object should
-                                              be transmitted as well */
-} TSPrefetchStatus;
-
-/* return type for TSPrefetchHook */
-typedef enum {
-  TS_PREFETCH_CONTINUE,
-  TS_PREFETCH_DISCONTINUE,
-} TSPrefetchReturnCode;
-
-
-/* prefetch hooks, which are *not* normal hooks (no continuations) */
-typedef enum {
-  TS_PREFETCH_PRE_PARSE_HOOK,
-  /* This hook is invoked just before we begin to parse a document
-     request and response headers are available.
-     Return value: TS_PREFETCH_CONTINUE  :continue parsing
-     TS_PREFETCH_DISCONTIUE: don't bother parser
-  */
-
-  TS_PREFETCH_EMBEDDED_URL_HOOK,
-  /* This hook is invoked when a URL is extracted.
-     url_proto and url_response_proto contain the default protocols used
-     for sending the url and actual url object respectively to the child.
-     The hook can change thes to one of the 3 methods mentioned above.
-     Return value: TS_PREFETCH_CONTINUE  : prefetch this url.
-     TS_PREFETCH_DISCONTIUE: don't bother prefetching this
-     url
-  */
-
-  TS_PREFETCH_EMBEDDED_OBJECT_HOOK
-  /* This hook is invoked when the user wants to have access to the buffer
-     of the embedded object we prefetched. We pass in the buffer reader.
-     The reader contains the data in the format specified in the Prefetch
-     document (with 12 byte header etc).
-     It is the users responsibility to free the reader.
-     The only valid field in the PrefetchInfo structure object_buf_reader.
-     embedded_url, object_buf, object_buf_reader, and object_buf_status are
-     set in TSPrefetchInfo passed as arguments
-  */
-} TSPrefetchHookID;
-
-
-/* This holds the main Prefetch information as used by the hook callbacks. */
-typedef struct {
-  /*request header */
-  TSMBuffer request_buf;
-  TSMLoc request_loc;
-
-  /*response header */
-  TSMBuffer response_buf;
-  TSMLoc response_loc;
-
-  /*child ip addr in network order */
-  struct sockaddr_storage client_ip;
-
-  /*the embedded url parsed by the parser */
-  const char *embedded_url;
-
-  /* flag which says if a perticular embedded url is present in the cache */
-  int present_in_cache;
-
-  /* Reader for the buffer which contains the prefetched object */
-  TSIOBuffer object_buf;
-  TSIOBufferReader object_buf_reader;
-
-  /* This specifies if we need to invoke the OBJECT_HOOK and whether we
-     need to send the buffer to child as well
-     This should set inside EMBEDDED_URL_HOOK by the user
-  */
-  int object_buf_status;
-
-  /** Method of sending data to child.
-
-      If set to @c MULTICAST_BLAST then the corresponding address
-      value must be set to a multicast address to use.
-  */
-  TSPrefetchBlastData url_blast;
-  TSPrefetchBlastData url_response_blast;
-
-} TSPrefetchInfo;
-
-typedef TSPrefetchReturnCode (*TSPrefetchHook)(TSPrefetchHookID hook, TSPrefetchInfo *prefetch_info);
-
-/* Registers a hook for the given hook_no.
-   A hook is already present, it is replace by hook_fn
-   return value 0 indicates success */
-tsapi int TSPrefetchHookSet(int hook_no, TSPrefetchHook hook_fn);
-
 
 /**
  * Extended FetchSM's AIPs

@@ -32,13 +32,16 @@
 #include "proxy/Main.h"
 #include "Error.h"
 #include <time.h>
-#include "ink_platform.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_assert.h"
+#include "ts/ink_thread.h"
 
 ErrorClass::~ErrorClass()
 {
 }
 
-void ErrorClass::operator()(const char *aformat_string, ...)
+void
+ErrorClass::operator()(const char *aformat_string, ...)
 {
   va_list aap;
   va_start(aap, aformat_string);

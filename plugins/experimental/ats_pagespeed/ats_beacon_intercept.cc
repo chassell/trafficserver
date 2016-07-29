@@ -69,8 +69,16 @@ struct InterceptCtx {
   bool initialized;
   TransformCtx *request_context;
   InterceptCtx(TSCont cont)
-    : net_vc(0), contp(cont), input(), output(), body(""), req_content_len(0), req_hdr_bufp(0), req_hdr_loc(0),
-      req_hdr_parsed(false), initialized(false)
+    : net_vc(0),
+      contp(cont),
+      input(),
+      output(),
+      body(""),
+      req_content_len(0),
+      req_hdr_bufp(0),
+      req_hdr_loc(0),
+      req_hdr_parsed(false),
+      initialized(false)
   {
     http_parser = TSHttpParserCreate();
   }
@@ -100,7 +108,7 @@ bool
 InterceptCtx::init(TSVConn vconn)
 {
   if (initialized) {
-    TSError("[%s] InterceptCtx already initialized!", __FUNCTION__);
+    TSError("[ats_beacon_intercept][%s] InterceptCtx already initialized!", __FUNCTION__);
     return false;
   }
 
@@ -108,10 +116,10 @@ InterceptCtx::init(TSVConn vconn)
 
   input.buffer = TSIOBufferCreate();
   input.reader = TSIOBufferReaderAlloc(input.buffer);
-  input.vio = TSVConnRead(net_vc, contp, input.buffer, INT_MAX);
+  input.vio    = TSVConnRead(net_vc, contp, input.buffer, INT_MAX);
 
   req_hdr_bufp = TSMBufferCreate();
-  req_hdr_loc = TSHttpHdrCreate(req_hdr_bufp);
+  req_hdr_loc  = TSHttpHdrCreate(req_hdr_bufp);
   TSHttpHdrTypeSet(req_hdr_bufp, req_hdr_loc, TS_HTTP_TYPE_REQUEST);
 
   initialized = true;
@@ -125,7 +133,7 @@ InterceptCtx::setupWrite()
   TSAssert(output.buffer == 0);
   output.buffer = TSIOBufferCreate();
   output.reader = TSIOBufferReaderAlloc(output.buffer);
-  output.vio = TSVConnWrite(net_vc, contp, output.reader, INT_MAX);
+  output.vio    = TSVConnWrite(net_vc, contp, output.reader, INT_MAX);
 }
 
 // Parses out query params from the request.
@@ -145,7 +153,7 @@ handleRead(InterceptCtx *cont_data, bool &read_complete)
 {
   int avail = TSIOBufferReaderAvail(cont_data->input.reader);
   if (avail == TS_ERROR) {
-    TSError("[%s] Error while getting number of bytes available", __FUNCTION__);
+    TSError("[ats_beacon_intercept][%s] Error while getting number of bytes available", __FUNCTION__);
     return false;
   }
 
@@ -185,7 +193,7 @@ handleRead(InterceptCtx *cont_data, bool &read_complete)
           }
           TSDebug(DEBUG_TAG, "[%s] Got content length as %d", __FUNCTION__, cont_data->req_content_len);
           if (cont_data->req_content_len < 0) {
-            TSError("[%s] Invalid content length [%d]", __FUNCTION__, cont_data->req_content_len);
+            TSError("[ats_beacon_intercept][%s] Invalid content length [%d]", __FUNCTION__, cont_data->req_content_len);
             return false;
           }
           if (endptr - data) {
@@ -234,7 +242,8 @@ processRequest(InterceptCtx *cont_data)
   string reply_header("HTTP/1.1 204 No Content\r\n");
   int body_size = static_cast<int>(cont_data->body.size());
   if (cont_data->req_content_len != body_size) {
-    TSError("[%s] Read only %d bytes of body; expecting %d bytes", __FUNCTION__, body_size, cont_data->req_content_len);
+    TSError("[ats_beacon_intercept][%s] Read only %d bytes of body; expecting %d bytes", __FUNCTION__, body_size,
+            cont_data->req_content_len);
   }
 
   char buf[64];
@@ -247,7 +256,7 @@ processRequest(InterceptCtx *cont_data)
   StringPiece query_param_beacon_data;
   ps_query_params_handler(cont_data->request_context->url_string->c_str(), &query_param_beacon_data);
 
-  GoogleString beacon_data = net_instaweb::StrCat(query_param_beacon_data, "&", cont_data->body);
+  GoogleString beacon_data      = net_instaweb::StrCat(query_param_beacon_data, "&", cont_data->body);
   ServerContext *server_context = cont_data->request_context->server_context;
 
   SystemRequestContext *system_request_context =
@@ -257,14 +266,14 @@ processRequest(InterceptCtx *cont_data)
 
   if (!server_context->HandleBeacon(beacon_data, cont_data->request_context->user_agent->c_str(),
                                     net_instaweb::RequestContextPtr(system_request_context))) {
-    TSError("Beacon handling failure!");
+    TSError("[ats_beacon_intercept] Beacon handling failure!");
   } else {
     TSDebug(DEBUG_TAG, "Beacon post data processed OK: [%s]", beacon_data.c_str());
   }
 
   cont_data->setupWrite();
   if (TSIOBufferWrite(cont_data->output.buffer, reply_header.data(), reply_header.size()) == TS_ERROR) {
-    TSError("[%s] Error while writing reply header", __FUNCTION__);
+    TSError("[ats_beacon_intercept][%s] Error while writing reply header", __FUNCTION__);
     return false;
   }
   /*
@@ -286,21 +295,21 @@ txn_intercept(TSCont contp, TSEvent event, void *edata)
   TSDebug(DEBUG_TAG, "[%s] Received event: %d", __FUNCTION__, (int)event);
 
   InterceptCtx *cont_data = static_cast<InterceptCtx *>(TSContDataGet(contp));
-  bool read_complete = false;
-  bool shutdown = false;
+  bool read_complete      = false;
+  bool shutdown           = false;
   switch (event) {
   case TS_EVENT_NET_ACCEPT:
     TSDebug(DEBUG_TAG, "[%s] Received net accept event", __FUNCTION__);
     TSAssert(cont_data->initialized == false);
     if (!cont_data->init(static_cast<TSVConn>(edata))) {
-      TSError("[%s] Could not initialize continuation data!", __FUNCTION__);
+      TSError("[ats_beacon_intercept][%s] Could not initialize continuation data!", __FUNCTION__);
       return 1;
     }
     break;
   case TS_EVENT_VCONN_READ_READY:
     TSDebug(DEBUG_TAG, "[%s] Received read ready event", __FUNCTION__);
     if (!handleRead(cont_data, read_complete)) {
-      TSError("[%s] Error while reading from input vio", __FUNCTION__);
+      TSError("[ats_beacon_intercept][%s] Error while reading from input vio", __FUNCTION__);
       // return 0;
       read_complete = true;
     }
@@ -321,7 +330,7 @@ txn_intercept(TSCont contp, TSEvent event, void *edata)
   case TS_EVENT_ERROR:
     // todo: do some error handling here
     TSDebug(DEBUG_TAG, "[%s] Received error event; going to shutdown, event: %d", __FUNCTION__, event);
-    TSError("[%s] Received error event; going to shutdown, event: %d", __FUNCTION__, event);
+    TSError("[ats_beacon_intercept][%s] Received error event; going to shutdown, event: %d", __FUNCTION__, event);
     shutdown = true;
     break;
   default:
@@ -330,7 +339,7 @@ txn_intercept(TSCont contp, TSEvent event, void *edata)
 
   if (read_complete) {
     if (!processRequest(cont_data)) {
-      TSError("[%s] Failed to process process", __FUNCTION__);
+      TSError("[ats_beacon_intercept][%s] Failed to process process", __FUNCTION__);
     } else {
       TSDebug(DEBUG_TAG, "[%s] Processed request successfully", __FUNCTION__);
     }
@@ -353,10 +362,10 @@ hook_beacon_intercept(TSHttpTxn txnp)
 {
   TSCont contp = TSContCreate(txn_intercept, TSMutexCreate());
   if (!contp) {
-    TSError("[%s] Could not create intercept request", __FUNCTION__);
+    TSError("[ats_beacon_intercept][%s] Could not create intercept request", __FUNCTION__);
     return false;
   }
-  InterceptCtx *cont_data = new InterceptCtx(contp);
+  InterceptCtx *cont_data    = new InterceptCtx(contp);
   cont_data->request_context = get_transaction_context(txnp);
   TSContDataSet(contp, cont_data);
   TSHttpTxnIntercept(contp, txnp);

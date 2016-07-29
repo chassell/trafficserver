@@ -28,19 +28,19 @@
  *
  *
  ****************************************************************************/
-#include "ink_platform.h"
-#include "ink_defs.h"
-#include "ink_time.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_defs.h"
+#include "ts/ink_time.h"
 
 #include "Main.h"
 #include "URL.h"
-#include "Tokenizer.h"
+#include "ts/Tokenizer.h"
 #include "ControlBase.h"
-#include "MatcherUtils.h"
+#include "ts/MatcherUtils.h"
 #include "HTTP.h"
 #include "ControlMatcher.h"
 #include "HdrUtils.h"
-#include "Vec.h"
+#include "ts/Vec.h"
 
 #include <ts/TsBuffer.h>
 
@@ -141,9 +141,9 @@ TimeMod::make(char *value, char const **error)
 const char *
 TimeMod::timeOfDayToSeconds(const char *time_str, time_t *seconds)
 {
-  int hour = 0;
-  int min = 0;
-  int sec = 0;
+  int hour   = 0;
+  int min    = 0;
+  int sec    = 0;
   time_t tmp = 0;
 
   // coverity[secure_coding]
@@ -327,7 +327,7 @@ SrcIPMod::make(char *value, char const **error)
 {
   SrcIPMod tmp;
   SrcIPMod *zret = 0;
-  *error = ExtractIpRange(value, &tmp.start_addr.sa, &tmp.end_addr.sa);
+  *error         = ExtractIpRange(value, &tmp.start_addr.sa, &tmp.end_addr.sa);
 
   if (!*error)
     zret = new SrcIPMod(tmp);
@@ -387,7 +387,7 @@ SchemeMod *
 SchemeMod::make(char *value, char const **error)
 {
   SchemeMod *zret = 0;
-  int scheme = hdrtoken_tokenize(value, strlen(value));
+  int scheme      = hdrtoken_tokenize(value, strlen(value));
   if (scheme < 0) {
     *error = "Unknown scheme";
   } else {
@@ -534,7 +534,7 @@ PrefixMod::check(HttpRequestData *req) const
 {
   int path_len;
   char const *path = req->hdr->url_get()->path_get(&path_len);
-  bool zret = path_len >= static_cast<int>(text.size()) && 0 == memcmp(path, text.data(), text.size());
+  bool zret        = path_len >= static_cast<int>(text.size()) && 0 == memcmp(path, text.data(), text.size());
   /*
     Debug("cache_control", "Prefix check: URL=%0.*s Mod=%0.*s Z=%s",
       path_len, path, text.size(), text.data(),
@@ -633,6 +633,56 @@ TagMod::make(char *value, char const ** /* error ATS_UNUSED */)
 }
 
 // ----------
+struct InternalMod : public ControlBase::Modifier {
+  bool flag;
+  static char const *const NAME;
+
+  virtual Type
+  type() const
+  {
+    return MOD_INTERNAL;
+  }
+  virtual char const *
+  name() const
+  {
+    return NAME;
+  }
+  virtual bool
+  check(HttpRequestData *req) const
+  {
+    return req->internal_txn == flag;
+  }
+  virtual void
+  print(FILE *f) const
+  {
+    fprintf(f, "%s=%s  ", this->name(), flag ? "true" : "false");
+  }
+  static InternalMod *make(char *value, char const **error);
+};
+
+char const *const InternalMod::NAME = "Internal";
+
+InternalMod *
+InternalMod::make(char *value, char const **error)
+{
+  InternalMod tmp;
+
+  if (0 == strncasecmp("false", value, 5)) {
+    tmp.flag = false;
+  } else if (0 == strncasecmp("true", value, 4)) {
+    tmp.flag = true;
+  } else {
+    *error = "Value must be true or false";
+  }
+
+  if (*error) {
+    return NULL;
+  } else {
+    return new InternalMod(tmp);
+  }
+}
+
+// ----------
 } // anon name space
 // ------------------------------------------------
 ControlBase::~ControlBase()
@@ -671,7 +721,7 @@ char const *
 ControlBase::getSchemeModText() const
 {
   char const *zret = 0;
-  Modifier *mod = this->findModOfType(Modifier::MOD_SCHEME);
+  Modifier *mod    = this->findModOfType(Modifier::MOD_SCHEME);
   if (mod)
     zret = static_cast<SchemeMod *>(mod)->getWksText();
   return zret;
@@ -719,7 +769,7 @@ ControlBase::ProcessModifiers(matcher_line *line_info)
 {
   // Variables for error processing
   const char *errBuf = NULL;
-  mod_errors err = ME_UNKNOWN;
+  mod_errors err     = ME_UNKNOWN;
 
   int n_elts = line_info->num_el; // Element count for line.
 
@@ -765,6 +815,8 @@ ControlBase::ProcessModifiers(matcher_line *line_info)
       mod = TimeMod::make(value, &errBuf);
     } else if (strcasecmp(label, "tag") == 0) {
       mod = TagMod::make(value, &errBuf);
+    } else if (strcasecmp(label, "internal") == 0) {
+      mod = InternalMod::make(value, &errBuf);
     } else {
       err = ME_BAD_MOD;
     }

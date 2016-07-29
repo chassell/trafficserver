@@ -61,10 +61,8 @@
 #ifndef __INK_RAND_H__
 #define __INK_RAND_H__
 
-
-#include "ink_defs.h"
-#include "ink_apidefs.h"
-
+#include "ts/ink_defs.h"
+#include "ts/ink_apidefs.h"
 
 class InkRand
 {

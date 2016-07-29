@@ -22,9 +22,9 @@
 
  */
 
-#include "libts.h"
-#include "ink_error.h"
-#include "ink_stack_trace.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_error.h"
+#include "ts/ink_stack_trace.h"
 
 #include <syslog.h>
 #include <signal.h> /* MAGIC_EDITING_TAG */
@@ -86,7 +86,7 @@ ink_pfatal(const char *message_format, ...)
   va_list ap;
   char extended_format[4096], message[4096];
 
-  int errsav = errno;
+  int errsav               = errno;
   const char *errno_string = strerror(errsav);
 
   va_start(ap, message_format);

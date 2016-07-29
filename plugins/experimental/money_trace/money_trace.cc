@@ -42,9 +42,9 @@ static struct txndata *
 allocTransactionData()
 {
   LOG_DEBUG("allocating transaction state data.");
-  struct txndata *txn_data = (struct txndata *)TSmalloc(sizeof(struct txndata));
+  struct txndata *txn_data           = (struct txndata *)TSmalloc(sizeof(struct txndata));
   txn_data->client_request_mt_header = NULL;
-  txn_data->new_span_mt_header = NULL;
+  txn_data->new_span_mt_header       = NULL;
   return txn_data;
 }
 
@@ -120,7 +120,7 @@ mt_cache_lookup_check(TSCont contp, TSHttpTxn txnp, struct txndata *txn_data)
 static void
 mt_check_request_header(TSHttpTxn txnp)
 {
-  int length = 0;
+  int length               = 0;
   struct txndata *txn_data = NULL;
   TSMBuffer bufp;
   TSMLoc hdr_loc = NULL, field_loc = NULL;
@@ -134,8 +134,8 @@ mt_check_request_header(TSHttpTxn txnp)
       if (!hdr_value || length <= 0) {
         LOG_DEBUG("ignoring, corrupt money trace header.");
       } else {
-        txn_data = allocTransactionData();
-        txn_data->client_request_mt_header = TSstrndup(hdr_value, length);
+        txn_data                                   = allocTransactionData();
+        txn_data->client_request_mt_header         = TSstrndup(hdr_value, length);
         txn_data->client_request_mt_header[length] = '\0'; // workaround for bug in core.
         LOG_DEBUG("found money trace header: %s, length: %d", txn_data->client_request_mt_header, length);
         if (NULL == (contp = TSContCreate(transaction_handler, NULL))) {
@@ -284,7 +284,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo * /* rri */)
 static int
 transaction_handler(TSCont contp, TSEvent event, void *edata)
 {
-  TSHttpTxn txnp = static_cast<TSHttpTxn>(edata);
+  TSHttpTxn txnp           = static_cast<TSHttpTxn>(edata);
   struct txndata *txn_data = (struct txndata *)TSContDataGet(contp);
 
   switch (event) {

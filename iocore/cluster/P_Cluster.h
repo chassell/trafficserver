@@ -24,7 +24,7 @@
 #ifndef _P_CLUSTER_H__
 #define _P_CLUSTER_H__
 
-#include "libts.h"
+#include "ts/ink_platform.h"
 #include "P_EventSystem.h"
 #include "I_RecProcess.h"
 #include "P_Net.h"
@@ -45,7 +45,6 @@
 #include "P_ClusterLib.h"
 #include "P_ClusterLoadMonitor.h"
 #include "P_TimeTrace.h"
-
 
 #define ECLUSTER_NO_VC (CLUSTER_ERRNO + 0)
 #define ECLUSTER_NO_MACHINE (CLUSTER_ERRNO + 1)
@@ -132,6 +131,5 @@ extern RecRawStatBlock *cluster_rsb;
     RecSetRawStatSum(cluster_rsb, x, 0);   \
     RecSetRawStatCount(cluster_rsb, x, 0); \
   } while (0);
-
 
 #endif

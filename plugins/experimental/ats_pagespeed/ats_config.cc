@@ -1,3 +1,4 @@
+
 /** @file
 
     A brief file description
@@ -34,7 +35,6 @@
 namespace net_instaweb
 {
 using namespace std;
-
 
 void
 ltrim_if(string &s, int (*fp)(int))
@@ -153,7 +153,7 @@ AtsConfig::Parse(const char *path)
   AtsHostConfig *current_host_configuration = host_configurations_[0];
 
   if (pathstring.empty()) {
-    TSError("Empty path passed in AtsConfig::Parse");
+    TSError("[ats_config] Empty path passed in AtsConfig::Parse");
     return false;
   }
 
@@ -165,10 +165,9 @@ AtsConfig::Parse(const char *path)
   f.open(path, std::ios::in);
 
   if (!f.is_open()) {
-    TSError("could not open file [%s], skip", path);
+    TSError("[ats_config] Could not open file [%s], skip", path);
     return false;
   }
-
 
   while (!f.eof()) {
     std::string line;
@@ -191,7 +190,7 @@ AtsConfig::Parse(const char *path)
     if (v.size() == 1) {
       string token = v[0];
       if ((token[0] == '[') && (token[token.size() - 1] == ']')) {
-        GoogleString current_host = token.substr(1, token.size() - 2);
+        GoogleString current_host  = token.substr(1, token.size() - 2);
         current_host_configuration = new AtsHostConfig(current_host, new AtsRewriteOptions(thread_system_));
         AddHostConfig(current_host_configuration);
       } else if (StringCaseEqual(token, "override_expiry")) {
@@ -214,6 +213,5 @@ AtsConfig::Parse(const char *path)
 
   return true;
 }
-
 
 } //  namespace net_instaweb

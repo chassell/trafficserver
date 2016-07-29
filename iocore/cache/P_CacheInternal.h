@@ -21,11 +21,11 @@
   limitations under the License.
  */
 
-
 #ifndef _P_CACHE_INTERNAL_H__
 #define _P_CACHE_INTERNAL_H__
 
-#include "libts.h"
+#include "ts/ink_platform.h"
+#include "ts/InkErrno.h"
 
 #ifdef HTTP_CACHE
 #include "HTTP.h"
@@ -59,8 +59,6 @@ struct EvacuationBlock;
 #endif
 
 #define AIO_SOFT_FAILURE -100000
-// retry read from writer delay
-#define WRITER_RETRY_DELAY HRTIME_MSECONDS(50)
 
 #ifndef CACHE_LOCK_FAIL_RATE
 #define CACHE_TRY_LOCK(_l, _m, _t) MUTEX_TRY_LOCK(_l, _m, _t)
@@ -70,7 +68,6 @@ struct EvacuationBlock;
   if ((uint32_t)_t->generator.random() < (uint32_t)(UINT_MAX * CACHE_LOCK_FAIL_RATE)) \
   CACHE_MUTEX_RELEASE(_l)
 #endif
-
 
 #define VC_LOCK_RETRY_EVENT()                                                                                         \
   do {                                                                                                                \
@@ -92,21 +89,16 @@ struct EvacuationBlock;
 
 #define CONT_SCHED_LOCK_RETRY(_c) _c->mutex->thread_holding->schedule_in_local(_c, HRTIME_MSECONDS(cache_config_mutex_retry_delay))
 
-#define VC_SCHED_WRITER_RETRY()                                   \
-  do {                                                            \
-    ink_assert(!trigger);                                         \
-    writer_lock_retry++;                                          \
-    ink_hrtime _t = WRITER_RETRY_DELAY;                           \
-    if (writer_lock_retry > 2)                                    \
-      _t = WRITER_RETRY_DELAY * 2;                                \
-    else if (writer_lock_retry > 5)                               \
-      _t = WRITER_RETRY_DELAY * 10;                               \
-    else if (writer_lock_retry > 10)                              \
-      _t = WRITER_RETRY_DELAY * 100;                              \
-    trigger = mutex->thread_holding->schedule_in_local(this, _t); \
-    return EVENT_CONT;                                            \
+#define VC_SCHED_WRITER_RETRY()                                           \
+  do {                                                                    \
+    ink_assert(!trigger);                                                 \
+    writer_lock_retry++;                                                  \
+    ink_hrtime _t = HRTIME_MSECONDS(cache_read_while_writer_retry_delay); \
+    if (writer_lock_retry > 2)                                            \
+      _t    = HRTIME_MSECONDS(cache_read_while_writer_retry_delay) * 2;   \
+    trigger = mutex->thread_holding->schedule_in_local(this, _t);         \
+    return EVENT_CONT;                                                    \
   } while (0)
-
 
 // cache stats definitions
 enum {
@@ -126,11 +118,6 @@ enum {
   cache_read_active_stat,
   cache_read_success_stat,
   cache_read_failure_stat,
-#if TS_USE_INTERIM_CACHE == 1
-  cache_interim_read_success_stat,
-  cache_disk_read_success_stat,
-  cache_ram_read_success_stat,
-#endif
   cache_write_active_stat,
   cache_write_success_stat,
   cache_write_failure_stat,
@@ -165,7 +152,6 @@ enum {
   cache_directory_sync_bytes_stat,
   cache_stat_count
 };
-
 
 extern RecRawStatBlock *cache_rsb;
 
@@ -226,10 +212,9 @@ extern int cache_config_hit_evacuate_size_limit;
 extern int cache_config_force_sector_size;
 extern int cache_config_target_fragment_size;
 extern int cache_config_mutex_retry_delay;
+extern int cache_read_while_writer_retry_delay;
 extern int cache_config_read_while_writer_max_retries;
-#if TS_USE_INTERIM_CACHE == 1
-extern int good_interim_disks;
-#endif
+
 // CacheVC
 struct CacheVC : public CacheVConnection {
   CacheVC();
@@ -254,8 +239,8 @@ struct CacheVC : public CacheVConnection {
   {
     if (first_buf.m_ptr) {
       Doc *doc = (Doc *)first_buf->data();
-      *ptr = doc->hdr();
-      *len = doc->hlen;
+      *ptr     = doc->hdr();
+      *len     = doc->hlen;
       return 0;
     } else
       return -1;
@@ -263,7 +248,7 @@ struct CacheVC : public CacheVConnection {
   int
   set_header(void *ptr, int len)
   {
-    header_to_write = ptr;
+    header_to_write     = ptr;
     header_to_write_len = len;
     return 0;
   }
@@ -279,6 +264,20 @@ struct CacheVC : public CacheVConnection {
       }
     }
     return -1;
+  }
+  int
+  get_volume_number() const
+  {
+    if (vol && vol->cache_vol) {
+      return vol->cache_vol->vol_number;
+    }
+    return -1;
+  }
+  bool
+  is_compressed_in_ram() const
+  {
+    ink_assert(vio.op == VIO::READ);
+    return f.compressed_in_ram;
   }
 
   bool writer_done();
@@ -466,11 +465,6 @@ struct CacheVC : public CacheVConnection {
   int header_to_write_len;
   void *header_to_write;
   short writer_lock_retry;
-#if TS_USE_INTERIM_CACHE == 1
-  InterimCacheVol *interim_vol;
-  MigrateToInterimCache *mts;
-  uint64_t dir_off;
-#endif
   union {
     uint32_t flags;
     struct {
@@ -493,12 +487,7 @@ struct CacheVC : public CacheVConnection {
       unsigned int readers : 1;
       unsigned int doc_from_ram_cache : 1;
       unsigned int hit_evacuate : 1;
-#if TS_USE_INTERIM_CACHE == 1
-      unsigned int read_from_interim : 1;
-      unsigned int write_into_interim : 1;
-      unsigned int ram_fixup : 1;
-      unsigned int transistor : 1;
-#endif
+      unsigned int compressed_in_ram : 1; // compressed state in ram cache
 #ifdef HTTP_CACHE
       unsigned int allow_empty_doc : 1; // used for cache empty http document
 #endif
@@ -517,7 +506,7 @@ struct CacheVC : public CacheVConnection {
   do {                                                            \
     ink_assert(handler != (ContinuationHandler)(&CacheVC::dead)); \
     save_handler = handler;                                       \
-    handler = (ContinuationHandler)(_x);                          \
+    handler      = (ContinuationHandler)(_x);                     \
   } while (0)
 
 #define POP_HANDLER                                               \
@@ -532,11 +521,7 @@ struct CacheRemoveCont : public Continuation {
   CacheRemoveCont() : Continuation(NULL) {}
 };
 
-
 // Global Data
-#if TS_USE_INTERIM_CACHE == 1
-extern ClassAllocator<MigrateToInterimCache> migrateToInterimCacheAllocator;
-#endif
 extern ClassAllocator<CacheVC> cacheVConnectionAllocator;
 extern CacheKey zero_key;
 extern CacheSync *cacheDirSync;
@@ -557,10 +542,10 @@ new_CacheVC(Continuation *cont)
 #ifdef HTTP_CACHE
   c->vector.data.data = &c->vector.data.fast_data[0];
 #endif
-  c->_action = cont;
+  c->_action        = cont;
   c->initial_thread = t->tt == DEDICATED ? NULL : t;
-  c->mutex = cont->mutex;
-  c->start_time = ink_get_hrtime();
+  c->mutex          = cont->mutex;
+  c->start_time     = Thread::get_hrtime();
   ink_assert(c->trigger == NULL);
   Debug("cache_new", "new %p", c);
 #ifdef CACHE_STAT_PAGES
@@ -576,22 +561,11 @@ free_CacheVC(CacheVC *cont)
 {
   Debug("cache_free", "free %p", cont);
   ProxyMutex *mutex = cont->mutex;
-  Vol *vol = cont->vol;
+  Vol *vol          = cont->vol;
   if (vol) {
     CACHE_DECREMENT_DYN_STAT(cont->base_stat + CACHE_STAT_ACTIVE);
     if (cont->closed > 0) {
       CACHE_INCREMENT_DYN_STAT(cont->base_stat + CACHE_STAT_SUCCESS);
-#if TS_USE_INTERIM_CACHE == 1
-      if (cont->vio.op == VIO::READ) {
-        if (cont->f.doc_from_ram_cache) {
-          CACHE_INCREMENT_DYN_STAT(cache_ram_read_success_stat);
-        } else if (cont->f.read_from_interim) {
-          CACHE_INCREMENT_DYN_STAT(cache_interim_read_success_stat);
-        } else {
-          CACHE_INCREMENT_DYN_STAT(cache_disk_read_success_stat);
-        }
-      }
-#endif
     } // else abort,cancel
   }
   ink_assert(mutex->thread_holding == this_ethread());
@@ -603,10 +577,10 @@ free_CacheVC(CacheVC *cont)
      release build....wierd??? For now, null out continuation and mutex
      of the action separately */
   cont->io.action.continuation = NULL;
-  cont->io.action.mutex = NULL;
+  cont->io.action.mutex        = NULL;
   cont->io.mutex.clear();
-  cont->io.aio_result = 0;
-  cont->io.aiocb.aio_nbytes = 0;
+  cont->io.aio_result        = 0;
+  cont->io.aiocb.aio_nbytes  = 0;
   cont->io.aiocb.aio_reqprio = AIO_DEFAULT_PRIORITY;
 #ifdef HTTP_CACHE
   cont->request.reset();
@@ -672,38 +646,9 @@ CacheVC::callcont(int event)
 TS_INLINE int
 CacheVC::do_read_call(CacheKey *akey)
 {
-  doc_pos = 0;
-  read_key = akey;
+  doc_pos             = 0;
+  read_key            = akey;
   io.aiocb.aio_nbytes = dir_approx_size(&dir);
-#if TS_USE_INTERIM_CACHE == 1
-  interim_vol = NULL;
-  ink_assert(mts == NULL);
-  mts = NULL;
-  f.write_into_interim = 0;
-  f.ram_fixup = 0;
-  f.transistor = 0;
-  f.read_from_interim = dir_ininterim(&dir);
-
-  if (!f.read_from_interim && vio.op == VIO::READ && good_interim_disks > 0) {
-    vol->history.put_key(read_key);
-    if (vol->history.is_hot(read_key) && !vol->migrate_probe(read_key, NULL) && !od) {
-      f.write_into_interim = 1;
-    }
-  }
-  if (f.read_from_interim) {
-    interim_vol = &vol->interim_vols[dir_get_index(&dir)];
-    if (vio.op == VIO::READ && vol_transistor_range_valid(interim_vol, &dir) && !vol->migrate_probe(read_key, NULL) && !od)
-      f.transistor = 1;
-  }
-  if (f.write_into_interim || f.transistor) {
-    mts = migrateToInterimCacheAllocator.alloc();
-    mts->vc = this;
-    mts->key = *read_key;
-    mts->rewrite = (f.transistor == 1);
-    dir_assign(&mts->dir, &dir);
-    vol->set_migrate_in_progress(mts);
-  }
-#endif
   PUSH_HANDLER(&CacheVC::handleRead);
   return handleRead(EVENT_CALL, 0);
 }
@@ -789,7 +734,7 @@ CacheVC::writer_done()
 {
   OpenDirEntry *cod = od;
   if (!cod)
-    cod = vol->open_read(&first_key);
+    cod      = vol->open_read(&first_key);
   CacheVC *w = (cod) ? cod->writers.head : NULL;
   // If the write vc started after the reader, then its not the
   // original writer, since we never choose a writer that started
@@ -817,7 +762,7 @@ Vol::close_write(CacheVC *cont)
 TS_INLINE int
 Vol::open_write(CacheVC *cont, int allow_if_writers, int max_writers)
 {
-  Vol *vol = this;
+  Vol *vol       = this;
   bool agg_error = false;
   if (!cont->f.remove) {
     agg_error = (!cont->f.update && agg_todo_size > cache_config_agg_write_backlog);
@@ -829,12 +774,6 @@ Vol::open_write(CacheVC *cont, int allow_if_writers, int max_writers)
     CACHE_INCREMENT_DYN_STAT(cache_write_backlog_failure_stat);
     return ECACHE_WRITE_FAIL;
   }
-#if TS_USE_INTERIM_CACHE == 1
-  MigrateToInterimCache *m_result = NULL;
-  if (vol->migrate_probe(&cont->first_key, &m_result)) {
-    m_result->notMigrate = true;
-  }
-#endif
   if (open_dir.open_write(cont, allow_if_writers, max_writers)) {
 #ifdef CACHE_STAT_PAGES
     ink_assert(cont->mutex->thread_holding == this_ethread());
@@ -944,9 +883,9 @@ next_CacheKey(CacheKey *next_key, CacheKey *key)
 {
   uint8_t *b = (uint8_t *)next_key;
   uint8_t *k = (uint8_t *)key;
-  b[0] = CacheKey_next_table[k[0]];
+  b[0]       = CacheKey_next_table[k[0]];
   for (int i = 1; i < 16; i++)
-    b[i] = CacheKey_next_table[(b[i - 1] + k[i]) & 0xFF];
+    b[i]     = CacheKey_next_table[(b[i - 1] + k[i]) & 0xFF];
 }
 extern uint8_t CacheKey_prev_table[];
 void TS_INLINE
@@ -955,16 +894,16 @@ prev_CacheKey(CacheKey *prev_key, CacheKey *key)
   uint8_t *b = (uint8_t *)prev_key;
   uint8_t *k = (uint8_t *)key;
   for (int i = 15; i > 0; i--)
-    b[i] = 256 + CacheKey_prev_table[k[i]] - k[i - 1];
-  b[0] = CacheKey_prev_table[k[0]];
+    b[i]     = 256 + CacheKey_prev_table[k[i]] - k[i - 1];
+  b[0]       = CacheKey_prev_table[k[0]];
 }
 
 TS_INLINE unsigned int
 next_rand(unsigned int *p)
 {
   unsigned int seed = *p;
-  seed = 1103515145 * seed + 12345;
-  *p = seed;
+  seed              = 1103515145 * seed + 12345;
+  *p                = seed;
   return seed;
 }
 
@@ -1024,45 +963,44 @@ struct Cache {
   int open(bool reconfigure, bool fix);
   int close();
 
-  Action *lookup(Continuation *cont, CacheKey *key, CacheFragType type, char const *hostname, int host_len);
-  inkcoreapi Action *open_read(Continuation *cont, CacheKey *key, CacheFragType type, char *hostname, int len);
-  inkcoreapi Action *open_write(Continuation *cont, CacheKey *key, CacheFragType frag_type, int options = 0,
-                                time_t pin_in_cache = (time_t)0, char *hostname = 0, int host_len = 0);
-  inkcoreapi Action *remove(Continuation *cont, CacheKey *key, CacheFragType type = CACHE_FRAG_TYPE_HTTP, bool user_agents = true,
-                            bool link = false, char *hostname = 0, int host_len = 0);
-  Action *scan(Continuation *cont, char *hostname = 0, int host_len = 0, int KB_per_second = 2500);
+  Action *lookup(Continuation *cont, const CacheKey *key, CacheFragType type, const char *hostname, int host_len);
+  inkcoreapi Action *open_read(Continuation *cont, const CacheKey *key, CacheFragType type, const char *hostname, int len);
+  inkcoreapi Action *open_write(Continuation *cont, const CacheKey *key, CacheFragType frag_type, int options = 0,
+                                time_t pin_in_cache = (time_t)0, const char *hostname = 0, int host_len = 0);
+  inkcoreapi Action *remove(Continuation *cont, const CacheKey *key, CacheFragType type = CACHE_FRAG_TYPE_HTTP,
+                            const char *hostname = 0, int host_len = 0);
+  Action *scan(Continuation *cont, const char *hostname = 0, int host_len = 0, int KB_per_second = 2500);
 
 #ifdef HTTP_CACHE
-  Action *lookup(Continuation *cont, URL *url, CacheFragType type);
-  inkcoreapi Action *open_read(Continuation *cont, CacheKey *key, CacheHTTPHdr *request, CacheLookupHttpConfig *params,
-                               CacheFragType type, char *hostname, int host_len);
-  Action *open_read(Continuation *cont, URL *url, CacheHTTPHdr *request, CacheLookupHttpConfig *params, CacheFragType type);
-  Action *open_write(Continuation *cont, CacheKey *key, CacheHTTPInfo *old_info, time_t pin_in_cache = (time_t)0,
-                     CacheKey *key1 = NULL, CacheFragType type = CACHE_FRAG_TYPE_HTTP, char *hostname = 0, int host_len = 0);
-  Action *open_write(Continuation *cont, URL *url, CacheHTTPHdr *request, CacheHTTPInfo *old_info, time_t pin_in_cache = (time_t)0,
-                     CacheFragType type = CACHE_FRAG_TYPE_HTTP);
-  static void generate_key(INK_MD5 *md5, URL *url);
+  Action *open_read(Continuation *cont, const CacheKey *key, CacheHTTPHdr *request, CacheLookupHttpConfig *params,
+                    CacheFragType type, const char *hostname, int host_len);
+  Action *open_write(Continuation *cont, const CacheKey *key, CacheHTTPInfo *old_info, time_t pin_in_cache = (time_t)0,
+                     const CacheKey *key1 = NULL, CacheFragType type = CACHE_FRAG_TYPE_HTTP, const char *hostname = 0,
+                     int host_len = 0);
+  static void generate_key(INK_MD5 *md5, CacheURL *url);
+  static void generate_key(HttpCacheKey *md5, CacheURL *url, cache_generation_t generation = -1);
 #endif
 
-  Action *link(Continuation *cont, CacheKey *from, CacheKey *to, CacheFragType type, char *hostname, int host_len);
-  Action *deref(Continuation *cont, CacheKey *key, CacheFragType type, char *hostname, int host_len);
+  Action *link(Continuation *cont, const CacheKey *from, const CacheKey *to, CacheFragType type, const char *hostname,
+               int host_len);
+  Action *deref(Continuation *cont, const CacheKey *key, CacheFragType type, const char *hostname, int host_len);
 
   void vol_initialized(bool result);
 
   int open_done();
 
-  Vol *key_to_vol(CacheKey *key, char const *hostname, int host_len);
+  Vol *key_to_vol(const CacheKey *key, char const *hostname, int host_len);
 
   Cache()
-    : cache_read_done(0), total_good_nvol(0), total_nvol(0), ready(CACHE_INITIALIZING), cache_size(0), // in store block size
-      hosttable(NULL), total_initialized_vol(0), scheme(CACHE_NONE_TYPE)
+    : cache_read_done(0),
+      total_good_nvol(0),
+      total_nvol(0),
+      ready(CACHE_INITIALIZING),
+      cache_size(0), // in store block size
+      hosttable(NULL),
+      total_initialized_vol(0),
+      scheme(CACHE_NONE_TYPE)
   {
-  }
-  CacheHostTable *
-  getHosttable(const char *callfunc)
-  {
-    Debug("cache_hosting", "getHosttable() from: %s", callfunc);
-    return hosttable;
   }
 };
 
@@ -1071,40 +1009,26 @@ extern Cache *theStreamCache;
 inkcoreapi extern Cache *caches[NUM_CACHE_FRAG_TYPES];
 
 #ifdef HTTP_CACHE
-TS_INLINE Action *
-Cache::open_read(Continuation *cont, CacheURL *url, CacheHTTPHdr *request, CacheLookupHttpConfig *params, CacheFragType type)
-{
-  INK_MD5 md5;
-  int len;
-  url->hash_get(&md5);
-  const char *hostname = url->host_get(&len);
-  return open_read(cont, &md5, request, params, type, (char *)hostname, len);
-}
 
 TS_INLINE void
-Cache::generate_key(INK_MD5 *md5, URL *url)
+Cache::generate_key(INK_MD5 *md5, CacheURL *url)
 {
   url->hash_get(md5);
 }
 
-TS_INLINE Action *
-Cache::open_write(Continuation *cont, CacheURL *url, CacheHTTPHdr *request, CacheHTTPInfo *old_info, time_t pin_in_cache,
-                  CacheFragType type)
+TS_INLINE void
+Cache::generate_key(HttpCacheKey *key, CacheURL *url, cache_generation_t generation)
 {
-  (void)request;
-  INK_MD5 url_md5;
-  url->hash_get(&url_md5);
-  int len;
-  const char *hostname = url->host_get(&len);
-
-  return open_write(cont, &url_md5, old_info, pin_in_cache, NULL, type, (char *)hostname, len);
+  key->hostname = url->host_get(&key->hostlen);
+  url->hash_get(&key->hash, generation);
 }
+
 #endif
 
 TS_INLINE unsigned int
-cache_hash(INK_MD5 &md5)
+cache_hash(const INK_MD5 &md5)
 {
-  uint64_t f = md5.fold();
+  uint64_t f         = md5.fold();
   unsigned int mhash = (unsigned int)(f >> 32);
   return mhash;
 }
@@ -1112,6 +1036,7 @@ cache_hash(INK_MD5 &md5)
 #ifdef HTTP_CACHE
 #define CLUSTER_CACHE
 #endif
+
 #ifdef CLUSTER_CACHE
 #include "P_Net.h"
 #include "P_ClusterInternal.h"
@@ -1119,171 +1044,6 @@ cache_hash(INK_MD5 &md5)
 //       reference problems.
 #include "P_ClusterInline.h"
 #endif
-
-TS_INLINE Action *
-CacheProcessor::lookup(Continuation *cont, CacheKey *key, bool cluster_cache_local ATS_UNUSED, bool local_only ATS_UNUSED,
-                       CacheFragType frag_type, char *hostname, int host_len)
-{
-#ifdef CLUSTER_CACHE
-  // Try to send remote, if not possible, handle locally
-  if ((cache_clustering_enabled > 0) && !cluster_cache_local && !local_only) {
-    Action *a = Cluster_lookup(cont, key, frag_type, hostname, host_len);
-    if (a) {
-      return a;
-    }
-  }
-#endif
-  return caches[frag_type]->lookup(cont, key, frag_type, hostname, host_len);
-}
-
-TS_INLINE inkcoreapi Action *
-CacheProcessor::open_read(Continuation *cont, CacheKey *key, bool cluster_cache_local ATS_UNUSED, CacheFragType frag_type,
-                          char *hostname, int host_len)
-{
-#ifdef CLUSTER_CACHE
-  if (cache_clustering_enabled > 0 && !cluster_cache_local) {
-    return open_read_internal(CACHE_OPEN_READ, cont, (MIOBuffer *)0, (CacheURL *)0, (CacheHTTPHdr *)0, (CacheLookupHttpConfig *)0,
-                              key, 0, frag_type, hostname, host_len);
-  }
-#endif
-  return caches[frag_type]->open_read(cont, key, frag_type, hostname, host_len);
-}
-
-TS_INLINE inkcoreapi Action *
-CacheProcessor::open_write(Continuation *cont, CacheKey *key, bool cluster_cache_local ATS_UNUSED, CacheFragType frag_type,
-                           int expected_size ATS_UNUSED, int options, time_t pin_in_cache, char *hostname, int host_len)
-{
-#ifdef CLUSTER_CACHE
-  if (cache_clustering_enabled > 0 && !cluster_cache_local) {
-    ClusterMachine *m = cluster_machine_at_depth(cache_hash(*key));
-    if (m)
-      return Cluster_write(cont, expected_size, (MIOBuffer *)0, m, key, frag_type, options, pin_in_cache, CACHE_OPEN_WRITE, key,
-                           (CacheURL *)0, (CacheHTTPHdr *)0, (CacheHTTPInfo *)0, hostname, host_len);
-  }
-#endif
-  return caches[frag_type]->open_write(cont, key, frag_type, options, pin_in_cache, hostname, host_len);
-}
-
-TS_INLINE Action *
-CacheProcessor::remove(Continuation *cont, CacheKey *key, bool cluster_cache_local ATS_UNUSED, CacheFragType frag_type,
-                       bool rm_user_agents, bool rm_link, char *hostname, int host_len)
-{
-  Debug("cache_remove", "[CacheProcessor::remove] Issuing cache delete for %u", cache_hash(*key));
-#ifdef CLUSTER_CACHE
-  if (cache_clustering_enabled > 0 && !cluster_cache_local) {
-    ClusterMachine *m = cluster_machine_at_depth(cache_hash(*key));
-
-    if (m) {
-      return Cluster_remove(m, cont, key, rm_user_agents, rm_link, frag_type, hostname, host_len);
-    }
-  }
-#endif
-  return caches[frag_type]->remove(cont, key, frag_type, rm_user_agents, rm_link, hostname, host_len);
-}
-
-#if 0
-TS_INLINE Action *
-scan(Continuation *cont, char *hostname = 0, int host_len = 0, int KB_per_second = 2500)
-{
-  return caches[CACHE_FRAG_TYPE_HTTP]->scan(cont, hostname, host_len, KB_per_second);
-}
-#endif
-
-#ifdef HTTP_CACHE
-TS_INLINE Action *
-CacheProcessor::lookup(Continuation *cont, URL *url, bool cluster_cache_local, bool local_only, CacheFragType frag_type)
-{
-  (void)local_only;
-  INK_MD5 md5;
-  url->hash_get(&md5);
-  int host_len = 0;
-  const char *hostname = url->host_get(&host_len);
-
-  return lookup(cont, &md5, cluster_cache_local, local_only, frag_type, (char *)hostname, host_len);
-}
-
-#endif
-
-
-#ifdef CLUSTER_CACHE
-TS_INLINE Action *
-CacheProcessor::open_read_internal(int opcode, Continuation *cont, MIOBuffer *buf, CacheURL *url, CacheHTTPHdr *request,
-                                   CacheLookupHttpConfig *params, CacheKey *key, time_t pin_in_cache, CacheFragType frag_type,
-                                   char *hostname, int host_len)
-{
-  INK_MD5 url_md5;
-  if ((opcode == CACHE_OPEN_READ_LONG) || (opcode == CACHE_OPEN_READ_BUFFER_LONG)) {
-    Cache::generate_key(&url_md5, url);
-  } else {
-    url_md5 = *key;
-  }
-  ClusterMachine *m = cluster_machine_at_depth(cache_hash(url_md5));
-
-  if (m) {
-    return Cluster_read(m, opcode, cont, buf, url, request, params, key, pin_in_cache, frag_type, hostname, host_len);
-  } else {
-    if ((opcode == CACHE_OPEN_READ_LONG) || (opcode == CACHE_OPEN_READ_BUFFER_LONG)) {
-      return caches[frag_type]->open_read(cont, &url_md5, request, params, frag_type, hostname, host_len);
-    } else {
-      return caches[frag_type]->open_read(cont, key, frag_type, hostname, host_len);
-    }
-  }
-}
-#endif
-
-#ifdef CLUSTER_CACHE
-TS_INLINE Action *
-CacheProcessor::link(Continuation *cont, CacheKey *from, CacheKey *to, bool cluster_cache_local, CacheFragType type, char *hostname,
-                     int host_len)
-{
-  if (cache_clustering_enabled > 0 && !cluster_cache_local) {
-    // Use INK_MD5 in "from" to determine target machine
-    ClusterMachine *m = cluster_machine_at_depth(cache_hash(*from));
-    if (m) {
-      return Cluster_link(m, cont, from, to, type, hostname, host_len);
-    }
-  }
-  return caches[type]->link(cont, from, to, type, hostname, host_len);
-}
-
-TS_INLINE Action *
-CacheProcessor::deref(Continuation *cont, CacheKey *key, bool cluster_cache_local, CacheFragType type, char *hostname, int host_len)
-{
-  if (cache_clustering_enabled > 0 && !cluster_cache_local) {
-    ClusterMachine *m = cluster_machine_at_depth(cache_hash(*key));
-    if (m) {
-      return Cluster_deref(m, cont, key, type, hostname, host_len);
-    }
-  }
-  return caches[type]->deref(cont, key, type, hostname, host_len);
-}
-#endif
-
-TS_INLINE Action *
-CacheProcessor::scan(Continuation *cont, char *hostname, int host_len, int KB_per_second)
-{
-  return caches[CACHE_FRAG_TYPE_HTTP]->scan(cont, hostname, host_len, KB_per_second);
-}
-
-TS_INLINE int
-CacheProcessor::IsCacheEnabled()
-{
-  return CacheProcessor::initialized;
-}
-
-TS_INLINE bool
-CacheProcessor::IsCacheReady(CacheFragType type)
-{
-  if (IsCacheEnabled() != CACHE_INITIALIZED)
-    return 0;
-  return (bool)(cache_ready & (1 << type));
-}
-
-TS_INLINE Cache *
-local_cache()
-{
-  return theCache;
-}
 
 LINK_DEFINITION(CacheVC, opendir_link)
 

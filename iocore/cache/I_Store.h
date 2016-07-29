@@ -31,7 +31,7 @@
 #ifndef _Store_h_
 #define _Store_h_
 
-#include "libts.h"
+#include "ts/ink_platform.h"
 
 #define STORE_BLOCK_SIZE 8192
 #define STORE_BLOCK_SHIFT 13
@@ -50,9 +50,17 @@ enum span_error_t {
 struct span_diskid_t {
   int64_t id[2];
 
-  bool operator<(const span_diskid_t &rhs) const { return id[0] < rhs.id[0] && id[1] < rhs.id[1]; }
+  bool
+  operator<(const span_diskid_t &rhs) const
+  {
+    return id[0] < rhs.id[0] && id[1] < rhs.id[1];
+  }
 
-  bool operator==(const span_diskid_t &rhs) const { return id[0] == rhs.id[0] && id[1] == rhs.id[1]; }
+  bool
+  operator==(const span_diskid_t &rhs) const
+  {
+    return id[0] == rhs.id[0] && id[1] == rhs.id[1];
+  }
 
   int64_t &operator[](unsigned i) { return id[i]; }
 };
@@ -147,8 +155,13 @@ public:
   void volume_number_set(int n);
 
   Span()
-    : blocks(0), offset(0), hw_sector_size(DEFAULT_HW_SECTOR_SIZE), alignment(0), forced_volume_num(-1),
-      is_mmapable_internal(false), file_pathname(false)
+    : blocks(0),
+      offset(0),
+      hw_sector_size(DEFAULT_HW_SECTOR_SIZE),
+      alignment(0),
+      forced_volume_num(-1),
+      is_mmapable_internal(false),
+      file_pathname(false)
   {
     disk_id[0] = disk_id[1] = 0;
   }
@@ -163,7 +176,7 @@ public:
       pathname = ats_strdup(that.pathname);
     if (that.hash_base_string)
       hash_base_string = ats_strdup(that.hash_base_string);
-    link.next = NULL;
+    link.next          = NULL;
   }
 
   ~Span();
@@ -187,7 +200,7 @@ struct Store {
     Store s;
     alloc(s, blocks, true, mmapable);
     if (s.n_disks) {
-      Span *t = s.disk[0];
+      Span *t   = s.disk[0];
       s.disk[0] = NULL;
       return t;
     }
@@ -240,13 +253,11 @@ struct Store {
   Store();
   ~Store();
 
+  // The number of disks/paths defined in storage.config
+  unsigned n_disks_in_config;
+  // The number of disks/paths we could actually read and parse.
   unsigned n_disks;
   Span **disk;
-#if TS_USE_INTERIM_CACHE == 1
-  int n_interim_disks;
-  Span **interim_disk;
-  const char *read_interim_config();
-#endif
   //
   // returns NULL on success
   // if fd >= 0 then on failure it returns an error string

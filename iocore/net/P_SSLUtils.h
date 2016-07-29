@@ -1,4 +1,4 @@
-/** @file
+/**
 
   @section license License
 
@@ -22,16 +22,17 @@
 #ifndef __P_SSLUTILS_H__
 #define __P_SSLUTILS_H__
 
-#include "ink_config.h"
-#include "Diags.h"
+#include "ts/ink_config.h"
+#include "ts/Diags.h"
+#include "P_SSLClientUtils.h"
 
 #define OPENSSL_THREAD_DEFINES
-#include <openssl/opensslconf.h>
-#include <openssl/ssl.h>
 
-#if !defined(OPENSSL_THREADS)
-#error Traffic Server requires a OpenSSL library that support threads
+// BoringSSL does not have this include file
+#ifndef OPENSSL_IS_BORINGSSL
+#include <openssl/opensslconf.h>
 #endif
+#include <openssl/ssl.h>
 
 struct SSLConfigParams;
 struct SSLCertLookup;
@@ -90,8 +91,12 @@ enum SSL_Stats {
   ssl_sni_name_set_failure,
   ssl_total_success_handshake_count_out_stat,
 
+  /* ocsp stapling stats */
+  ssl_ocsp_revoked_cert_stat,
+  ssl_ocsp_unknown_cert_stat,
+
   ssl_cipher_stats_start = 100,
-  ssl_cipher_stats_end = 300,
+  ssl_cipher_stats_end   = 300,
 
   Ssl_Stat_Count
 };
@@ -111,9 +116,6 @@ extern RecRawStatBlock *ssl_rsb;
 
 // Create a default SSL server context.
 SSL_CTX *SSLDefaultServerContext();
-
-// Create and initialize a SSL client context.
-SSL_CTX *SSLInitClientContext(const SSLConfigParams *param);
 
 // Initialize the SSL library.
 void SSLInitializeLibrary();

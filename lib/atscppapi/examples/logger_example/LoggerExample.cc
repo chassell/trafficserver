@@ -16,7 +16,6 @@
   limitations under the License.
  */
 
-
 /**
  * @warning log rolling doesn't work correctly in 3.2.x, see:
  *   https://issues.apache.org/jira/browse/TS-1813, Apply the patch in
@@ -102,6 +101,7 @@ private:
 void
 TSPluginInit(int argc ATSCPPAPI_UNUSED, const char *argv[] ATSCPPAPI_UNUSED)
 {
+  RegisterGlobalPlugin("CPP_Example_Logger", "apache", "dev@trafficserver.apache.org");
   // Create a new logger
   // This will create a log file with the name logger_example.log (since we left off
   //    the extension it will automatically add .log)

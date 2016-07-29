@@ -25,14 +25,14 @@
 #if !defined(I_VIO_h)
 #define I_VIO_h
 
-#include "libts.h"
+#include "ts/ink_platform.h"
 #include "I_EventSystem.h"
 #if !defined(I_IOBuffer_h)
 #error "include I_IOBuffer.h"
 -- -
   include I_IOBuffer.h
 #endif
-#include "ink_apidefs.h"
+#include "ts/ink_apidefs.h"
   class Continuation;
 class VConnection;
 class IOVConnection;
@@ -75,7 +75,6 @@ class VIO
 {
 public:
   ~VIO() {}
-
   /** Interface for the VConnection that owns this handle. */
   Continuation *get_continuation();
   void set_continuation(Continuation *cont);

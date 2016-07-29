@@ -21,7 +21,7 @@
   limitations under the License.
  */
 
-#include "ink_config.h"
+#include "ts/ink_config.h"
 #include "P_Net.h"
 #include "Main.h"
 #include "Error.h"
@@ -30,16 +30,18 @@
 #include "ReverseProxy.h"
 #include "HttpSessionManager.h"
 #include "HttpUpdateSM.h"
-#include "HttpClientSession.h"
+#ifdef USE_HTTP_DEBUG_LISTS
+#include "Http1ClientSession.h"
+#endif
 #include "HttpPages.h"
 #include "HttpTunnel.h"
-#include "Tokenizer.h"
+#include "ts/Tokenizer.h"
 #include "P_SSLNextProtocolAccept.h"
 #include "ProtocolProbeSessionAccept.h"
 #include "SpdySessionAccept.h"
 #include "http2/Http2SessionAccept.h"
 
-HttpSessionAccept *plugin_http_accept = NULL;
+HttpSessionAccept *plugin_http_accept             = NULL;
 HttpSessionAccept *plugin_http_transparent_accept = 0;
 
 static SLL<SSLNextProtocolAccept> ssl_plugin_acceptors;
@@ -48,7 +50,7 @@ static Ptr<ProxyMutex> ssl_plugin_mutex;
 bool
 ssl_register_protocol(const char *protocol, Continuation *contp)
 {
-  MUTEX_LOCK(lock, ssl_plugin_mutex, this_ethread());
+  SCOPED_MUTEX_LOCK(lock, ssl_plugin_mutex, this_ethread());
 
   for (SSLNextProtocolAccept *ssl = ssl_plugin_acceptors.head; ssl; ssl = ssl_plugin_acceptors.next(ssl)) {
     if (!ssl->registerEndpoint(protocol, contp)) {
@@ -62,7 +64,7 @@ ssl_register_protocol(const char *protocol, Continuation *contp)
 bool
 ssl_unregister_protocol(const char *protocol, Continuation *contp)
 {
-  MUTEX_LOCK(lock, ssl_plugin_mutex, this_ethread());
+  SCOPED_MUTEX_LOCK(lock, ssl_plugin_mutex, this_ethread());
 
   for (SSLNextProtocolAccept *ssl = ssl_plugin_acceptors.head; ssl; ssl = ssl_plugin_acceptors.next(ssl)) {
     // Ignore possible failure because we want to try to unregister
@@ -115,8 +117,8 @@ make_net_accept_options(const HttpProxyPort &port, unsigned nthreads)
   net.accept_threads = nthreads;
 
   net.f_inbound_transparent = port.m_inbound_transparent_p;
-  net.ip_family = port.m_family;
-  net.local_port = port.m_port;
+  net.ip_family             = port.m_family;
+  net.local_port            = port.m_port;
 
   if (port.m_inbound_ip.isValid()) {
     net.local_ip = port.m_inbound_ip;
@@ -142,7 +144,7 @@ MakeHttpProxyAcceptor(HttpProxyAcceptor &acceptor, HttpProxyPort &port, unsigned
   REC_ReadConfigInteger(net_opt.packet_tos, "proxy.config.net.sock_packet_tos_in");
 
   accept_opt.f_outbound_transparent = port.m_outbound_transparent_p;
-  accept_opt.transport_type = port.m_type;
+  accept_opt.transport_type         = port.m_type;
   accept_opt.setHostResPreference(port.m_host_res_preference);
   accept_opt.setTransparentPassthrough(port.m_transparent_passthrough);
   accept_opt.setSessionProtocolPreference(port.m_session_protocol_preference);
@@ -167,7 +169,7 @@ MakeHttpProxyAcceptor(HttpProxyAcceptor &acceptor, HttpProxyPort &port, unsigned
   // XXX the protocol probe should be a configuration option.
 
   ProtocolProbeSessionAccept *probe = new ProtocolProbeSessionAccept();
-  HttpSessionAccept *http = 0; // don't allocate this unless it will be used.
+  HttpSessionAccept *http           = 0; // don't allocate this unless it will be used.
 
   if (port.m_session_protocol_preference.intersects(HTTP_PROTOCOL_SET)) {
     http = new HttpSessionAccept(accept_opt);
@@ -223,7 +225,7 @@ MakeHttpProxyAcceptor(HttpProxyAcceptor &acceptor, HttpProxyPort &port, unsigned
       ssl->registerEndpoint(TS_NPN_PROTOCOL_HTTP_2_0, acc);
     }
 
-    MUTEX_LOCK(lock, ssl_plugin_mutex, this_ethread());
+    SCOPED_MUTEX_LOCK(lock, ssl_plugin_mutex, this_ethread());
     ssl_plugin_acceptors.push(ssl);
 
     acceptor._accept = ssl;
@@ -242,8 +244,10 @@ init_HttpProxyServer(int n_accept_threads)
   init_reverse_proxy();
   httpSessionManager.init();
   http_pages_init();
+#ifdef USE_HTTP_DEBUG_LISTS
   ink_mutex_init(&debug_sm_list_mutex, "HttpSM Debug List");
   ink_mutex_init(&debug_cs_list_mutex, "HttpCS Debug List");
+#endif
   // DI's request to disable/reenable ICP on the fly
   icp_dynamic_enabled = 1;
 
@@ -252,18 +256,18 @@ init_HttpProxyServer(int n_accept_threads)
   //   port but without going through the operating system
   //
   if (plugin_http_accept == NULL) {
-    plugin_http_accept = new HttpSessionAccept;
+    plugin_http_accept        = new HttpSessionAccept;
     plugin_http_accept->mutex = new_ProxyMutex();
   }
   // Same as plugin_http_accept except outbound transparent.
   if (!plugin_http_transparent_accept) {
     HttpSessionAccept::Options ha_opt;
     ha_opt.setOutboundTransparent(true);
-    plugin_http_transparent_accept = new HttpSessionAccept(ha_opt);
+    plugin_http_transparent_accept        = new HttpSessionAccept(ha_opt);
     plugin_http_transparent_accept->mutex = new_ProxyMutex();
   }
   if (ssl_plugin_mutex == NULL) {
-    ssl_plugin_mutex = new ProxyMutex();
+    ssl_plugin_mutex = mutexAllocator.alloc();
     ssl_plugin_mutex->init("SSL Acceptor List");
   }
 
@@ -276,7 +280,7 @@ init_HttpProxyServer(int n_accept_threads)
 void
 start_HttpProxyServer()
 {
-  static bool called_once = false;
+  static bool called_once           = false;
   HttpProxyPort::Group &proxy_ports = HttpProxyPort::global();
 
   ///////////////////////////////////
@@ -288,7 +292,7 @@ start_HttpProxyServer()
 
   for (int i = 0, n = proxy_ports.length(); i < n; ++i) {
     HttpProxyAcceptor &acceptor = HttpProxyAcceptors[i];
-    HttpProxyPort &port = proxy_ports[i];
+    HttpProxyPort &port         = proxy_ports[i];
     if (port.isSSL()) {
       if (NULL == sslNetProcessor.main_accept(acceptor._accept, port.m_fd, acceptor._net_opt))
         return;
@@ -320,11 +324,11 @@ start_HttpProxyServerBackDoor(int port, int accept_threads)
   NetProcessor::AcceptOptions opt;
   HttpSessionAccept::Options ha_opt;
 
-  opt.local_port = port;
+  opt.local_port     = port;
   opt.accept_threads = accept_threads;
   opt.localhost_only = true;
-  ha_opt.backdoor = true;
-  opt.backdoor = true;
+  ha_opt.backdoor    = true;
+  opt.backdoor       = true;
 
   // The backdoor only binds the loopback interface
   netProcessor.main_accept(new HttpSessionAccept(ha_opt), NO_FD, opt);

@@ -18,6 +18,10 @@
 
 # This does intentionally not run the regressions, it's primarily a "build" test
 
+# Test if we should enable CPPAPI (only 5.0 and later for now)
+enable_cppapi="--enable-cppapi"
+test "${JOB_NAME#*-6.0.x}" == "${JOB_NAME}" && enable_cppapi=""
+
 cd "${WORKSPACE}/src"
 
 autoreconf -fi
@@ -28,9 +32,8 @@ mkdir -p BUILDS && cd BUILDS
     --enable-experimental-plugins \
     --enable-example-plugins \
     --enable-test-tools \
-    --enable-reclaimable-freelist \
     --enable-wccp \
-    CORES=2
+    ${enable_cppapi}
 
 ${ATS_MAKE} -j5 V=1
 #${ATS_MAKE} check VERBOSE=Y

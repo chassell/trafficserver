@@ -29,7 +29,8 @@
  *
  ***************************************************************************/
 
-#include "libts.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_sock.h"
 #include "LocalManager.h"
 #include "MgmtSocket.h"
 #include "MgmtMarshall.h"
@@ -60,7 +61,7 @@ new_event_client()
   EventClientT *ele = (EventClientT *)ats_malloc(sizeof(EventClientT));
 
   // now set the alarms registered section
-  for (int i = 0; i < NUM_EVENTS; i++)
+  for (int i                  = 0; i < NUM_EVENTS; i++)
     ele->events_registered[i] = 0;
 
   ele->adr = (struct sockaddr *)ats_malloc(sizeof(struct sockaddr));
@@ -208,8 +209,8 @@ apiEventCallback(alarm_t newAlarm, const char * /* ip ATS_UNUSED */, const char 
   // addEvent(new_alarm, ip, desc) // adds event to mgmt_events
   TSMgmtEvent *newEvent;
 
-  newEvent = TSEventCreate();
-  newEvent->id = newAlarm;
+  newEvent       = TSEventCreate();
+  newEvent->id   = newAlarm;
   newEvent->name = get_event_name(newEvent->id);
   // newEvent->ip   = ats_strdup(ip);
   if (desc)
@@ -241,7 +242,7 @@ event_callback_main(void *arg)
   int *socket_fd;
   int con_socket_fd; // main socket for listening to new connections
 
-  socket_fd = (int *)arg;
+  socket_fd     = (int *)arg;
   con_socket_fd = *socket_fd; // the socket for event callbacks
 
   Debug("event", "[event_callback_main] listen on socket = %d\n", con_socket_fd);
@@ -268,11 +269,10 @@ event_callback_main(void *arg)
   InkHashTableIteratorState con_state; // used to iterate through hash table
   int fds_ready;                       // return value for select go here
   struct timeval timeout;
-  int addr_len = (sizeof(struct sockaddr));
 
   while (1) {
     // LINUX fix: to prevent hard-spin reset timeout on each loop
-    timeout.tv_sec = 1;
+    timeout.tv_sec  = 1;
     timeout.tv_usec = 0;
 
     FD_ZERO(&selectFDs);
@@ -311,7 +311,8 @@ event_callback_main(void *arg)
           // Debug ("TS_Control_Main", "can't create new EventClientT for new connection\n");
         } else {
           // accept connection
-          new_con_fd = mgmt_accept(con_socket_fd, new_client_con->adr, &addr_len);
+          socklen_t addr_len = (sizeof(struct sockaddr));
+          new_con_fd         = mgmt_accept(con_socket_fd, new_client_con->adr, &addr_len);
           new_client_con->fd = new_con_fd;
           ink_hash_table_insert(accepted_clients, (char *)&new_client_con->fd, new_client_con);
           Debug("event", "[event_callback_main] Accept new connection: fd=%d\n", new_con_fd);
@@ -385,7 +386,7 @@ event_callback_main(void *arg)
       while (con_entry) {
         client_entry = (EventClientT *)ink_hash_table_entry_value(accepted_clients, con_entry);
         if (client_entry->events_registered[event->id]) {
-          MgmtMarshallInt optype = EVENT_NOTIFY;
+          MgmtMarshallInt optype  = EVENT_NOTIFY;
           MgmtMarshallString name = event->name;
           MgmtMarshallString desc = event->description;
 

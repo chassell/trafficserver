@@ -26,13 +26,13 @@
 
 #include <assert.h>
 #include <sys/types.h>
-#include "ink_assert.h"
-#include "ink_atomic.h"
-#include "ink_defs.h"
-#include "ink_string.h"
-#include "Allocator.h"
-#include "Regex.h"
-#include "ink_apidefs.h"
+#include "ts/ink_assert.h"
+#include "ts/ink_atomic.h"
+#include "ts/ink_defs.h"
+#include "ts/ink_string.h"
+#include "ts/Allocator.h"
+#include "ts/Regex.h"
+#include "ts/ink_apidefs.h"
 
 ////////////////////////////////////////////////////////////////////////////
 //
@@ -43,10 +43,10 @@
 #define SIZEOF(x) (sizeof(x) / sizeof(x[0]))
 
 enum HdrTokenType {
-  HDRTOKEN_TYPE_OTHER = 0,
-  HDRTOKEN_TYPE_FIELD = 1,
-  HDRTOKEN_TYPE_METHOD = 2,
-  HDRTOKEN_TYPE_SCHEME = 3,
+  HDRTOKEN_TYPE_OTHER         = 0,
+  HDRTOKEN_TYPE_FIELD         = 1,
+  HDRTOKEN_TYPE_METHOD        = 2,
+  HDRTOKEN_TYPE_SCHEME        = 3,
   HDRTOKEN_TYPE_CACHE_CONTROL = 4
 };
 
@@ -79,10 +79,10 @@ struct HdrTokenHeapPrefix {
 };
 
 enum HdrTokenInfoFlags {
-  HTIF_NONE = 0,
-  HTIF_COMMAS = 1 << 0,
-  HTIF_MULTVALS = 1 << 1,
-  HTIF_HOPBYHOP = 1 << 2,
+  HTIF_NONE      = 0,
+  HTIF_COMMAS    = 1 << 0,
+  HTIF_MULTVALS  = 1 << 1,
+  HTIF_HOPBYHOP  = 1 << 2,
   HTIF_PROXYAUTH = 1 << 3
 };
 
@@ -372,7 +372,6 @@ hdrtoken_wks_to_flags(const char *wks)
 #define MIME_PRESENCE_UNUSED_5 (TOK_64_CONST(1) << 60)
 
 #define MIME_PRESENCE_XREF (TOK_64_CONST(1) << 61)
-#define MIME_PRESENCE_INT_DATA_INFO (TOK_64_CONST(1) << 62)
 
 #define MIME_PRESENCE_NONE TOK_64_CONST(0)
 #define MIME_PRESENCE_ALL ~(TOK_64_CONST(0))

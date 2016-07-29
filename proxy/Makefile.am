@@ -36,7 +36,6 @@ TESTS = \
 AM_CPPFLAGS = \
   $(iocore_include_dirs) \
   -I$(top_srcdir)/lib/records \
-  -I$(top_srcdir)/lib/ts \
   -I$(srcdir)/http \
   -I$(srcdir)/http2 \
   -I$(srcdir)/spdy \
@@ -48,7 +47,6 @@ AM_CPPFLAGS = \
   -I$(top_srcdir)/mgmt/utils \
   -I$(top_srcdir)/proxy/api/ts \
   -I$(top_srcdir)/lib \
-  -I$(top_builddir)/lib \
   @OPENSSL_INCLUDES@
 
 # NOTE: it is safe to use AM_LDFLAGS here because we are only building executables. If we start
@@ -145,7 +143,6 @@ traffic_server_SOURCES = \
   CoreUtils.cc \
   CoreUtils.h \
   Crash.cc \
-  DynamicStats.h \
   EventName.cc \
   FetchSM.cc \
   HttpTransStats.h \
@@ -164,34 +161,31 @@ traffic_server_SOURCES = \
   InkIOCoreAPI.cc \
   Main.cc \
   Main.h \
+  Milestones.h \
+  ParentConsistentHash.cc \
+  ParentConsistentHash.h \
+  ParentRoundRobin.cc \
+  ParentRoundRobin.h \
   ParentSelection.cc \
   ParentSelection.h \
-	ParentConsistentHash.cc \
-	ParentConsistentHash.h \
-	ParentRoundRobin.cc \
-	ParentRoundRobin.h \
   Plugin.cc \
   Plugin.h \
   PluginVC.cc \
   PluginVC.h \
-  Prefetch.cc \
-  Prefetch.h \
   ProtocolProbeSessionAccept.cc \
   ProtocolProbeSessionAccept.h \
   ProxyClientSession.cc \
   ProxyClientSession.h \
+  ProxyClientTransaction.cc \
+  ProxyClientTransaction.h \
   ReverseProxy.cc \
   ReverseProxy.h \
   SocksProxy.cc \
   StatPages.cc \
   StatPages.h \
-  StatSystem.cc \
-  StatSystem.h \
   Transform.cc \
   Transform.h \
-  TransformInternal.h \
-  Update.cc \
-  Update.h
+  TransformInternal.h
 
 if BUILD_TESTS
 traffic_server_SOURCES +=  \
@@ -250,7 +244,7 @@ if BUILD_LUAJIT
 
   # On Darwin LuaJIT requires magic link options, otherwise it will crash in luaL_openlibs() at startup. See
   # http://luajit.org/install.html.
-  traffic_server_LDFLAGS += $(TS_LUAJIT_LDFLAGS)
+  traffic_server_LDFLAGS += $(LUAJIT_LDFLAGS)
 endif
 
 traffic_logcat_SOURCES = logcat.cc
@@ -286,25 +280,24 @@ traffic_sac_SOURCES = \
   ICPProcessor.cc \
   ICPStats.cc \
   IPAllow.cc \
-  ParentSelection.cc \
   ParentConsistentHash.cc \
   ParentRoundRobin.cc \
+  ParentSelection.cc \
   ControlBase.cc \
   ControlMatcher.cc \
   CacheControl.cc \
-  StatSystem.cc \
   ReverseProxy.cc \
   EventName.cc \
   StatPages.cc \
   PluginVC.cc \
   AbstractBuffer.cc \
   Transform.cc \
-  Prefetch.cc \
   ProtocolProbeSessionAccept.cc \
   ProtocolProbeSessionAccept.h \
   ProxyClientSession.cc \
   ProxyClientSession.h \
-  Update.cc \
+  ProxyClientTransaction.cc \
+  ProxyClientTransaction.h \
   Plugin.cc \
   InkAPI.cc \
   FetchSM.cc \

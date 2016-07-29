@@ -38,7 +38,7 @@
 
 #include "Plugin.h"
 #include "P_Net.h"
-#include "ink_atomic.h"
+#include "ts/ink_atomic.h"
 
 class PluginVCCore;
 
@@ -60,13 +60,13 @@ enum PluginVC_t {
 
 // For the id in set_data/get_data
 enum {
-  PLUGIN_VC_DATA_LOCAL,
+  PLUGIN_VC_DATA_LOCAL = TS_API_DATA_LAST,
   PLUGIN_VC_DATA_REMOTE,
 };
 
 enum {
   PLUGIN_VC_MAGIC_ALIVE = 0xaabbccdd,
-  PLUGIN_VC_MAGIC_DEAD = 0xaabbdead,
+  PLUGIN_VC_MAGIC_DEAD  = 0xaabbdead,
 };
 
 class PluginVC : public NetVConnection, public PluginIdentity
@@ -93,8 +93,9 @@ public:
   virtual void set_inactivity_timeout(ink_hrtime timeout_in);
   virtual void cancel_active_timeout();
   virtual void cancel_inactivity_timeout();
-  virtual void add_to_keep_alive_lru();
-  virtual void remove_from_keep_alive_lru();
+  virtual void add_to_keep_alive_queue();
+  virtual void remove_from_keep_alive_queue();
+  virtual bool add_to_active_queue();
   virtual ink_hrtime get_active_timeout();
   virtual ink_hrtime get_inactivity_timeout();
 
@@ -103,6 +104,8 @@ public:
   virtual void set_local_addr();
   virtual void set_remote_addr();
   virtual int set_tcp_init_cwnd(int init_cwnd);
+  virtual int set_tcp_congestion_control(const char *name, int len);
+
   virtual void apply_options();
 
   virtual bool get_data(int id, void *data);
@@ -260,8 +263,17 @@ private:
 };
 
 inline PluginVCCore::PluginVCCore()
-  : active_vc(this), passive_vc(this), connect_to(NULL), connected(false), p_to_a_buffer(NULL), p_to_a_reader(NULL),
-    a_to_p_buffer(NULL), a_to_p_reader(NULL), passive_data(NULL), active_data(NULL), id(0)
+  : active_vc(this),
+    passive_vc(this),
+    connect_to(NULL),
+    connected(false),
+    p_to_a_buffer(NULL),
+    p_to_a_reader(NULL),
+    a_to_p_buffer(NULL),
+    a_to_p_reader(NULL),
+    passive_data(NULL),
+    active_data(NULL),
+    id(0)
 {
   memset(&active_addr_struct, 0, sizeof active_addr_struct);
   memset(&passive_addr_struct, 0, sizeof passive_addr_struct);

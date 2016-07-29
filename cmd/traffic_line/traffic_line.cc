@@ -21,12 +21,12 @@
   limitations under the License.
  */
 
-#include "libts.h"
-
-#include "ink_args.h"
-#include "I_Version.h"
-#include "Tokenizer.h"
-#include "TextBuffer.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_memory.h"
+#include "ts/ink_args.h"
+#include "ts/I_Version.h"
+#include "ts/Tokenizer.h"
+#include "ts/TextBuffer.h"
 #include "mgmtapi.h"
 #include <stdio.h>
 #include <string.h>
@@ -80,7 +80,7 @@ handleArgInvocation()
   } else if (*ZeroNode != '\0' || *ZeroCluster != '\0') {
     TSMgmtError err;
     TSRecordEle *rec_ele = TSRecordEleCreate();
-    char *name = *ZeroNode ? ZeroNode : ZeroCluster;
+    char *name           = *ZeroNode ? ZeroNode : ZeroCluster;
 
     if ((err = TSRecordGet(name, rec_ele)) != TS_ERR_OKAY) {
       fprintf(stderr, "%s: %s\n", program_name, TSGetErrorMessage(err));
@@ -121,7 +121,7 @@ handleArgInvocation()
   } else if (*ClearAlarms != '\0') {
     // Clear (some) active alarms, this was moved from the old traffic_shell implementation (config:alarm)
     TSList events = TSListCreate();
-    size_t len = strlen(ClearAlarms);
+    size_t len    = strlen(ClearAlarms);
 
     if (TS_ERR_OKAY != TSActiveEventGetMlt(events)) {
       TSListDestroy(events);
@@ -138,8 +138,8 @@ handleArgInvocation()
     }
 
     int errors = 0;
-    bool all = false;
-    int num = -1;
+    bool all   = false;
+    int num    = -1;
 
     if ((3 == len) && (0 == strncasecmp(ClearAlarms, "all", len))) {
       all = true;
@@ -282,7 +282,7 @@ handleArgInvocation()
         printf("Set %s, restart required\n", SetVar);
         break;
       case TS_ACTION_RECONFIGURE:
-        // printf("Set %s, reconfiguration required\n", SetVar);
+        printf("Set %s, please wait 10 seconds for traffic server to sync configuration, restart is not required\n", SetVar);
         break;
       case TS_ACTION_DYNAMIC:
       default:
@@ -308,30 +308,31 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   TSMgmtError status;
 
   // build the application information structure
-  appVersionInfo.setup(PACKAGE_NAME, "traffic_line", PACKAGE_VERSION, __DATE__, __TIME__, BUILD_MACHINE, BUILD_PERSON, "");
+  appVersionInfo.setup(PACKAGE_NAME, "traffic_line [DEPRECATED]", PACKAGE_VERSION, __DATE__, __TIME__, BUILD_MACHINE, BUILD_PERSON,
+                       "");
 
   program_name = appVersionInfo.AppStr;
 
-  ReadVar[0] = '\0';
-  MatchVar[0] = '\0';
-  SetVar[0] = '\0';
-  VarValue[0] = '\0';
-  ReRead = 0;
-  Shutdown = 0;
-  BounceCluster = 0;
-  BounceLocal = 0;
-  QueryDeadhosts = 0;
-  Startup = 0;
+  ReadVar[0]          = '\0';
+  MatchVar[0]         = '\0';
+  SetVar[0]           = '\0';
+  VarValue[0]         = '\0';
+  ReRead              = 0;
+  Shutdown            = 0;
+  BounceCluster       = 0;
+  BounceLocal         = 0;
+  QueryDeadhosts      = 0;
+  Startup             = 0;
   ShutdownMgmtCluster = 0;
-  ShutdownMgmtLocal = 0;
-  ClearCluster = 0;
-  ClearNode = 0;
-  ZeroCluster[0] = '\0';
-  ZeroNode[0] = '\0';
-  *StorageCmdOffline = 0;
-  ShowAlarms = 0;
-  ShowStatus = 0;
-  ClearAlarms[0] = '\0';
+  ShutdownMgmtLocal   = 0;
+  ClearCluster        = 0;
+  ClearNode           = 0;
+  ZeroCluster[0]      = '\0';
+  ZeroNode[0]         = '\0';
+  *StorageCmdOffline  = 0;
+  ShowAlarms          = 0;
+  ShowStatus          = 0;
+  ClearAlarms[0]      = '\0';
 
   /* Argument description table used to describe how to parse command line args, */
   /* see 'ink_args.h' for meanings of the various fields */

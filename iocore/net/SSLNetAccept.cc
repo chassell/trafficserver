@@ -19,7 +19,7 @@
   limitations under the License.
  */
 
-#include "ink_config.h"
+#include "ts/ink_config.h"
 #include "P_Net.h"
 
 typedef int (SSLNetAccept::*SSLNetAcceptHandler)(int, void *);
@@ -40,24 +40,24 @@ SSLNetAccept::getNetProcessor() const
 }
 
 void
-SSLNetAccept::init_accept_per_thread()
+SSLNetAccept::init_accept_per_thread(bool isTransparent)
 {
   int i, n;
   NetAccept *a;
 
-  if (do_listen(NON_BLOCKING))
+  if (do_listen(NON_BLOCKING, isTransparent))
     return;
   if (accept_fn == net_accept)
     SET_HANDLER((SSLNetAcceptHandler)&SSLNetAccept::acceptFastEvent);
   else
     SET_HANDLER((SSLNetAcceptHandler)&SSLNetAccept::acceptEvent);
-  period = ACCEPT_PERIOD;
-  n = eventProcessor.n_threads_for_type[SSLNetProcessor::ET_SSL];
+  period = -HRTIME_MSECONDS(net_accept_period);
+  n      = eventProcessor.n_threads_for_type[SSLNetProcessor::ET_SSL];
   for (i = 0; i < n; i++) {
     if (i < n - 1)
       a = clone();
     else
-      a = this;
+      a        = this;
     EThread *t = eventProcessor.eventthread[SSLNetProcessor::ET_SSL][i];
 
     PollDescriptor *pd = get_PollDescriptor(t);
@@ -72,7 +72,7 @@ NetAccept *
 SSLNetAccept::clone() const
 {
   NetAccept *na;
-  na = new SSLNetAccept;
+  na  = new SSLNetAccept;
   *na = *this;
   return na;
 }

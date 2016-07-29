@@ -29,11 +29,9 @@
 #ifndef _INK_THREAD_H
 #define _INK_THREAD_H
 
-
-#include "ink_hrtime.h"
-#include "ink_defs.h"
+#include "ts/ink_hrtime.h"
+#include "ts/ink_defs.h"
 #include <sched.h>
-
 
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -93,9 +91,9 @@ typedef struct timespec ink_timestruc;
 typedef timestruc_t ink_timestruc;
 #endif
 
-#include "ink_mutex.h"
 #include <errno.h>
-#include "ink_assert.h"
+#include "ts/ink_mutex.h"
+#include "ts/ink_assert.h"
 
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -127,7 +125,6 @@ ink_thread_key_delete(ink_thread_key key)
 {
   ink_assert(!pthread_key_delete(key));
 }
-
 
 static inline ink_thread
 ink_thread_create(void *(*f)(void *), void *a, int detached = 0, size_t stacksize = 0)
@@ -195,7 +192,7 @@ ink_thread_get_priority(ink_thread t, int *priority)
 #else
   int policy;
   struct sched_param param;
-  int res = pthread_getschedparam(t, &policy, &param);
+  int res   = pthread_getschedparam(t, &policy, &param);
   *priority = param.sched_priority;
   return res;
 #endif

@@ -26,9 +26,12 @@
 
 **************************************************************************/
 
-#include "libts.h"
-#include "signals.h"
-#include "ink_stack_trace.h"
+#include "ts/ink_platform.h"
+#include "ts/signals.h"
+#include "ts/ink_stack_trace.h"
+#include "ts/ink_assert.h"
+#include "ts/ink_thread.h"
+#include "ts/Diags.h"
 
 bool
 signal_check_handler(int signal, signal_handler_t handler)
@@ -66,6 +69,7 @@ check_signals(signal_handler_t handler)
   signal_check_handler(SIGTERM, handler);
   signal_check_handler(SIGINT, handler);
   signal_check_handler(SIGUSR1, handler);
+  signal_check_handler(SIGUSR2, handler);
 }
 
 static void
@@ -73,9 +77,9 @@ set_signal(int signo, signal_handler_t handler)
 {
   struct sigaction act;
 
-  act.sa_handler = NULL;
+  act.sa_handler   = NULL;
   act.sa_sigaction = handler;
-  act.sa_flags = SA_SIGINFO;
+  act.sa_flags     = SA_SIGINFO;
   sigemptyset(&(act.sa_mask));
 
   ink_release_assert(sigaction(signo, &act, NULL) == 0);
@@ -88,7 +92,7 @@ signal_reset_default(int signo)
   struct sigaction act;
 
   act.sa_handler = SIG_DFL;
-  act.sa_flags = SA_NODEFER | SA_ONSTACK | SA_RESETHAND;
+  act.sa_flags   = SA_NODEFER | SA_ONSTACK | SA_RESETHAND;
   sigemptyset(&(act.sa_mask));
 
   ink_release_assert(sigaction(signo, &act, NULL) == 0);

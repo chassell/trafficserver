@@ -27,10 +27,11 @@ ParentConsistentHash::ParentConsistentHash(ParentRecord *parent_record)
   int i;
 
   ink_assert(parent_record->num_parents > 0);
-  parents[PRIMARY] = parent_record->parents;
+  parents[PRIMARY]   = parent_record->parents;
   parents[SECONDARY] = parent_record->secondary_parents;
-  ignore_query = parent_record->ignore_query;
+  ignore_query       = parent_record->ignore_query;
   ink_zero(foundParents);
+  last_unavailable = 0;
 
   chash[PRIMARY] = new ATSConsistentHash();
 
@@ -49,8 +50,6 @@ ParentConsistentHash::ParentConsistentHash(ParentRecord *parent_record)
   } else {
     chash[SECONDARY] = NULL;
   }
-  last_unavailable = time(NULL);
-
   Debug("parent_select", "Using a consistent hash parent selection strategy.");
 }
 
@@ -59,7 +58,6 @@ ParentConsistentHash::~ParentConsistentHash()
   delete chash[PRIMARY];
   delete chash[SECONDARY];
 }
-
 
 uint64_t
 ParentConsistentHash::getPathHash(HttpRequestData *hrdata, ATSHash64 *h)
@@ -95,9 +93,9 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
   ATSHash64Sip24 hash;
   ATSConsistentHash *fhash;
   HttpRequestData *request_info = static_cast<HttpRequestData *>(rdata);
-  bool firstCall = first_call;
-  bool wrap_around[2] = {false, false};
-  uint64_t path_hash = 0;
+  bool firstCall                = first_call;
+  bool wrap_around[2]           = {false, false};
+  uint64_t path_hash            = 0;
   uint32_t last_lookup;
   pRecord *prtmp = NULL, *pRec = NULL;
   URL *url = request_info->hdr->url_get();
@@ -105,24 +103,24 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
 
   Debug("parent_select", "ParentConsistentHash::%s(): Using a consistent hash parent selection strategy.", __func__);
   ink_assert(numParents(result) > 0 || result->rec->go_direct == true);
-  //
+
   // Should only get into this state if we are supposed to go direct.
   if (parents[PRIMARY] == NULL && parents[SECONDARY] == NULL) {
-    if (result->rec->go_direct == true) {
-      result->r = PARENT_DIRECT;
+    if (result->rec->go_direct == true && result->rec->parent_is_proxy == true) {
+      result->result = PARENT_DIRECT;
     } else {
-      result->r = PARENT_FAIL;
+      result->result = PARENT_FAIL;
     }
     result->hostname = NULL;
-    result->port = 0;
+    result->port     = 0;
     return;
   }
 
   // findParent() call if firstCall.
   if (firstCall) {
     last_lookup = PRIMARY;
-    path_hash = getPathHash(request_info, (ATSHash64 *)&hash);
-    fhash = chash[PRIMARY];
+    path_hash   = getPathHash(request_info, (ATSHash64 *)&hash);
+    fhash       = chash[PRIMARY];
     if (path_hash) {
       prtmp = (pRecord *)fhash->lookup_by_hashval(path_hash, &result->chashIter[last_lookup], &wrap_around[last_lookup]);
       if (prtmp)
@@ -132,14 +130,14 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
   } else {
     if (chash[SECONDARY] != NULL) {
       last_lookup = SECONDARY;
-      fhash = chash[SECONDARY];
-      path_hash = getPathHash(request_info, (ATSHash64 *)&hash);
-      prtmp = (pRecord *)fhash->lookup_by_hashval(path_hash, &result->chashIter[last_lookup], &wrap_around[last_lookup]);
+      fhash       = chash[SECONDARY];
+      path_hash   = getPathHash(request_info, (ATSHash64 *)&hash);
+      prtmp       = (pRecord *)fhash->lookup_by_hashval(path_hash, &result->chashIter[last_lookup], &wrap_around[last_lookup]);
       if (prtmp)
         pRec = (parents[last_lookup] + prtmp->idx);
     } else {
       last_lookup = PRIMARY;
-      fhash = chash[PRIMARY];
+      fhash       = chash[PRIMARY];
       do { // search until we've selected a different parent.
         prtmp = (pRecord *)fhash->lookup(NULL, &result->chashIter[last_lookup], &wrap_around[last_lookup], &hash);
         if (prtmp)
@@ -158,24 +156,20 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
         // make sure that the proper state is recorded in the result structure
         result->last_parent = pRec->idx;
         result->last_lookup = last_lookup;
-        result->retry = true;
-        if (!result->rec->parent_is_proxy) {
-          result->r = PARENT_ORIGIN;
-        } else {
-          result->r = PARENT_SPECIFIED;
-        }
+        result->retry       = true;
+        result->result = PARENT_SPECIFIED;
         Debug("parent_select", "Down parent %s is now retryable, pRec: %p, result->retry: %d.", pRec->hostname, pRec,
               result->retry);
       } else { // if not retryable find an available host on the primary ring.
         last_lookup = PRIMARY;
-        fhash = chash[PRIMARY];
-        prtmp = (pRecord *)fhash->lookup_available(NULL, &result->chashIter[last_lookup], &wrap_around[last_lookup], &hash);
+        fhash       = chash[PRIMARY];
+        prtmp       = (pRecord *)fhash->lookup_available(NULL, &result->chashIter[last_lookup], &wrap_around[last_lookup], &hash);
         if (prtmp) {
           pRec = (parents[last_lookup] + prtmp->idx);
         } else if (chash[SECONDARY] != NULL) { // search the secondary if if available.
           last_lookup = SECONDARY;
-          fhash = chash[SECONDARY];
-          prtmp = (pRecord *)fhash->lookup_available(NULL, &result->chashIter[last_lookup], &wrap_around[last_lookup], &hash);
+          fhash       = chash[SECONDARY];
+          prtmp       = (pRecord *)fhash->lookup_available(NULL, &result->chashIter[last_lookup], &wrap_around[last_lookup], &hash);
           if (prtmp) {
             pRec = (parents[last_lookup] + prtmp->idx);
           }
@@ -186,13 +180,9 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
 
   // use the available parent.
   if (pRec && (pRec->available || result->retry)) {
-    if (!result->rec->parent_is_proxy) {
-      result->r = PARENT_ORIGIN;
-    } else {
-      result->r = PARENT_SPECIFIED;
-    }
-    result->hostname = pRec->hostname;
-    result->port = pRec->port;
+    result->result = PARENT_SPECIFIED;
+    result->hostname    = pRec->hostname;
+    result->port        = pRec->port;
     result->last_parent = pRec->idx;
     result->last_lookup = last_lookup;
     ink_assert(result->hostname != NULL);
@@ -200,23 +190,31 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
     Debug("parent_select", "Chosen parent: %s.%d", result->hostname, result->port);
   } else {
     if (result->rec->go_direct == true && result->rec->parent_is_proxy) {
-      result->r = PARENT_DIRECT;
+      result->result = PARENT_DIRECT;
     } else {
       now = time(NULL);
       // limit logging to no more than one message per second.
       if (now > last_unavailable) {
-        int len = 0;
+        int len           = 0;
         char *request_str = url->string_get_ref(&len);
         if (request_str) {
           Note("No available parents for request: %*s.", len, request_str);
         }
         ink_atomic_swap(&last_unavailable, now);
       }
-      result->r = PARENT_FAIL;
+      result->result = PARENT_FAIL;
     }
     result->hostname = NULL;
-    result->port = 0;
-    result->retry = false;
+    result->port     = 0;
+    result->retry    = false;
+    if (result->rec->go_direct == true && result->rec->parent_is_proxy == true) {
+      result->result = PARENT_DIRECT;
+    } else {
+      result->result = PARENT_FAIL;
+    }
+    result->hostname = NULL;
+    result->port     = 0;
+    result->retry    = false;
   }
 
   return;
@@ -233,13 +231,13 @@ ParentConsistentHash::markParentDown(const ParentSelectionPolicy *policy, Parent
 
   //  Make sure that we are being called back with with a
   //   result structure with a parent
-  ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
-  if (result->r != PARENT_SPECIFIED && result->r != PARENT_ORIGIN) {
+  ink_assert(result->result == PARENT_SPECIFIED);
+  if (result->result != PARENT_SPECIFIED) {
     return;
   }
   // If we were set through the API we currently have not failover
   //   so just return fail
-  if (result->rec == extApiRecord) {
+  if (result->is_api_result()) {
     return;
   }
 
@@ -309,13 +307,13 @@ ParentConsistentHash::markParentUp(ParentResult *result)
   //  Make sure that we are being called back with with a
   //   result structure with a parent that is being retried
   ink_release_assert(result->retry == true);
-  ink_assert(result->r == PARENT_SPECIFIED || result->r == PARENT_ORIGIN);
-  if (result->r != PARENT_SPECIFIED && result->r != PARENT_ORIGIN) {
+  ink_assert(result->result == PARENT_SPECIFIED);
+  if (result->result != PARENT_SPECIFIED) {
     return;
   }
   // If we were set through the API we currently have not failover
   //   so just return fail
-  if (result->rec == extApiRecord) {
+  if (result->is_api_result()) {
     ink_assert(0);
     return;
   }

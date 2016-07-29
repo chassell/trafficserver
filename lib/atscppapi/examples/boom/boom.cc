@@ -85,7 +85,7 @@ const std::string DEFAULT_ERROR_FILE = "default"; // default.html will be search
 const std::string DEFAULT_ERROR_RESPONSE = "<html><body><h1>This page will be back soon</h1></body></html>";
 
 // Default HTTP status code to use after booming
-const int DEFAULT_BOOM_HTTP_STATUS_CODE = 200;
+// const int DEFAULT_BOOM_HTTP_STATUS_CODE = 200;
 
 // Default HTTP status string to use after booming
 const std::string DEFAULT_BOOM_HTTP_STATUS = "OK (BOOM)";
@@ -110,7 +110,8 @@ public:
     current_code_string_ = oss.str();
   }
 
-  bool operator()(const std::string &code) const
+  bool
+  operator()(const std::string &code) const
   {
     TS_DEBUG(TAG, "Checking if %s matches code %s", current_code_string_.c_str(), code.c_str());
     if (code == current_code_string_)
@@ -177,7 +178,6 @@ public:
   // Register error codes
   void register_error_codes(const std::vector<std::string> &error_codes);
 };
-
 
 void
 BoomResponseRegistry::register_error_codes(const std::vector<std::string> &error_codes)
@@ -415,6 +415,7 @@ BoomGlobalPlugin::handleReadResponseHeaders(Transaction &transaction)
 void
 TSPluginInit(int argc, const char *argv[])
 {
+  RegisterGlobalPlugin("CPP_Example_Boom", "apache", "dev@trafficserver.apache.org");
   boom_counter.init(BOOM_COUNTER);
   BoomResponseRegistry *pregistry = new BoomResponseRegistry();
 

@@ -27,7 +27,7 @@
 
 #include "ts/ts.h"
 #include "ts/remap.h"
-#include "ink_defs.h"
+#include "ts/ink_defs.h"
 
 #define PLUGIN_NAME "query_remap"
 
@@ -41,7 +41,6 @@ typedef struct _query_remap_info {
   int num_hosts;
 } query_remap_info;
 
-
 int
 TSRemapInit(TSRemapInterface *api_info ATS_UNUSED, char *errbuf ATS_UNUSED, int errbuf_size ATS_UNUSED)
 {
@@ -49,7 +48,6 @@ TSRemapInit(TSRemapInterface *api_info ATS_UNUSED, char *errbuf ATS_UNUSED, int 
   TSDebug(PLUGIN_NAME, "remap plugin initialized");
   return 0;
 }
-
 
 int
 TSRemapNewInstance(int argc, char *argv[], void **ih, char *errbuf ATS_UNUSED, int errbuf_size ATS_UNUSED)
@@ -59,7 +57,7 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char *errbuf ATS_UNUSED, i
   TSDebug(PLUGIN_NAME, "new instance fromURL: %s toURL: %s", argv[0], argv[1]);
 
   if (argc < 4) {
-    TSError("Missing parameters for " PLUGIN_NAME);
+    TSError("[query_remap] Missing parameters");
     return -1;
   }
 
@@ -73,9 +71,9 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char *errbuf ATS_UNUSED, i
   query_remap_info *qri = (query_remap_info *)TSmalloc(sizeof(query_remap_info));
 
   qri->param_name = TSstrdup(argv[2]);
-  qri->param_len = strlen(qri->param_name);
-  qri->num_hosts = argc - 3;
-  qri->hosts = (char **)TSmalloc(qri->num_hosts * sizeof(char *));
+  qri->param_len  = strlen(qri->param_name);
+  qri->num_hosts  = argc - 3;
+  qri->hosts      = (char **)TSmalloc(qri->num_hosts * sizeof(char *));
 
   TSDebug(PLUGIN_NAME, " - Hash using query parameter [%s] with %d hosts", qri->param_name, qri->num_hosts);
 
@@ -110,15 +108,14 @@ TSRemapDeleteInstance(void *ih)
   }
 }
 
-
 TSRemapStatus
 TSRemapDoRemap(void *ih, TSHttpTxn rh ATS_UNUSED, TSRemapRequestInfo *rri)
 {
-  int hostidx = -1;
+  int hostidx           = -1;
   query_remap_info *qri = (query_remap_info *)ih;
 
   if (!qri || !rri) {
-    TSError(PLUGIN_NAME "NULL private data or RRI");
+    TSError("[query_remap] NULL private data or RRI");
     return TSREMAP_NO_REMAP;
   }
 
@@ -166,7 +163,6 @@ TSRemapDoRemap(void *ih, TSHttpTxn rh ATS_UNUSED, TSRemapRequestInfo *rri)
   TSDebug(PLUGIN_NAME, "request not modified");
   return TSREMAP_NO_REMAP;
 }
-
 
 /* FNV (Fowler/Noll/Vo) hash
    (description: http://www.isthe.com/chongo/tech/comp/fnv/index.html) */

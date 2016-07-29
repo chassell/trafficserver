@@ -30,10 +30,10 @@
 #if !defined(_ink_sock_h_)
 #define _ink_sock_h_
 
-#include "ink_platform.h"
-#include "ink_defs.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_defs.h"
 
-#include "ink_apidefs.h"
+#include "ts/ink_apidefs.h"
 
 int safe_setsockopt(int s, int level, int optname, char *optval, int optlevel);
 int safe_getsockopt(int s, int level, int optname, char *optval, int *optlevel);
@@ -51,8 +51,8 @@ int safe_clr_fl(int fd, int arg);
 int safe_blocking(int fd);
 int safe_nonblocking(int fd);
 
-int write_ready(int fd);
-int read_ready(int fd);
+int write_ready(int fd, int timeout_msec = 0);
+int read_ready(int fd, int timeout_msec = 0);
 
 char fd_read_char(int fd);
 int fd_read_line(int fd, char *s, int len);

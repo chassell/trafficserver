@@ -21,7 +21,9 @@
   limitations under the License.
  */
 
-#include "libts.h"
+#include "ts/ink_platform.h"
+#include "ts/I_Version.h"
+#include "ts/ink_string.h"
 
 AppVersionInfo::AppVersionInfo()
 {
@@ -38,7 +40,6 @@ AppVersionInfo::AppVersionInfo()
   ink_strlcpy(FullVersionInfoStr, "?", sizeof(FullVersionInfoStr));
   // coverity[uninit_member]
 }
-
 
 void
 AppVersionInfo::setup(const char *pkg_name, const char *app_name, const char *app_version, const char *build_date,
@@ -113,7 +114,6 @@ AppVersionInfo::setup(const char *pkg_name, const char *app_name, const char *ap
   defined = 1;
 }
 
-
 #if TS_HAS_TESTS
 #include <ts/TestBox.h>
 
@@ -129,7 +129,7 @@ REGRESSION_TEST(AppVersionInfo)(RegressionTest *t, int /* atype ATS_UNUSED */, i
   TestBox tb(t, pstatus);
 
   const char *errMsgFormat = "wrong build number, expected '%s', got '%s'";
-  const char *bench[][3] = {// date, time, resulting build number
+  const char *bench[][3]   = {// date, time, resulting build number
                             {"Oct  4 1957", "19:28:34", BUILD_NUMBER},
                             {"Oct  4 1957", "19:28:34", "100419"},
                             {"Apr  4 1957", "09:08:04", "040409"},

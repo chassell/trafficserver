@@ -21,9 +21,9 @@
   limitations under the License.
  */
 
-#include "libts.h"
+#include "ts/ink_platform.h"
 #include "Rollback.h"
-#include "ParseRules.h"
+#include "ts/ParseRules.h"
 #include "P_RecCore.h"
 #include "P_RecLocal.h"
 #include "P_RecMessage.h"
@@ -62,7 +62,7 @@ i_am_the_record_owner(RecT rec_type)
 static void *
 sync_thr(void *data)
 {
-  textBuffer *tb = new textBuffer(65536);
+  textBuffer *tb           = new textBuffer(65536);
   FileManager *configFiles = (FileManager *)data;
 
   Rollback *rb;
@@ -104,7 +104,6 @@ sync_thr(void *data)
   return NULL;
 }
 
-
 //-------------------------------------------------------------------------
 // config_update_thr
 //-------------------------------------------------------------------------
@@ -134,7 +133,6 @@ config_update_thr(void * /* data */)
   }
   return NULL;
 }
-
 
 //-------------------------------------------------------------------------
 // RecMessageInit
@@ -180,7 +178,6 @@ RecLocalInit(Diags *_diags)
   return REC_ERR_OKAY;
 }
 
-
 //-------------------------------------------------------------------------
 // RecLocalInitMessage
 //-------------------------------------------------------------------------
@@ -209,9 +206,14 @@ RecLocalInitMessage()
 int
 RecLocalStart(FileManager *configFiles)
 {
-  ink_thread_create(sync_thr, configFiles);
-  ink_thread_create(config_update_thr, NULL);
-
+  RecInt disable_modification = 0;
+  RecGetRecordInt("proxy.config.disable_configuration_modification", &disable_modification);
+  if (disable_modification == 1) {
+    RecDebug(DL_Debug, "Disable configuration modification");
+  } else {
+    ink_thread_create(sync_thr, configFiles);
+    ink_thread_create(config_update_thr, NULL);
+  }
   return REC_ERR_OKAY;
 }
 
@@ -244,7 +246,7 @@ RecMessageSend(RecMessage *msg)
   // Make a copy of the record, but truncate it to the size actually used
   if (g_mode_type == RECM_CLIENT || g_mode_type == RECM_SERVER) {
     msg->o_end = msg->o_write;
-    msg_size = sizeof(RecMessageHdr) + (msg->o_write - msg->o_start);
+    msg_size   = sizeof(RecMessageHdr) + (msg->o_write - msg->o_start);
     lmgmt->signalEvent(MGMT_EVENT_LIBRECORDS, (char *)msg, msg_size);
   }
 

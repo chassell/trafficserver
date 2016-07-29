@@ -21,9 +21,12 @@
   limitations under the License.
  */
 
-#include "libts.h"
 #include <unistd.h>
 #include <limits.h>
+#include "ts/ink_platform.h"
+#include "ts/ink_file.h"
+#include "ts/ink_string.h"
+#include "ts/ink_memory.h"
 
 #if HAVE_SYS_STAT_H
 #include <sys/stat.h>
@@ -181,9 +184,9 @@ ink_filepath_merge(char *path, int pathsz, const char *rootpath, const char *add
     rootpath = curdir;
   }
   rootlen = strlen(rootpath);
-  maxlen = rootlen + strlen(addpath) + 4; // 4 for slashes at start, after
-                                          // root, and at end, plus trailing
-                                          // null
+  maxlen  = rootlen + strlen(addpath) + 4; // 4 for slashes at start, after
+                                           // root, and at end, plus trailing
+                                           // null
   if (maxlen > (size_t)pathsz) {
     return E2BIG; // APR_ENAMETOOLONG;
   }
@@ -341,7 +344,7 @@ ink_filepath_make(char *path, int pathsz, const char *rootpath, const char *addp
     return 0;
   }
   rootlen = strlen(rootpath);
-  maxlen = strlen(addpath) + 2;
+  maxlen  = strlen(addpath) + 2;
   if (maxlen > (size_t)pathsz) {
     *path = '\0';
     return (int)maxlen;
@@ -506,4 +509,41 @@ ink_file_namemax(const char *path)
 #else
   return 255;
 #endif
+}
+
+int
+ink_fileperm_parse(const char *perms)
+{
+  if (perms && strlen(perms) == 9) {
+    int re  = 0;
+    char *c = (char *)perms;
+    if (*c == 'r')
+      re |= S_IRUSR;
+    c++;
+    if (*c == 'w')
+      re |= S_IWUSR;
+    c++;
+    if (*c == 'x')
+      re |= S_IXUSR;
+    c++;
+    if (*c == 'r')
+      re |= S_IRGRP;
+    c++;
+    if (*c == 'w')
+      re |= S_IWGRP;
+    c++;
+    if (*c == 'x')
+      re |= S_IXGRP;
+    c++;
+    if (*c == 'r')
+      re |= S_IROTH;
+    c++;
+    if (*c == 'w')
+      re |= S_IWOTH;
+    c++;
+    if (*c == 'x')
+      re |= S_IXOTH;
+    return re;
+  }
+  return -1;
 }

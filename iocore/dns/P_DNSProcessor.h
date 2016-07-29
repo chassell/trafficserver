@@ -26,7 +26,6 @@
 
 /*
   #include "I_DNS.h"
-  #include "libts.h"
   #include <arpa/nameser.h>
   #include "I_Cache.h"
   #include "P_Net.h"
@@ -79,7 +78,6 @@ extern unsigned int dns_sequence_number;
 #define QFIXEDSZ 4
 #endif
 
-
 // Events
 
 #define DNS_EVENT_LOOKUP DNS_EVENT_EVENTS_START
@@ -87,7 +85,6 @@ extern unsigned int dns_sequence_number;
 extern int dns_fd;
 
 void *dns_udp_receiver(void *arg);
-
 
 // Stats
 enum DNS_Stats {
@@ -168,16 +165,28 @@ struct DNSEntry : public Continuation {
   void init(const char *x, int len, int qtype_arg, Continuation *acont, DNSProcessor::Options const &opt);
 
   DNSEntry()
-    : Continuation(NULL), qtype(0), host_res_style(HOST_RES_NONE), retries(DEFAULT_DNS_RETRIES), which_ns(NO_NAMESERVER_SELECTED),
-      submit_time(0), send_time(0), qname_len(0), orig_qname_len(0), domains(0), timeout(0), result_ent(0), dnsH(0),
-      written_flag(false), once_written_flag(false), last(false)
+    : Continuation(NULL),
+      qtype(0),
+      host_res_style(HOST_RES_NONE),
+      retries(DEFAULT_DNS_RETRIES),
+      which_ns(NO_NAMESERVER_SELECTED),
+      submit_time(0),
+      send_time(0),
+      qname_len(0),
+      orig_qname_len(0),
+      domains(0),
+      timeout(0),
+      result_ent(0),
+      dnsH(0),
+      written_flag(false),
+      once_written_flag(false),
+      last(false)
   {
     for (int i = 0; i < MAX_DNS_RETRIES; i++)
-      id[i] = -1;
+      id[i]    = -1;
     memset(qname, 0, MAXDNAME);
   }
 };
-
 
 typedef int (DNSEntry::*DNSEntryHandler)(int, void *);
 
@@ -229,7 +238,7 @@ struct DNSHandler : public Continuation {
     ++failover_number[name_server];
     Debug("dns", "sent_one: failover_number for resolver %d is %d", name_server, failover_number[name_server]);
     if (failover_number[name_server] >= dns_failover_number && !crossed_failover_number[name_server])
-      crossed_failover_number[name_server] = ink_get_hrtime();
+      crossed_failover_number[name_server] = Thread::get_hrtime();
   }
 
   bool
@@ -238,16 +247,17 @@ struct DNSHandler : public Continuation {
     if (is_debug_tag_set("dns")) {
       Debug("dns", "failover_now: Considering immediate failover, target time is %" PRId64 "",
             (ink_hrtime)HRTIME_SECONDS(dns_failover_period));
-      Debug("dns", "\tdelta time is %" PRId64 "", (ink_get_hrtime() - crossed_failover_number[i]));
+      Debug("dns", "\tdelta time is %" PRId64 "", (Thread::get_hrtime() - crossed_failover_number[i]));
     }
-    return (crossed_failover_number[i] && ((ink_get_hrtime() - crossed_failover_number[i]) > HRTIME_SECONDS(dns_failover_period)));
+    return (crossed_failover_number[i] &&
+            ((Thread::get_hrtime() - crossed_failover_number[i]) > HRTIME_SECONDS(dns_failover_period)));
   }
 
   bool
   failover_soon(int i)
   {
     return (crossed_failover_number[i] &&
-            ((ink_get_hrtime() - crossed_failover_number[i]) >
+            ((Thread::get_hrtime() - crossed_failover_number[i]) >
              (HRTIME_SECONDS(dns_failover_try_period + failover_soon_number[i] * FAILOVER_SOON_RETRY))));
   }
 
@@ -314,20 +324,28 @@ struct DNSServer {
   }
 };
 
-
 TS_INLINE
 DNSHandler::DNSHandler()
-  : Continuation(NULL), n_con(0), in_flight(0), name_server(0), in_write_dns(0), hostent_cache(0), last_primary_retry(0),
-    last_primary_reopen(0), m_res(0), txn_lookup_timeout(0), generator((uint32_t)((uintptr_t)time(NULL) ^ (uintptr_t) this))
+  : Continuation(NULL),
+    n_con(0),
+    in_flight(0),
+    name_server(0),
+    in_write_dns(0),
+    hostent_cache(0),
+    last_primary_retry(0),
+    last_primary_reopen(0),
+    m_res(0),
+    txn_lookup_timeout(0),
+    generator((uint32_t)((uintptr_t)time(NULL) ^ (uintptr_t)this))
 {
   ats_ip_invalidate(&ip);
   for (int i = 0; i < MAX_NAMED; i++) {
-    ifd[i] = -1;
-    failover_number[i] = 0;
-    failover_soon_number[i] = 0;
+    ifd[i]                     = -1;
+    failover_number[i]         = 0;
+    failover_soon_number[i]    = 0;
     crossed_failover_number[i] = 0;
-    ns_down[i] = 1;
-    con[i].handler = this;
+    ns_down[i]                 = 1;
+    con[i].handler             = this;
   }
   memset(&qid_in_flight, 0, sizeof(qid_in_flight));
   SET_HANDLER(&DNSHandler::startEvent);

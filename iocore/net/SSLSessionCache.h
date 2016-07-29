@@ -22,15 +22,15 @@
 #ifndef __SSLSESSIONCACHE_H__
 #define __SSLSESSIONCACHE_H__
 
-#include "Map.h"
-#include "List.h"
-#include "ink_mutex.h"
+#include "ts/Map.h"
+#include "ts/List.h"
+#include "ts/ink_mutex.h"
 #include "P_EventSystem.h"
 #include "P_AIO.h"
 #include "I_RecProcess.h"
-#include "libts.h"
+#include "ts/ink_platform.h"
 #include "P_SSLUtils.h"
-#include "RbTree.h"
+#include "ts/RbTree.h"
 #include <openssl/ssl.h>
 
 #define SSL_MAX_SESSION_SIZE 256
@@ -53,7 +53,8 @@ struct SSLSessionID {
     len = other.len;
   }
 
-  bool operator<(const SSLSessionID &other) const
+  bool
+  operator<(const SSLSessionID &other) const
   {
     if (len != other.len)
       return len < other.len;
@@ -61,7 +62,8 @@ struct SSLSessionID {
     return (memcmp(bytes, other.bytes, len) < 0);
   }
 
-  SSLSessionID &operator=(const SSLSessionID &other)
+  SSLSessionID &
+  operator=(const SSLSessionID &other)
   {
     if (other.len)
       memcpy(bytes, other.bytes, other.len);
@@ -70,7 +72,8 @@ struct SSLSessionID {
     return *this;
   }
 
-  bool operator==(const SSLSessionID &other) const
+  bool
+  operator==(const SSLSessionID &other) const
   {
     if (len != other.len)
       return false;

@@ -24,6 +24,11 @@
 #ifndef _I_HostDBProcessor_h_
 #define _I_HostDBProcessor_h_
 
+#include "ts/HashFNV.h"
+#include "ts/ink_time.h"
+#include "ts/INK_MD5.h"
+#include "ts/ink_align.h"
+#include "ts/ink_resolver.h"
 #include "I_EventSystem.h"
 #include "SRV.h"
 
@@ -58,7 +63,6 @@ extern unsigned int hostdb_ip_stale_interval;
 extern unsigned int hostdb_ip_timeout_interval;
 extern unsigned int hostdb_ip_fail_timeout_interval;
 extern unsigned int hostdb_serve_stale_but_revalidate;
-
 
 static inline unsigned int
 makeHostHash(const char *string)
@@ -115,9 +119,9 @@ union HostDBApplicationInfo {
 
   enum HttpVersion_t {
     HTTP_VERSION_UNDEFINED = 0,
-    HTTP_VERSION_09 = 1,
-    HTTP_VERSION_10 = 2,
-    HTTP_VERSION_11 = 3,
+    HTTP_VERSION_09        = 1,
+    HTTP_VERSION_10        = 2,
+    HTTP_VERSION_11        = 3,
   };
 
   struct application_data_rr {
@@ -151,7 +155,17 @@ struct HostDBInfo {
   }
 
   char *hostname();
+  char *perm_hostname();
   char *srvname(HostDBRoundRobin *rr);
+  /// Check if this entry is an element of a round robin entry.
+  /// If @c true then this entry is part of and was obtained from a round robin root. This is useful if the
+  /// address doesn't work - a retry can probably get a new address by doing another lookup and resolving to
+  /// a different element of the round robin.
+  bool
+  is_rr_elt() const
+  {
+    return 0 != round_robin_elt;
+  }
   HostDBRoundRobin *rr();
 
   /** Indicate that the HostDBInfo is BAD and should be deleted. */
@@ -224,7 +238,6 @@ struct HostDBInfo {
     return false;
   }
 
-
   //
   // Private
   //
@@ -235,25 +248,53 @@ struct HostDBInfo {
     SRVInfo srv;
   } data;
 
+  int hostname_offset; // always maintain a permanent copy of the hostname for non-rev dns records.
+
   unsigned int ip_timestamp;
   // limited to HOST_DB_MAX_TTL (0x1FFFFF, 24 days)
   // if this is 0 then no timeout.
   unsigned int ip_timeout_interval;
 
+  // Make sure we only have 8 bits of these flags before the @a md5_low_low
   unsigned int full : 1;
   unsigned int backed : 1; // duplicated in lower level
   unsigned int deleted : 1;
   unsigned int hits : 3;
 
-  unsigned int is_srv : 1; // steal a bit from ip_timeout_interval
-  unsigned int round_robin : 1;
+  unsigned int is_srv : 1;
   unsigned int reverse_dns : 1;
 
   unsigned int md5_low_low : 24;
   unsigned int md5_low;
 
+  unsigned int round_robin : 1;     // This is the root of a round robin block
+  unsigned int round_robin_elt : 1; // This is an address in a round robin block
+
   uint64_t md5_high;
 
+  /*
+   * Given the current time `now` and the fail_window, determine if this real is alive
+   */
+  bool
+  alive(ink_time_t now, int32_t fail_window)
+  {
+    unsigned int last_failure = app.http_data.last_failure;
+
+    if (last_failure == 0 || (unsigned int)(now - fail_window) > last_failure) {
+      return true;
+    } else {
+      // Entry is marked down.  Make sure some nasty clock skew
+      //  did not occur.  Use the retry time to set an upper bound
+      //  as to how far in the future we should tolerate bogus last
+      //  failure times.  This sets the upper bound that we would ever
+      //  consider a server down to 2*down_server_timeout
+      if ((unsigned int)(now + fail_window) < last_failure) {
+        app.http_data.last_failure = 0;
+        return false;
+      }
+      return false;
+    }
+  }
   bool
   failed()
   {
@@ -290,9 +331,9 @@ struct HostDBInfo {
   void
   set_empty()
   {
-    full = 0;
-    md5_high = 0;
-    md5_low = 0;
+    full        = 0;
+    md5_high    = 0;
+    md5_low     = 0;
     md5_low_low = 0;
   }
 
@@ -302,10 +343,10 @@ struct HostDBInfo {
     uint64_t ttag = folded_md5 / buckets;
 
     if (!ttag)
-      ttag = 1;
+      ttag      = 1;
     md5_low_low = (unsigned int)ttag;
-    md5_low = (unsigned int)(ttag >> 24);
-    full = 1;
+    md5_low     = (unsigned int)(ttag >> 24);
+    full        = 1;
   }
 
   void
@@ -314,12 +355,12 @@ struct HostDBInfo {
     ats_ip_invalidate(ip());
     app.allotment.application1 = 0;
     app.allotment.application2 = 0;
-    backed = 0;
-    deleted = 0;
-    hits = 0;
-    round_robin = 0;
-    reverse_dns = 0;
-    is_srv = 0;
+    backed                     = 0;
+    deleted                    = 0;
+    hits                       = 0;
+    round_robin                = 0;
+    reverse_dns                = 0;
+    is_srv                     = 0;
   }
 
   uint64_t
@@ -333,7 +374,6 @@ struct HostDBInfo {
   int heap_size();
   int *heap_offset_ptr();
 };
-
 
 struct HostDBRoundRobin {
   /** Total number (to compute space used). */
@@ -381,6 +421,7 @@ struct HostDBCache;
 typedef void (Continuation::*process_hostdb_info_pfn)(HostDBInfo *r);
 typedef void (Continuation::*process_srv_info_pfn)(HostDBInfo *r);
 
+Action *iterate(Continuation *cont);
 
 /** The Host Databse access interface. */
 struct HostDBProcessor : public Processor {
@@ -396,10 +437,10 @@ struct HostDBProcessor : public Processor {
   //       The HostDBInfo may be changed during the callback.
 
   enum {
-    HOSTDB_DO_NOT_FORCE_DNS = 0,
-    HOSTDB_ROUND_ROBIN = 0,
-    HOSTDB_FORCE_DNS_RELOAD = 1,
-    HOSTDB_FORCE_DNS_ALWAYS = 2,
+    HOSTDB_DO_NOT_FORCE_DNS   = 0,
+    HOSTDB_ROUND_ROBIN        = 0,
+    HOSTDB_FORCE_DNS_RELOAD   = 1,
+    HOSTDB_FORCE_DNS_ALWAYS   = 2,
     HOSTDB_DO_NOT_ROUND_ROBIN = 4
   };
 
@@ -412,7 +453,6 @@ struct HostDBProcessor : public Processor {
     HostResStyle host_res_style; ///< How to query host (default HOST_RES_IPV4)
 
     Options() : port(0), flags(HOSTDB_DO_NOT_FORCE_DNS), timeout(0), host_res_style(HOST_RES_IPV4) {}
-
     /// Set the flags.
     self &
     setFlags(int f)
@@ -426,8 +466,9 @@ struct HostDBProcessor : public Processor {
   static Options const DEFAULT_OPTIONS;
 
   HostDBProcessor() {}
-
   inkcoreapi Action *getbyname_re(Continuation *cont, const char *hostname, int len, Options const &opt = DEFAULT_OPTIONS);
+
+  Action *getbynameport_re(Continuation *cont, const char *hostname, int len, Options const &opt = DEFAULT_OPTIONS);
 
   Action *getSRVbyname_imm(Continuation *cont, process_srv_info_pfn process_srv_info, const char *hostname, int len,
                            Options const &opt = DEFAULT_OPTIONS);
@@ -435,6 +476,7 @@ struct HostDBProcessor : public Processor {
   Action *getbyname_imm(Continuation *cont, process_hostdb_info_pfn process_hostdb_info, const char *hostname, int len,
                         Options const &opt = DEFAULT_OPTIONS);
 
+  Action *iterate(Continuation *cont);
 
   /** Lookup Hostinfo by addr */
   Action *

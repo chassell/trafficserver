@@ -26,9 +26,10 @@
 
 #include <sys/time.h>
 
-#include "ink_assert.h"
-#include "ink_apidefs.h"
-#include "ink_string++.h"
+#include "ts/ink_assert.h"
+#include "ts/ink_apidefs.h"
+#include "ts/ink_string++.h"
+#include "ts/ParseRules.h"
 #include "HdrHeap.h"
 #include "HdrToken.h"
 
@@ -40,9 +41,9 @@
 
 enum MIMEParseResult {
   PARSE_ERROR = -1,
-  PARSE_DONE = 0,
-  PARSE_OK = 1,
-  PARSE_CONT = 2,
+  PARSE_DONE  = 0,
+  PARSE_OK    = 1,
+  PARSE_CONT  = 2,
 };
 
 enum {
@@ -164,6 +165,7 @@ struct MIMEField {
   int value_get_comma_list(StrList *list) const;
 
   void name_set(HdrHeap *heap, MIMEHdrImpl *mh, const char *name, int length);
+  bool name_is_valid() const;
 
   void value_set(HdrHeap *heap, MIMEHdrImpl *mh, const char *value, int length);
   void value_set_int(HdrHeap *heap, MIMEHdrImpl *mh, int32_t value);
@@ -175,6 +177,7 @@ struct MIMEField {
   // Other separators (e.g. ';' in Set-cookie/Cookie) are also possible
   void value_append(HdrHeap *heap, MIMEHdrImpl *mh, const char *value, int length, bool prepend_comma = false,
                     const char separator = ',');
+  bool value_is_valid() const;
   int has_dups() const;
 };
 
@@ -184,13 +187,14 @@ struct MIMEFieldBlockImpl : public HdrHeapObjImpl {
   MIMEFieldBlockImpl *m_next;
   MIMEField m_field_slots[MIME_FIELD_BLOCK_SLOTS];
   // mime_hdr_copy_onto assumes that m_field_slots is last --
-  // don't add any new fields afterit.
+  // don't add any new fields after it.
 
   // Marshaling Functions
   int marshal(MarshalXlate *ptr_xlate, int num_ptr, MarshalXlate *str_xlate, int num_str);
   void unmarshal(intptr_t offset);
   void move_strings(HdrStrHeap *new_heap);
   size_t strings_length();
+  bool contains(const MIMEField *field);
 
   // Sanity Check Functions
   void check_strings(HeapCheck *heaps, int num_heaps);
@@ -203,20 +207,20 @@ struct MIMEFieldBlockImpl : public HdrHeapObjImpl {
  ***********************************************************************/
 
 enum MIMECookedMask {
-  MIME_COOKED_MASK_CC_MAX_AGE = (1 << 0),
-  MIME_COOKED_MASK_CC_NO_CACHE = (1 << 1),
-  MIME_COOKED_MASK_CC_NO_STORE = (1 << 2),
-  MIME_COOKED_MASK_CC_NO_TRANSFORM = (1 << 3),
-  MIME_COOKED_MASK_CC_MAX_STALE = (1 << 4),
-  MIME_COOKED_MASK_CC_MIN_FRESH = (1 << 5),
-  MIME_COOKED_MASK_CC_ONLY_IF_CACHED = (1 << 6),
-  MIME_COOKED_MASK_CC_PUBLIC = (1 << 7),
-  MIME_COOKED_MASK_CC_PRIVATE = (1 << 8),
-  MIME_COOKED_MASK_CC_MUST_REVALIDATE = (1 << 9),
-  MIME_COOKED_MASK_CC_PROXY_REVALIDATE = (1 << 10),
-  MIME_COOKED_MASK_CC_S_MAXAGE = (1 << 11),
+  MIME_COOKED_MASK_CC_MAX_AGE              = (1 << 0),
+  MIME_COOKED_MASK_CC_NO_CACHE             = (1 << 1),
+  MIME_COOKED_MASK_CC_NO_STORE             = (1 << 2),
+  MIME_COOKED_MASK_CC_NO_TRANSFORM         = (1 << 3),
+  MIME_COOKED_MASK_CC_MAX_STALE            = (1 << 4),
+  MIME_COOKED_MASK_CC_MIN_FRESH            = (1 << 5),
+  MIME_COOKED_MASK_CC_ONLY_IF_CACHED       = (1 << 6),
+  MIME_COOKED_MASK_CC_PUBLIC               = (1 << 7),
+  MIME_COOKED_MASK_CC_PRIVATE              = (1 << 8),
+  MIME_COOKED_MASK_CC_MUST_REVALIDATE      = (1 << 9),
+  MIME_COOKED_MASK_CC_PROXY_REVALIDATE     = (1 << 10),
+  MIME_COOKED_MASK_CC_S_MAXAGE             = (1 << 11),
   MIME_COOKED_MASK_CC_NEED_REVALIDATE_ONCE = (1 << 12),
-  MIME_COOKED_MASK_CC_EXTENSION = (1 << 13)
+  MIME_COOKED_MASK_CC_EXTENSION            = (1 << 13)
 };
 
 struct MIMECookedCacheControl {
@@ -282,7 +286,6 @@ struct MIMEScanner {
                           //  int m_state;                  // state of scanning state machine
   MimeParseState m_state; ///< Parsing machine state.
 };
-
 
 struct MIMEParser {
   MIMEScanner m_scanner;
@@ -765,6 +768,23 @@ MIMEField::name_set(HdrHeap *heap, MIMEHdrImpl *mh, const char *name, int length
 /*-------------------------------------------------------------------------
   -------------------------------------------------------------------------*/
 
+inline bool
+MIMEField::name_is_valid() const
+{
+  const char *name;
+  int length;
+
+  for (name = name_get(&length); length > 0; length--) {
+    if (ParseRules::is_control(name[length - 1])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/*-------------------------------------------------------------------------
+  -------------------------------------------------------------------------*/
+
 inline const char *
 MIMEField::value_get(int *length) const
 {
@@ -852,6 +872,23 @@ MIMEField::value_append(HdrHeap *heap, MIMEHdrImpl *mh, const char *value, int l
   mime_field_value_append(heap, mh, this, value, length, prepend_comma, separator);
 }
 
+/*-------------------------------------------------------------------------
+  -------------------------------------------------------------------------*/
+
+inline bool
+MIMEField::value_is_valid() const
+{
+  const char *value;
+  int length;
+
+  for (value = value_get(&length); length > 0; length--) {
+    if (ParseRules::is_control(value[length - 1])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 inline int
 MIMEField::has_dups() const
 {
@@ -866,7 +903,6 @@ MIMEField::has_dups() const
 
 struct MIMEFieldIter {
   MIMEFieldIter() : m_slot(0), m_block(NULL) {}
-
   uint32_t m_slot;
   MIMEFieldBlockImpl *m_block;
 };
@@ -907,6 +943,7 @@ public:
   void field_delete(const char *name, int name_length);
 
   MIMEField *iter_get_first(MIMEFieldIter *iter);
+  MIMEField *iter_get(MIMEFieldIter *iter);
   MIMEField *iter_get_next(MIMEFieldIter *iter);
 
   uint64_t presence(uint64_t mask);
@@ -942,6 +979,7 @@ public:
   // Other separators (e.g. ';' in Set-cookie/Cookie) are also possible
   void field_value_append(MIMEField *field, const char *value, int value_length, bool prepend_comma = false,
                           const char separator = ',');
+  void field_combine_dups(MIMEField *field, bool prepend_comma = false, const char separator = ',');
   time_t get_age();
   int64_t get_content_length() const;
   time_t get_date();
@@ -1142,33 +1180,40 @@ inline MIMEField *
 MIMEHdr::iter_get_first(MIMEFieldIter *iter)
 {
   iter->m_block = &m_mime->m_first_fblock;
-  iter->m_slot = (unsigned int)-1;
-  return iter_get_next(iter);
+  iter->m_slot  = 0;
+  return iter_get(iter);
 }
 
 inline MIMEField *
-MIMEHdr::iter_get_next(MIMEFieldIter *iter)
+MIMEHdr::iter_get(MIMEFieldIter *iter)
 {
   MIMEField *f;
   MIMEFieldBlockImpl *b = iter->m_block;
 
-  int slot = iter->m_slot + 1;
+  int slot = iter->m_slot;
 
   while (b) {
     for (; slot < (int)b->m_freetop; slot++) {
       f = &(b->m_field_slots[slot]);
       if (f->is_live()) {
-        iter->m_slot = slot;
+        iter->m_slot  = slot;
         iter->m_block = b;
         return f;
       }
     }
-    b = b->m_next;
+    b    = b->m_next;
     slot = 0;
   }
 
   iter->m_block = NULL;
   return NULL;
+}
+
+inline MIMEField *
+MIMEHdr::iter_get_next(MIMEFieldIter *iter)
+{
+  iter->m_slot++;
+  return iter_get(iter);
 }
 
 /*-------------------------------------------------------------------------
@@ -1326,6 +1371,24 @@ inline void
 MIMEHdr::field_value_append(MIMEField *field, const char *value_str, int value_len, bool prepend_comma, const char separator)
 {
   field->value_append(m_heap, m_mime, value_str, value_len, prepend_comma, separator);
+}
+
+inline void
+MIMEHdr::field_combine_dups(MIMEField *field, bool prepend_comma, const char separator)
+{
+  MIMEField *current = field->m_next_dup;
+
+  while (current) {
+    int value_len         = 0;
+    const char *value_str = current->value_get(&value_len);
+
+    if (value_len > 0) {
+      HdrHeap::HeapGuard guard(m_heap, value_str); // reference count the source string so it doesn't get moved
+      field->value_append(m_heap, m_mime, value_str, value_len, prepend_comma, separator);
+    }
+    field_delete(current, false); // don't delete duplicates
+    current = field->m_next_dup;
+  }
 }
 
 /*-------------------------------------------------------------------------

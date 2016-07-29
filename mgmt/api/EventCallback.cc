@@ -29,12 +29,11 @@
  *
  ***************************************************************************/
 
-#include "ink_config.h"
-#include "ink_memory.h"
+#include "ts/ink_config.h"
+#include "ts/ink_memory.h"
 
 #include "EventCallback.h"
 #include "CoreAPIShared.h"
-
 
 /**********************************************************************
  * create_event_callback
@@ -84,14 +83,13 @@ create_callback_table(const char *lock_name)
 {
   CallbackTable *cb_table = (CallbackTable *)ats_malloc(sizeof(CallbackTable));
 
-  for (int i = 0; i < NUM_EVENTS; i++)
+  for (int i                      = 0; i < NUM_EVENTS; i++)
     cb_table->event_callback_l[i] = NULL;
 
   // initialize the mutex
   ink_mutex_init(&cb_table->event_callback_lock, lock_name);
   return cb_table;
 }
-
 
 /**********************************************************************
  * delete_callback_table
@@ -199,7 +197,7 @@ cb_table_register(CallbackTable *cb_table, const char *event_name, TSEventSignal
     for (int i = 0; i < NUM_EVENTS; i++) {
       if (!cb_table->event_callback_l[i]) {
         cb_table->event_callback_l[i] = create_queue();
-        first_time = 1;
+        first_time                    = 1;
       }
 
       if (!cb_table->event_callback_l[i]) {
@@ -213,18 +211,20 @@ cb_table_register(CallbackTable *cb_table, const char *event_name, TSEventSignal
   } else { // register callback for specific alarm
     // printf("[EventSignalCbRegister] Register callback for %s\n", event_name);
     id = get_event_id(event_name);
-    if (!cb_table->event_callback_l[id]) {
-      cb_table->event_callback_l[id] = create_queue();
-      first_time = 1;
-    }
+    if (id != -1) {
+      if (!cb_table->event_callback_l[id]) {
+        cb_table->event_callback_l[id] = create_queue();
+        first_time                     = 1;
+      }
 
-    if (!cb_table->event_callback_l[id]) {
-      ink_mutex_release(&cb_table->event_callback_lock);
-      return TS_ERR_SYS_CALL;
+      if (!cb_table->event_callback_l[id]) {
+        ink_mutex_release(&cb_table->event_callback_lock);
+        return TS_ERR_SYS_CALL;
+      }
+      // now add to list
+      event_cb = create_event_callback(func, data);
+      enqueue(cb_table->event_callback_l[id], event_cb);
     }
-    // now add to list
-    event_cb = create_event_callback(func, data);
-    enqueue(cb_table->event_callback_l[id], event_cb);
   }
 
   // release lock on callback table
@@ -235,7 +235,6 @@ cb_table_register(CallbackTable *cb_table, const char *event_name, TSEventSignal
 
   return TS_ERR_OKAY;
 }
-
 
 /**********************************************************************
  * cb_table_unregister
@@ -280,7 +279,7 @@ cb_table_unregister(CallbackTable *cb_table, const char *event_name, TSEventSign
         // remove this function
         for (int j = 0; j < queue_depth; j++) {
           event_cb = (EventCallbackT *)dequeue(cb_table->event_callback_l[i]);
-          cb_fun = event_cb->func;
+          cb_fun   = event_cb->func;
 
           // the pointers are the same so don't enqueue the fn back on
           if (*cb_fun == *func) {
@@ -301,41 +300,43 @@ cb_table_unregister(CallbackTable *cb_table, const char *event_name, TSEventSign
   } else {
     // unregister for specific event
     int id = get_event_id(event_name);
-    if (cb_table->event_callback_l[id]) {
-      int queue_depth;
+    if (id != -1) {
+      if (cb_table->event_callback_l[id]) {
+        int queue_depth;
 
-      queue_depth = queue_len(cb_table->event_callback_l[id]);
-      // func == NULL means unregister all functions associated with alarm
-      if (func == NULL) {
-        while (!queue_is_empty(cb_table->event_callback_l[id])) {
-          event_cb = (EventCallbackT *)dequeue(cb_table->event_callback_l[id]);
-          delete_event_callback(event_cb);
-        }
-
-        // clean up queue and set to NULL
-        delete_queue(cb_table->event_callback_l[id]);
-        cb_table->event_callback_l[id] = NULL;
-      } else {
-        // remove this function
-        for (int j = 0; j < queue_depth; j++) {
-          event_cb = (EventCallbackT *)dequeue(cb_table->event_callback_l[id]);
-          cb_fun = event_cb->func;
-
-          // the pointers are the same
-          if (*cb_fun == *func) {
+        queue_depth = queue_len(cb_table->event_callback_l[id]);
+        // func == NULL means unregister all functions associated with alarm
+        if (func == NULL) {
+          while (!queue_is_empty(cb_table->event_callback_l[id])) {
+            event_cb = (EventCallbackT *)dequeue(cb_table->event_callback_l[id]);
             delete_event_callback(event_cb);
-            continue;
           }
 
-          enqueue(cb_table->event_callback_l[id], event_cb);
-        }
-
-        // is queue empty now?
-        if (queue_is_empty(cb_table->event_callback_l[id])) {
+          // clean up queue and set to NULL
           delete_queue(cb_table->event_callback_l[id]);
           cb_table->event_callback_l[id] = NULL;
-        }
-      } // end if NULL else
+        } else {
+          // remove this function
+          for (int j = 0; j < queue_depth; j++) {
+            event_cb = (EventCallbackT *)dequeue(cb_table->event_callback_l[id]);
+            cb_fun   = event_cb->func;
+
+            // the pointers are the same
+            if (*cb_fun == *func) {
+              delete_event_callback(event_cb);
+              continue;
+            }
+
+            enqueue(cb_table->event_callback_l[id], event_cb);
+          }
+
+          // is queue empty now?
+          if (queue_is_empty(cb_table->event_callback_l[id])) {
+            delete_queue(cb_table->event_callback_l[id]);
+            cb_table->event_callback_l[id] = NULL;
+          }
+        } // end if NULL else
+      }
     }
   }
 

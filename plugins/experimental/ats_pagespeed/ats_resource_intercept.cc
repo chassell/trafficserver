@@ -27,7 +27,6 @@
 
 #include "ats_resource_intercept.h"
 
-
 #include "ats_base_fetch.h"
 #include "ats_rewrite_driver_factory.h"
 #include "ats_rewrite_options.h"
@@ -41,7 +40,6 @@
 #include "net/instaweb/system/public/system_request_context.h"
 
 #include "net/instaweb/util/public/string_writer.h"
-
 
 using namespace net_instaweb;
 
@@ -91,15 +89,15 @@ resource_intercept(TSCont cont, TSEvent event, void *edata)
 {
   TSDebug("ats-speed", "resource_intercept event: %d", (int)event);
   InterceptCtx *intercept_ctx = static_cast<InterceptCtx *>(TSContDataGet(cont));
-  bool shutDown = false;
+  bool shutDown               = false;
 
   // TODO(oschaaf): have a look at https://github.com/apache/trafficserver/blob/master/plugins/experimental/esi/serverIntercept.c
   // and see if we have any edge cases we should fix.
   switch (event) {
   case TS_EVENT_NET_ACCEPT: {
-    intercept_ctx->vconn = static_cast<TSVConn>(edata);
-    intercept_ctx->req_buffer = TSIOBufferCreate();
-    intercept_ctx->req_reader = TSIOBufferReaderAlloc(intercept_ctx->req_buffer);
+    intercept_ctx->vconn       = static_cast<TSVConn>(edata);
+    intercept_ctx->req_buffer  = TSIOBufferCreate();
+    intercept_ctx->req_reader  = TSIOBufferReaderAlloc(intercept_ctx->req_buffer);
     intercept_ctx->resp_buffer = TSIOBufferCreate();
     intercept_ctx->resp_reader = TSIOBufferReaderAlloc(intercept_ctx->resp_buffer);
     TSVConnRead(intercept_ctx->vconn, cont, intercept_ctx->req_buffer, 0x7fffffff);
@@ -120,40 +118,47 @@ resource_intercept(TSCont cont, TSEvent event, void *edata)
       AtsServerContext *server_context = intercept_ctx->request_ctx->server_context;
 
       // TODO:(oschaaf) host/port
-      SystemRequestContext *system_request_context =
-        new SystemRequestContext(server_context->thread_system()->NewMutex(), server_context->timer(),
-                                 "www.foo.com", // TODO(oschaaf): compute these
-                                 80, "127.0.0.1");
+      RequestContextPtr system_request_context(new SystemRequestContext(server_context->thread_system()->NewMutex(),
+                                                                        server_context->timer(),
+                                                                        "www.foo.com", // TODO(oschaaf): compute these
+                                                                        80, "127.0.0.1"));
 
-      intercept_ctx->request_ctx->base_fetch = new AtsBaseFetch(server_context, RequestContextPtr(system_request_context),
-                                                                downstream_vio, intercept_ctx->resp_buffer, true);
+      intercept_ctx->request_ctx->base_fetch =
+        new AtsBaseFetch(server_context, system_request_context, downstream_vio, intercept_ctx->resp_buffer, true);
       intercept_ctx->request_ctx->base_fetch->set_request_headers(intercept_ctx->request_headers);
 
+      std::string host        = intercept_ctx->request_ctx->gurl->HostAndPort().as_string();
       RewriteOptions *options = NULL;
-
-      // const char* host = intercept_ctx->request_headers->Lookup1(HttpAttributes::kHost);
-      const char *host = intercept_ctx->request_ctx->gurl->HostAndPort().as_string().c_str();
-      if (host != NULL && strlen(host) > 0) {
-        intercept_ctx->request_ctx->options = get_host_options(host);
+      if (host.size() > 0) {
+        options = get_host_options(host.c_str(), server_context);
+      }
+      if (options == NULL) {
+        options = server_context->global_options()->Clone();
       }
 
-      // TODO(oschaaf): directory options should be coming from configuration!
-      bool ok = ps_determine_options(
-        server_context, intercept_ctx->request_ctx->options, intercept_ctx->request_ctx->base_fetch->request_headers(),
-        intercept_ctx->request_ctx->base_fetch->response_headers(), &options, intercept_ctx->request_ctx->gurl);
-
-      // Take ownership of custom_options.
-      scoped_ptr<RewriteOptions> custom_options(options);
-
+      /*        GoogleString pagespeed_query_params;
+      GoogleString pagespeed_option_cookies;
+      bool ok = ps_determine_options(server_context,
+                                     intercept_ctx->request_ctx->base_fetch->request_headers(),
+                                     NULL //intercept_ctx->request_ctx->base_fetch->response_headers()//,
+                                     &options,
+                                     system_request_context,
+                                     intercept_ctx->request_ctx->gurl,
+                                     &pagespeed_query_params,
+                                     &pagespeed_option_cookies,
+                                     false );
       if (!ok) {
         TSError("Failure while determining request options for psol resource");
-        // options = server_context->global_options();
-      } else {
-        // ps_determine_options modified url, removing any ModPagespeedFoo=Bar query
-        // parameters.  Keep url_string in sync with url.
-        // TODO(oschaaf): we really should determine if we have to do the lookup
-        intercept_ctx->request_ctx->gurl->Spec().CopyToString(intercept_ctx->request_ctx->url_string);
+        options = server_context->global_options()->Clone();
+      } else if (options == NULL) {
+        options = server_context->global_options()->Clone();
       }
+    */
+      scoped_ptr<RewriteOptions> custom_options(options);
+
+      // TODO(oschaaf): directory options should be coming from configuration!
+      // TODO(oschaaf): do we need to sync the url?
+      system_request_context->set_options(options->ComputeHttpOptions());
 
       // The url we have here is already checked for IsWebValid()
       net_instaweb::ResourceFetch::Start(GoogleUrl(*intercept_ctx->request_ctx->url_string),
@@ -168,7 +173,7 @@ resource_intercept(TSCont cont, TSEvent event, void *edata)
       if (numBytesWritten == numBytesToWrite) {
         TSVConnWrite(intercept_ctx->vconn, cont, intercept_ctx->resp_reader, numBytesToWrite);
       } else {
-        TSError("Not all output could be written in one go");
+        TSError("[ats_resource_intercept] Not all output could be written in one go");
         DCHECK(false);
       }
     }
@@ -185,18 +190,18 @@ resource_intercept(TSCont cont, TSEvent event, void *edata)
     shutDown = true;
     break;
   case TS_EVENT_ERROR:
-    TSError("vconn event: error %s", intercept_ctx->request_ctx->url_string->c_str());
+    TSError("[ats_resource_intercept] vconn event: error %s", intercept_ctx->request_ctx->url_string->c_str());
     shutDown = true;
     break;
   case TS_EVENT_NET_ACCEPT_FAILED:
-    TSError("vconn event: accept failed");
+    TSError("[ats_resource_intercept] vconn event: accept failed");
     shutDown = true;
     break;
   case TS_EVENT_IMMEDIATE:
   case TS_EVENT_TIMEOUT:
     break;
   default:
-    TSError("default clause event: %d", event);
+    TSError("[ats_resource_intercept] Default clause event: %d", event);
     break;
   }
 
@@ -212,7 +217,7 @@ resource_intercept(TSCont cont, TSEvent event, void *edata)
 static int
 read_cache_header_callback(TSCont cont, TSEvent event, void *edata)
 {
-  TSHttpTxn txn = static_cast<TSHttpTxn>(edata);
+  TSHttpTxn txn     = static_cast<TSHttpTxn>(edata);
   TransformCtx *ctx = get_transaction_context(txn);
 
   if (ctx == NULL) {
@@ -249,10 +254,10 @@ read_cache_header_callback(TSCont cont, TSEvent event, void *edata)
   AtsRewriteDriverFactory *factory = (AtsRewriteDriverFactory *)server_context->factory();
   GoogleString output;
   StringWriter writer(&output);
-  HttpStatus::Code status = HttpStatus::kOK;
-  ContentType content_type = kContentTypeHtml;
-  StringPiece cache_control = HttpAttributes::kNoCache;
-  const char *error_message = NULL;
+  HttpStatus::Code status      = HttpStatus::kOK;
+  ContentType content_type     = kContentTypeHtml;
+  StringPiece cache_control    = HttpAttributes::kNoCache;
+  const char *error_message    = NULL;
   StringPiece request_uri_path = ctx->gurl->PathAndLeaf();
 
   if (false && ctx->gurl->PathSansQuery() == "/robots.txt") {
@@ -278,18 +283,17 @@ read_cache_header_callback(TSCont cont, TSEvent event, void *edata)
     TSMBuffer reqp;
     TSMLoc req_hdr_loc;
     if (TSHttpTxnClientReqGet(ctx->txn, &reqp, &req_hdr_loc) != TS_SUCCESS) {
-      TSError("Error TSHttpTxnClientReqGet for resource!");
+      TSError("[ats_resource_intercept] Error TSHttpTxnClientReqGet for resource!");
       TSHttpTxnReenable(txn, TS_EVENT_HTTP_CONTINUE);
       return 0;
     }
 
-    TSCont interceptCont = TSContCreate(resource_intercept, TSMutexCreate());
-    InterceptCtx *intercept_ctx = new InterceptCtx();
-    intercept_ctx->request_ctx = ctx;
+    TSCont interceptCont           = TSContCreate(resource_intercept, TSMutexCreate());
+    InterceptCtx *intercept_ctx    = new InterceptCtx();
+    intercept_ctx->request_ctx     = ctx;
     intercept_ctx->request_headers = new RequestHeaders();
     copy_request_headers_to_psol(reqp, req_hdr_loc, intercept_ctx->request_headers);
     TSHandleMLocRelease(reqp, TS_NULL_MLOC, req_hdr_loc);
-
 
     TSContDataSet(interceptCont, intercept_ctx);
     TSHttpTxnServerIntercept(interceptCont, txn);
@@ -298,9 +302,9 @@ read_cache_header_callback(TSCont cont, TSEvent event, void *edata)
   }
 
   if (error_message != NULL) {
-    status = HttpStatus::kNotFound;
+    status       = HttpStatus::kNotFound;
     content_type = kContentTypeHtml;
-    output = error_message;
+    output       = error_message;
   }
 
   ResponseHeaders response_headers;
@@ -323,9 +327,9 @@ read_cache_header_callback(TSCont cont, TSEvent event, void *edata)
   StringWriter header_writer(&header);
   response_headers.WriteAsHttp(&header_writer, server_context->message_handler());
 
-  TSCont interceptCont = TSContCreate(resource_intercept, TSMutexCreate());
+  TSCont interceptCont        = TSContCreate(resource_intercept, TSMutexCreate());
   InterceptCtx *intercept_ctx = new InterceptCtx();
-  intercept_ctx->request_ctx = ctx;
+  intercept_ctx->request_ctx  = ctx;
   header.append(output);
   TSHttpTxnRespCacheableSet(txn, 0);
   TSHttpTxnReqCacheableSet(txn, 0);

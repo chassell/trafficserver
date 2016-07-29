@@ -21,8 +21,9 @@
   limitations under the License.
  */
 
-#include "libts.h"
-#include "I_Layout.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_args.h"
+#include "ts/I_Layout.h"
 
 #define PROGRAM_NAME "traffic_logcat"
 #define MAX_LOGBUFFER_SIZE 65536
@@ -42,16 +43,15 @@
 #include "LogBuffer.h"
 #include "LogUtils.h"
 #include "LogSock.h"
-#include "LogPredefined.h"
 #include "Log.h"
 
 // logcat-specific command-line flags
-static int squid_flag = 0;
-static int follow_flag = 0;
-static int clf_flag = 0;
-static int elf_flag = 0;
-static int elf2_flag = 0;
-static int auto_filenames = 0;
+static int squid_flag              = 0;
+static int follow_flag             = 0;
+static int clf_flag                = 0;
+static int elf_flag                = 0;
+static int elf2_flag               = 0;
+static int auto_filenames          = 0;
 static int overwrite_existing_file = 0;
 static char output_file[1024];
 int auto_clear_cache_flag = 0;
@@ -87,8 +87,8 @@ process_file(int in_fd, int out_fd)
     // cookie and the version number.
     //
     unsigned first_read_size = sizeof(uint32_t) + sizeof(uint32_t);
-    unsigned header_size = sizeof(LogBufferHeader);
-    LogBufferHeader *header = (LogBufferHeader *)&buffer[0];
+    unsigned header_size     = sizeof(LogBufferHeader);
+    LogBufferHeader *header  = (LogBufferHeader *)&buffer[0];
 
     nread = read(in_fd, buffer, first_read_size);
     if (!nread || nread == EOF)
@@ -149,15 +149,6 @@ process_file(int in_fd, int out_fd)
     // line
     //
     const char *alt_format = NULL;
-    if (squid_flag)
-      alt_format = PreDefinedFormatInfo::squid;
-    if (clf_flag)
-      alt_format = PreDefinedFormatInfo::common;
-    if (elf_flag)
-      alt_format = PreDefinedFormatInfo::extended;
-    if (elf2_flag)
-      alt_format = PreDefinedFormatInfo::extended2;
-
     // convert the buffer to ascii entries and place onto stdout
     //
     if (header->fmt_fieldlist()) {
@@ -200,7 +191,6 @@ open_output_file(char *output_file)
   return file_desc;
 }
 
-
 /*-------------------------------------------------------------------------
   main
   -------------------------------------------------------------------------*/
@@ -209,7 +199,7 @@ int
 main(int /* argc ATS_UNUSED */, const char *argv[])
 {
   enum {
-    NO_ERROR = 0,
+    NO_ERROR              = 0,
     CMD_LINE_OPTION_ERROR = 1,
     DATA_PROCESSING_ERROR = 2,
   };
@@ -254,7 +244,7 @@ main(int /* argc ATS_UNUSED */, const char *argv[])
   int error = NO_ERROR;
 
   if (n_file_arguments) {
-    int bin_ext_len = strlen(LOG_FILE_BINARY_OBJECT_FILENAME_EXTENSION);
+    int bin_ext_len   = strlen(LOG_FILE_BINARY_OBJECT_FILENAME_EXTENSION);
     int ascii_ext_len = strlen(LOG_FILE_ASCII_OBJECT_FILENAME_EXTENSION);
 
     for (unsigned i = 0; i < n_file_arguments; ++i) {

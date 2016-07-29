@@ -23,8 +23,8 @@
 
 #include "HttpUpdateSM.h"
 #include "HttpDebugNames.h"
-#include "Diags.h"
-#include "ink_platform.h"
+#include "ts/Diags.h"
+#include "ts/ink_platform.h"
 
 #define MAX_ACTIVE_REQUESTS 5
 #define MAX_TOTAL_REQUESTS 100
@@ -45,10 +45,12 @@ private:
 };
 
 UpTest::UpTest(FILE * /* f ATS_UNUSED */, ProxyMutex *amutex)
-  : Continuation(amutex), active_req(0)
+  : Continuation(amutex),
+    active_req(0)
 #ifdef GO_AWAY
     ,
-    total_req(0), file(f)
+    total_req(0),
+    file(f)
 #endif
 {
   SET_HANDLER(&UpTest::main_handler);

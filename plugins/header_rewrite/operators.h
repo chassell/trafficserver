@@ -30,7 +30,6 @@
 #include "resources.h"
 #include "value.h"
 
-
 ///////////////////////////////////////////////////////////////////////////////
 // Operator declarations.
 //
@@ -56,7 +55,6 @@ private:
   Value _value;
 };
 
-
 class OperatorSetStatus : public Operator
 {
 public:
@@ -75,7 +73,6 @@ private:
   int _reason_len;
 };
 
-
 class OperatorSetStatusReason : public Operator
 {
 public:
@@ -91,7 +88,6 @@ private:
 
   Value _reason;
 };
-
 
 class OperatorSetDestination : public Operator
 {
@@ -109,7 +105,6 @@ private:
   Value _value;
 };
 
-
 class OperatorSetRedirect : public Operator
 {
 public:
@@ -126,19 +121,16 @@ private:
   Value _location;
 };
 
-
 class OperatorNoOp : public Operator
 {
 public:
   OperatorNoOp() { TSDebug(PLUGIN_NAME_DBG, "Calling CTOR for OperatorNoOp"); }
-
 protected:
   void exec(const Resources & /* res ATS_UNUSED */) const {};
 
 private:
   DISALLOW_COPY_AND_ASSIGN(OperatorNoOp);
 };
-
 
 class OperatorSetTimeoutOut : public Operator
 {
@@ -179,20 +171,17 @@ private:
   bool _skip_remap;
 };
 
-
 // All the header operators share a base class
 class OperatorRMHeader : public OperatorHeaders
 {
 public:
   OperatorRMHeader() { TSDebug(PLUGIN_NAME_DBG, "Calling CTOR for OperatorRMHeader"); }
-
 protected:
   void exec(const Resources &res) const;
 
 private:
   DISALLOW_COPY_AND_ASSIGN(OperatorRMHeader);
 };
-
 
 class OperatorAddHeader : public OperatorHeaders
 {
@@ -208,7 +197,6 @@ private:
 
   Value _value;
 };
-
 
 class OperatorSetHeader : public OperatorHeaders
 {
@@ -257,10 +245,10 @@ private:
   Value _ds_value;
 };
 
-class OperatorSetMethod : public OperatorHeaders
+class OperatorSetDebug : public Operator
 {
 public:
-  OperatorSetMethod() { TSDebug(PLUGIN_NAME_DBG, "Calling CTOR for OperatorSetMethod"); }
+  OperatorSetDebug() { TSDebug(PLUGIN_NAME_DBG, "Calling CTOR for OperatorSetDebug"); }
   void initialize(Parser &p);
 
 protected:
@@ -268,9 +256,9 @@ protected:
   void exec(const Resources &res) const;
 
 private:
-  DISALLOW_COPY_AND_ASSIGN(OperatorSetMethod);
+  DISALLOW_COPY_AND_ASSIGN(OperatorSetDebug);
 
-  Value _method;
+  Value _ds_value;
 };
 
 #endif // __OPERATORS_H

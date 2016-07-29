@@ -36,7 +36,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif /* __cplusplus */
-#include "ink_apidefs.h"
+#include "ts/ink_apidefs.h"
 
 /*===========================================================================*
 
@@ -70,7 +70,6 @@ typedef enum {
 InkHashTable *ink_hash_table_create(InkHashTableKeyType key_type);
 InkHashTable *ink_hash_table_destroy(InkHashTable *ht_ptr);
 InkHashTable *ink_hash_table_destroy_and_free_values(InkHashTable *ht_ptr);
-InkHashTable *ink_hash_table_destroy_and_xfree_values(InkHashTable *ht_ptr);
 inkcoreapi int ink_hash_table_isbound(InkHashTable *ht_ptr, const char *key);
 inkcoreapi int ink_hash_table_lookup(InkHashTable *ht_ptr, const char *key, InkHashTableValue *value_ptr);
 inkcoreapi int ink_hash_table_delete(InkHashTable *ht_ptr, const char *key);
@@ -106,15 +105,14 @@ ink_hash_table_iterator_first(InkHashTable *ht_ptr, InkHashTableIteratorState *s
   Tcl_HashEntry *tcl_he_ptr;
   InkHashTableEntry *he_ptr;
 
-  tcl_ht_ptr = (Tcl_HashTable *)ht_ptr;
+  tcl_ht_ptr           = (Tcl_HashTable *)ht_ptr;
   tcl_search_state_ptr = (Tcl_HashSearch *)state_ptr;
 
   tcl_he_ptr = Tcl_FirstHashEntry(tcl_ht_ptr, tcl_search_state_ptr);
-  he_ptr = (InkHashTableEntry *)tcl_he_ptr;
+  he_ptr     = (InkHashTableEntry *)tcl_he_ptr;
 
   return (he_ptr);
 } /* End ink_hash_table_iterator_first */
-
 
 /*---------------------------------------------------------------------------*
 
@@ -138,7 +136,7 @@ ink_hash_table_iterator_next(InkHashTable *ht_ptr, InkHashTableIteratorState *st
   tcl_search_state_ptr = (Tcl_HashSearch *)state_ptr;
 
   tcl_he_ptr = Tcl_NextHashEntry(tcl_search_state_ptr);
-  he_ptr = (InkHashTableEntry *)tcl_he_ptr;
+  he_ptr     = (InkHashTableEntry *)tcl_he_ptr;
 
   return (he_ptr);
 } /* End ink_hash_table_iterator_next */

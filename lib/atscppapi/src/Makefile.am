@@ -15,12 +15,13 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-TS_PLUGIN_CPPFLAGS = \
+AM_CPPFLAGS = \
+  -I$(top_srcdir)/$(subdir)/include \
+  -I$(top_builddir)/$(subdir)/include \
+  -I$(top_builddir)/proxy/api \
   -I$(top_srcdir)/proxy/api \
-  -I$(top_builddir)/lib/ts \
-  -I$(top_srcdir)/lib/ts
+  -I$(top_srcdir)/lib
 
-AM_CXXFLAGS = -Iinclude $(TS_PLUGIN_CPPFLAGS)
 
 # build the library
 lib_LTLIBRARIES = libatscppapi.la
@@ -48,10 +49,11 @@ libatscppapi_la_SOURCES = GlobalPlugin.cc \
 			  GzipDeflateTransformation.cc \
 			  GzipInflateTransformation.cc \
 			  AsyncTimer.cc \
-                          InterceptPlugin.cc
+			  InterceptPlugin.cc \
+			  Mutex.cc
 
 library_includedir=$(includedir)/atscppapi
-base_include_folder = include/atscppapi/
+base_include_folder = $(top_srcdir)/$(subdir)/include/atscppapi
 
 library_include_HEADERS = $(base_include_folder)/GlobalPlugin.h \
 			  $(base_include_folder)/Plugin.h \
@@ -74,10 +76,12 @@ library_include_HEADERS = $(base_include_folder)/GlobalPlugin.h \
 			  $(base_include_folder)/Stat.h \
 			  $(base_include_folder)/Mutex.h \
 			  $(base_include_folder)/RemapPlugin.h \
-			  $(base_include_folder)/shared_ptr.h \
 			  $(base_include_folder)/Async.h \
 			  $(base_include_folder)/AsyncHttpFetch.h \
 			  $(base_include_folder)/GzipDeflateTransformation.h \
 			  $(base_include_folder)/GzipInflateTransformation.h \
 			  $(base_include_folder)/AsyncTimer.h \
 			  $(base_include_folder)/InterceptPlugin.h
+
+library_include_HEADERS += \
+			  $(top_builddir)/$(subdir)/include/atscppapi/shared_ptr.h

@@ -34,12 +34,13 @@
 #ifndef _BASE_MANAGER_H
 #define _BASE_MANAGER_H
 
-#include "ink_thread.h"
-#include "ink_mutex.h"
-#include "ink_llqueue.h"
+#include "ts/ink_thread.h"
+#include "ts/ink_mutex.h"
+#include "ts/ink_llqueue.h"
+#include "ts/ink_hash_table.h"
 
 #include "MgmtDefs.h"
-
+#include "MgmtMarshall.h"
 
 /*******************************************
  * used by LocalManager and in Proxy Main. *
@@ -99,6 +100,8 @@
 #define MGMT_SIGNAL_HTTP_CONGESTED_SERVER 20  /* Congestion control -- congested server */
 #define MGMT_SIGNAL_HTTP_ALLEVIATED_SERVER 21 /* Congestion control -- alleviated server */
 
+#define MGMT_SIGNAL_CONFIG_FILE_CHILD 22
+
 #define MGMT_SIGNAL_SAC_SERVER_DOWN 400
 
 typedef struct _mgmt_message_hdr_type {
@@ -106,13 +109,11 @@ typedef struct _mgmt_message_hdr_type {
   int data_len;
 } MgmtMessageHdr;
 
-
 typedef struct _mgmt_event_callback_list {
   MgmtCallback func;
   void *opaque_data;
   struct _mgmt_event_callback_list *next;
 } MgmtCallbackList;
-
 
 class BaseManager
 {
@@ -133,6 +134,5 @@ protected:
 
 private:
 }; /* End class BaseManager */
-
 
 #endif /* _BASE_MANAGER_H */

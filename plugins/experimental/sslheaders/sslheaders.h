@@ -30,7 +30,10 @@ typedef struct bio_st BIO;
 #define PLUGIN_NAME "sslheaders"
 
 #define SslHdrDebug(fmt, ...) TSDebug(PLUGIN_NAME, "%s: " fmt, __func__, ##__VA_ARGS__)
-#define SslHdrError(fmt, ...) TSError(PLUGIN_NAME ": %s: " fmt, __func__, ##__VA_ARGS__)
+#define SslHdrError(fmt, ...)  \
+  TSError("[" PLUGIN_NAME "] " \
+          ": %s: " fmt,        \
+          __func__, ##__VA_ARGS__)
 
 enum AttachOptions {
   SSL_HEADERS_ATTACH_CLIENT,
@@ -60,7 +63,6 @@ enum ExpansionField {
 
 struct SslHdrExpansion {
   SslHdrExpansion() : name(), scope(SSL_HEADERS_SCOPE_NONE), field(SSL_HEADERS_FIELD_NONE) {}
-
   std::string name; // HTTP header name
   ExpansionScope scope;
   ExpansionField field;

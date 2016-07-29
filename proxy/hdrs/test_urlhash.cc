@@ -21,24 +21,21 @@
   limitations under the License.
  */
 
-
 #include <stdlib.h>
 #include <string.h>
 
-#include "Arena.h"
+#include "ts/Arena.h"
 #include "HTTP.h"
 #include "MIME.h"
-#include "Regex.h"
+#include "ts/Regex.h"
 #include "URL.h"
 #include "HttpCompat.h"
 
 static void
 test_url()
 {
-  url_hash_method = 1;
-
   static const char *strs[] = {"http://npdev:19080/1.6664000000/4000", "http://npdev:19080/1.8666000000/4000"};
-  static int nstrs = sizeof(strs) / sizeof(strs[0]);
+  static int nstrs          = sizeof(strs) / sizeof(strs[0]);
 
   int err, failed;
   URL url;
@@ -49,8 +46,8 @@ test_url()
   failed = 0;
   for (i = 0; i < nstrs; i++) {
     old_length = strlen(strs[i]);
-    start = strs[i];
-    end = start + old_length;
+    start      = strs[i];
+    end        = start + old_length;
 
     url.create(NULL);
     err = url.parse(&start, end);

@@ -22,15 +22,15 @@
  */
 
 #include <stdio.h>
-#include "ink_platform.h"
-#include "ink_file.h"
-#include "ParseRules.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_file.h"
+#include "ts/ParseRules.h"
 #include "I_RecCore.h"
-#include "I_Layout.h"
+#include "ts/I_Layout.h"
 #include "InkAPIInternal.h"
 #include "Main.h"
 #include "Plugin.h"
-#include "ink_cap.h"
+#include "ts/ink_cap.h"
 
 static const char *plugin_dir = ".";
 
@@ -51,18 +51,30 @@ DLL<PluginRegInfo> plugin_reg_list;
 PluginRegInfo *plugin_reg_current = NULL;
 
 PluginRegInfo::PluginRegInfo()
-  : plugin_registered(false), plugin_path(NULL), sdk_version(PLUGIN_SDK_VERSION_UNKNOWN), plugin_name(NULL), vendor_name(NULL),
-    support_email(NULL)
+  : plugin_registered(false), plugin_path(NULL), plugin_name(NULL), vendor_name(NULL), support_email(NULL), dlh(NULL)
 {
+}
+
+PluginRegInfo::~PluginRegInfo()
+{
+  // We don't support unloading plugins once they are successfully loaded, so assert
+  // that we don't accidentally attempt this.
+  ink_release_assert(this->plugin_registered == false);
+  ink_release_assert(this->link.prev == NULL);
+
+  ats_free(this->plugin_path);
+  ats_free(this->plugin_name);
+  ats_free(this->vendor_name);
+  ats_free(this->support_email);
+  if (dlh)
+    dlclose(dlh);
 }
 
 static bool
 plugin_load(int argc, char *argv[], bool validateOnly)
 {
-  char path[PATH_NAME_MAX + 1];
-  void *handle;
+  char path[PATH_NAME_MAX];
   init_func_t init;
-  PluginRegInfo *plugin_reg_temp;
 
   if (argc < 1) {
     return true;
@@ -71,24 +83,22 @@ plugin_load(int argc, char *argv[], bool validateOnly)
 
   Note("loading plugin '%s'", path);
 
-  plugin_reg_temp = plugin_reg_list.head;
-  while (plugin_reg_temp) {
+  for (PluginRegInfo *plugin_reg_temp = plugin_reg_list.head; plugin_reg_temp != NULL;
+       plugin_reg_temp                = (plugin_reg_temp->link).next) {
     if (strcmp(plugin_reg_temp->plugin_path, path) == 0) {
       Warning("multiple loading of plugin %s", path);
       break;
     }
-    plugin_reg_temp = (plugin_reg_temp->link).next;
   }
+
   // elevate the access to read files as root if compiled with capabilities, if not
   // change the effective user to root
   {
-#if TS_USE_POSIX_CAP
     uint32_t elevate_access = 0;
     REC_ReadConfigInteger(elevate_access, "proxy.config.plugin.load_elevated");
-    ElevateAccess access(elevate_access != 0);
-#endif /* TS_USE_POSIX_CAP */
+    ElevateAccess access(elevate_access ? ElevateAccess::FILE_PRIVILEGE : 0);
 
-    handle = dlopen(path, RTLD_NOW);
+    void *handle = dlopen(path, RTLD_NOW);
     if (!handle) {
       if (validateOnly) {
         return false;
@@ -99,11 +109,13 @@ plugin_load(int argc, char *argv[], bool validateOnly)
     // Allocate a new registration structure for the
     //    plugin we're starting up
     ink_assert(plugin_reg_current == NULL);
-    plugin_reg_current = new PluginRegInfo;
+    plugin_reg_current              = new PluginRegInfo;
     plugin_reg_current->plugin_path = ats_strdup(path);
+    plugin_reg_current->dlh         = handle;
 
-    init = (init_func_t)dlsym(handle, "TSPluginInit");
+    init = (init_func_t)dlsym(plugin_reg_current->dlh, "TSPluginInit");
     if (!init) {
+      delete plugin_reg_current;
       if (validateOnly) {
         return false;
       }
@@ -114,7 +126,13 @@ plugin_load(int argc, char *argv[], bool validateOnly)
     init(argc, argv);
   } // done elevating access
 
-  plugin_reg_list.push(plugin_reg_current);
+  if (plugin_reg_current->plugin_registered) {
+    plugin_reg_list.push(plugin_reg_current);
+  } else {
+    Fatal("plugin not registered by calling TSPluginRegister");
+    return false; // this line won't get called since Fatal brings down ATS
+  }
+
   plugin_reg_current = NULL;
 
   return true;
@@ -180,7 +198,6 @@ plugin_expand(char *arg)
     break;
   }
 
-
 not_found:
   Warning("plugin.config: unable to find parameter %s", arg);
   return NULL;
@@ -196,18 +213,18 @@ plugin_init(bool validateOnly)
   int argc;
   int fd;
   int i;
-  bool retVal = true;
+  bool retVal           = true;
   static bool INIT_ONCE = true;
 
   if (INIT_ONCE) {
     api_init();
     TSConfigDirGet();
     plugin_dir = TSPluginDirGet();
-    INIT_ONCE = false;
+    INIT_ONCE  = false;
   }
 
   path = RecConfigReadConfigPath(NULL, "plugin.config");
-  fd = open(path, O_RDONLY);
+  fd   = open(path, O_RDONLY);
   if (fd < 0) {
     Warning("unable to open plugin config file '%s': %d, %s", (const char *)path, errno, strerror(errno));
     return false;
@@ -215,7 +232,7 @@ plugin_init(bool validateOnly)
 
   while (ink_file_fd_readline(fd, sizeof(line) - 1, line) > 0) {
     argc = 0;
-    p = line;
+    p    = line;
 
     // strip leading white space and test for comment or blank line
     while (*p && ParseRules::is_wslfcr(*p))

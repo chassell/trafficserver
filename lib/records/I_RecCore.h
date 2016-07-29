@@ -24,7 +24,7 @@
 #ifndef _I_REC_CORE_H_
 #define _I_REC_CORE_H_
 
-#include "Diags.h"
+#include "ts/Diags.h"
 
 #include "I_RecDefs.h"
 #include "I_RecAlarms.h"
@@ -134,7 +134,6 @@ int RecLinkConfigBool(const char *name, RecBool *rec_byte);
 int RecRegisterConfigUpdateCb(const char *name, RecConfigUpdateCb update_cb, void *cookie);
 int RecRegisterRawStatUpdateFunc(const char *name, RecRawStatBlock *rsb, int id, RecStatUpdateFunc update_func, void *cookie);
 
-
 //-------------------------------------------------------------------------
 // Record Reading/Writing
 //-------------------------------------------------------------------------
@@ -166,7 +165,10 @@ int RecGetRecordBool(const char *name, RecBool *rec_byte, bool lock = true);
 // Record Attributes Reading
 //------------------------------------------------------------------------
 
-int RecLookupRecord(const char *name, void (*callback)(const RecRecord *, void *), void *data, bool lock = true);
+typedef void (*RecLookupCallback)(const RecRecord *, void *);
+
+int RecLookupRecord(const char *name, RecLookupCallback callback, void *data, bool lock = true);
+int RecLookupMatchingRecords(unsigned rec_type, const char *match, RecLookupCallback callback, void *data, bool lock = true);
 
 int RecGetRecordType(const char *name, RecT *rec_type, bool lock = true);
 int RecGetRecordDataType(const char *name, RecDataT *data_type, bool lock = true);
@@ -181,9 +183,6 @@ int RecGetRecordSource(const char *name, RecSourceT *source, bool lock = true);
 
 int RecGetRecordAccessType(const char *name, RecAccessT *secure, bool lock = true);
 int RecSetRecordAccessType(const char *name, RecAccessT secure, bool lock = true);
-
-int RecGetRecordPrefix_Xmalloc(char *prefix, char **result, int *result_len);
-
 
 //------------------------------------------------------------------------
 // Signal and Alarms
@@ -301,7 +300,6 @@ RecString REC_readString(const char *name, bool *found, bool lock = true);
 //------------------------------------------------------------------------
 int RecResetStatRecord(const char *name);
 int RecResetStatRecord(RecT type = RECT_NULL, bool all = false);
-
 
 //------------------------------------------------------------------------
 // Set RecRecord attributes

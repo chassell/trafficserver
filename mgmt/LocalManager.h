@@ -90,19 +90,6 @@ public:
   bool processRunning();
   bool clusterOk();
 
-  void
-  tick()
-  {
-    ++internal_ticker;
-  };
-  void
-  resetTicker()
-  {
-    internal_ticker = 0;
-  }
-
-  void syslogThrInit();
-
   volatile bool run_proxy;
   volatile time_t manager_started_at;
   volatile time_t proxy_started_at;
@@ -128,15 +115,12 @@ public:
   volatile int watched_process_fd;
   volatile pid_t proxy_launch_pid;
 
-  int mgmt_sync_key;
-
   Alarms *alarm_keeper;
   VMap *virt_map;
   FileManager *configFiles;
 
   ClusterCom *ccom;
 
-  volatile int internal_ticker;
   volatile pid_t watched_process_pid;
 
   int syslog_facility;

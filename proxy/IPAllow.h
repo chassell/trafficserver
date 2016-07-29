@@ -43,6 +43,13 @@
 // forward declare in name only so it can be a friend.
 struct IpAllowUpdate;
 
+//
+// Timeout the IpAllowTable * this amount of time after the
+//    a reconfig event happens that the old table gets thrown
+//    away
+//
+static uint64_t const IP_ALLOW_TIMEOUT = HRTIME_HOUR;
+
 /** An access control record.
     It has the methods permitted and the source line.
 */
@@ -57,11 +64,11 @@ struct AclRecord {
   /// Default constructor.
   /// Present only to make Vec<> happy, do not use.
   AclRecord() : _method_mask(0), _src_line(0), _deny_nonstandard_methods(false) {}
-
   AclRecord(uint32_t method_mask) : _method_mask(method_mask), _src_line(0), _deny_nonstandard_methods(false) {}
-
   AclRecord(uint32_t method_mask, int ln, const MethodSet &nonstandard_methods, bool deny_nonstandard_methods)
-    : _method_mask(method_mask), _src_line(ln), _nonstandard_methods(nonstandard_methods),
+    : _method_mask(method_mask),
+      _src_line(ln),
+      _nonstandard_methods(nonstandard_methods),
       _deny_nonstandard_methods(deny_nonstandard_methods)
   {
   }

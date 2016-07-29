@@ -37,7 +37,8 @@
 #include <arpa/inet.h>
 #include <sys/param.h>
 #include <ts/remap.h>
-#include <ink_config.h>
+
+#include "ts/ink_config.h"
 
 using std::strlen;
 
@@ -61,7 +62,6 @@ struct AuthOptions {
   bool force;
 
   AuthOptions() : hostport(-1), transform(NULL), force(false) {}
-
   ~AuthOptions() {}
 };
 
@@ -151,8 +151,15 @@ struct AuthRequestContext {
   const StateTransition *state;
 
   AuthRequestContext()
-    : txn(NULL), cont(NULL), vconn(NULL), hparser(TSHttpParserCreate()), rheader(), iobuf(TS_IOBUFFER_SIZE_INDEX_4K), method(NULL),
-      read_body(true), state(NULL)
+    : txn(NULL),
+      cont(NULL),
+      vconn(NULL),
+      hparser(TSHttpParserCreate()),
+      rheader(),
+      iobuf(TS_IOBUFFER_SIZE_INDEX_4K),
+      method(NULL),
+      read_body(true),
+      state(NULL)
   {
     this->cont = TSContCreate(dispatch, TSMutexCreate());
     TSContDataSet(this->cont, this);
@@ -218,7 +225,7 @@ pump:
   // Move to the next state. We have to set this *before* invoking the
   // handler because the handler itself can invoke the next handler.
   auth->state = s->next;
-  event = s->handler(auth, edata);
+  event       = s->handler(auth, edata);
 
   // If the handler returns TS_EVENT_NONE, it means that a re-entrant event
   // was dispatched. In this case, the state machine continues from the
@@ -393,7 +400,7 @@ static TSEvent
 StateAuthProxyConnect(AuthRequestContext *auth, void * /* edata ATS_UNUSED */)
 {
   const AuthOptions *options = auth->options();
-  struct sockaddr const *ip = TSHttpTxnClientAddrGet(auth->txn);
+  struct sockaddr const *ip  = TSHttpTxnClientAddrGet(auth->txn);
 
   TSReleaseAssert(ip); // We must have a client IP.
 
@@ -494,7 +501,7 @@ StateAuthProxyReadHeaders(AuthRequestContext *auth, void * /* edata ATS_UNUSED *
 {
   TSIOBufferBlock blk;
   ssize_t consumed = 0;
-  bool complete = false;
+  bool complete    = false;
 
   AuthLogDebug("reading header data, %u bytes available", (unsigned)TSIOBufferReaderAvail(auth->iobuf.reader));
 
@@ -509,7 +516,7 @@ StateAuthProxyReadHeaders(AuthRequestContext *auth, void * /* edata ATS_UNUSED *
       continue;
     }
 
-    end = ptr + nbytes;
+    end    = ptr + nbytes;
     result = TSHttpHdrParseResp(auth->hparser, auth->rheader.buffer, auth->rheader.header, &ptr, end);
     switch (result) {
     case TS_PARSE_ERROR:
@@ -556,7 +563,7 @@ StateAuthProxyReadContent(AuthRequestContext *auth, void * /* edata ATS_UNUSED *
   unsigned needed;
   int64_t avail = 0;
 
-  avail = TSIOBufferReaderAvail(auth->iobuf.reader);
+  avail  = TSIOBufferReaderAvail(auth->iobuf.reader);
   needed = HttpGetContentLength(auth->rheader.buffer, auth->rheader.header);
 
   AuthLogDebug("we have %u of %u needed bytes", (unsigned)avail, needed);
@@ -576,7 +583,7 @@ StateAuthProxyCompleteContent(AuthRequestContext *auth, void * /* edata ATS_UNUS
   unsigned needed;
   int64_t avail;
 
-  avail = TSIOBufferReaderAvail(auth->iobuf.reader);
+  avail  = TSIOBufferReaderAvail(auth->iobuf.reader);
   needed = HttpGetContentLength(auth->rheader.buffer, auth->rheader.header);
 
   AuthLogDebug("we have %u of %u needed bytes", (unsigned)avail, needed);
@@ -640,7 +647,7 @@ AuthProxyGlobalHook(TSCont /* cont ATS_UNUSED */, TSEvent event, void *edata)
   switch (event) {
   case TS_EVENT_HTTP_POST_REMAP:
     // Ignore internal requests since we generated them.
-    if (TSHttpIsInternalRequest(txn) == TS_SUCCESS) {
+    if (TSHttpTxnIsInternal(txn) == TS_SUCCESS) {
       // All our internal requests *must* hit the origin since it is the
       // agent that needs to make the authorization decision. We can't
       // allow that to be cached. Note that this only affects the remap
@@ -657,9 +664,9 @@ AuthProxyGlobalHook(TSCont /* cont ATS_UNUSED */, TSEvent event, void *edata)
     // Hook this request if we are in global authorization mode or if a
     // remap rule tagged it.
     if (AuthGlobalOptions != NULL || AuthRequestIsTagged(txn)) {
-      auth = AuthRequestContext::allocate();
+      auth        = AuthRequestContext::allocate();
       auth->state = StateTableInit;
-      auth->txn = txn;
+      auth->txn   = txn;
       return AuthRequestContext::dispatch(auth->cont, event, edata);
     }
   // fallthru
@@ -737,18 +744,18 @@ TSPluginInit(int argc, const char *argv[])
 {
   TSPluginRegistrationInfo info;
 
-  info.plugin_name = (char *)"authproxy";
-  info.vendor_name = (char *)"Apache Software Foundation";
+  info.plugin_name   = (char *)"authproxy";
+  info.vendor_name   = (char *)"Apache Software Foundation";
   info.support_email = (char *)"dev@trafficserver.apache.org";
 
-  if (TSPluginRegister(TS_SDK_VERSION_3_0, &info) != TS_SUCCESS) {
+  if (TSPluginRegister(&info) != TS_SUCCESS) {
     AuthLogError("plugin registration failed");
   }
 
   TSReleaseAssert(TSHttpArgIndexReserve("AuthProxy", "AuthProxy authorization tag", &AuthTaggedRequestArg) == TS_SUCCESS);
 
   AuthOsDnsContinuation = TSContCreate(AuthProxyGlobalHook, NULL);
-  AuthGlobalOptions = AuthParseOptions(argc, argv);
+  AuthGlobalOptions     = AuthParseOptions(argc, argv);
   AuthLogDebug("using authorization proxy at %s:%d", AuthGlobalOptions->hostname.c_str(), AuthGlobalOptions->hostport);
 
   // Use the appropriate hook for consistent auth checks.

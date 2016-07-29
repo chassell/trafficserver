@@ -31,16 +31,16 @@
 #include <stdio.h>
 
 // zlib stuff, see [deflateInit2] at http://www.zlib.net/manual.html
-static const int ZLIB_MEMLEVEL = 9; // min=1 (optimize for memory),max=9 (optimized for speed)
+static const int ZLIB_MEMLEVEL       = 9; // min=1 (optimize for memory),max=9 (optimized for speed)
 static const int WINDOW_BITS_DEFLATE = -15;
-static const int WINDOW_BITS_GZIP = 31;
+static const int WINDOW_BITS_GZIP    = 31;
 
 // misc
 static const int COMPRESSION_TYPE_DEFLATE = 1;
-static const int COMPRESSION_TYPE_GZIP = 2;
+static const int COMPRESSION_TYPE_GZIP    = 2;
 // this one is just for txnargset/get to point to
-static const int GZIP_ONE = 1;
-static const int DICT_PATH_MAX = 512;
+static const int GZIP_ONE       = 1;
+static const int DICT_PATH_MAX  = 512;
 static const int DICT_ENTRY_MAX = 2048;
 
 // this one is used to rename the accept encoding header
@@ -48,11 +48,7 @@ static const int DICT_ENTRY_MAX = 2048;
 // to make it work, the name must be different then downstream proxies though
 // otherwise the downstream will restore the accept encoding header
 
-enum transform_state {
-  transform_state_initialized,
-  transform_state_output,
-  transform_state_finished,
-};
+enum transform_state { transform_state_initialized, transform_state_output, transform_state_finished };
 
 typedef struct {
   TSHttpTxn txn;
@@ -64,7 +60,6 @@ typedef struct {
   enum transform_state state;
   int compression_type;
 } GzipData;
-
 
 voidpf gzip_alloc(voidpf opaque, uInt items, uInt size);
 void gzip_free(voidpf opaque, voidpf address);

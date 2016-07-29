@@ -21,20 +21,19 @@
   limitations under the License.
  */
 
-#include "libts.h"
-
-#include "ink_platform.h"
-#include "ink_defs.h"
-#include "ink_assert.h"
-#include "ink_error.h"
-#include "ink_file.h"
-#include "ink_string.h"
-#include "ink_time.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_memory.h"
+#include "ts/ink_defs.h"
+#include "ts/ink_assert.h"
+#include "ts/ink_error.h"
+#include "ts/ink_file.h"
+#include "ts/ink_string.h"
+#include "ts/ink_time.h"
 
 #include "MgmtUtils.h"
 #include "MultiFile.h"
 #include "ExpandingArray.h"
-#include "TextBuffer.h"
+#include "ts/TextBuffer.h"
 #include "WebMgmtUtils.h"
 
 /****************************************************************************
@@ -47,7 +46,7 @@
 
 MultiFile::MultiFile()
 {
-  managedDir = NULL;
+  managedDir  = NULL;
   dirDescript = NULL;
 }
 
@@ -62,9 +61,9 @@ MultiFile::addTableEntries(ExpandingArray *fileList, textBuffer *output)
   fileEntry *current;
   char *safeName;
   char dateBuf[64];
-  const char dataOpen[] = "\t<td>";
+  const char dataOpen[]  = "\t<td>";
   const char dataClose[] = "</td>\n";
-  const int dataOpenLen = strlen(dataOpen);
+  const int dataOpenLen  = strlen(dataOpen);
   const int dataCloseLen = strlen(dataClose);
 
   for (int i = 0; i < numFiles; i++) {
@@ -118,19 +117,20 @@ MultiFile::WalkFiles(ExpandingArray *fileList)
   while (readdir_r(dir, dirEntry, &result) == 0) {
     if (!result)
       break;
-    fileName = dirEntry->d_name;
-    filePath = newPathString(managedDir, fileName);
+    fileName                = dirEntry->d_name;
+    filePath                = newPathString(managedDir, fileName);
     records_config_filePath = newPathString(filePath, "records.config");
     if (stat(filePath, &fileInfo) < 0) {
       mgmt_log(stderr, "[MultiFile::WalkFiles] Stat of a %s failed %s: %s\n", dirDescript, fileName, strerror(errno));
     } else {
       if (stat(records_config_filePath, &records_config_fileInfo) < 0) {
         delete[] filePath;
+        delete[] records_config_filePath;
         continue;
       }
       // Ignore ., .., and any dot files
       if (*fileName != '.' && isManaged(fileName)) {
-        fileListEntry = (fileEntry *)ats_malloc(sizeof(fileEntry));
+        fileListEntry         = (fileEntry *)ats_malloc(sizeof(fileEntry));
         fileListEntry->c_time = fileInfo.st_ctime;
         ink_strlcpy(fileListEntry->name, fileName, sizeof(fileListEntry->name));
         fileList->addEntry(fileListEntry);
@@ -147,7 +147,6 @@ MultiFile::WalkFiles(ExpandingArray *fileList)
   return MF_OK;
 }
 
-
 bool
 MultiFile::isManaged(const char *fileName)
 {
@@ -161,9 +160,9 @@ MultiFile::isManaged(const char *fileName)
 void
 MultiFile::addSelectOptions(textBuffer *output, ExpandingArray *options)
 {
-  const char selectEnd[] = "</select>\n";
-  const char option[] = "\t<option value='";
-  const int optionLen = strlen(option);
+  const char selectEnd[]  = "</select>\n";
+  const char option[]     = "\t<option value='";
+  const int optionLen     = strlen(option);
   const char option_end[] = "'>";
   char *safeCurrent;
 
@@ -219,7 +218,7 @@ MultiFile::newPathString(const char *s1, const char *s2)
 
   // Treat null as an empty path.
   if (!s2)
-    s2 = "";
+    s2   = "";
   addLen = strlen(s2) + 1;
   if (*s2 == '/') {
     // If addpath is rooted, then rootpath is unused.

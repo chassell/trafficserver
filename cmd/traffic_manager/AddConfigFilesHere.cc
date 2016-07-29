@@ -21,10 +21,10 @@
   limitations under the License.
  */
 
-#include "ink_platform.h"
+#include "ts/ink_platform.h"
 #include "MgmtUtils.h"
 #include "ConfigParse.h"
-#include "Diags.h"
+#include "ts/Diags.h"
 #include "FileManager.h"
 
 extern FileManager *configFiles;
@@ -41,7 +41,6 @@ testcall(char *foo, bool /* incVersion */)
 {
   Debug("lm", "Received Callback that %s has changed\n", foo);
 }
-
 
 //
 // initializeRegistry()
@@ -70,7 +69,6 @@ initializeRegistry()
   configFiles->addFile("logs_xml.config", false);
   configFiles->addFile("storage.config", false);
   configFiles->addFile("socks.config", false);
-  configFiles->addFile("proxy.pac", false);
   configFiles->addFile("records.config", false);
   configFiles->addFile("vaddrs.config", false);
   configFiles->addFile("cache.config", false);
@@ -78,7 +76,6 @@ initializeRegistry()
   configFiles->addFile("ip_allow.config", false);
   configFiles->addFile("parent.config", false);
   configFiles->addFile("remap.config", false);
-  configFiles->addFile("update.config", false);
   configFiles->addFile("volume.config", false);
   configFiles->addFile("hosting.config", false);
   configFiles->addFile("congestion.config", false);
@@ -86,6 +83,6 @@ initializeRegistry()
   configFiles->addFile("splitdns.config", false);
   configFiles->addFile("ssl_multicert.config", false);
   configFiles->addFile("stats.config.xml", false);
-  configFiles->addFile("prefetch.config", false);
+  configFiles->addFile("metrics.config", false);
   configFiles->registerCallback(testcall);
 }

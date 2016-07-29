@@ -53,7 +53,7 @@
 #include <ctype.h>
 
 #include "ts/ts.h"
-#include "ink_defs.h"
+#include "ts/ink_defs.h"
 
 static int init_buffer_status;
 
@@ -88,7 +88,7 @@ modify_header(TSHttpTxn txnp)
     return; /* caller reenables */
 
   if (TSHttpTxnServerRespGet(txnp, &resp_bufp, &resp_loc) != TS_SUCCESS) {
-    TSError("couldn't retrieve server response header\n");
+    TSError("[response_header-1] Couldn't retrieve server response header");
     return; /* caller reenables */
   }
 
@@ -107,7 +107,6 @@ modify_header(TSHttpTxn txnp)
 
     /*********** Unclear why this is needed **************/
     TSMimeHdrFieldAppend(resp_bufp, resp_loc, new_field_loc);
-
 
     /* Cache-Control: Public */
     TSMimeHdrFieldCreate(resp_bufp, resp_loc, &new_field_loc); /* Probably should check for errors */
@@ -136,8 +135,8 @@ modify_header(TSHttpTxn txnp)
 
     /* Get the cached HTTP header */
     if (TSHttpTxnCachedRespGet(txnp, &cached_bufp, &cached_loc) != TS_SUCCESS) {
-      TSError("STATUS 304, TSHttpTxnCachedRespGet():");
-      TSError("couldn't retrieve cached response header\n");
+      TSError("[response_header-1] STATUS 304, TSHttpTxnCachedRespGet():");
+      TSError("[response_header-1] Couldn't retrieve cached response header");
       TSHandleMLocRelease(resp_bufp, TS_NULL_MLOC, resp_loc);
       return; /* Caller reenables */
     }
@@ -145,7 +144,7 @@ modify_header(TSHttpTxn txnp)
     /* Get the cached MIME field name for this HTTP header */
     cached_field_loc = TSMimeHdrFieldFind(cached_bufp, cached_loc, (const char *)mimehdr1_name, strlen(mimehdr1_name));
     if (TS_NULL_MLOC == cached_field_loc) {
-      TSError("Can't find header %s in cached document", mimehdr1_name);
+      TSError("[response_header-1] Can't find header %s in cached document", mimehdr1_name);
       TSHandleMLocRelease(resp_bufp, TS_NULL_MLOC, resp_loc);
       TSHandleMLocRelease(cached_bufp, TS_NULL_MLOC, cached_loc);
       return; /* Caller reenables */
@@ -154,14 +153,13 @@ modify_header(TSHttpTxn txnp)
     /* Get the cached MIME value for this name in this HTTP header */
     chkptr = TSMimeHdrFieldValueStringGet(cached_bufp, cached_loc, cached_field_loc, -1, &chklength);
     if (NULL == chkptr || !chklength) {
-      TSError("Could not find value for cached MIME field name %s", mimehdr1_name);
+      TSError("[response_header-1] Could not find value for cached MIME field name %s", mimehdr1_name);
       TSHandleMLocRelease(resp_bufp, TS_NULL_MLOC, resp_loc);
       TSHandleMLocRelease(cached_bufp, TS_NULL_MLOC, cached_loc);
       TSHandleMLocRelease(cached_bufp, cached_loc, cached_field_loc);
       return; /* Caller reenables */
     }
     TSDebug("resphdr", "Header field value is %s, with length %d", chkptr, chklength);
-
 
     /* Get the cached MIME value for this name in this HTTP header */
     /*
@@ -208,7 +206,6 @@ modify_header(TSHttpTxn txnp)
   /* Caller reneables */
 }
 
-
 static int
 modify_response_header_plugin(TSCont contp ATS_UNUSED, TSEvent event, void *edata)
 {
@@ -234,19 +231,19 @@ TSPluginInit(int argc, const char *argv[])
 
   TSPluginRegistrationInfo info;
 
-  info.plugin_name = "response-header-1";
-  info.vendor_name = "MyCompany";
+  info.plugin_name   = "response-header-1";
+  info.vendor_name   = "MyCompany";
   info.support_email = "ts-api-support@MyCompany.com";
 
-  if (TSPluginRegister(TS_SDK_VERSION_3_0, &info) != TS_SUCCESS) {
-    TSError("Plugin registration failed.\n");
+  if (TSPluginRegister(&info) != TS_SUCCESS) {
+    TSError("[response_header-1] Plugin registration failed.");
   }
 
   init_buffer_status = 0;
   if (argc > 1) {
-    TSError("usage: %s \n", argv[0]);
-    TSError("warning: too many args %d\n", argc);
-    TSError("warning: ignoring unused arguments beginning with %s\n", argv[1]);
+    TSError("[response_header-1] usage: %s", argv[0]);
+    TSError("[response_header-1] warning: too many args %d", argc);
+    TSError("[response_header-1] warning: ignoring unused arguments beginning with %s", argv[1]);
   }
 
   /*
@@ -256,11 +253,10 @@ TSPluginInit(int argc, const char *argv[])
    *  basis.
    */
 
-
   hdr_bufp = TSMBufferCreate();
   TSMimeHdrCreate(hdr_bufp, &hdr_loc);
 
-  mimehdr1_name = TSstrdup("x-num-served-from-cache");
+  mimehdr1_name  = TSstrdup("x-num-served-from-cache");
   mimehdr1_value = TSstrdup("0");
 
   /* Create name here and set DateTime value when o.s.
@@ -277,7 +273,6 @@ TSPluginInit(int argc, const char *argv[])
   TSDebug("resphdr", "init buffer hdr, field and value locs are %p, %p and %p", hdr_loc, field_loc, value_loc);
   init_buffer_status = 1;
 
-
   TSHttpHookAdd(TS_HTTP_READ_RESPONSE_HDR_HOOK, TSContCreate(modify_response_header_plugin, NULL));
 
   /*
@@ -287,12 +282,12 @@ TSPluginInit(int argc, const char *argv[])
    */
 
   if (TS_NULL_MLOC == (chk_field_loc = TSMimeHdrFieldGet(hdr_bufp, hdr_loc, 0))) {
-    TSError("couldn't retrieve header field from init buffer");
-    TSError("marking init buffer as corrupt; no more plugin processing");
+    TSError("[response_header-1] Couldn't retrieve header field from init buffer");
+    TSError("[response_header-1] Marking init buffer as corrupt; no more plugin processing");
     init_buffer_status = 0;
     /* bail out here and reenable transaction */
   } else {
     if (field_loc != chk_field_loc)
-      TSError("retrieved buffer field loc is %p when it should be %p", chk_field_loc, field_loc);
+      TSError("[response_header-1] Retrieved buffer field loc is %p when it should be %p", chk_field_loc, field_loc);
   }
 }

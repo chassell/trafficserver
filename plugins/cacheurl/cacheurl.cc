@@ -27,8 +27,9 @@
 
 #include "ts/ts.h"
 #include "ts/remap.h"
-#include "ink_defs.h"
-#include "ink_memory.h"
+
+#include "ts/ink_defs.h"
+#include "ts/ink_memory.h"
 
 #include <string>
 #include <vector>
@@ -57,7 +58,6 @@ struct pr_list {
   std::vector<regex_info *> pr;
 
   pr_list() {}
-
   ~pr_list()
   {
     for (std::vector<regex_info *>::iterator info = this->pr.begin(); info != this->pr.end(); ++info) {
@@ -87,7 +87,7 @@ regex_substitute(char **buf, char *str, regex_info *info)
     case PCRE_ERROR_NOMATCH:
       break;
     default:
-      TSError("[%s] Matching error: %d\n", PLUGIN_NAME, matchcount);
+      TSError("[%s] Matching error: %d", PLUGIN_NAME, matchcount);
       break;
     }
     return 0;
@@ -96,7 +96,7 @@ regex_substitute(char **buf, char *str, regex_info *info)
   /* Verify the replacement has the right number of matching groups */
   for (i = 0; i < info->tokcount; i++) {
     if (info->tokens[i] >= matchcount) {
-      TSError("[%s] Invalid reference int replacement: $%d\n", PLUGIN_NAME, info->tokens[i]);
+      TSError("[%s] Invalid reference int replacement: $%d", PLUGIN_NAME, info->tokens[i]);
       return 0;
     }
   }
@@ -112,7 +112,7 @@ regex_substitute(char **buf, char *str, regex_info *info)
 
   /* perform string replacement */
   offset = 0; /* Where we are adding new data in the string */
-  prev = 0;
+  prev   = 0;
   for (i = 0; i < info->tokcount; i++) {
     memcpy(*buf + offset, info->replacement + prev, info->tokenoffset[i] - prev);
     offset += (info->tokenoffset[i] - prev);
@@ -134,41 +134,41 @@ regex_compile(regex_info **buf, char *pattern, char *replacement)
   int reerroffset;     /* Offset where any pcre error occured */
 
   int tokcount;
-  int *tokens = NULL;
+  int *tokens      = NULL;
   int *tokenoffset = NULL;
 
-  int status = 1; /* Status (return value) of the function */
+  int status       = 1; /* Status (return value) of the function */
   regex_info *info = (regex_info *)TSmalloc(sizeof(regex_info));
 
   /* Precompile the regular expression */
   info->re = pcre_compile(pattern, 0, &reerror, &reerroffset, NULL);
   if (!info->re) {
-    TSError("[%s] Compilation of regex '%s' failed at char %d: %s\n", PLUGIN_NAME, pattern, reerroffset, reerror);
+    TSError("[%s] Compilation of regex '%s' failed at char %d: %s", PLUGIN_NAME, pattern, reerroffset, reerror);
     status = 0;
   }
 
   /* Precalculate the location of $X tokens in the replacement */
   tokcount = 0;
   if (status) {
-    tokens = (int *)TSmalloc(sizeof(int) * TOKENCOUNT);
+    tokens      = (int *)TSmalloc(sizeof(int) * TOKENCOUNT);
     tokenoffset = (int *)TSmalloc(sizeof(int) * TOKENCOUNT);
     for (unsigned i = 0; i < strlen(replacement); i++) {
       if (replacement[i] == '$') {
         if (tokcount >= TOKENCOUNT) {
           TSError("[%s] Error: too many tokens in replacement "
-                  "string: %s\n",
+                  "string: %s",
                   PLUGIN_NAME, replacement);
           status = 0;
           break;
         } else if (replacement[i + 1] < '0' || replacement[i + 1] > '9') {
-          TSError("[%s] Error: Invalid replacement token $%c in %s: should be $0 - $9\n", PLUGIN_NAME, replacement[i + 1],
+          TSError("[%s] Error: Invalid replacement token $%c in %s: should be $0 - $9", PLUGIN_NAME, replacement[i + 1],
                   replacement);
           status = 0;
           break;
         } else {
           /* Store the location of the replacement */
           /* Convert '0' to 0 */
-          tokens[tokcount] = replacement[i + 1] - '0';
+          tokens[tokcount]      = replacement[i + 1] - '0';
           tokenoffset[tokcount] = i;
           tokcount++;
           /* Skip the next char */
@@ -180,11 +180,11 @@ regex_compile(regex_info **buf, char *pattern, char *replacement)
 
   if (status) {
     /* Everything went OK */
-    info->tokcount = tokcount;
-    info->tokens = tokens;
+    info->tokcount    = tokcount;
+    info->tokens      = tokens;
     info->tokenoffset = tokenoffset;
 
-    info->pattern = TSstrdup(pattern);
+    info->pattern     = TSstrdup(pattern);
     info->replacement = TSstrdup(replacement);
 
     *buf = info;
@@ -231,7 +231,7 @@ load_config_file(const char *config_file)
   fh = TSfopen(path.c_str(), "r");
 
   if (!fh) {
-    TSError("[%s] Unable to open %s. No patterns will be loaded\n", PLUGIN_NAME, path.c_str());
+    TSError("[%s] Unable to open %s. No patterns will be loaded", PLUGIN_NAME, path.c_str());
     return NULL;
   }
 
@@ -261,7 +261,7 @@ load_config_file(const char *config_file)
       spstart = strstr(buffer, "\t");
     }
     if (!spstart) {
-      TSError("[%s] ERROR: Invalid format on line %d. Skipping\n", PLUGIN_NAME, lineno);
+      TSError("[%s] ERROR: Invalid format on line %d. Skipping", PLUGIN_NAME, lineno);
       TSfclose(fh);
       return NULL;
     }
@@ -272,7 +272,7 @@ load_config_file(const char *config_file)
     }
     if (*spend == 0) {
       /* We reached the end of the string without any non-whitepace */
-      TSError("[%s] ERROR: Invalid format on line %d. Skipping\n", PLUGIN_NAME, lineno);
+      TSError("[%s] ERROR: Invalid format on line %d. Skipping", PLUGIN_NAME, lineno);
       TSfclose(fh);
       return NULL;
     }
@@ -284,7 +284,7 @@ load_config_file(const char *config_file)
     TSDebug(PLUGIN_NAME, "Adding pattern/replacement pair: '%s' -> '%s'", buffer, spend);
     retval = regex_compile(&info, buffer, spend);
     if (!retval) {
-      TSError("[%s] Error precompiling regex/replacement. Skipping.\n", PLUGIN_NAME);
+      TSError("[%s] Error precompiling regex/replacement. Skipping.", PLUGIN_NAME);
       TSfclose(fh);
       return NULL;
     }
@@ -294,7 +294,7 @@ load_config_file(const char *config_file)
   TSfclose(fh);
 
   if (prl->pr.empty()) {
-    TSError("[%s] No regular expressions loaded.\n", PLUGIN_NAME);
+    TSError("[%s] No regular expressions loaded.", PLUGIN_NAME);
   }
 
   TSDebug(PLUGIN_NAME, "loaded %u regexes", (unsigned)prl->pr.size());
@@ -304,7 +304,7 @@ load_config_file(const char *config_file)
 static int
 rewrite_cacheurl(pr_list *prl, TSHttpTxn txnp)
 {
-  int ok = 1;
+  int ok       = 1;
   char *newurl = 0;
   int retval;
   char *url;
@@ -312,7 +312,7 @@ rewrite_cacheurl(pr_list *prl, TSHttpTxn txnp)
 
   url = TSHttpTxnEffectiveUrlStringGet(txnp, &url_length);
   if (!url) {
-    TSError("[%s] couldn't retrieve request url\n", PLUGIN_NAME);
+    TSError("[%s] couldn't retrieve request url", PLUGIN_NAME);
     ok = 0;
   }
 
@@ -328,7 +328,7 @@ rewrite_cacheurl(pr_list *prl, TSHttpTxn txnp)
       TSDebug(PLUGIN_NAME, "Rewriting cache URL for %s to %s", url, newurl);
       if (TSCacheUrlSet(txnp, newurl, strlen(newurl)) != TS_SUCCESS) {
         TSError("[%s] Unable to modify cache url from "
-                "%s to %s\n",
+                "%s to %s",
                 PLUGIN_NAME, url, newurl);
         ok = 0;
       }
@@ -371,8 +371,8 @@ handle_hook(TSCont contp, TSEvent event, void *edata)
 static void
 initialization_error(const char *msg)
 {
-  TSError("[%s] %s\n", PLUGIN_NAME, msg);
-  TSError("[%s] Unable to initialize plugin (disabled).\n", PLUGIN_NAME);
+  TSError("[%s] %s", PLUGIN_NAME, msg);
+  TSError("[%s] Unable to initialize plugin (disabled).", PLUGIN_NAME);
 }
 
 TSReturnCode
@@ -395,6 +395,9 @@ TSRemapInit(TSRemapInterface *api_info, char *errbuf, int errbuf_size)
   }
 
   TSDebug(PLUGIN_NAME, "remap plugin is successfully initialized");
+
+  TSError("[%s] is deprecated and will be removed as of v7.0.0", PLUGIN_NAME);
+
   return TS_SUCCESS;
 }
 
@@ -404,7 +407,6 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char *errbuf ATS_UNUSED, i
   *ih = load_config_file(argc > 2 ? argv[2] : NULL);
   return (NULL == *ih) ? TS_ERROR : TS_SUCCESS;
 }
-
 
 void
 TSRemapDeleteInstance(void *ih)
@@ -436,11 +438,11 @@ TSPluginInit(int argc, const char *argv[])
   TSCont contp;
   pr_list *prl;
 
-  info.plugin_name = (char *)PLUGIN_NAME;
-  info.vendor_name = (char *)"Apache Software Foundation";
+  info.plugin_name   = (char *)PLUGIN_NAME;
+  info.vendor_name   = (char *)"Apache Software Foundation";
   info.support_email = (char *)"dev@trafficserver.apache.org";
 
-  if (TSPluginRegister(TS_SDK_VERSION_3_0, &info) != TS_SUCCESS) {
+  if (TSPluginRegister(&info) != TS_SUCCESS) {
     TSDebug(PLUGIN_NAME, "ERROR, Plugin registration failed");
     initialization_error("Plugin registration failed.");
     return;
@@ -457,4 +459,6 @@ TSPluginInit(int argc, const char *argv[])
     initialization_error("Plugin config load failed.");
     return;
   }
+
+  TSError("[%s] is deprecated and will be removed as of v7.0.0", PLUGIN_NAME);
 }

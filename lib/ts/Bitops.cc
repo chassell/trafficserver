@@ -21,8 +21,7 @@
   limitations under the License.
  */
 
-#include "Bitops.h"
-
+#include "ts/Bitops.h"
 
 unsigned char bit_table[256] = {
   0, 1, 2, 1, 3, 1, 2, 1, 4, 1, 2, 1, 3, 1, 2, 1, 5, 1, 2, 1, 3, 1, 2, 1, 4, 1, 2, 1, 3, 1, 2, 1, 6, 1, 2, 1, 3, 1, 2, 1, 4, 1, 2,

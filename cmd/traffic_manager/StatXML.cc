@@ -21,7 +21,7 @@
   limitations under the License.
  */
 
-#include "ink_config.h"
+#include "ts/ink_config.h"
 #include "StatXML.h"
 #include <stdlib.h>
 #include <ctype.h>
@@ -55,7 +55,6 @@ XML_extractContent(const char *name, char *content, size_t result_len)
 
   return (strlen(content));
 }
-
 
 //
 // Returns true  if 'c'is an operator (in our definition),

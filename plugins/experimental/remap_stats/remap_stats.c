@@ -19,9 +19,7 @@
   limitations under the License.
  */
 
-#include "ink_config.h"
-#include "ink_defs.h"
-
+#include "ts/ink_defs.h"
 #include "ts/ts.h"
 
 #include <stdint.h>
@@ -321,7 +319,7 @@ TSPluginInit(int argc, const char *argv[])
   info.vendor_name = "Apache Software Foundation";
   info.support_email = "dev@trafficserver.apache.org";
 
-  if (TSPluginRegister(TS_SDK_VERSION_3_0, &info) != TS_SUCCESS) {
+  if (TSPluginRegister(&info) != TS_SUCCESS) {
     TSError("Plugin registration failed.");
     return;
   } else

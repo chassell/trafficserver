@@ -24,7 +24,6 @@
 #include "ruleset.h"
 #include "factory.h"
 
-
 ///////////////////////////////////////////////////////////////////////////////
 // Class implementation (no reason to have these inline)
 //
@@ -36,10 +35,9 @@ RuleSet::append(RuleSet *rule)
   TSReleaseAssert(rule->next == NULL);
 
   while (tmp->next)
-    tmp = tmp->next;
+    tmp     = tmp->next;
   tmp->next = rule;
 }
-
 
 void
 RuleSet::add_condition(Parser &p)
@@ -50,7 +48,7 @@ RuleSet::add_condition(Parser &p)
     TSDebug(PLUGIN_NAME, "   Adding condition: %%{%s} with arg: %s\n", p.get_op().c_str(), p.get_arg().c_str());
     c->initialize(p);
     if (!c->set_hook(_hook)) {
-      TSError("%s: can't use this condition in this hook", PLUGIN_NAME);
+      TSError("[%s] can't use this condition in this hook", PLUGIN_NAME);
       return;
     }
     if (NULL == _cond) {
@@ -65,7 +63,6 @@ RuleSet::add_condition(Parser &p)
   }
 }
 
-
 void
 RuleSet::add_operator(Parser &p)
 {
@@ -76,7 +73,7 @@ RuleSet::add_operator(Parser &p)
     TSDebug(PLUGIN_NAME, "   Adding operator: %s(%s)\n", p.get_op().c_str(), p.get_arg().c_str());
     o->initialize(p);
     if (!o->set_hook(_hook)) {
-      TSError("%s: can't use this operator in this hook", PLUGIN_NAME);
+      TSError("[%s] can't use this operator in this hook", PLUGIN_NAME);
       return;
     }
     if (NULL == _oper) {
@@ -87,6 +84,6 @@ RuleSet::add_operator(Parser &p)
 
     // Update some ruleset state based on this new operator
     _opermods = static_cast<OperModifiers>(_opermods | _oper->get_oper_modifiers());
-    _ids = static_cast<ResourceIDs>(_ids | _oper->get_resource_ids());
+    _ids      = static_cast<ResourceIDs>(_ids | _oper->get_resource_ids());
   }
 }

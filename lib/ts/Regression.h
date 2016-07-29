@@ -24,8 +24,8 @@
 #ifndef _Regression_h
 #define _Regression_h
 
-#include "libts.h"
-#include "Regex.h"
+#include "ts/ink_platform.h"
+#include "ts/Regex.h"
 
 //   Each module should provide one or more regression tests
 //
@@ -42,7 +42,6 @@
 //     } else
 //       *pstatus = REGRESSION_TEST_PASSED;
 //   }
-
 
 // status values
 #define REGRESSION_TEST_PASSED 1
@@ -79,7 +78,7 @@ struct RegressionTest {
   static int ran_tests;
   static DFA dfa;
   static RegressionTest *current;
-  static int run(char *name = NULL);
+  static int run(const char *name = NULL);
   static int run_some();
   static int check_status();
 };

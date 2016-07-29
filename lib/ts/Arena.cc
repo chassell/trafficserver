@@ -21,17 +21,17 @@
   limitations under the License.
  */
 
-#include "libts.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_memory.h"
+#include "ts/Allocator.h"
+#include "ts/Arena.h"
 #include <assert.h>
 #include <string.h>
-
 
 #define DEFAULT_ALLOC_SIZE 1024
 #define DEFAULT_BLOCK_SIZE (DEFAULT_ALLOC_SIZE - (sizeof(ArenaBlock) - 8))
 
-
 static Allocator defaultSizeArenaBlock("ArenaBlock", DEFAULT_ALLOC_SIZE);
-
 
 /*-------------------------------------------------------------------------
   -------------------------------------------------------------------------*/
@@ -47,8 +47,8 @@ blk_alloc(int size)
     blk = (ArenaBlock *)ats_malloc(size + sizeof(ArenaBlock) - 8);
   }
 
-  blk->next = NULL;
-  blk->m_heap_end = &blk->data[size];
+  blk->next          = NULL;
+  blk->m_heap_end    = &blk->data[size];
   blk->m_water_level = &blk->data[0];
 
   return blk;
@@ -69,7 +69,6 @@ blk_free(ArenaBlock *blk)
     ats_free(blk);
   }
 }
-
 
 /*-------------------------------------------------------------------------
   -------------------------------------------------------------------------*/
@@ -115,8 +114,8 @@ Arena::alloc(size_t size, size_t alignment)
     block_size = DEFAULT_BLOCK_SIZE;
   }
 
-  b = blk_alloc(block_size);
-  b->next = m_blocks;
+  b        = blk_alloc(block_size);
+  b->next  = m_blocks;
   m_blocks = b;
 
   mem = block_alloc(b, size, alignment);

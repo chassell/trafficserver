@@ -1,12 +1,12 @@
 #if !defined(TS_IP_MAP_HEADER)
 #define TS_IP_MAP_HEADER
 
-#include "ink_platform.h"
-#include "ink_defs.h"
-#include "RbTree.h"
-#include <ts/ink_inet.h>
-#include <ts/IntrusiveDList.h>
-#include <ts/ink_assert.h>
+#include "ts/ink_platform.h"
+#include "ts/ink_defs.h"
+#include "ts/RbTree.h"
+#include "ts/ink_inet.h"
+#include "ts/IntrusiveDList.h"
+#include "ts/ink_assert.h"
 
 /** @file
 
@@ -155,7 +155,6 @@ public:
     typedef std::bidirectional_iterator_tag iterator_category;
     /// Default constructor.
     iterator() : _tree(0), _node(0) {}
-
     reference operator*() const; //!< value operator
     pointer operator->() const;  //!< dereference operator
     self &operator++();          //!< next node (prefix)
@@ -170,7 +169,11 @@ public:
     /** Inequality.
         @return @c true if the iterators refer to different nodes.
     */
-    bool operator!=(self const &that) const { return !(*this == that); }
+    bool
+    operator!=(self const &that) const
+    {
+      return !(*this == that);
+    }
 
   private:
     /// Construct a valid iterator.
@@ -427,7 +430,8 @@ inline IpMap::iterator IpMap::iterator::operator--(int)
   return tmp;
 }
 
-inline bool IpMap::iterator::operator==(iterator const &that) const
+inline bool
+IpMap::iterator::operator==(iterator const &that) const
 {
   return _tree == that._tree && _node == that._node;
 }

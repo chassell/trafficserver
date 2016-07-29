@@ -21,7 +21,7 @@ library_includedir=$(includedir)/ts
 library_include_HEADERS = apidefs.h
 
 noinst_PROGRAMS = mkdfa CompileParseRules
-check_PROGRAMS = test_arena test_atomic test_freelist test_geometry test_List test_Map test_Regex test_Vec
+check_PROGRAMS = test_arena test_atomic test_freelist test_geometry test_List test_Map test_Regex test_PriorityQueue test_Vec test_X509HostnameValidator
 TESTS = $(check_PROGRAMS)
 
 AM_CPPFLAGS = -I$(top_srcdir)/lib
@@ -43,11 +43,14 @@ libtsutil_la_SOURCES = \
   Allocator.h \
   Arena.cc \
   Arena.h \
+  BaseLogFile.cc \
+  BaseLogFile.h \
   Bitops.cc \
   Bitops.h \
   ConsistentHash.cc \
   ConsistentHash.h \
-  Cryptohash.h \
+  ContFlags.cc \
+  ContFlags.h \
   Diags.cc \
   Diags.h \
   DynArray.h \
@@ -67,7 +70,6 @@ libtsutil_la_SOURCES = \
   I_Layout.h \
   I_Version.h \
   InkErrno.h \
-  InkPool.h \
   IntrusiveDList.h \
   IpMap.cc \
   IpMap.h \
@@ -80,10 +82,9 @@ libtsutil_la_SOURCES = \
   Map.h \
   MatcherUtils.cc \
   MatcherUtils.h \
-  MimeTable.cc \
-  MimeTable.h \
   ParseRules.cc \
   ParseRules.h \
+  PriorityQueue.h \
   Ptr.h \
   RawHashTable.cc \
   RawHashTable.h \
@@ -117,8 +118,6 @@ libtsutil_la_SOURCES = \
   ink_assert.cc \
   ink_assert.h \
   ink_atomic.h \
-  ink_auth_api.cc \
-  ink_auth_api.h \
   ink_base64.cc \
   ink_base64.h \
   ink_cap.cc \
@@ -148,8 +147,6 @@ libtsutil_la_SOURCES = \
   ink_platform.h \
   ink_queue.cc \
   ink_queue.h \
-  ink_queue_ext.cc \
-  ink_queue_ext.h \
   ink_queue_utils.cc \
   ink_rand.cc \
   ink_rand.h \
@@ -178,19 +175,18 @@ libtsutil_la_SOURCES = \
   ink_thread.h \
   ink_time.cc \
   ink_time.h \
-  libts.h \
   llqueue.cc \
   lockfile.cc \
   signals.cc \
-  signals.h
+  signals.h \
+  X509HostnameValidator.cc \
+  X509HostnameValidator.h
 
 #test_UNUSED_SOURCES = \
 #  load_http_hdr.cc \
 #  IntrusivePtrTest.cc \
 #  IpMapTest.cc \
-#  TestHttpHeader.cc \
-#  test_memchr.cc \
-#  test_strings.cc
+#  TestHttpHeader.cc
 
 # Special hacks to generate the parser rules
 $(srcdir)/ParseRules.cc: ParseRulesCType
@@ -221,6 +217,10 @@ test_Regex_SOURCES = test_Regex.cc
 test_Regex_LDADD = libtsutil.la @LIBTCL@ @LIBPCRE@
 test_Regex_LDFLAGS = @EXTRA_CXX_LDFLAGS@ @LIBTOOL_LINK_FLAGS@
 
+test_PriorityQueue_SOURCES = test_PriorityQueue.cc
+test_PriorityQueue_LDADD = libtsutil.la @LIBTCL@ @LIBPCRE@
+test_PriorityQueue_LDFLAGS = @EXTRA_CXX_LDFLAGS@ @LIBTOOL_LINK_FLAGS@
+
 test_Vec_SOURCES = test_Vec.cc
 test_Vec_LDADD = libtsutil.la @LIBTCL@ @LIBPCRE@
 test_Vec_LDFLAGS = @EXTRA_CXX_LDFLAGS@ @LIBTOOL_LINK_FLAGS@
@@ -228,6 +228,10 @@ test_Vec_LDFLAGS = @EXTRA_CXX_LDFLAGS@ @LIBTOOL_LINK_FLAGS@
 test_geometry_SOURCES = test_geometry.cc
 test_geometry_LDADD = libtsutil.la @LIBTCL@ @LIBPCRE@
 test_geometry_LDFLAGS = @EXTRA_CXX_LDFLAGS@ @LIBTOOL_LINK_FLAGS@
+
+test_X509HostnameValidator_SOURCES = test_X509HostnameValidator.cc
+test_X509HostnameValidator_LDADD = libtsutil.la @LIBTCL@ @LIBPCRE@ @OPENSSL_LIBS@
+test_X509HostnameValidator_LDFLAGS = @EXTRA_CXX_LDFLAGS@ @LIBTOOL_LINK_FLAGS@
 
 CompileParseRules_SOURCES = CompileParseRules.cc
 

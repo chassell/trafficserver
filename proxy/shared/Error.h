@@ -34,8 +34,8 @@
 #if !defined _Error_h_
 #define _Error_h_
 
-#include "libts.h"
-#include "Diags.h"
+#include "ts/ink_platform.h"
+#include "ts/Diags.h"
 
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -74,7 +74,6 @@ struct ErrorClass {
 struct FatalClass : public ErrorClass {
   FatalClass(const char *afile, int aline, const char *afunction) : ErrorClass(afile, aline, afunction) {}
 };
-
 
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -127,7 +126,6 @@ struct ProcessFatalClass : public FatalClass {
 };
 
 #define ProcessFatal (*(new ProcessFatalClass(__FILE__, __LINE__, __FUNCTION__)))
-
 
 //////////////////////////////////////////////////////////////////////////////
 //

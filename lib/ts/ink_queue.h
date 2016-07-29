@@ -34,9 +34,9 @@
 
 ***********************************************************************/
 
-#include "ink_platform.h"
-#include "ink_defs.h"
-#include "ink_apidefs.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_defs.h"
+#include "ts/ink_apidefs.h"
 
 /*
   For information on the structure of the x86_64 memory map:
@@ -61,8 +61,6 @@
 extern "C" {
 #endif /* __cplusplus */
 
-extern int fastmemtotal;
-
 void ink_queue_load_64(void *dst, void *src);
 
 #ifdef __x86_64__
@@ -72,9 +70,9 @@ void ink_queue_load_64(void *dst, void *src);
 #endif
 
 #if TS_HAS_128BIT_CAS
-#define INK_QUEUE_LD(dst, src)                                                         \
-  do {                                                                                 \
-    *(__int128_t *) & (dst) = __sync_val_compare_and_swap((__int128_t *)&(src), 0, 0); \
+#define INK_QUEUE_LD(dst, src)                                                       \
+  do {                                                                               \
+    *(__int128_t *)&(dst) = __sync_val_compare_and_swap((__int128_t *)&(src), 0, 0); \
   } while (0)
 #else
 #define INK_QUEUE_LD(dst, src) INK_QUEUE_LD64(dst, src)
@@ -144,12 +142,6 @@ typedef union {
 #error "unsupported processor"
 #endif
 
-#if TS_USE_RECLAIMABLE_FREELIST
-extern float cfg_reclaim_factor;
-extern int64_t cfg_max_overage;
-extern int64_t cfg_enable_reclaim;
-extern int64_t cfg_debug_filter;
-#else
 struct _InkFreeList {
   volatile head_p head;
   const char *name;
@@ -158,17 +150,12 @@ struct _InkFreeList {
   int advice;
 };
 
-inkcoreapi extern volatile int64_t fastalloc_mem_in_use;
-inkcoreapi extern volatile int64_t fastalloc_mem_total;
-inkcoreapi extern volatile int64_t freelist_allocated_mem;
-#endif
+typedef struct ink_freelist_ops InkFreeListOps;
+typedef struct _InkFreeList InkFreeList;
 
-typedef struct _InkFreeList InkFreeList, *PInkFreeList;
-typedef struct _ink_freelist_list {
-  InkFreeList *fl;
-  struct _ink_freelist_list *next;
-} ink_freelist_list;
-extern ink_freelist_list *freelists;
+const InkFreeListOps *ink_freelist_malloc_ops();
+const InkFreeListOps *ink_freelist_freelist_ops();
+void ink_freelist_init_ops(const InkFreeListOps *);
 
 /*
  * alignment must be a power of 2

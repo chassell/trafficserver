@@ -33,14 +33,13 @@
 #ifndef _HTTP_SM_H_
 #define _HTTP_SM_H_
 
-#include "libts.h"
+#include "ts/ink_platform.h"
 #include "P_EventSystem.h"
 #include "HttpCacheSM.h"
 #include "HttpTransact.h"
 #include "HttpTunnel.h"
 #include "InkAPIInternal.h"
-#include "StatSystem.h"
-#include "HttpClientSession.h"
+#include "../ProxyClientTransaction.h"
 #include "HdrUtils.h"
 //#include "AuthHttpAdapter.h"
 
@@ -145,20 +144,20 @@ struct HttpTransformInfo {
 
 enum {
   HTTP_SM_MAGIC_ALIVE = 0x0000FEED,
-  HTTP_SM_MAGIC_DEAD = 0xDEADFEED,
+  HTTP_SM_MAGIC_DEAD  = 0xDEADFEED,
 };
 
 enum {
-  HTTP_SM_POST_UNKNOWN = 0,
-  HTTP_SM_POST_UA_FAIL = 1,
+  HTTP_SM_POST_UNKNOWN     = 0,
+  HTTP_SM_POST_UA_FAIL     = 1,
   HTTP_SM_POST_SERVER_FAIL = 2,
-  HTTP_SM_POST_SUCCESS = 3,
+  HTTP_SM_POST_SUCCESS     = 3,
 };
 
 enum {
-  HTTP_SM_TRANSFORM_OPEN = 0,
+  HTTP_SM_TRANSFORM_OPEN   = 0,
   HTTP_SM_TRANSFORM_CLOSED = 1,
-  HTTP_SM_TRANSFORM_FAIL = 2,
+  HTTP_SM_TRANSFORM_FAIL   = 2,
 };
 
 enum HttpApiState_t {
@@ -167,7 +166,6 @@ enum HttpApiState_t {
   HTTP_API_DEFERED_CLOSE,
   HTTP_API_DEFERED_SERVER_ERROR,
 };
-
 
 enum HttpPluginTunnel_t {
   HTTP_NO_PLUGIN_TUNNEL = 0,
@@ -191,12 +189,10 @@ public:
   static HttpSM *allocate();
   HttpCacheSM &get_cache_sm();      // Added to get the object of CacheSM YTS Team, yamsat
   HttpVCTableEntry *get_ua_entry(); // Added to get the ua_entry pointer  - YTS-TEAM
-  static void _instantiate_func(HttpSM *prototype, HttpSM *new_instance);
-  static void _make_scatter_list(HttpSM *prototype);
 
   void init();
 
-  void attach_client_session(HttpClientSession *client_vc_arg, IOBufferReader *buffer_reader);
+  void attach_client_session(ProxyClientTransaction *client_vc_arg, IOBufferReader *buffer_reader);
 
   // Called by httpSessionManager so that we can reset
   //  the session timeouts and initiate a read while
@@ -251,7 +247,7 @@ public:
   get_tunnel()
   {
     return &tunnel;
-  };
+  }
 
   // Debugging routines to dump the SM history, hdrs
   void dump_state_on_assert();
@@ -304,7 +300,7 @@ protected:
   void remove_ua_entry();
 
 public:
-  HttpClientSession *ua_session;
+  ProxyClientTransaction *ua_session;
   BackgroundFill_t background_fill;
   // AuthHttpAdapter authAdapter;
   void set_http_schedule(Continuation *);
@@ -495,7 +491,17 @@ public:
   int64_t cache_response_body_bytes;
   int pushed_response_hdr_bytes;
   int64_t pushed_response_body_bytes;
+  bool client_tcp_reused;
+  // Info about client's SSL connection.
+  bool client_ssl_reused;
+  bool client_connection_is_ssl;
+  const char *client_sec_protocol;
+  const char *client_cipher_suite;
+  int server_transact_count;
+  bool server_connection_is_ssl;
+
   TransactionMilestones milestones;
+  ink_hrtime api_timer;
   // The next two enable plugins to tag the state machine for
   // the purposes of logging so the instances can be correlated
   // with the source plugin.
@@ -541,6 +547,11 @@ public:
 
 public:
   bool set_server_session_private(bool private_session);
+  bool
+  is_dying() const
+  {
+    return terminate_sm;
+  }
 };
 
 // Function to get the cache_sm object - YTS Team, yamsat
@@ -560,7 +571,7 @@ HttpSM::get_ua_entry()
 inline HttpSM *
 HttpSM::allocate()
 {
-  extern SparseClassAllocator<HttpSM> httpSMAllocator;
+  extern ClassAllocator<HttpSM> httpSMAllocator;
   return httpSMAllocator.alloc();
 }
 
@@ -593,9 +604,9 @@ HttpSM::write_response_header_into_buffer(HTTPHdr *h, MIOBuffer *b)
 inline void
 HttpSM::add_history_entry(const char *fileline, int event, int reentrant)
 {
-  int pos = history_pos++ % HISTORY_SIZE;
-  history[pos].fileline = fileline;
-  history[pos].event = (unsigned short)event;
+  int pos                 = history_pos++ % HISTORY_SIZE;
+  history[pos].fileline   = fileline;
+  history[pos].event      = (unsigned short)event;
   history[pos].reentrancy = (short)reentrant;
 }
 
@@ -631,13 +642,12 @@ HttpSM::add_cache_sm()
   if (second_cache_sm == NULL) {
     second_cache_sm = new HttpCacheSM;
     second_cache_sm->init(this, mutex);
-    second_cache_sm->set_lookup_url(cache_sm.get_lookup_url());
     if (t_state.cache_info.object_read != NULL) {
-      second_cache_sm->cache_read_vc = cache_sm.cache_read_vc;
-      cache_sm.cache_read_vc = NULL;
-      second_cache_sm->read_locked = cache_sm.read_locked;
+      second_cache_sm->cache_read_vc        = cache_sm.cache_read_vc;
+      cache_sm.cache_read_vc                = NULL;
+      second_cache_sm->read_locked          = cache_sm.read_locked;
       t_state.cache_info.second_object_read = t_state.cache_info.object_read;
-      t_state.cache_info.object_read = NULL;
+      t_state.cache_info.object_read        = NULL;
     }
   }
 }
@@ -645,7 +655,8 @@ HttpSM::add_cache_sm()
 inline bool
 HttpSM::is_transparent_passthrough_allowed()
 {
-  return (t_state.client_info.is_transparent && ua_session->f_transparent_passthrough && ua_session->get_transact_count() == 1);
+  return (t_state.client_info.is_transparent && ua_session->is_transparent_passthrough_allowed() &&
+          ua_session->get_transact_count() == 1);
 }
 
 #endif

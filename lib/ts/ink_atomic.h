@@ -41,10 +41,10 @@
 #include <string.h>
 #include <stdint.h>
 #include <assert.h>
-#include "ink_defs.h"
 
-#include "ink_apidefs.h"
-#include "ink_mutex.h"
+#include "ts/ink_defs.h"
+#include "ts/ink_apidefs.h"
+#include "ts/ink_mutex.h"
 
 typedef volatile int8_t vint8;
 typedef volatile int16_t vint16;
@@ -64,7 +64,6 @@ typedef vvoidp *pvvoidp;
 
 /* GCC compiler >= 4.1 */
 #if defined(__GNUC__) && (((__GNUC__ == 4) && (__GNUC_MINOR__ >= 1)) || (__GNUC__ >= 5))
-
 
 /* see http://gcc.gnu.org/onlinedocs/gcc-4.1.2/gcc/Atomic-Builtins.html */
 
@@ -115,7 +114,7 @@ ink_atomic_swap<int64_t>(pvint64 mem, int64_t value)
 {
   int64_t old;
   ink_mutex_acquire(&__global_death);
-  old = *mem;
+  old  = *mem;
   *mem = value;
   ink_mutex_release(&__global_death);
   return old;
@@ -189,7 +188,6 @@ ink_atomic_decrement(pvuint64 mem, Amount value)
 /* not used for Intel Processors which have sequential(esque) consistency */
 #define INK_WRITE_MEMORY_BARRIER
 #define INK_MEMORY_BARRIER
-
 
 #else /* not gcc > v4.1.2 */
 #error Need a compiler / libc that supports atomic operations, e.g. gcc v4.1.2 or later

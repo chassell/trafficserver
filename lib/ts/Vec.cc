@@ -23,7 +23,7 @@
 /* UnionFind after Tarjan */
 
 #include <stdint.h>
-#include "Vec.h"
+#include "ts/Vec.h"
 
 const uintptr_t prime2[] = {1,       3,       7,       13,       31,       61,       127,       251,       509,      1021,
                             2039,    4093,    8191,    16381,    32749,    65521,    131071,    262139,    524287,   1048573,
@@ -139,7 +139,7 @@ Lmore:
   fill(n + 2);
   if (n - 2 - l > 0)
     memmove(v + l + 2, v + l, sizeof(int) * (n - 2 - l));
-  v[l] = x;
+  v[l]     = x;
   v[l + 1] = x;
   return;
 Lmerge:
@@ -166,7 +166,7 @@ UnionFind::size(int s)
   size_t nn = n;
   fill(s);
   for (size_t i = nn; i < n; i++)
-    v[i] = -1;
+    v[i]        = -1;
 }
 
 int
@@ -176,8 +176,8 @@ UnionFind::find(int n)
   for (i = n; v[i] >= 0; i = v[i])
     ;
   while (v[n] >= 0) {
-    t = n;
-    n = v[n];
+    t    = n;
+    n    = v[n];
     v[t] = i;
   }
   return i;

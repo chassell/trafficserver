@@ -21,14 +21,21 @@
   limitations under the License.
  */
 
-#include "libts.h"
-#include "I_Layout.h"
-#include "I_Version.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_syslog.h"
+#include "ts/ink_stack_trace.h"
+#include "ts/ink_lockfile.h"
+#include "ts/ink_sock.h"
+#include "ts/ink_args.h"
+#include "ts/ink_file.h"
+#include "ts/I_Layout.h"
+#include "ts/I_Version.h"
 #include "I_RecCore.h"
 #include "mgmtapi.h"
 #include "RecordsConfig.h"
 #include "ClusterCom.h"
-#include "ink_cap.h"
+#include "ts/ink_cap.h"
+#include "Cop.h"
 
 #include <string>
 #include <map>
@@ -70,32 +77,31 @@ static char manager_lockfile[PATH_NAME_MAX];
 static char server_lockfile[PATH_NAME_MAX];
 
 static int check_memory_min_swapfree_kb = 0;
-static int check_memory_min_memfree_kb = 0;
+static int check_memory_min_memfree_kb  = 0;
 
-static int syslog_facility = LOG_DAEMON;
+static int syslog_facility                = LOG_DAEMON;
 static char syslog_fac_str[PATH_NAME_MAX] = "LOG_DAEMON";
 
 static int killsig = SIGKILL;
 static int coresig = 0;
 
-static int debug_flag = false;
+static int debug_flag  = false;
 static int stdout_flag = false;
-static int stop_flag = false;
+static int stop_flag   = false;
 
 static char *admin_user;
 static uid_t admin_uid;
 static gid_t admin_gid;
-static bool admin_user_p = false;
+static bool admin_user_p                  = false;
 static char manager_binary[PATH_NAME_MAX] = "traffic_manager";
-static char server_binary[PATH_NAME_MAX] = "traffic_server";
-static char manager_options[OPTIONS_LEN_MAX] = "";
+static char server_binary[PATH_NAME_MAX]  = "traffic_server";
 
 static char log_file[PATH_NAME_MAX] = "traffic.out";
 
-static int autoconf_port = 8083;
-static int rs_port = 8088;
+static int synthetic_port           = 8083;
+static int rs_port                  = 8088;
 static MgmtClusterType cluster_type = NO_CLUSTER;
-static int http_backdoor_port = 8084;
+static int http_backdoor_port       = 8084;
 
 #if defined(linux)
 // TS-1075 : auto-port ::connect DoS on high traffic linux systems
@@ -103,33 +109,27 @@ static int source_port = 0;
 #endif
 
 static int manager_failures = 0;
-static int server_failures = 0;
+static int server_failures  = 0;
 static int server_not_found = 0;
-
-static const int sleep_time = 10;          // 10 sec
-static const int manager_timeout = 3 * 60; //  3 min
-static const int server_timeout = 3 * 60;  //  3 min
+static int init_sleep_time  = cop_sleep_time; // 10 sec
 
 // traffic_manager flap detection
 #define MANAGER_FLAP_DETECTION 1
 #if defined(MANAGER_FLAP_DETECTION)
-#define MANAGER_MAX_FLAP_COUNT 3                        // if flap this many times, give up for a while
-#define MANAGER_FLAP_INTERVAL_MSEC 60000                // if x number of flaps happen in this interval, declare flapping
-#define MANAGER_FLAP_RETRY_MSEC 60000                   // if flapping, don't try to restart until after this retry duration
-static bool manager_flapping = false;                   // is the manager flapping?
-static int manager_flap_count = 0;                      // how many times has the manager flapped?
-static ink_hrtime manager_flap_interval_start_time = 0; // first time we attempted to start the manager in past little while)
-static ink_hrtime manager_flap_retry_start_time = 0;    // first time we attempted to start the manager in past little while)
+#define MANAGER_MAX_FLAP_COUNT 3                            // if flap this many times, give up for a while
+#define MANAGER_FLAP_INTERVAL_MSEC 60000                    // if x number of flaps happen in this interval, declare flapping
+#define MANAGER_FLAP_RETRY_MSEC 60000                       // if flapping, don't try to restart until after this retry duration
+static bool manager_flapping                       = false; // is the manager flapping?
+static int manager_flap_count                      = 0;     // how many times has the manager flapped?
+static ink_hrtime manager_flap_interval_start_time = 0;     // first time we attempted to start the manager in past little while)
+static ink_hrtime manager_flap_retry_start_time    = 0;     // first time we attempted to start the manager in past little while)
 #endif
 
 // transient syscall error timeout
 #define TRANSIENT_ERROR_WAIT_MS 500
 
-static const int kill_timeout = 1 * 60; //  1 min
-
-static int child_pid = 0;
+static int child_pid    = 0;
 static int child_status = 0;
-static int sem_id = 11452;
 
 AppVersionInfo appVersionInfo;
 
@@ -141,9 +141,7 @@ static void get_admin_user(void);
 
 struct ConfigValue {
   ConfigValue() : config_type(RECT_NULL), data_type(RECD_NULL) {}
-
   ConfigValue(RecT _t, RecDataT _d, const std::string &_v) : config_type(_t), data_type(_d), data_value(_v) {}
-
   RecT config_type;
   RecDataT data_type;
   std::string data_value;
@@ -186,7 +184,7 @@ cop_log(int priority, const char *format, ...)
     struct timeval now;
     double now_f;
 
-    gettimeofday(&now, NULL);
+    now   = ink_gettimeofday();
     now_f = now.tv_sec + now.tv_usec / 1000000.0f;
 
     fprintf(stdout, "<%.4f> [%s]: ", now_f, priority_name(priority));
@@ -200,7 +198,6 @@ cop_log(int priority, const char *format, ...)
 
   va_end(args);
 }
-
 
 void
 chown_file_to_admin_user(const char *file)
@@ -216,7 +213,7 @@ chown_file_to_admin_user(const char *file)
 static void
 sig_child(int signum)
 {
-  pid_t pid = 0;
+  pid_t pid  = 0;
   int status = 0;
 
   cop_log_trace("Entering sig_child(%d)\n", signum);
@@ -232,7 +229,7 @@ sig_child(int signum)
     //   next time through the event loop.  We will occasionally
     //   lose some information if we get two sig childs in rapid
     //   succession
-    child_pid = pid;
+    child_pid    = pid;
     child_status = status;
   }
   cop_log_trace("Leaving sig_child(%d)\n", signum);
@@ -241,7 +238,7 @@ sig_child(int signum)
 static void
 sig_term(int signum)
 {
-  pid_t pid = 0;
+  pid_t pid  = 0;
   int status = 0;
 
   // killsig = SIGTERM;
@@ -266,7 +263,7 @@ sig_term(int signum)
     //   next time through the event loop.  We will occasionally
     //   lose some information if we get two sig childs in rapid
     //   succession
-    child_pid = pid;
+    child_pid    = pid;
     child_status = status;
   }
   cop_log_trace("Leaving sig_term(%d), exiting traffic_cop\n", signum);
@@ -311,12 +308,10 @@ sig_alarm_warn(int signum)
 #endif
 {
   cop_log_trace("Entering sig_alarm_warn(%d)\n", signum);
-  cop_log(COP_WARNING, "unable to kill traffic_server for the last"
-                       " %d seconds\n",
-          kill_timeout);
+  cop_log(COP_WARNING, "unable to kill traffic_server for the last %d seconds\n", cop_kill_timeout);
 
   // Set us up for another alarm
-  alarm(kill_timeout);
+  alarm(cop_kill_timeout);
   cop_log_trace("Leaving sig_alarm_warn(%d)\n", signum);
 }
 
@@ -335,14 +330,14 @@ set_alarm_death()
 
   cop_log_trace("Entering set_alarm_death()\n");
 #if defined(solaris)
-  action.sa_handler = NULL;
+  action.sa_handler   = NULL;
   action.sa_sigaction = sig_fatal;
   sigemptyset(&action.sa_mask);
   action.sa_flags = SA_SIGINFO;
 #else
   action.sa_handler = sig_fatal;
   sigemptyset(&action.sa_mask);
-  action.sa_flags = 0;
+  action.sa_flags   = 0;
 #endif
 
   sigaction(SIGALRM, &action, NULL);
@@ -356,7 +351,7 @@ set_alarm_warn()
 
   cop_log_trace("Entering set_alarm_warn()\n");
 #if defined(solaris)
-  action.sa_handler = NULL;
+  action.sa_handler   = NULL;
   action.sa_sigaction = sig_alarm_warn;
   sigemptyset(&action.sa_mask);
   action.sa_flags = SA_SIGINFO;
@@ -397,7 +392,7 @@ safe_kill(const char *lockfile_name, const char *pname, bool group)
 
   cop_log_trace("Entering safe_kill(%s, %s, %d)\n", lockfile_name, pname, group);
   set_alarm_warn();
-  alarm(kill_timeout);
+  alarm(cop_kill_timeout);
 
   if (group == true) {
     lockfile.KillGroup(killsig, coresig, pname);
@@ -411,7 +406,6 @@ safe_kill(const char *lockfile_name, const char *pname, bool group)
   cop_log_trace("Leaving safe_kill(%s, %s, %d)\n", lockfile_name, pname, group);
 }
 
-
 // ink_hrtime milliseconds()
 //
 // Returns the result of gettimeofday converted to
@@ -420,14 +414,14 @@ safe_kill(const char *lockfile_name, const char *pname, bool group)
 static ink_hrtime
 milliseconds(void)
 {
-  struct timeval curTime;
+  struct timeval now;
 
   cop_log_trace("Entering milliseconds()\n");
-  ink_gethrtimeofday(&curTime, NULL);
+  now = ink_gettimeofday();
   // Make liberal use of casting to ink_hrtime to ensure the
   //  compiler does not truncate our result
   cop_log_trace("Leaving milliseconds()\n");
-  return ((ink_hrtime)curTime.tv_sec * 1000) + ((ink_hrtime)curTime.tv_usec / 1000);
+  return ((ink_hrtime)now.tv_sec * 1000) + ((ink_hrtime)now.tv_usec / 1000);
 }
 
 static void
@@ -436,7 +430,7 @@ millisleep(int ms)
   struct timespec ts;
 
   cop_log_trace("Entering millisleep(%d)\n", ms);
-  ts.tv_sec = ms / 1000;
+  ts.tv_sec  = ms / 1000;
   ts.tv_nsec = (ms - ts.tv_sec * 1000) * 1000 * 1000;
   nanosleep(&ts, NULL);
   cop_log_trace("Leaving millisleep(%d)\n", ms);
@@ -651,9 +645,9 @@ config_reload_records()
   Layout::relative_to(log_file, sizeof(log_file), logdir, log_filename);
 
   config_read_int("proxy.config.process_manager.mgmt_port", &http_backdoor_port, true);
-  config_read_int("proxy.config.admin.autoconf_port", &autoconf_port, true);
+  config_read_int("proxy.config.admin.synthetic_port", &synthetic_port, true);
   config_read_int("proxy.config.cluster.rsport", &rs_port, true);
-  config_read_int("proxy.config.lm.sem_id", &sem_id, true);
+  config_read_int("proxy.config.cop.init_sleep_time", &init_sleep_time, true);
 
 #if defined(linux)
   // TS-1075 : auto-port ::connect DoS on high traffic linux systems
@@ -706,8 +700,8 @@ get_admin_user()
     }
 
     if (pwd) {
-      admin_uid = pwd->pw_uid;
-      admin_gid = pwd->pw_gid;
+      admin_uid    = pwd->pw_uid;
+      admin_gid    = pwd->pw_gid;
       admin_user_p = true;
     } else {
       cop_log(COP_FATAL, "can't get passwd entry for the admin user '%s' - [%d] %s\n", admin_user, errno, strerror(errno));
@@ -720,58 +714,14 @@ static void
 spawn_manager()
 {
   char prog[PATH_NAME_MAX];
-  char *options[OPTIONS_MAX];
-  char *last;
-  char *tok;
-  int log_fd;
-  int err;
-  int key;
-
   ats_scoped_str bindir(config_read_bin_dir());
 
   cop_log_trace("Entering spawn_manager()\n");
-  // Clean up shared memory segments.
-  if (sem_id > 0) {
-    key = sem_id;
-  } else {
-    key = 11452;
-  }
-  for (;; key++) {
-    err = semget(key, 1, 0666);
-    if (err < 0) {
-      break;
-    }
-#if defined(solaris) || defined(kfreebsd) || defined(unknown)
-    err = semctl(err, 1, IPC_RMID);
-#else
-    union semun dummy_semun;
-    memset(&dummy_semun, 0, sizeof(dummy_semun));
-    err = semctl(err, 1, IPC_RMID, dummy_semun);
-#endif
-    if (err < 0) {
-      break;
-    }
-  }
 
   Layout::relative_to(prog, sizeof(prog), bindir, manager_binary);
   if (access(prog, R_OK | X_OK) == -1) {
     cop_log(COP_FATAL, "unable to access() manager binary \"%s\" [%d '%s']\n", prog, errno, strerror(errno));
     exit(1);
-  }
-
-  cop_log_trace("spawn_manager: Launching %s with options '%s'\n", prog, manager_options);
-  int i;
-  for (i = 0; i < OPTIONS_MAX; i++) {
-    options[i] = NULL;
-  }
-  options[0] = prog;
-  i = 1;
-  tok = strtok_r(manager_options, " ", &last);
-  options[i++] = tok;
-  if (tok != NULL) {
-    while (i < OPTIONS_MAX && (tok = strtok_r(NULL, " ", &last))) {
-      options[i++] = tok;
-    }
   }
 
   // Move any traffic.out that we can not write to, out
@@ -780,41 +730,31 @@ spawn_manager()
   if (access(log_file, W_OK) < 0 && errno == EACCES) {
     char old_log_file[PATH_NAME_MAX];
     snprintf(old_log_file, sizeof(old_log_file), "%s.old", log_file);
+    cop_log(COP_NOTICE, "renaming %s to %s as it is not writeable\n", log_file, old_log_file);
     // coverity[toctou]
-    rename(log_file, old_log_file);
-    cop_log(COP_WARNING, "rename %s to %s as it is not accessible.\n", log_file, old_log_file);
-  }
-  // coverity[toctou]
-  if ((log_fd = open(log_file, O_WRONLY | O_APPEND | O_CREAT, 0644)) < 0) {
-    cop_log(COP_WARNING, "unable to open log file \"%s\" [%d '%s']\n", log_file, errno, strerror(errno));
-  }
-
-  err = fork();
-  if (err == 0) {
-    if (log_fd >= 0) {
-      dup2(log_fd, STDOUT_FILENO);
-      dup2(log_fd, STDERR_FILENO);
-      close(log_fd);
+    if (rename(log_file, old_log_file) != 0) {
+      cop_log(COP_WARNING, "unable to rename \"%s\" to \"%s\" [%d '%s']\n", log_file, old_log_file, errno, strerror(errno));
     }
+  }
 
+  cop_log_trace("launching %s'\n", prog);
+
+  pid_t child = fork();
+  if (child == 0) {
     EnableDeathSignal(SIGTERM);
 
-    err = execv(prog, options);
-    cop_log_trace("Somehow execv(%s, options, NULL) failed (%d)!\n", prog, err);
+    // Bind stdout and stderr of traffic_manager to traffic.out
+    execl(prog, prog, "--" TM_OPT_BIND_STDOUT, log_file, "--" TM_OPT_BIND_STDERR, log_file, NULL);
+    cop_log_trace("Somehow execv(%s, options, NULL) failed: %s (%d)!\n", prog, strerror(errno), errno);
     exit(1);
-  } else if (err == -1) {
+  } else if (child == -1) {
     cop_log(COP_FATAL, "unable to fork [%d '%s']\n", errno, strerror(errno));
     exit(1);
-  }
-
-  if (log_fd >= 0) {
-    close(log_fd);
   }
 
   manager_failures = 0;
   cop_log_trace("Leaving spawn_manager()\n");
 }
-
 
 static int
 poll_read_or_write(int fd, int timeout, int inorout)
@@ -822,8 +762,8 @@ poll_read_or_write(int fd, int timeout, int inorout)
   struct pollfd info;
   int err;
 
-  info.fd = fd;
-  info.events = inorout;
+  info.fd      = fd;
+  info.events  = inorout;
   info.revents = 0;
 
   do {
@@ -854,10 +794,10 @@ open_socket(int port, const char *ip = NULL, char const *ip_to_bind = NULL)
 {
   int sock = 0;
   struct addrinfo hints;
-  struct addrinfo *result = NULL;
+  struct addrinfo *result         = NULL;
   struct addrinfo *result_to_bind = NULL;
-  char port_str[8] = {'\0'};
-  int err = 0;
+  char port_str[8]                = {'\0'};
+  int err                         = 0;
 
   cop_log_trace("Entering open_socket(%d, %s, %s)\n", port, ip, ip_to_bind);
   if (!ip) {
@@ -874,7 +814,7 @@ open_socket(int port, const char *ip = NULL, char const *ip_to_bind = NULL)
 
   snprintf(port_str, sizeof(port_str), "%d", port);
   memset(&hints, 0, sizeof(hints));
-  hints.ai_family = AF_UNSPEC;
+  hints.ai_family   = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
 
   err = getaddrinfo(ip, port_str, &hints, &result);
@@ -895,7 +835,7 @@ open_socket(int port, const char *ip = NULL, char const *ip_to_bind = NULL)
 
   if (ip_to_bind) {
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = result->ai_family;
+    hints.ai_family   = result->ai_family;
     hints.ai_socktype = result->ai_socktype;
 
     err = getaddrinfo(ip_to_bind, NULL, &hints, &result_to_bind);
@@ -1065,7 +1005,7 @@ read_manager_string(const char *variable, char *value, size_t val_len)
 
   snprintf(request, sizeof(request), "read %s\n", variable);
 
-  err = test_port(rs_port, request, buffer, 4095, manager_timeout * 1000);
+  err = test_port(rs_port, request, buffer, 4095, cop_manager_timeout * 1000);
   if (err < 0) {
     return err;
   }
@@ -1119,7 +1059,7 @@ read_manager_int(const char *variable, int *value)
 
   snprintf(request, sizeof(request), "read %s\n", variable);
 
-  err = test_port(rs_port, request, buffer, 4095, manager_timeout * 1000);
+  err = test_port(rs_port, request, buffer, 4095, cop_manager_timeout * 1000);
   if (err < 0) {
     return err;
   }
@@ -1174,7 +1114,6 @@ read_mgmt_cli_int(const char *variable, int *value)
   return 0;
 }
 
-
 static int
 test_rs_port()
 {
@@ -1194,12 +1133,11 @@ test_rs_port()
   return 0;
 }
 
-
 static int
 test_mgmt_cli_port()
 {
   TSString val = NULL;
-  int ret = 0;
+  int ret      = 0;
 
   if (TSRecordGetString("proxy.config.manager_binary", &val) != TS_ERR_OKAY) {
     cop_log(COP_WARNING, "(cli test) unable to retrieve manager_binary\n");
@@ -1215,7 +1153,6 @@ test_mgmt_cli_port()
     TSfree(val);
   return ret;
 }
-
 
 static int
 test_http_port(int port, char *request, int timeout, char const *ip = NULL, char const *ip_to_bind = NULL)
@@ -1282,9 +1219,9 @@ test_server_http_port()
 
   // Generate a request for a the 'synthetic.txt' document the manager
   // servers up on the autoconf port.
-  snprintf(request, sizeof(request), "GET http://127.0.0.1:%d/synthetic.txt HTTP/1.0\r\n\r\n", autoconf_port);
+  snprintf(request, sizeof(request), "GET http://127.0.0.1:%d/synthetic.txt HTTP/1.0\r\n\r\n", synthetic_port);
 
-  return test_http_port(http_backdoor_port, request, server_timeout * 1000, localhost, localhost);
+  return test_http_port(http_backdoor_port, request, cop_server_timeout * 1000, localhost, localhost);
 }
 
 static int
@@ -1349,6 +1286,10 @@ heartbeat_server()
       //   if it is taking too long to kill the server
       //
       safe_kill(server_lockfile, server_binary, false);
+      // Allow a configurable longer sleep init time
+      // to load very large remap files
+      cop_log_trace("performing additional sleep for %d sec during init", init_sleep_time);
+      millisleep(init_sleep_time * 1000);
     }
   } else {
     if (server_failures)
@@ -1364,7 +1305,7 @@ static int
 server_up()
 {
   static int old_val = 0;
-  int val = -1;
+  int val            = -1;
   int err;
 
   cop_log_trace("Entering server_up()\n");
@@ -1381,9 +1322,9 @@ server_up()
   }
 
   if (val != old_val) {
-    server_failures = 0;
+    server_failures  = 0;
     server_not_found = 0;
-    old_val = val;
+    old_val          = val;
   }
 
   if (val == 1) {
@@ -1394,7 +1335,6 @@ server_up()
     return 0;
   }
 }
-
 
 //         |  state  |  status  |  action
 // --------|---------|----------|---------------
@@ -1409,7 +1349,6 @@ server_up()
 // --------|---------|----------|---------------
 // manager |   up    |    ok    |  kill server
 // server  |   up    |    bad   |
-
 
 static void
 check_programs()
@@ -1459,7 +1398,7 @@ check_programs()
       if (manager_flap_count >= MANAGER_MAX_FLAP_COUNT) {
         // we've flapped too many times, hold off for a while
         cop_log(COP_WARNING, "unable to start traffic_manager, retrying in %d second(s)\n", MANAGER_FLAP_RETRY_MSEC / 1000);
-        manager_flapping = true;
+        manager_flapping              = true;
         manager_flap_retry_start_time = now;
       } else {
         // try to spawn traffic_manager
@@ -1475,7 +1414,7 @@ check_programs()
       // we were flapping, take some time off and don't call
       // spawn_manager
       if (now - manager_flap_retry_start_time > MANAGER_FLAP_RETRY_MSEC) {
-        manager_flapping = false;
+        manager_flapping                 = false;
         manager_flap_interval_start_time = 0;
       }
     }
@@ -1488,7 +1427,7 @@ check_programs()
     // is up, we make sure there is actually a server process
     // running. If there is we test it.
 
-    alarm(2 * manager_timeout);
+    alarm(2 * cop_manager_timeout);
     err = heartbeat_manager();
     alarm(0);
 
@@ -1515,7 +1454,7 @@ check_programs()
         safe_kill(manager_lockfile, manager_binary, true);
       }
     } else {
-      alarm(2 * server_timeout);
+      alarm(2 * cop_server_timeout);
       heartbeat_server();
       alarm(0);
     }
@@ -1610,7 +1549,7 @@ check(void *arg)
     chown_file_to_admin_user(manager_lockfile);
     chown_file_to_admin_user(server_lockfile);
 
-    alarm(2 * (sleep_time + manager_timeout * 2 + server_timeout));
+    alarm(2 * (cop_sleep_time + cop_manager_timeout * 2 + cop_server_timeout));
 
     if (check_no_run() < 0) {
       break;
@@ -1629,7 +1568,7 @@ check(void *arg)
         cop_log(COP_WARNING, "child terminated due to signal %d: %s\n", sig, strsignal(sig));
       }
 
-      child_pid = 0;
+      child_pid    = 0;
       child_status = 0;
     }
 
@@ -1645,13 +1584,18 @@ check(void *arg)
     // Pause to catch our breath. (10 seconds).
     // Use 'millisleep()' because normal 'sleep()' interferes with
     // the SIGALRM signal which we use to heartbeat the cop.
-    millisleep(sleep_time * 1000);
+    millisleep(cop_sleep_time * 1000);
 
     // We do this after the first round of checks, since the first "check" will spawn traffic_manager
     if (!mgmt_init) {
       ats_scoped_str runtimedir(config_read_runtime_dir());
       TSInit(runtimedir, static_cast<TSInitOptionT>(TS_MGMT_OPT_NO_EVENTS));
       mgmt_init = true;
+
+      // Allow a configurable longer sleep init time
+      // to load very large remap files
+      cop_log_trace("performing additional sleep for %d sec during init", init_sleep_time);
+      millisleep(init_sleep_time * 1000);
     }
   }
 
@@ -1661,7 +1605,6 @@ check(void *arg)
   cop_log_trace("Leaving check()\n");
   return arg;
 }
-
 
 static void
 check_lockfile()
@@ -1712,7 +1655,7 @@ init_signals()
 // difficulty with generating core files when linking with libthread
 // under solaris.
 #if defined(solaris)
-  action.sa_handler = NULL;
+  action.sa_handler   = NULL;
   action.sa_sigaction = sig_fatal;
 #else
   action.sa_handler = sig_fatal;
@@ -1721,7 +1664,7 @@ init_signals()
 #if defined(solaris)
   action.sa_flags = SA_SIGINFO;
 #else
-  action.sa_flags = 0;
+  action.sa_flags   = 0;
 #endif
 
   sigaction(SIGQUIT, &action, NULL);

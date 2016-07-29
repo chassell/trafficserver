@@ -23,7 +23,8 @@
 
 #ifndef __BITOPS_H__
 #define __BITOPS_H__
-#include "libts.h"
+
+#include <strings.h>
 
 /**
   Find First (bit) Set. Index starts at 1.
@@ -129,8 +130,8 @@ bitops_next_set(unsigned char *start, unsigned char *end, int offset)
   int t;
 
   idx = 0;
-  p = start + offset / 8;
-  t = (offset % 8) + 1;
+  p   = start + offset / 8;
+  t   = (offset % 8) + 1;
 
   while (p != end) {
     idx = bit_table[*p];
@@ -170,11 +171,11 @@ bitops_next_unset(unsigned char *start, unsigned char *end, int offset)
   int t;
 
   idx = 0;
-  p = start + offset / 8;
-  t = (offset % 8) + 1;
+  p   = start + offset / 8;
+  t   = (offset % 8) + 1;
 
   while (p != end) {
-    c = ~(*p);
+    c   = ~(*p);
     idx = bit_table[c];
     if (idx) {
       while (idx && (idx <= (size_t)t)) {

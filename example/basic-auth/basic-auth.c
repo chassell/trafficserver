@@ -21,18 +21,15 @@
   limitations under the License.
  */
 
-
 #include <stdio.h>
 #include <string.h>
 
 #include <unistd.h>
 
 #include "ts/ts.h"
-#include "ink_defs.h"
-
+#include "ts/ink_defs.h"
 
 static char base64_codes[256];
-
 
 static char *
 base64_decode(const char *input)
@@ -97,20 +94,20 @@ handle_dns(TSHttpTxn txnp, TSCont contp)
   int authval_length;
 
   if (TSHttpTxnClientReqGet(txnp, &bufp, &hdr_loc) != TS_SUCCESS) {
-    TSError("couldn't retrieve client request header\n");
+    TSError("[basic_auth] Couldn't retrieve client request header");
     goto done;
   }
 
   field_loc = TSMimeHdrFieldFind(bufp, hdr_loc, TS_MIME_FIELD_PROXY_AUTHORIZATION, TS_MIME_LEN_PROXY_AUTHORIZATION);
   if (!field_loc) {
     TSHandleMLocRelease(bufp, TS_NULL_MLOC, hdr_loc);
-    TSError("no Proxy-Authorization field\n");
+    TSError("[basic_auth] No Proxy-Authorization field");
     goto done;
   }
 
   val = TSMimeHdrFieldValueStringGet(bufp, hdr_loc, field_loc, -1, &authval_length);
   if (NULL == val) {
-    TSError("no value in Proxy-Authorization field\n");
+    TSError("[basic_auth] No value in Proxy-Authorization field");
     TSHandleMLocRelease(bufp, hdr_loc, field_loc);
     TSHandleMLocRelease(bufp, TS_NULL_MLOC, hdr_loc);
     goto done;
@@ -118,7 +115,7 @@ handle_dns(TSHttpTxn txnp, TSCont contp)
 
   ptr = val;
   if (strncmp(ptr, "Basic", 5) != 0) {
-    TSError("no Basic auth type in Proxy-Authorization\n");
+    TSError("[basic_auth] No Basic auth type in Proxy-Authorization");
     TSHandleMLocRelease(bufp, hdr_loc, field_loc);
     TSHandleMLocRelease(bufp, TS_NULL_MLOC, hdr_loc);
     goto done;
@@ -129,10 +126,10 @@ handle_dns(TSHttpTxn txnp, TSCont contp)
     ptr += 1;
   }
 
-  user = base64_decode(ptr);
+  user     = base64_decode(ptr);
   password = strchr(user, ':');
   if (!password) {
-    TSError("no password in authorization information\n");
+    TSError("[basic_auth] No password in authorization information");
     TSfree(user);
     TSHandleMLocRelease(bufp, hdr_loc, field_loc);
     TSHandleMLocRelease(bufp, TS_NULL_MLOC, hdr_loc);
@@ -142,7 +139,7 @@ handle_dns(TSHttpTxn txnp, TSCont contp)
   password += 1;
 
   if (!authorized(user, password)) {
-    TSError("%s:%s not authorized\n", user, password);
+    TSError("[basic_auth] %s:%s not authorized", user, password);
     TSfree(user);
     TSHandleMLocRelease(bufp, hdr_loc, field_loc);
     TSHandleMLocRelease(bufp, TS_NULL_MLOC, hdr_loc);
@@ -167,10 +164,10 @@ handle_response(TSHttpTxn txnp)
   TSMLoc hdr_loc;
   TSMLoc field_loc;
   const char *insert = "Basic realm=\"proxy\"";
-  int len = strlen(insert);
+  int len            = strlen(insert);
 
   if (TSHttpTxnClientRespGet(txnp, &bufp, &hdr_loc) != TS_SUCCESS) {
-    TSError("couldn't retrieve client response header\n");
+    TSError("[basic_auth] Couldn't retrieve client response header");
     goto done;
   }
 
@@ -215,12 +212,12 @@ TSPluginInit(int argc ATS_UNUSED, const char *argv[] ATS_UNUSED)
   int i, cc;
   TSPluginRegistrationInfo info;
 
-  info.plugin_name = "basic-authorization";
-  info.vendor_name = "MyCompany";
+  info.plugin_name   = "basic-authorization";
+  info.vendor_name   = "MyCompany";
   info.support_email = "ts-api-support@MyCompany.com";
 
-  if (TSPluginRegister(TS_SDK_VERSION_3_0, &info) != TS_SUCCESS) {
-    TSError("Plugin registration failed.\n");
+  if (TSPluginRegister(&info) != TS_SUCCESS) {
+    TSError("[basic_auth] Plugin registration failed.");
   }
 
   /* Build translation table */

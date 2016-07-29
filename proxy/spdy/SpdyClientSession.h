@@ -29,6 +29,7 @@
 #include "SpdyCallbacks.h"
 #include <openssl/md5.h>
 #include "Plugin.h"
+#include "ProxyClientSession.h"
 
 class SpdyClientSession;
 typedef int (*SpdyClientSessionHandler)(TSCont contp, TSEvent event, void *data);
@@ -37,22 +38,39 @@ class SpdyRequest
 {
 public:
   SpdyRequest()
-    : spdy_sm(NULL), stream_id(-1), fetch_sm(NULL), has_submitted_data(false), need_resume_data(false), fetch_data_len(0),
-      delta_window_size(0), fetch_body_completed(false)
+    : event(0),
+      spdy_sm(NULL),
+      stream_id(-1),
+      start_time(0),
+      fetch_sm(NULL),
+      has_submitted_data(false),
+      need_resume_data(false),
+      fetch_data_len(0),
+      delta_window_size(0),
+      fetch_body_completed(false)
   {
   }
 
   SpdyRequest(SpdyClientSession *sm, int id)
-    : spdy_sm(NULL), stream_id(-1), fetch_sm(NULL), has_submitted_data(false), need_resume_data(false), fetch_data_len(0),
-      delta_window_size(0), fetch_body_completed(false)
+    : event(0),
+      spdy_sm(NULL),
+      stream_id(-1),
+      start_time(0),
+      fetch_sm(NULL),
+      has_submitted_data(false),
+      need_resume_data(false),
+      fetch_data_len(0),
+      delta_window_size(0),
+      fetch_body_completed(false)
   {
     init(sm, id);
   }
 
-  ~SpdyRequest() { clear(); }
-
   void init(SpdyClientSession *sm, int id);
   void clear();
+
+  static SpdyRequest *alloc();
+  void destroy();
 
   void
   append_nv(char **nv)
@@ -73,7 +91,7 @@ public:
   int fetch_data_len;
   unsigned delta_window_size;
   bool fetch_body_completed;
-  vector<pair<string, string> > headers;
+  vector<pair<string, string>> headers;
 
   string url;
   string host;
@@ -87,15 +105,82 @@ public:
 
 extern ClassAllocator<SpdyRequest> spdyRequestAllocator;
 
-class SpdyClientSession : public Continuation, public PluginIdentity
+// class SpdyClientSession : public Continuation, public PluginIdentity
+class SpdyClientSession : public ProxyClientSession, public PluginIdentity
 {
 public:
-  SpdyClientSession() : Continuation(NULL) {}
+  typedef ProxyClientSession super; ///< Parent type.
+  SpdyClientSession()
+    : sm_id(0),
+      version(spdy::SessionVersion::SESSION_VERSION_3_1),
+      total_size(0),
+      start_time(0),
+      vc(NULL),
+      req_buffer(NULL),
+      req_reader(NULL),
+      resp_buffer(NULL),
+      resp_reader(NULL),
+      read_vio(NULL),
+      write_vio(NULL),
+      event(0),
+      session(NULL)
+  {
+  }
 
-  ~SpdyClientSession() { clear(); }
-
-  void init(NetVConnection *netvc, spdy::SessionVersion vers);
+  void init(NetVConnection *netvc);
   void clear();
+  void destroy();
+
+  static SpdyClientSession *alloc();
+
+  VIO *
+  do_io_read(Continuation *, int64_t, MIOBuffer *)
+  {
+    // Due to spdylay, SPDY does not exercise do_io_read
+    ink_release_assert(false);
+    return NULL;
+  }
+  VIO *
+  do_io_write(Continuation *, int64_t, IOBufferReader *, bool)
+  {
+    // Due to spdylay, SPDY does not exercise do_io_write
+    ink_release_assert(false);
+    return NULL;
+  }
+
+  void
+  start()
+  {
+    ink_release_assert(false);
+  }
+
+  void do_io_close(int lerrno = -1);
+  void
+  do_io_shutdown(ShutdownHowTo_t howto)
+  {
+    ink_release_assert(false);
+  }
+  NetVConnection *
+  get_netvc() const
+  {
+    return vc;
+  }
+  void
+  release_netvc()
+  {
+    vc = NULL;
+  }
+  void new_connection(NetVConnection *new_vc, MIOBuffer *iobuf, IOBufferReader *reader, bool backdoor);
+
+  int
+  get_transact_count() const
+  {
+    return this->transact_count;
+  }
+  void
+  release(ProxyClientTransaction *)
+  { /* TBD */
+  }
 
   int64_t sm_id;
   spdy::SessionVersion version;
@@ -115,6 +200,7 @@ public:
 
   int event;
   spdylay_session *session;
+  int transact_count;
 
   map<int32_t, SpdyRequest *> req_map;
 
@@ -133,12 +219,11 @@ public:
   {
     SpdyRequest *req = this->find_request(streamId);
     if (req) {
-      req->clear();
-      spdyRequestAllocator.free(req);
+      req->destroy();
       this->req_map.erase(streamId);
     }
     if (req_map.empty() == true) {
-      vc->add_to_keep_alive_lru();
+      vc->add_to_keep_alive_queue();
     }
   }
 
@@ -146,7 +231,5 @@ private:
   int state_session_start(int event, void *edata);
   int state_session_readwrite(int event, void *edata);
 };
-
-void spdy_cs_create(NetVConnection *netvc, spdy::SessionVersion vers, MIOBuffer *iobuf, IOBufferReader *reader);
 
 #endif

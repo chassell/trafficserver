@@ -24,10 +24,12 @@
 #include "P_EventSystem.h" /* MAGIC_EDITING_TAG */
 #include <sched.h>
 #if TS_USE_HWLOC
+#if HAVE_ALLOCA_H
 #include <alloca.h>
+#endif
 #include <hwloc.h>
 #endif
-#include "ink_defs.h"
+#include "ts/ink_defs.h"
 
 EventType
 EventProcessor::spawn_event_threads(int n_threads, const char *et_name, size_t stacksize)
@@ -43,8 +45,8 @@ EventProcessor::spawn_event_threads(int n_threads, const char *et_name, size_t s
   new_thread_group_id = (EventType)n_thread_groups;
 
   for (i = 0; i < n_threads; i++) {
-    EThread *t = new EThread(REGULAR, n_ethreads + i);
-    all_ethreads[n_ethreads + i] = t;
+    EThread *t                          = new EThread(REGULAR, n_ethreads + i);
+    all_ethreads[n_ethreads + i]        = t;
     eventthread[new_thread_group_id][i] = t;
     t->set_event_type(new_thread_group_id);
   }
@@ -62,7 +64,6 @@ EventProcessor::spawn_event_threads(int n_threads, const char *et_name, size_t s
   return new_thread_group_id;
 }
 
-
 class EventProcessor eventProcessor;
 
 int
@@ -77,17 +78,15 @@ EventProcessor::start(int n_event_threads, size_t stacksize)
   ink_release_assert(n_event_threads > 0 && n_event_threads <= MAX_EVENT_THREADS);
   started = 1;
 
-  n_ethreads = n_event_threads;
+  n_ethreads      = n_event_threads;
   n_thread_groups = 1;
-
-  int first_thread = 1;
 
   for (i = 0; i < n_event_threads; i++) {
     EThread *t = new EThread(REGULAR, i);
-    if (first_thread && !i) {
+    if (i == 0) {
       ink_thread_setspecific(Thread::thread_data_key, t);
       global_mutex = t->mutex;
-      t->cur_time = ink_get_based_hrtime_internal();
+      Thread::get_hrtime_updated();
     }
     all_ethreads[i] = t;
 
@@ -97,7 +96,7 @@ EventProcessor::start(int n_event_threads, size_t stacksize)
   n_threads_for_type[ET_CALL] = n_event_threads;
 
 #if TS_USE_HWLOC
-  int affinity = 0;
+  int affinity = 1;
   REC_ReadConfigInteger(affinity, "proxy.config.exec_thread.affinity");
   hwloc_obj_t obj;
   hwloc_obj_type_t obj_type;
@@ -137,7 +136,7 @@ EventProcessor::start(int n_event_threads, size_t stacksize)
 #endif
   for (i = 0; i < n_ethreads; i++) {
     ink_thread tid;
-    if (i >= first_thread) {
+    if (i > 0) {
       snprintf(thr_name, MAX_THREAD_NAME_LENGTH, "[ET_NET %d]", i);
       tid = all_ethreads[i]->start(thr_name, stacksize);
     } else {
@@ -148,7 +147,7 @@ EventProcessor::start(int n_event_threads, size_t stacksize)
       obj = hwloc_get_obj_by_type(ink_get_topology(), obj_type, i % obj_count);
 #if HWLOC_API_VERSION >= 0x00010100
       int cpu_mask_len = hwloc_bitmap_snprintf(NULL, 0, obj->cpuset) + 1;
-      char *cpu_mask = (char *)alloca(cpu_mask_len);
+      char *cpu_mask   = (char *)alloca(cpu_mask_len);
       hwloc_bitmap_snprintf(cpu_mask, cpu_mask_len, obj->cpuset);
       Debug("iocore_thread", "EThread: %d %s: %d CPU Mask: %s\n", i, obj_name, obj->logical_index, cpu_mask);
 #else
@@ -180,7 +179,7 @@ EventProcessor::spawn_thread(Continuation *cont, const char *thr_name, size_t st
 
   e->init(cont, 0, 0);
   all_dthreads[n_dthreads] = new EThread(DEDICATED, e);
-  e->ethread = all_dthreads[n_dthreads];
+  e->ethread               = all_dthreads[n_dthreads];
   e->mutex = e->continuation->mutex = all_dthreads[n_dthreads]->mutex;
   n_dthreads++;
   e->ethread->start(thr_name, stacksize);

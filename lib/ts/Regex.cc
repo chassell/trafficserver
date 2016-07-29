@@ -21,13 +21,14 @@
   limitations under the License.
  */
 
-#include "libts.h"
-#include "Regex.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_thread.h"
+#include "ts/ink_memory.h"
+#include "ts/Regex.h"
 
 #ifdef PCRE_CONFIG_JIT
 struct RegexThreadKey {
   RegexThreadKey() { ink_thread_key_create(&this->key, (void (*)(void *)) & pcre_jit_stack_free); }
-
   ink_thread_key key;
 };
 
@@ -48,11 +49,11 @@ get_jit_stack(void *data ATS_UNUSED)
 #endif
 
 bool
-Regex::compile(const char *pattern, unsigned flags)
+Regex::compile(const char *pattern, const unsigned flags)
 {
   const char *error;
   int erroffset;
-  int options = 0;
+  int options    = 0;
   int study_opts = 0;
 
   if (regex)
@@ -86,6 +87,17 @@ Regex::compile(const char *pattern, unsigned flags)
   return true;
 }
 
+int
+Regex::get_capture_count()
+{
+  int captures = -1;
+  if (pcre_fullinfo(regex, regex_extra, PCRE_INFO_CAPTURECOUNT, &captures) != 0) {
+    return -1;
+  }
+
+  return captures;
+}
+
 bool
 Regex::exec(const char *str)
 {
@@ -95,9 +107,16 @@ Regex::exec(const char *str)
 bool
 Regex::exec(const char *str, int length)
 {
-  int ovector[30], rv;
+  int ovector[30];
+  return exec(str, length, ovector, countof(ovector));
+}
 
-  rv = pcre_exec(regex, regex_extra, str, length, 0, 0, ovector, countof(ovector));
+bool
+Regex::exec(const char *str, int length, int *ovector, int ovecsize)
+{
+  int rv;
+
+  rv = pcre_exec(regex, regex_extra, str, length, 0, 0, ovector, ovecsize);
   return rv > 0 ? true : false;
 }
 
@@ -139,19 +158,19 @@ DFA::build(const char *pattern, unsigned flags)
     flags |= RE_ANCHORED;
   }
 
-  ret = (dfa_pattern *)ats_malloc(sizeof(dfa_pattern));
+  ret     = (dfa_pattern *)ats_malloc(sizeof(dfa_pattern));
   ret->_p = NULL;
 
   ret->_re = new Regex();
-  rv = ret->_re->compile(pattern, flags);
+  rv       = ret->_re->compile(pattern, flags);
   if (rv == -1) {
     delete ret->_re;
     ats_free(ret);
     return NULL;
   }
 
-  ret->_idx = 0;
-  ret->_p = ats_strndup(pattern, strlen(pattern));
+  ret->_idx  = 0;
+  ret->_p    = ats_strndup(pattern, strlen(pattern));
   ret->_next = NULL;
   return ret;
 }
@@ -177,22 +196,22 @@ DFA::compile(const char **patterns, int npatterns, unsigned flags)
 
   for (i = 0; i < npatterns; i++) {
     pattern = patterns[i];
-    ret = build(pattern, flags);
+    ret     = build(pattern, flags);
     if (!ret) {
       continue;
     }
 
     if (!_my_patterns) {
-      _my_patterns = ret;
+      _my_patterns        = ret;
       _my_patterns->_next = NULL;
-      _my_patterns->_idx = i;
+      _my_patterns->_idx  = i;
     } else {
       end = _my_patterns;
       while (end->_next) {
         end = end->_next;
       }
       end->_next = ret; // add to end
-      ret->_idx = i;
+      ret->_idx  = i;
     }
   }
 

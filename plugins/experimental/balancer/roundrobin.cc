@@ -32,7 +32,6 @@ namespace
 {
 struct RoundRobinBalancer : public BalancerInstance {
   RoundRobinBalancer() : targets(), next(0) {}
-
   void
   push_target(const BalancerTarget &target)
   {
@@ -63,7 +62,7 @@ MakeRoundRobinBalancer(const char *options)
   if (options) {
     options = tmp = strdup(options);
     while ((opt = strsep(&tmp, ",")) != NULL) {
-      TSError("balancer: ignoring invalid round robin field '%s'", opt);
+      TSError("[balancer] Ignoring invalid round robin field '%s'", opt);
     }
 
     free((void *)options);

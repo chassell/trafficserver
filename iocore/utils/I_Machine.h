@@ -31,6 +31,7 @@
 #ifndef _I_Machine_h
 #define _I_Machine_h
 
+#include "ts/ink_inet.h"
 
 /**
   The Machine is a simple place holder for the hostname and the ip
@@ -70,8 +71,8 @@ struct Machine {
       @note This must be called before called @c instance so that the
       singleton is not @em inadvertently default initialized.
   */
-  static self *init(char const *name = 0,    ///< Host name of the machine.
-                    sockaddr const *addr = 0 ///< Primary IP adddress of the machine.
+  static self *init(char const *name     = 0, ///< Host name of the machine.
+                    sockaddr const *addr = 0  ///< Primary IP adddress of the machine.
                     );
   /// @return The global instance of this class.
   static self *instance();

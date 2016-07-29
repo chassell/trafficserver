@@ -31,12 +31,11 @@
 
 #include <stdio.h>
 #include "ts/ts.h"
-#include "ink_defs.h"
+#include "ts/ink_defs.h"
 
 static INKStat transaction_count;
 static INKStat session_count;
 static INKStat av_transaction;
-
 
 static void
 txn_handler(TSHttpTxn txnp, TSCont contp)
@@ -47,7 +46,6 @@ txn_handler(TSHttpTxn txnp, TSCont contp)
   num_txns = INKStatIntGet(transaction_count);
   TSDebug("tag_session", "The number of transactions is %" PRId64, num_txns);
 }
-
 
 static void
 handle_session(TSHttpSsn ssnp, TSCont contp)
@@ -93,22 +91,23 @@ TSPluginInit(int argc, const char *argv[])
   TSCont contp;
   TSPluginRegistrationInfo info;
 
-  info.plugin_name = "session-1";
-  info.vendor_name = "MyCompany";
+  info.plugin_name   = "session-1";
+  info.vendor_name   = "MyCompany";
   info.support_email = "ts-api-support@MyCompany.com";
 
-  if (TSPluginRegister(TS_SDK_VERSION_3_0, &info) != TS_SUCCESS) {
-    TSError("[PluginInit] Plugin registration failed.\n");
+  if (TSPluginRegister(&info) != TS_SUCCESS) {
+    TSError("[session-1] Plugin registration failed.\n");
+
     goto error;
   }
 
   transaction_count = INKStatCreate("transaction.count", INKSTAT_TYPE_INT64);
-  session_count = INKStatCreate("session.count", INKSTAT_TYPE_INT64);
-  av_transaction = INKStatCreate("avg.transactions", INKSTAT_TYPE_FLOAT);
+  session_count     = INKStatCreate("session.count", INKSTAT_TYPE_INT64);
+  av_transaction    = INKStatCreate("avg.transactions", INKSTAT_TYPE_FLOAT);
 
   contp = TSContCreate(ssn_handler, NULL);
   TSHttpHookAdd(TS_HTTP_SSN_START_HOOK, contp);
 
 error:
-  TSError("[PluginInit] Plugin not initialized");
+  TSError("[session-1] Plugin not initialized");
 }

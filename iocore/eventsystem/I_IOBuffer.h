@@ -39,8 +39,12 @@
 #if !defined(I_IOBuffer_h)
 #define I_IOBuffer_h
 
-#include "libts.h"
-#include "ink_resource.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_apidefs.h"
+#include "ts/Allocator.h"
+#include "ts/Ptr.h"
+#include "ts/ink_assert.h"
+#include "ts/ink_resource.h"
 
 struct MIOBufferAccessor;
 
@@ -68,11 +72,7 @@ enum AllocType {
   CONSTANT,
 };
 
-#if TS_USE_RECLAIMABLE_FREELIST
-#define DEFAULT_BUFFER_NUMBER 64
-#else
 #define DEFAULT_BUFFER_NUMBER 128
-#endif
 #define DEFAULT_HUGE_BUFFER_NUMBER 32
 #define MAX_MIOBUFFER_READERS 5
 #define DEFAULT_BUFFER_ALIGNMENT 8192 // should be disk/page size
@@ -109,7 +109,6 @@ enum AllocType {
 #define DEFAULT_MAX_BUFFER_SIZE BUFFER_SIZE_FOR_INDEX(MAX_BUFFER_SIZE_INDEX)
 #define MIN_IOBUFFER_SIZE BUFFER_SIZE_INDEX_128
 #define MAX_IOBUFFER_SIZE (DEFAULT_BUFFER_SIZES - 1)
-
 
 #define BUFFER_SIZE_ALLOCATED(_i) (BUFFER_SIZE_INDEX_IS_FAST_ALLOCATED(_i) || BUFFER_SIZE_INDEX_IS_XMALLOCED(_i))
 
@@ -223,7 +222,6 @@ public:
 
   */
   operator char *() { return _data; }
-
   /**
     Frees the IOBufferData object and its underlying memory. Deallocates
     the memory managed by this IOBufferData and then frees itself. You
@@ -261,7 +259,9 @@ public:
 
   */
   IOBufferData()
-    : _size_index(BUFFER_SIZE_NOT_ALLOCATED), _mem_type(NO_ALLOC), _data(NULL)
+    : _size_index(BUFFER_SIZE_NOT_ALLOCATED),
+      _mem_type(NO_ALLOC),
+      _data(NULL)
 #ifdef TRACK_BUFFER_USER
       ,
       _location(NULL)
@@ -577,7 +577,6 @@ public:
       @return @c true if more than @a size byte are available.
   */
   bool is_read_avail_more_than(int64_t size);
-
 
   /**
     Number of IOBufferBlocks with data in the block list. Returns the
@@ -932,7 +931,6 @@ public:
       return NULL;
   }
 
-
   char *
   buf()
   {
@@ -1210,7 +1208,7 @@ struct MIOBufferAccessor {
   void
   clear()
   {
-    mbuf = NULL;
+    mbuf  = NULL;
     entry = NULL;
   }
 
@@ -1219,7 +1217,8 @@ struct MIOBufferAccessor {
 #ifdef DEBUG
       name(NULL),
 #endif
-      mbuf(NULL), entry(NULL)
+      mbuf(NULL),
+      entry(NULL)
   {
   }
 
@@ -1250,7 +1249,11 @@ class MIOBuffer_tracker
 
 public:
   MIOBuffer_tracker(const char *_loc) : loc(_loc) {}
-  MIOBuffer *operator()(int64_t size_index = default_large_iobuffer_size) { return new_MIOBuffer_internal(loc, size_index); }
+  MIOBuffer *
+  operator()(int64_t size_index = default_large_iobuffer_size)
+  {
+    return new_MIOBuffer_internal(loc, size_index);
+  }
 };
 #endif
 
@@ -1267,7 +1270,11 @@ class Empty_MIOBuffer_tracker
 
 public:
   Empty_MIOBuffer_tracker(const char *_loc) : loc(_loc) {}
-  MIOBuffer *operator()(int64_t size_index = default_large_iobuffer_size) { return new_empty_MIOBuffer_internal(loc, size_index); }
+  MIOBuffer *
+  operator()(int64_t size_index = default_large_iobuffer_size)
+  {
+    return new_empty_MIOBuffer_internal(loc, size_index);
+  }
 };
 #endif
 
@@ -1301,8 +1308,13 @@ class IOBufferBlock_tracker
 
 public:
   IOBufferBlock_tracker(const char *_loc) : loc(_loc) {}
-  IOBufferBlock *operator()() { return new_IOBufferBlock_internal(loc); }
-  IOBufferBlock *operator()(IOBufferData *d, int64_t len = 0, int64_t offset = 0)
+  IOBufferBlock *
+  operator()()
+  {
+    return new_IOBufferBlock_internal(loc);
+  }
+  IOBufferBlock *
+  operator()(IOBufferData *d, int64_t len = 0, int64_t offset = 0)
   {
     return new_IOBufferBlock_internal(loc, d, len, offset);
   }
@@ -1342,7 +1354,8 @@ class IOBufferData_tracker
 
 public:
   IOBufferData_tracker(const char *_loc) : loc(_loc) {}
-  IOBufferData *operator()(int64_t size_index = default_large_iobuffer_size, AllocType type = DEFAULT_ALLOC)
+  IOBufferData *
+  operator()(int64_t size_index = default_large_iobuffer_size, AllocType type = DEFAULT_ALLOC)
   {
     return new_IOBufferData_internal(loc, size_index, type);
   }

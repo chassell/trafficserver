@@ -30,14 +30,13 @@
 
 typedef int (NetAccept::*NetAcceptHandler)(int, void *);
 volatile int dummy_volatile = 0;
-int accept_till_done = 1;
+int accept_till_done        = 1;
 
 static void
 safe_delay(int msec)
 {
   socketManager.poll(0, 0, msec);
 }
-
 
 //
 // Send the throttling message to up to THROTTLE_AT_ONCE connections,
@@ -50,28 +49,27 @@ send_throttle_message(NetAccept *na)
   Connection con[100];
   char dummy_read_request[4096];
 
-  afd.fd = na->server.fd;
+  afd.fd     = na->server.fd;
   afd.events = POLLIN;
 
   int n = 0;
-  while (check_net_throttle(ACCEPT, ink_get_hrtime()) && n < THROTTLE_AT_ONCE - 1 && (socketManager.poll(&afd, 1, 0) > 0)) {
+  while (check_net_throttle(ACCEPT, Thread::get_hrtime()) && n < THROTTLE_AT_ONCE - 1 && (socketManager.poll(&afd, 1, 0) > 0)) {
     int res = 0;
     if ((res = na->server.accept(&con[n])) < 0)
       return res;
     n++;
   }
-  safe_delay(NET_THROTTLE_DELAY / 2);
+  safe_delay(net_throttle_delay / 2);
   int i = 0;
   for (i = 0; i < n; i++) {
     socketManager.read(con[i].fd, dummy_read_request, 4096);
     socketManager.write(con[i].fd, unix_netProcessor.throttle_error_message, strlen(unix_netProcessor.throttle_error_message));
   }
-  safe_delay(NET_THROTTLE_DELAY / 2);
+  safe_delay(net_throttle_delay / 2);
   for (i = 0; i < n; i++)
     con[i].close();
   return 0;
 }
-
 
 //
 // General case network connection accept code
@@ -79,11 +77,12 @@ send_throttle_message(NetAccept *na)
 int
 net_accept(NetAccept *na, void *ep, bool blockable)
 {
-  Event *e = (Event *)ep;
-  int res = 0;
-  int count = 0;
-  int loop = accept_till_done;
+  Event *e               = (Event *)ep;
+  int res                = 0;
+  int count              = 0;
+  int loop               = accept_till_done;
   UnixNetVConnection *vc = NULL;
+  Connection con;
 
   if (!blockable)
     if (!MUTEX_TAKE_TRY_LOCK_FOR(na->action_->mutex, e->ethread, na->action_->continuation))
@@ -91,33 +90,32 @@ net_accept(NetAccept *na, void *ep, bool blockable)
   // do-while for accepting all the connections
   // added by YTS Team, yamsat
   do {
-    vc = (UnixNetVConnection *)na->alloc_cache;
-    if (!vc) {
-      vc = (UnixNetVConnection *)na->getNetProcessor()->allocate_vc(e->ethread);
-      NET_SUM_GLOBAL_DYN_STAT(net_connections_currently_open_stat, 1);
-      vc->id = net_next_connection_number();
-      na->alloc_cache = vc;
-    }
-    if ((res = na->server.accept(&vc->con)) < 0) {
+    if ((res = na->server.accept(&con)) < 0) {
       if (res == -EAGAIN || res == -ECONNABORTED || res == -EPIPE)
         goto Ldone;
       if (na->server.fd != NO_FD && !na->action_->cancelled) {
         if (!blockable)
           na->action_->continuation->handleEvent(EVENT_ERROR, (void *)(intptr_t)res);
         else {
-          MUTEX_LOCK(lock, na->action_->mutex, e->ethread);
+          SCOPED_MUTEX_LOCK(lock, na->action_->mutex, e->ethread);
           na->action_->continuation->handleEvent(EVENT_ERROR, (void *)(intptr_t)res);
         }
       }
       count = res;
       goto Ldone;
     }
-    count++;
-    na->alloc_cache = NULL;
 
-    vc->submit_time = ink_get_hrtime();
+    vc = static_cast<UnixNetVConnection *>(na->getNetProcessor()->allocate_vc(e->ethread));
+    if (!vc)
+      goto Ldone; // note: @a con will clean up the socket when it goes out of scope.
+
+    ++count;
+    NET_SUM_GLOBAL_DYN_STAT(net_connections_currently_open_stat, 1);
+    vc->id = net_next_connection_number();
+    vc->con.move(con);
+    vc->submit_time = Thread::get_hrtime();
     ats_ip_copy(&vc->server_addr, &vc->con.addr);
-    vc->mutex = new_ProxyMutex();
+    vc->mutex   = new_ProxyMutex();
     vc->action_ = *na->action_;
     vc->set_is_transparent(na->server.f_inbound_transparent);
     vc->closed = 0;
@@ -149,7 +147,6 @@ NetAccept::init_accept_loop(const char *thr_name)
   eventProcessor.spawn_thread(this, thr_name, stacksize);
 }
 
-
 //
 // Initialize the NetAccept for execution in a etype thread.
 // This should be done for low connection rate sockets.
@@ -158,35 +155,34 @@ NetAccept::init_accept_loop(const char *thr_name)
 // use it for high connection rates as well.
 //
 void
-NetAccept::init_accept(EThread *t)
+NetAccept::init_accept(EThread *t, bool isTransparent)
 {
   if (!t)
     t = eventProcessor.assign_thread(etype);
 
   if (!action_->continuation->mutex) {
     action_->continuation->mutex = t->mutex;
-    action_->mutex = t->mutex;
+    action_->mutex               = t->mutex;
   }
-  if (do_listen(NON_BLOCKING))
+  if (do_listen(NON_BLOCKING, isTransparent))
     return;
   SET_HANDLER((NetAcceptHandler)&NetAccept::acceptEvent);
-  period = ACCEPT_PERIOD;
+  period = -HRTIME_MSECONDS(net_accept_period);
   t->schedule_every(this, period, etype);
 }
 
-
 void
-NetAccept::init_accept_per_thread()
+NetAccept::init_accept_per_thread(bool isTransparent)
 {
   int i, n;
 
-  if (do_listen(NON_BLOCKING))
+  if (do_listen(NON_BLOCKING, isTransparent))
     return;
   if (accept_fn == net_accept)
     SET_HANDLER((NetAcceptHandler)&NetAccept::acceptFastEvent);
   else
     SET_HANDLER((NetAcceptHandler)&NetAccept::acceptEvent);
-  period = ACCEPT_PERIOD;
+  period = -HRTIME_MSECONDS(net_accept_period);
 
   NetAccept *a;
   n = eventProcessor.n_threads_for_type[ET_NET];
@@ -194,8 +190,8 @@ NetAccept::init_accept_per_thread()
     if (i < n - 1)
       a = clone();
     else
-      a = this;
-    EThread *t = eventProcessor.eventthread[ET_NET][i];
+      a                = this;
+    EThread *t         = eventProcessor.eventthread[ET_NET][i];
     PollDescriptor *pd = get_PollDescriptor(t);
     if (a->ep.start(pd, a, EVENTIO_READ) < 0)
       Warning("[NetAccept::init_accept_per_thread]:error starting EventIO");
@@ -232,26 +228,26 @@ NetAccept::do_listen(bool non_blocking, bool transparent)
 int
 NetAccept::do_blocking_accept(EThread *t)
 {
-  int res = 0;
-  int loop = accept_till_done;
+  int res                = 0;
+  int loop               = accept_till_done;
   UnixNetVConnection *vc = NULL;
   Connection con;
 
   // do-while for accepting all the connections
   // added by YTS Team, yamsat
   do {
-    ink_hrtime now = ink_get_hrtime();
+    ink_hrtime now = Thread::get_hrtime();
 
     // Throttle accepts
 
     while (!backdoor && check_net_throttle(ACCEPT, now)) {
       check_throttle_warning();
       if (!unix_netProcessor.throttle_error_message) {
-        safe_delay(NET_THROTTLE_DELAY);
+        safe_delay(net_throttle_delay);
       } else if (send_throttle_message(this) < 0) {
         goto Lerror;
       }
-      now = ink_get_hrtime();
+      now = Thread::get_hrtime();
     }
 
     if ((res = server.accept(&con)) < 0) {
@@ -260,13 +256,12 @@ NetAccept::do_blocking_accept(EThread *t)
       if (seriousness >= 0) { // not so bad
         if (!seriousness)     // bad enough to warn about
           check_transient_accept_error(res);
-        safe_delay(NET_THROTTLE_DELAY);
+        safe_delay(net_throttle_delay);
         return 0;
       }
       if (!action_->cancelled) {
-        MUTEX_LOCK(lock, action_->mutex, t);
+        SCOPED_MUTEX_LOCK(lock, action_->mutex, t);
         action_->continuation->handleEvent(EVENT_ERROR, (void *)(intptr_t)res);
-        MUTEX_UNTAKE_LOCK(action_->mutex, t);
         Warning("accept thread received fatal error: errno = %d", errno);
       }
       return -1;
@@ -274,17 +269,16 @@ NetAccept::do_blocking_accept(EThread *t)
 
     // Use 'NULL' to Bypass thread allocator
     vc = (UnixNetVConnection *)this->getNetProcessor()->allocate_vc(NULL);
-    if (!vc) {
+    if (unlikely(!vc || shutdown_event_system == true)) {
       con.close();
       return -1;
     }
-    vc->con = con;
+    vc->con                 = con;
     vc->options.packet_mark = packet_mark;
-    vc->options.packet_tos = packet_tos;
+    vc->options.packet_tos  = packet_tos;
     vc->apply_options();
     vc->from_accept_thread = true;
-    vc->id = net_next_connection_number();
-    alloc_cache = NULL;
+    vc->id                 = net_next_connection_number();
 
     check_emergency_throttle(con);
 
@@ -292,7 +286,7 @@ NetAccept::do_blocking_accept(EThread *t)
     vc->submit_time = now;
     ats_ip_copy(&vc->server_addr, &vc->con.addr);
     vc->set_is_transparent(server.f_inbound_transparent);
-    vc->mutex = new_ProxyMutex();
+    vc->mutex   = new_ProxyMutex();
     vc->action_ = *action_;
     SET_CONTINUATION_HANDLER(vc, (NetVConnHandler)&UnixNetVConnection::acceptEvent);
     // eventProcessor.schedule_imm(vc, getEtype());
@@ -301,7 +295,6 @@ NetAccept::do_blocking_accept(EThread *t)
 
   return 1;
 }
-
 
 int
 NetAccept::acceptEvent(int event, void *ep)
@@ -344,7 +337,6 @@ NetAccept::acceptEvent(int event, void *ep)
   return EVENT_CONT;
 }
 
-
 int
 NetAccept::acceptFastEvent(int event, void *ep)
 {
@@ -354,19 +346,19 @@ NetAccept::acceptFastEvent(int event, void *ep)
   int bufsz, res;
   Connection con;
 
-  PollDescriptor *pd = get_PollDescriptor(e->ethread);
+  PollDescriptor *pd     = get_PollDescriptor(e->ethread);
   UnixNetVConnection *vc = NULL;
-  int loop = accept_till_done;
+  int loop               = accept_till_done;
 
   do {
-    if (!backdoor && check_net_throttle(ACCEPT, ink_get_hrtime())) {
-      ifd = -1;
+    if (!backdoor && check_net_throttle(ACCEPT, Thread::get_hrtime())) {
+      ifd = NO_FD;
       return EVENT_CONT;
     }
 
     socklen_t sz = sizeof(con.addr);
-    int fd = socketManager.accept(server.fd, &con.addr.sa, &sz);
-    con.fd = fd;
+    int fd       = socketManager.accept(server.fd, &con.addr.sa, &sz);
+    con.fd       = fd;
 
     if (likely(fd >= 0)) {
       Debug("iocore_net", "accepted a new socket: %d", fd);
@@ -411,7 +403,7 @@ NetAccept::acceptFastEvent(int event, void *ep)
       vc->con = con;
 
       vc->options.packet_mark = packet_mark;
-      vc->options.packet_tos = packet_tos;
+      vc->options.packet_tos  = packet_tos;
       vc->apply_options();
     } else {
       res = fd;
@@ -436,10 +428,10 @@ NetAccept::acceptFastEvent(int event, void *ep)
     NET_SUM_GLOBAL_DYN_STAT(net_connections_currently_open_stat, 1);
     vc->id = net_next_connection_number();
 
-    vc->submit_time = ink_get_hrtime();
+    vc->submit_time = Thread::get_hrtime();
     ats_ip_copy(&vc->server_addr, &vc->con.addr);
     vc->set_is_transparent(server.f_inbound_transparent);
-    vc->mutex = new_ProxyMutex();
+    vc->mutex  = new_ProxyMutex();
     vc->thread = e->ethread;
 
     vc->nh = get_NetHandler(e->ethread);
@@ -452,6 +444,7 @@ NetAccept::acceptFastEvent(int event, void *ep)
       return EVENT_DONE;
     }
 
+    ink_assert(vc->nh->mutex->thread_holding == this_ethread());
     vc->nh->open_list.enqueue(vc);
 
 #ifdef USE_EDGE_TRIGGER
@@ -463,10 +456,11 @@ NetAccept::acceptFastEvent(int event, void *ep)
 
     if (!action_->cancelled) {
       // We must be holding the lock already to do later do_io_read's
-      MUTEX_LOCK(lock, vc->mutex, e->ethread);
+      SCOPED_MUTEX_LOCK(lock, vc->mutex, e->ethread);
       action_->continuation->handleEvent(NET_EVENT_ACCEPT, vc);
-    } else
+    } else {
       close_UnixNetVConnection(vc, e->ethread);
+    }
   } while (loop);
 
 Ldone:
@@ -481,7 +475,6 @@ Lerror:
   delete this;
   return EVENT_DONE;
 }
-
 
 int
 NetAccept::acceptLoopEvent(int event, Event *e)
@@ -499,18 +492,25 @@ NetAccept::acceptLoopEvent(int event, Event *e)
   return EVENT_DONE;
 }
 
-
 //
 // Accept Event handler
 //
 //
 
 NetAccept::NetAccept()
-  : Continuation(NULL), period(0), alloc_cache(0), ifd(-1), callback_on_open(false), backdoor(false), recv_bufsize(0),
-    send_bufsize(0), sockopt_flags(0), packet_mark(0), packet_tos(0), etype(0)
+  : Continuation(NULL),
+    period(0),
+    ifd(NO_FD),
+    callback_on_open(false),
+    backdoor(false),
+    recv_bufsize(0),
+    send_bufsize(0),
+    sockopt_flags(0),
+    packet_mark(0),
+    packet_tos(0),
+    etype(0)
 {
 }
-
 
 //
 // Stop listening.  When the next poll takes place, an error will result.
@@ -527,7 +527,7 @@ NetAccept *
 NetAccept::clone() const
 {
   NetAccept *na;
-  na = new NetAccept;
+  na  = new NetAccept;
   *na = *this;
   return na;
 }

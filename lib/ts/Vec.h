@@ -28,8 +28,9 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/types.h>
-#include "defalloc.h"
-#include "ink_assert.h"
+#include "ts/defalloc.h"
+#include "ts/ink_assert.h"
+#include "ts/Diags.h"
 
 // Simple Vector class, also supports open hashed sets
 
@@ -56,7 +57,6 @@ public:
   ~Vec();
 
   C &operator[](int i) const { return v[i]; }
-
   C get(size_t i) const;
   void add(C a);
   void
@@ -133,7 +133,8 @@ public:
   {
     return v[n - 1];
   }
-  Vec<C, A, S> &operator=(Vec<C, A, S> &v)
+  Vec<C, A, S> &
+  operator=(Vec<C, A, S> &v)
   {
     this->copy(v);
     return *this;
@@ -148,6 +149,7 @@ public:
   int read(int fd);
   void qsort(bool (*lt)(C, C));
   void qsort(bool (*lt)(const C &, const C &));
+  void swap(C *p1, C *p2);
 
 private:
   void move_internal(Vec<C, A, S> &v);
@@ -158,20 +160,20 @@ private:
 };
 
 // c -- class, p -- pointer to elements of v, v -- vector
-#define forv_Vec(_c, _p, _v)                                                                  \
-  if ((_v).n)                                                                                 \
-    for (_c *qq__##_p = (_c *)0, *_p = (_v).v[0];                                             \
-         ((uintptr_t)(qq__##_p) < (_v).length()) && ((_p = (_v).v[(intptr_t)qq__##_p]) || 1); \
+#define forv_Vec(_c, _p, _v)                                                                \
+  if ((_v).n)                                                                               \
+    for (_c *qq__##_p = (_c *)0, *_p = (_v).v[0];                                           \
+         ((uintptr_t)(qq__##_p) < (_v).length()) && ((_p = (_v).v[(intptr_t)qq__##_p]), 1); \
          qq__##_p = (_c *)(((intptr_t)qq__##_p) + 1))
-#define for_Vec(_c, _p, _v)                                                                   \
-  if ((_v).n)                                                                                 \
-    for (_c *qq__##_p = (_c *)0, _p = (_v).v[0];                                              \
-         ((uintptr_t)(qq__##_p) < (_v).length()) && ((_p = (_v).v[(intptr_t)qq__##_p]) || 1); \
+#define for_Vec(_c, _p, _v)                                                                 \
+  if ((_v).n)                                                                               \
+    for (_c *qq__##_p = (_c *)0, _p = (_v).v[0];                                            \
+         ((uintptr_t)(qq__##_p) < (_v).length()) && ((_p = (_v).v[(intptr_t)qq__##_p]), 1); \
          qq__##_p = (_c *)(((intptr_t)qq__##_p) + 1))
-#define forvp_Vec(_c, _p, _v)                                                                  \
-  if ((_v).n)                                                                                  \
-    for (_c *qq__##_p = (_c *)0, *_p = &(_v).v[0];                                             \
-         ((uintptr_t)(qq__##_p) < (_v).length()) && ((_p = &(_v).v[(intptr_t)qq__##_p]) || 1); \
+#define forvp_Vec(_c, _p, _v)                                                                \
+  if ((_v).n)                                                                                \
+    for (_c *qq__##_p = (_c *)0, *_p = &(_v).v[0];                                           \
+         ((uintptr_t)(qq__##_p) < (_v).length()) && ((_p = &(_v).v[(intptr_t)qq__##_p]), 1); \
          qq__##_p = (_c *)(((intptr_t)qq__##_p) + 1))
 
 template <class C, class A = DefaultAlloc, int S = VEC_INTEGRAL_SHIFT_DEFAULT> class Accum
@@ -241,9 +243,9 @@ template <class C, class A, int S> inline Vec<C, A, S>::Vec(const Vec<C, A, S> &
 
 template <class C, class A, int S> inline Vec<C, A, S>::Vec(C c)
 {
-  n = 1;
-  i = 0;
-  v = &e[0];
+  n    = 1;
+  i    = 0;
+  v    = &e[0];
   e[0] = c;
 }
 
@@ -451,7 +453,7 @@ inline void
 Vec<C, A, S>::fill(size_t nn)
 {
   for (size_t i = n; i < nn; i++)
-    add() = 0;
+    add()       = 0;
 }
 
 template <class C, class A, int S>
@@ -510,7 +512,7 @@ Vec<C, A, S>::set_add_internal(C c)
   size_t j, k;
   if (n) {
     uintptr_t h = (uintptr_t)c;
-    h = h % n;
+    h           = h % n;
     for (k = h, j = 0; j < i + 3; j++) {
       if (!v[k]) {
         v[k] = c;
@@ -537,7 +539,7 @@ Vec<C, A, S>::set_in_internal(C c)
   size_t j, k;
   if (n) {
     uintptr_t h = (uintptr_t)c;
-    h = h % n;
+    h           = h % n;
     for (k = h, j = 0; j < i + 3; j++) {
       if (!v[k])
         return 0;
@@ -722,7 +724,7 @@ Vec<C, A, S>::insert(size_t index, Vec<C> &vv)
 {
   fill(n + vv.n);
   memmove(&v[index + vv.n], &v[index], (n - index - 1) * sizeof(C));
-  for (int x = 0; x < vv.n; x++)
+  for (int x     = 0; x < vv.n; x++)
     v[index + x] = vv[x];
 }
 
@@ -760,7 +762,7 @@ Vec<C, A, S>::copy_internal(const Vec<C, A, S> &vv)
     nl++;
   }
   nl = 1 << nl;
-  v = (C *)A::alloc(nl * sizeof(C));
+  v  = (C *)A::alloc(nl * sizeof(C));
   memcpy(v, vv.v, n * sizeof(C));
   memset(v + n, 0, (nl - n) * sizeof(C));
   if (i > n) // reset reserve
@@ -775,8 +777,8 @@ Vec<C, A, S>::set_expand()
     i = SET_INITIAL_INDEX;
   else
     i = i + 1;
-  n = prime2[i];
-  v = (C *)A::alloc(n * sizeof(C));
+  n   = prime2[i];
+  v   = (C *)A::alloc(n * sizeof(C));
   memset(v, 0, n * sizeof(C));
 }
 
@@ -789,9 +791,9 @@ Vec<C, A, S>::reserve(size_t x)
   unsigned xx = 1 << VEC_INITIAL_SHIFT;
   while (xx < x)
     xx *= 2;
-  i = xx;
+  i        = xx;
   void *vv = (void *)v;
-  v = (C *)A::alloc(i * sizeof(C));
+  v        = (C *)A::alloc(i * sizeof(C));
   if (vv && n)
     memcpy(v, vv, n * sizeof(C));
   memset(&v[n], 0, (i - n) * sizeof(C));
@@ -821,7 +823,7 @@ Vec<C, A, S>::addx()
         i = 0;
       }
       void *vv = (void *)v;
-      v = (C *)A::alloc(nl * sizeof(C));
+      v        = (C *)A::alloc(nl * sizeof(C));
       memcpy(v, vv, n * sizeof(C));
       memset(&v[n], 0, n * sizeof(C));
       A::free(vv);
@@ -889,7 +891,7 @@ template <class C, class A, int S>
 inline int
 marshal(Vec<C, A, S> &v, char *buf)
 {
-  char *x = buf;
+  char *x   = buf;
   *(int *)x = v.n;
   x += sizeof(int);
   *(int *)x = v.i;
@@ -904,7 +906,7 @@ inline int
 unmarshal(Vec<C, A, S> &v, char *buf)
 {
   char *x = buf;
-  v.n = *(int *)x;
+  v.n     = *(int *)x;
   x += sizeof(int);
   v.i = *(int *)x;
   x += sizeof(int);
@@ -950,90 +952,144 @@ Vec<C, A, S>::read(int fd)
 
 template <class C>
 inline void
+swap(C *p1, C *p2)
+{
+  C t = *p1;
+  *p1 = *p2;
+  *p2 = t;
+}
+
+template <class C>
+inline void
 qsort_Vec(C *left, C *right, bool (*lt)(C, C))
 {
-Lagain:
   if (right - left < 5) {
     for (C *y = right - 1; y > left; y--) {
       for (C *x = left; x < y; x++) {
         if (lt(x[1], x[0])) {
-          C t = x[0];
+          C t  = x[0];
           x[0] = x[1];
           x[1] = t;
         }
       }
     }
   } else {
-    C *i = left + 1, *j = right - 1;
-    C x = *left;
-    for (;;) {
-      while (lt(x, *j))
-        j--;
-      while (i < j && lt(*i, x))
-        i++;
-      if (i >= j)
-        break;
-      C t = *i;
-      *i = *j;
-      *j = t;
-      i++;
-      j--;
+    C *center = left + ((right - left) / 2);
+    C median;
+
+    // find the median
+    if (lt(*center, *left)) { // order left and center
+      swap(center, left);
     }
-    if (j == right - 1) {
-      *left = *(right - 1);
-      *(right - 1) = x;
-      right--;
-      goto Lagain;
+    if (lt(*(right - 1), *left)) { // order left and right
+      swap(right - 1, left);
     }
-    if (left < j)
-      qsort_Vec<C>(left, j + 1, lt);
-    if (j + 2 < right)
-      qsort_Vec<C>(j + 1, right, lt);
+    if (lt(*(right - 1), *center)) { // order right and center
+      swap((right - 1), center);
+    }
+    swap(center, right - 2); // stash the median one from the right for now
+    median = *(right - 2);   // the median of left, center and right values
+
+    // now partition, pivoting on the median value
+    // l ptr is +1 b/c we already put the lowest of the incoming left, center
+    // and right in there, ignore it for now
+    // r ptr is -2 b/c we already put the biggest of the 3 values in (right-1)
+    // and the median in (right -2)
+    C *l = left + 1, *r = right - 2;
+
+    // move l and r until they have something to do
+    while (lt(median, *(r - 1))) {
+      r--;
+    }
+    while (l < r && lt(*l, median)) {
+      l++;
+    }
+    // until l and r meet,
+    // compare l and median
+    // swap l for r if l is larger than median
+    while (l < r) {
+      if (lt(*l, median)) {
+        l++;
+      } else {
+        swap(l, r - 1);
+        r--;
+      }
+    }
+
+    swap(l, right - 2); // restore median to its rightful place
+
+    // recurse for the littles (left segment)
+    qsort_Vec<C>(left, l, lt);
+    // recurse for the bigs (right segment)
+    qsort_Vec<C>(l + 1, right, lt);
   }
 }
 
 template <class C>
 inline void
-qsort_VecRef(C *left, C *right, bool (*lt)(const C &, const C &))
+qsort_VecRef(C *left, C *right, bool (*lt)(const C &, const C &), unsigned int *p_ctr)
 {
-Lagain:
   if (right - left < 5) {
     for (C *y = right - 1; y > left; y--) {
       for (C *x = left; x < y; x++) {
         if (lt(x[1], x[0])) {
-          C t = x[0];
+          C t  = x[0];
           x[0] = x[1];
           x[1] = t;
         }
       }
     }
   } else {
-    C *i = left + 1, *j = right - 1;
-    C x = *left;
-    for (;;) {
-      while (lt(x, *j))
-        j--;
-      while (i < j && lt(*i, x))
-        i++;
-      if (i >= j)
-        break;
-      C t = *i;
-      *i = *j;
-      *j = t;
-      i++;
-      j--;
+    C *center = left + ((right - left) / 2);
+    C median;
+
+    // find the median
+    if (lt(*center, *left)) { // order left and center
+      swap(center, left);
     }
-    if (j == right - 1) {
-      *left = *(right - 1);
-      *(right - 1) = x;
-      right--;
-      goto Lagain;
+    if (lt(*(right - 1), *left)) { // order left and right
+      swap(right - 1, left);
     }
-    if (left < j)
-      qsort_VecRef<C>(left, j + 1, lt);
-    if (j + 2 < right)
-      qsort_VecRef<C>(j + 1, right, lt);
+    if (lt(*(right - 1), *center)) { // order right and center
+      swap((right - 1), center);
+    }
+    swap(center, right - 2); // stash the median one from the right for now
+    median = *(right - 2);   // the median of left, center and right values
+
+    // now partition, pivoting on the median value
+    // l ptr is +1 b/c we already put the lowest of the incoming left, center
+    // and right in there, ignore it for now
+    // r ptr is -2 b/c we already put the biggest of the 3 values in (right-1)
+    // and the median in (right -2)
+    C *l = left + 1, *r = right - 2;
+
+    // move l and r until they have something to do
+    while (lt(median, *(r - 1))) {
+      r--;
+    }
+    while (l < r && lt(*l, median)) {
+      l++;
+    }
+    // until l and r meet,
+    // compare l and median
+    // swap l for r if l is larger than median
+    while (l < r) {
+      if (lt(*l, median)) {
+        l++;
+      } else {
+        swap(l, r - 1);
+        r--;
+      }
+    }
+
+    swap(l, right - 2); // restore median to its rightful place
+
+    // recurse for the littles (left segment)
+    qsort_VecRef<C>(left, l, lt, p_ctr);
+    // recurse for the bigs (right segment)
+    qsort_VecRef<C>(l + 1, right, lt, p_ctr);
   }
+  (*p_ctr)++;
 }
 
 template <class C, class A, int S>
@@ -1048,8 +1104,10 @@ template <class C, class A, int S>
 inline void
 Vec<C, A, S>::qsort(bool (*lt)(const C &, const C &))
 {
+  static unsigned int ctr = 0;
   if (n)
-    qsort_VecRef<C>(&v[0], end(), lt);
+    qsort_VecRef<C>(&v[0], end(), lt, &ctr);
+  Debug("qsort", "took %u iterations to sort %ld elements", ctr, n);
 }
 void test_vec();
 

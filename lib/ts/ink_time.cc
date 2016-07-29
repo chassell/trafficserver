@@ -28,11 +28,11 @@
 
  ****************************************************************************/
 
-#include "ink_platform.h"
-#include "ink_defs.h"
-#include "ink_time.h"
-#include "ink_assert.h"
-#include "ink_string.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_defs.h"
+#include "ts/ink_time.h"
+#include "ts/ink_assert.h"
+#include "ts/ink_string.h"
 
 #include <locale.h>
 #include <sys/resource.h>
@@ -91,7 +91,6 @@ ink_time_wall_seconds()
   return ((double)s_val.tv_sec + 0.000001 * s_val.tv_usec);
 } /* End ink_time_wall_seconds */
 
-
 struct dtconv {
   char *abbrev_month_names[12];
   char *month_names[12];
@@ -104,7 +103,6 @@ struct dtconv {
   char *pm_string;
   char *ldate_format;
 };
-
 
 /*
  * The man page for cftime lies. It claims that it is thread safe.
@@ -146,9 +144,9 @@ convert_tm(const struct tm *tp)
   int month;
   int mday;
 
-  year = tp->tm_year;
+  year  = tp->tm_year;
   month = tp->tm_mon;
-  mday = tp->tm_mday;
+  mday  = tp->tm_mday;
 
   /* what should we do? */
   if ((year < 70) || (year > 137))

@@ -21,12 +21,13 @@
   limitations under the License.
  */
 
-
 #ifndef LOG_FIELD_H
 #define LOG_FIELD_H
 
-#include "libts.h"
+#include "ts/ink_platform.h"
+#include "ts/List.h"
 #include "LogFieldAliasMap.h"
+#include "Milestones.h"
 
 class LogAccess;
 
@@ -38,8 +39,8 @@ struct LogSlice {
   LogSlice()
   {
     m_enable = false;
-    m_start = 0;
-    m_end = INT_MAX;
+    m_start  = 0;
+    m_end    = INT_MAX;
   }
 
   //
@@ -57,7 +58,6 @@ struct LogSlice {
   //
   int toStrOffset(int strlen, int *offset);
 };
-
 
 /*-------------------------------------------------------------------------
   LogField
@@ -78,7 +78,6 @@ public:
   typedef int (*UnmarshalFuncWithSlice)(char **buf, char *dest, int len, LogSlice *slice);
   typedef int (*UnmarshalFuncWithMap)(char **buf, char *dest, int len, Ptr<LogFieldAliasMap> map);
   typedef void (LogAccess::*SetFunc)(char *buf, int len);
-
 
   enum Type {
     sINT = 0,
@@ -103,6 +102,8 @@ public:
     ICFG,
     SCFG,
     RECORD,
+    MS,
+    MSDMS,
     N_CONTAINERS,
   };
 
@@ -167,6 +168,7 @@ public:
   void set_aggregate_op(Aggregate agg_op);
   void update_aggregate(int64_t val);
 
+  static void init_milestone_container(void);
   static Container valid_container_name(char *name);
   static Aggregate valid_aggregate_name(char *name);
   static bool fieldlist_contains_aggregates(char *fieldlist);
@@ -182,9 +184,13 @@ private:
   Aggregate m_agg_op;
   int64_t m_agg_cnt;
   int64_t m_agg_val;
+  TSMilestonesType m_milestone1; ///< Used for MS and MSDMS as the first (or only) milestone.
+  TSMilestonesType m_milestone2; ///< Second milestone for MSDMS
   bool m_time_field;
   Ptr<LogFieldAliasMap> m_alias_map; // map sINT <--> string
   SetFunc m_set_func;
+  TSMilestonesType milestone_from_m_name();
+  int milestones_from_m_name(TSMilestonesType *m1, TSMilestonesType *m2);
 
 public:
   LINK(LogField, link);

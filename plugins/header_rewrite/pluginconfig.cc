@@ -33,7 +33,7 @@
 #include <stdio.h>
 #include <string>
 
-#include "ink_defs.h"
+//#include "ink_defs.h"
 #include "ts/ts.h"
 #include "pluginconfig.h"
 
@@ -79,9 +79,9 @@ ConfigHolder::load_config_file()
   if (newconfig) {
     if (newconfig->parse_config(config_path)) {
       TSDebug(pluginName, "after new_config parse: %s", config_path);
-      last_load = time(NULL);
+      last_load            = time(NULL);
       PluginConfig **confp = &(config);
-      oldconfig = __sync_lock_test_and_set(confp, newconfig);
+      oldconfig            = __sync_lock_test_and_set(confp, newconfig);
       if (oldconfig) {
         TSDebug(pluginName, "scheduling free: %p (%p)", oldconfig, newconfig);
         free_cont = TSContCreate(free_handler, NULL);
@@ -160,7 +160,7 @@ ConfigHolder::addUpdateRegister()
 bool
 ConfigHolder::removeUpdateRegister()
 {
-  TSMgmtUnRegister(uniqueID);
+  //TSMgmtUnRegister(uniqueID);
   TSContDestroy(config_cont);
   return true;
 }

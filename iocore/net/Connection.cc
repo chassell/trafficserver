@@ -27,12 +27,10 @@
   Commonality across all platforms -- move out as required.
 
 **************************************************************************/
-#include "libts.h"
+#include "ts/ink_platform.h"
 
 #include "P_Net.h"
 
-#define SET_TCP_NO_DELAY
-#define SET_NO_LINGER
 // set in the OS
 // #define RECV_BUF_SIZE            (1024*64)
 // #define SEND_BUF_SIZE            (1024*64)
@@ -48,12 +46,11 @@
 int
 get_listen_backlog(void)
 {
-  int listen_backlog = 1024;
+  int listen_backlog;
 
   REC_ReadConfigInteger(listen_backlog, "proxy.config.net.listen_backlog");
-  return listen_backlog;
+  return listen_backlog >= 0 ? listen_backlog : ats_tcp_somaxconn();
 }
-
 
 //
 // Functions
@@ -69,17 +66,15 @@ Connection::Connection() : fd(NO_FD), is_bound(false), is_connected(false), sock
   memset(&addr, 0, sizeof(addr));
 }
 
-
 Connection::~Connection()
 {
   close();
 }
 
-
 int
 Server::accept(Connection *c)
 {
-  int res = 0;
+  int res      = 0;
   socklen_t sz = sizeof(c->addr);
 
   res = socketManager.accept(fd, &c->addr.sa, &sz);
@@ -101,11 +96,6 @@ Server::accept(Connection *c)
 #ifdef SEND_BUF_SIZE
   socketManager.set_sndbuf_size(c->fd, SEND_BUF_SIZE);
 #endif
-#ifdef SET_SO_KEEPALIVE
-  // enables 2 hour inactivity probes, also may fix IRIX FIN_WAIT_2 leak
-  if ((res = safe_setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, SOCKOPT_ON, sizeof(int))) < 0)
-    goto Lerror;
-#endif
 
   return 0;
 
@@ -114,21 +104,36 @@ Lerror:
   return res;
 }
 
-
 int
 Connection::close()
 {
   is_connected = false;
-  is_bound = false;
+  is_bound     = false;
   // don't close any of the standards
   if (fd >= 2) {
     int fd_save = fd;
-    fd = NO_FD;
+    fd          = NO_FD;
     return socketManager.close(fd_save);
   } else {
     fd = NO_FD;
     return -EBADF;
   }
+}
+
+/**
+ * Move control of the socket from the argument object orig to the current object.
+ * Orig is marked as zombie, so when it is freed, the socket will not be closed
+ */
+void
+Connection::move(Connection &orig)
+{
+  this->is_connected = orig.is_connected;
+  this->is_bound     = orig.is_bound;
+  this->fd           = orig.fd;
+  // The target has taken ownership of the file descriptor
+  orig.fd         = NO_FD;
+  this->addr      = orig.addr;
+  this->sock_type = orig.sock_type;
 }
 
 static int
@@ -144,7 +149,14 @@ add_http_filter(int fd ATS_UNUSED)
 int
 Server::setup_fd_for_listen(bool non_blocking, int recv_bufsize, int send_bufsize, bool transparent)
 {
-  int res = 0;
+  int res             = 0;
+  int sockopt_flag_in = 0;
+  REC_ReadConfigInteger(sockopt_flag_in, "proxy.config.net.sock_option_flag_in");
+
+#ifdef TCP_FASTOPEN
+  int tfo_queue_length = 0;
+  REC_ReadConfigInteger(tfo_queue_length, "proxy.config.net.sock_option_tfo_queue_size_in");
+#endif
 
   ink_assert(fd != NO_FD);
 
@@ -204,16 +216,15 @@ Server::setup_fd_for_listen(bool non_blocking, int recv_bufsize, int send_bufsiz
   }
 #endif
 
-#ifdef SET_NO_LINGER
   {
     struct linger l;
-    l.l_onoff = 0;
+    l.l_onoff  = 0;
     l.l_linger = 0;
-    if ((res = safe_setsockopt(fd, SOL_SOCKET, SO_LINGER, (char *)&l, sizeof(l))) < 0) {
+    if ((sockopt_flag_in & NetVCOptions::SOCK_OPT_LINGER_ON) &&
+        (res = safe_setsockopt(fd, SOL_SOCKET, SO_LINGER, (char *)&l, sizeof(l))) < 0) {
       goto Lerror;
     }
   }
-#endif
 
   if (ats_is_ip6(&addr) && (res = safe_setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, SOCKOPT_ON, sizeof(int))) < 0) {
     goto Lerror;
@@ -223,15 +234,20 @@ Server::setup_fd_for_listen(bool non_blocking, int recv_bufsize, int send_bufsiz
     goto Lerror;
   }
 
-#ifdef SET_TCP_NO_DELAY
-  if ((res = safe_setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, SOCKOPT_ON, sizeof(int))) < 0) {
+  if ((sockopt_flag_in & NetVCOptions::SOCK_OPT_NO_DELAY) &&
+      (res = safe_setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, SOCKOPT_ON, sizeof(int))) < 0) {
     goto Lerror;
   }
-#endif
 
-#ifdef SET_SO_KEEPALIVE
   // enables 2 hour inactivity probes, also may fix IRIX FIN_WAIT_2 leak
-  if ((res = safe_setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, SOCKOPT_ON, sizeof(int))) < 0) {
+  if ((sockopt_flag_in & NetVCOptions::SOCK_OPT_KEEP_ALIVE) &&
+      (res = safe_setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, SOCKOPT_ON, sizeof(int))) < 0) {
+    goto Lerror;
+  }
+
+#ifdef TCP_FASTOPEN
+  if ((sockopt_flag_in & NetVCOptions::SOCK_OPT_TCP_FAST_OPEN) &&
+      (res = safe_setsockopt(fd, IPPROTO_TCP, TCP_FASTOPEN, (char *)&tfo_queue_length, sizeof(int)))) {
     goto Lerror;
   }
 #endif
@@ -275,7 +291,6 @@ Lerror:
 
   return res;
 }
-
 
 int
 Server::listen(bool non_blocking, int recv_bufsize, int send_bufsize, bool transparent)

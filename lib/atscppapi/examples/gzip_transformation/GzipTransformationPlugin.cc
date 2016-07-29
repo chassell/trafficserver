@@ -62,8 +62,8 @@ public:
   }
 
   enum ContentType {
-    UNKNOWN = 0,
-    TEXT_HTML = 1,
+    UNKNOWN    = 0,
+    TEXT_HTML  = 1,
     TEXT_PLAIN = 2,
   };
 
@@ -120,7 +120,6 @@ public:
   }
 
   virtual ~SomeTransformationPlugin() {}
-
 private:
   Transaction &transaction_;
 };
@@ -192,6 +191,7 @@ public:
 void
 TSPluginInit(int argc ATSCPPAPI_UNUSED, const char *argv[] ATSCPPAPI_UNUSED)
 {
+  RegisterGlobalPlugin("CPP_Example_GzipTransformation", "apache", "dev@trafficserver.apache.org");
   TS_DEBUG(TAG, "TSPluginInit");
   new GlobalHookPlugin();
 }

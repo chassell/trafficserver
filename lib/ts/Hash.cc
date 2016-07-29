@@ -19,14 +19,15 @@
   limitations under the License.
  */
 
-#include "Hash.h"
+#include "ts/Hash.h"
 #include <cstring>
 
 ATSHashBase::~ATSHashBase()
 {
 }
 
-bool ATSHash::operator==(const ATSHash &other) const
+bool
+ATSHash::operator==(const ATSHash &other) const
 {
   if (this->size() != other.size()) {
     return false;
@@ -38,12 +39,14 @@ bool ATSHash::operator==(const ATSHash &other) const
   }
 }
 
-bool ATSHash32::operator==(const ATSHash32 &other) const
+bool
+ATSHash32::operator==(const ATSHash32 &other) const
 {
   return this->get() == other.get();
 }
 
-bool ATSHash64::operator==(const ATSHash64 &other) const
+bool
+ATSHash64::operator==(const ATSHash64 &other) const
 {
   return this->get() == other.get();
 }

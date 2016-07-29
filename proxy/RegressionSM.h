@@ -25,6 +25,8 @@
 #define _RegressionSM_h
 
 #include "I_EventSystem.h"
+#include "ts/Regression.h"
+#include "ts/DynArray.h"
 
 /*
   Regression Test Composition State Machine
@@ -66,8 +68,17 @@ struct RegressionSM : public Continuation {
   void xrun(RegressionSM *parent);
 
   RegressionSM(RegressionTest *at = NULL)
-    : t(at), status(REGRESSION_TEST_INPROGRESS), pstatus(0), parent(0), nwaiting(0), nchildren(0), children(0), ichild(0),
-      par(false), rep(false), pending_action(0)
+    : t(at),
+      status(REGRESSION_TEST_INPROGRESS),
+      pstatus(0),
+      parent(0),
+      nwaiting(0),
+      nchildren(0),
+      children(0),
+      ichild(0),
+      par(false),
+      rep(false),
+      pending_action(0)
   {
     mutex = new_ProxyMutex();
   }

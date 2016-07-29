@@ -19,9 +19,6 @@
   limitations under the License.
  */
 
-#include "ink_defs.h"
-#include "ink_platform.h"
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
@@ -32,6 +29,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <ts/ink_defs.h>
 #include <ts/ts.h>
 
 #ifdef HAVE_PCRE_PCRE_H
@@ -343,7 +341,7 @@ TSPluginInit(int argc, const char *argv[])
   info.vendor_name = "Apache Software Foundation";
   info.support_email = "dev@trafficserver.apache.org";
 
-  if (TSPluginRegister(TS_SDK_VERSION_3_0, &info) != TS_SUCCESS) {
+  if (TSPluginRegister(&info) != TS_SUCCESS) {
     TSError("Plugin registration failed.");
     free_config_holder_t(config_holder);
     return;

@@ -35,7 +35,6 @@
 #include <vector>
 #include <set>
 
-
 #include "ats_pagespeed.h"
 
 #include "ats_config.h"
@@ -82,8 +81,11 @@
 #include "net/instaweb/util/stack_buffer.h"
 #include "net/instaweb/system/public/system_request_context.h"
 
-
 #include <dirent.h>
+
+#ifndef INT64_MIN
+#define INT64_MAX (9223372036854775807LL)
+#endif
 
 using namespace net_instaweb;
 
@@ -94,7 +96,7 @@ static int TXN_INDEX_OWNED_ARG;
 static int TXN_INDEX_OWNED_ARG_SET;
 static int TXN_INDEX_OWNED_ARG_UNSET;
 TSMutex config_mutex = TSMutexCreate();
-AtsConfig *config = NULL;
+AtsConfig *config    = NULL;
 TransformCtx *
 get_transaction_context(TSHttpTxn txnp)
 {
@@ -106,37 +108,37 @@ ats_ctx_alloc()
 {
   TransformCtx *ctx;
 
-  ctx = (TransformCtx *)TSmalloc(sizeof(TransformCtx));
-  ctx->downstream_vio = NULL;
+  ctx                    = (TransformCtx *)TSmalloc(sizeof(TransformCtx));
+  ctx->downstream_vio    = NULL;
   ctx->downstream_buffer = NULL;
   ctx->downstream_length = 0;
-  ctx->state = transform_state_initialized;
+  ctx->state             = transform_state_initialized;
 
-  ctx->base_fetch = NULL;
+  ctx->base_fetch  = NULL;
   ctx->proxy_fetch = NULL;
 
-  ctx->inflater = NULL;
-  ctx->url_string = NULL;
-  ctx->gurl = NULL;
-  ctx->write_pending = false;
-  ctx->fetch_done = false;
-  ctx->resource_request = false;
-  ctx->beacon_request = false;
-  ctx->transform_added = false;
-  ctx->mps_user_agent = false;
-  ctx->user_agent = NULL;
-  ctx->server_context = NULL;
-  ctx->html_rewrite = false;
-  ctx->request_method = NULL;
-  ctx->alive = 0xaaaa;
-  ctx->options = NULL;
-  ctx->to_host = NULL;
-  ctx->in_place = false;
-  ctx->driver = NULL;
-  ctx->record_in_place = false;
-  ctx->recorder = NULL;
+  ctx->inflater              = NULL;
+  ctx->url_string            = NULL;
+  ctx->gurl                  = NULL;
+  ctx->write_pending         = false;
+  ctx->fetch_done            = false;
+  ctx->resource_request      = false;
+  ctx->beacon_request        = false;
+  ctx->transform_added       = false;
+  ctx->mps_user_agent        = false;
+  ctx->user_agent            = NULL;
+  ctx->server_context        = NULL;
+  ctx->html_rewrite          = false;
+  ctx->request_method        = NULL;
+  ctx->alive                 = 0xaaaa;
+  ctx->options               = NULL;
+  ctx->to_host               = NULL;
+  ctx->in_place              = false;
+  ctx->driver                = NULL;
+  ctx->record_in_place       = false;
+  ctx->recorder              = NULL;
   ctx->ipro_response_headers = NULL;
-  ctx->serve_in_place = false;
+  ctx->serve_in_place        = false;
   return ctx;
 }
 
@@ -205,40 +207,56 @@ ats_ctx_destroy(TransformCtx *ctx)
   TSfree(ctx);
 }
 
+// Wrapper around GetQueryOptions()
 RewriteOptions *
-ps_determine_request_options(ServerContext *server_context, RequestHeaders *request_headers, ResponseHeaders *response_headers,
-                             GoogleUrl *url)
+ps_determine_request_options(const RewriteOptions *domain_options, /* may be null */
+                             RequestHeaders *request_headers, ResponseHeaders *response_headers, RequestContextPtr request_context,
+                             ServerContext *server_context, GoogleUrl *url, GoogleString *pagespeed_query_params,
+                             GoogleString *pagespeed_option_cookies)
 {
-  // Stripping ModPagespeed query params before the property cache lookup to
-  // make cache key consistent for both lookup and storing in cache.
-  //
   // Sets option from request headers and url.
   RewriteQuery rewrite_query;
-  if (!server_context->GetQueryOptions(url, request_headers, response_headers, &rewrite_query)) {
+  if (!server_context->GetQueryOptions(request_context, domain_options, url, request_headers, response_headers, &rewrite_query)) {
     // Failed to parse query params or request headers.  Treat this as if there
     // were no query params given.
-    TSError("ps_route rerquest: parsing headers or query params failed.");
+    TSError("[ats_pagespeed] ps_route request: parsing headers or query params failed.");
     return NULL;
   }
+
+  *pagespeed_query_params   = rewrite_query.pagespeed_query_params().ToEscapedString();
+  *pagespeed_option_cookies = rewrite_query.pagespeed_option_cookies().ToEscapedString();
 
   // Will be NULL if there aren't any options set with query params or in
   // headers.
   return rewrite_query.ReleaseOptions();
 }
 
+// There are many sources of options:
+//  - the request (query parameters, headers, and cookies)
+//  - location block
+//  - global server options
+//  - experiment framework
+// Consider them all, returning appropriate options for this request, of which
+// the caller takes ownership.  If the only applicable options are global,
+// set options to NULL so we can use server_context->global_options().
 bool
-ps_determine_options(ServerContext *server_context,
-                     // Directory-specific options, usually null.  They've already been rebased off
-                     // of the global options as part of the configuration process.
-                     RewriteOptions *directory_options, RequestHeaders *request_headers, ResponseHeaders *response_headers,
-                     RewriteOptions **options, GoogleUrl *url)
+ps_determine_options(ServerContext *server_context, RequestHeaders *request_headers, ResponseHeaders *response_headers,
+                     RewriteOptions **options, RequestContextPtr request_context, GoogleUrl *url,
+                     GoogleString *pagespeed_query_params, GoogleString *pagespeed_option_cookies, bool html_rewrite)
 {
   // Global options for this server.  Never null.
   RewriteOptions *global_options = server_context->global_options();
 
+  // TODO(oschaaf): we don't have directory_options right now. But if we did,
+  // we'd need to take them into account here.
+  RewriteOptions *directory_options = NULL;
+
   // Request-specific options, nearly always null.  If set they need to be
   // rebased on the directory options or the global options.
-  RewriteOptions *request_options = ps_determine_request_options(server_context, request_headers, response_headers, url);
+  // TODO(oschaaf): domain options..
+  RewriteOptions *request_options =
+    ps_determine_request_options(NULL /*domain options*/, request_headers, response_headers, request_context, server_context, url,
+                                 pagespeed_query_params, pagespeed_option_cookies);
 
   // Because the caller takes ownership of any options we return, the only
   // situation in which we can avoid allocating a new RewriteOptions is if the
@@ -300,7 +318,7 @@ handle_send_response_headers(TSHttpTxn txnp)
     if (TSHttpTxnClientRespGet(txnp, &bufp, &hdr_loc) == TS_SUCCESS) {
       ResponseHeaders *pagespeed_headers = ctx->base_fetch->response_headers();
       for (int i = 0; i < pagespeed_headers->NumAttributes(); i++) {
-        const GoogleString &name_gs = pagespeed_headers->Name(i);
+        const GoogleString &name_gs  = pagespeed_headers->Name(i);
         const GoogleString &value_gs = pagespeed_headers->Value(i);
 
         // We should avoid touching these fields, as ATS will drop keepalive when we do.
@@ -406,15 +424,16 @@ get_override_expiry(const StringPiece &host)
 }
 
 AtsRewriteOptions *
-get_host_options(const StringPiece &host)
+get_host_options(const StringPiece &host, ServerContext *server_context)
 {
   TSMutexLock(config_mutex);
-  AtsRewriteOptions *r = NULL;
-  AtsHostConfig *hc = config->Find(host.data(), host.size());
+  AtsRewriteOptions *r = (AtsRewriteOptions *)server_context->global_options()->Clone();
+  AtsHostConfig *hc    = config->Find(host.data(), host.size());
   if (hc->options() != NULL) {
     // We return a clone here to avoid having to thing about
     // configuration reloads and outstanding options
-    r = hc->options()->Clone();
+    hc->options()->ClearSignatureWithCaution();
+    r->Merge(*hc->options());
   }
   TSMutexUnlock(config_mutex);
   return r;
@@ -447,14 +466,13 @@ ats_transform_init(TSCont contp, TransformCtx *ctx)
   TSMLoc req_hdr_loc;
   ctx->state = transform_state_output;
 
-
   // TODO: check cleanup flow
   if (TSHttpTxnTransformRespGet(ctx->txn, &bufp, &hdr_loc) != TS_SUCCESS) {
-    TSError("Error TSHttpTxnTransformRespGet");
+    TSError("[ats_pagespeed] TSHttpTxnTransformRespGet failed");
     return;
   }
   if (TSHttpTxnClientReqGet(ctx->txn, &reqp, &req_hdr_loc) != TS_SUCCESS) {
-    TSError("Error TSHttpTxnClientReqGet");
+    TSError("[ats_pagespeed] TSHttpTxnClientReqGet failed");
     return;
   }
 
@@ -463,9 +481,9 @@ ats_transform_init(TSCont contp, TransformCtx *ctx)
     CHECK(false) << "PageSpeed resource should not get here!";
   }
 
-  downstream_conn = TSTransformOutputVConnGet(contp);
+  downstream_conn        = TSTransformOutputVConnGet(contp);
   ctx->downstream_buffer = TSIOBufferCreate();
-  ctx->downstream_vio = TSVConnWrite(downstream_conn, contp, TSIOBufferReaderAlloc(ctx->downstream_buffer), INT64_MAX);
+  ctx->downstream_vio    = TSVConnWrite(downstream_conn, contp, TSIOBufferReaderAlloc(ctx->downstream_buffer), INT64_MAX);
   if (ctx->recorder != NULL) {
     TSHandleMLocRelease(reqp, TS_NULL_MLOC, req_hdr_loc);
     TSHandleMLocRelease(bufp, TS_NULL_MLOC, hdr_loc);
@@ -475,32 +493,50 @@ ats_transform_init(TSCont contp, TransformCtx *ctx)
   // TODO(oschaaf): fix host/ip(?)
   SystemRequestContext *system_request_context =
     new SystemRequestContext(server_context->thread_system()->NewMutex(), server_context->timer(), "www.foo.com", 80, "127.0.0.1");
+  RequestContextPtr rptr(system_request_context);
+  ctx->base_fetch = new AtsBaseFetch(server_context, rptr, ctx->downstream_vio, ctx->downstream_buffer, false);
 
-  ctx->base_fetch =
-    new AtsBaseFetch(server_context, RequestContextPtr(system_request_context), ctx->downstream_vio, ctx->downstream_buffer, false);
-
-
-  RewriteOptions *options = NULL;
+  ResponseHeaders response_headers;
   RequestHeaders *request_headers = new RequestHeaders();
   ctx->base_fetch->SetRequestHeadersTakingOwnership(request_headers);
   copy_request_headers_to_psol(reqp, req_hdr_loc, request_headers);
 
   TSHttpStatus status = TSHttpHdrStatusGet(bufp, hdr_loc);
-  // TODO(oschaaf): http version
-  ctx->base_fetch->response_headers()->set_status_code(status);
-  copy_response_headers_to_psol(bufp, hdr_loc, ctx->base_fetch->response_headers());
-  ctx->base_fetch->response_headers()->ComputeCaching();
-  const char *host = ctx->gurl->HostAndPort().as_string().c_str();
-  // request_headers->Lookup1(HttpAttributes::kHost);
-  if (host != NULL && strlen(host) > 0) {
-    ctx->options = get_host_options(host);
-  }
-  bool ok =
-    ps_determine_options(server_context, ctx->options, request_headers, ctx->base_fetch->response_headers(), &options, ctx->gurl);
+  copy_response_headers_to_psol(bufp, hdr_loc, &response_headers);
 
+  std::string host        = ctx->gurl->HostAndPort().as_string();
+  RewriteOptions *options = NULL;
+  if (host.size() > 0) {
+    options = get_host_options(host.c_str(), server_context);
+    if (options != NULL) {
+      server_context->message_handler()->Message(kInfo, "request options found \r\n");
+    }
+  }
+  if (options == NULL) {
+    options = server_context->global_options()->Clone();
+  }
+
+  server_context->message_handler()->Message(kInfo, "request options:\r\n[%s]", options->OptionsToString().c_str());
+
+  /*
+  RewriteOptions* options = NULL;
+  GoogleString pagespeed_query_params;
+  GoogleString pagespeed_option_cookies;
+  bool ok = ps_determine_options(server_context,
+                                 ctx->base_fetch->request_headers(),
+                                 &response_headers,
+                                 &options,
+                                 rptr,
+                                 ctx->gurl,
+                                 &pagespeed_query_params,
+                                 &pagespeed_option_cookies,
+                                 true);
+  */
+
+  // TODO(oschaaf): use the determined option/query params
   // Take ownership of custom_options.
   scoped_ptr<RewriteOptions> custom_options(options);
-
+  /*
   if (!ok) {
     TSError("Failure while determining request options for psol");
     options = server_context->global_options();
@@ -508,7 +544,7 @@ ats_transform_init(TSCont contp, TransformCtx *ctx)
     // ps_determine_options modified url, removing any ModPagespeedFoo=Bar query
     // parameters.  Keep url_string in sync with url.
     ctx->gurl->Spec().CopyToString(ctx->url_string);
-  }
+    }*/
 
   RewriteDriver *driver;
   if (custom_options.get() == NULL) {
@@ -516,9 +552,16 @@ ats_transform_init(TSCont contp, TransformCtx *ctx)
   } else {
     driver = server_context->NewCustomRewriteDriver(custom_options.release(), ctx->base_fetch->request_context());
   }
+  rptr->set_options(driver->options()->ComputeHttpOptions());
+  // TODO(oschaaf): http version
+  ctx->base_fetch->response_headers()->set_status_code(status);
+  copy_response_headers_to_psol(bufp, hdr_loc, ctx->base_fetch->response_headers());
+  ctx->base_fetch->response_headers()->ComputeCaching();
 
   driver->SetUserAgent(ctx->user_agent->c_str());
   driver->SetRequestHeaders(*request_headers);
+  // driver->set_pagespeed_query_params(pagespeed_query_params);
+  // driver->set_pagespeed_option_cookies(pagespeed_option_cookies);
 
   bool page_callback_added = false;
   scoped_ptr<ProxyFetchPropertyCallbackCollector> property_callback(ProxyFetchFactory::InitiatePropertyCacheLookup(
@@ -543,13 +586,13 @@ ats_transform_one(TransformCtx *ctx, TSIOBufferReader upstream_reader, int amoun
   while (amount > 0) {
     downstream_blkp = TSIOBufferReaderStart(upstream_reader);
     if (!downstream_blkp) {
-      TSError("couldn't get from IOBufferBlock");
+      TSError("[ats_pagespeed] Couldn't get from IOBufferBlock");
       return;
     }
 
     upstream_buffer = TSIOBufferBlockReadStart(downstream_blkp, upstream_reader, &upstream_length);
     if (!upstream_buffer) {
-      TSError("couldn't get from TSIOBufferBlockReadStart");
+      TSError("[ats_pagespeed] Couldn't get from TSIOBufferBlockReadStart");
       return;
     }
 
@@ -573,7 +616,7 @@ ats_transform_one(TransformCtx *ctx, TSIOBufferReader upstream_reader, int amoun
       while (ctx->inflater->HasUnconsumedInput()) {
         int num_inflated_bytes = ctx->inflater->InflateBytes(buf, net_instaweb::kStackBufferSize);
         if (num_inflated_bytes < 0) {
-          TSError("Corrupted inflation");
+          TSError("[ats_pagespeed] Corrupted inflation");
         } else if (num_inflated_bytes > 0) {
           if (ctx->recorder != NULL) {
             ctx->recorder->Write(StringPiece(buf, num_inflated_bytes), ats_process_context->message_handler());
@@ -591,7 +634,6 @@ ats_transform_one(TransformCtx *ctx, TSIOBufferReader upstream_reader, int amoun
   // This would require proper locking around the base fetch buffer
   // We could also have a look at directly writing to the traffic server buffers
 }
-
 
 static void
 ats_transform_finish(TransformCtx *ctx)
@@ -625,7 +667,7 @@ ats_transform_do(TSCont contp)
     ats_transform_init(contp, ctx);
   }
 
-  upstream_vio = TSVConnWriteVIOGet(contp);
+  upstream_vio             = TSVConnWriteVIOGet(contp);
   downstream_bytes_written = ctx->downstream_length;
 
   if (!TSVIOBufferGet(upstream_vio)) {
@@ -669,7 +711,6 @@ ats_transform_do(TSCont contp)
     TSContCall(TSVIOContGet(upstream_vio), TS_EVENT_VCONN_WRITE_COMPLETE, upstream_vio);
   }
 }
-
 
 static int
 ats_pagespeed_transform(TSCont contp, TSEvent event, void * /* edata ATS_UNUSED */)
@@ -733,11 +774,11 @@ handle_read_request_header(TSHttpTxn txnp)
 {
   TSMBuffer reqp = NULL;
   TSMLoc hdr_loc = NULL;
-  char *url = NULL;
+  char *url      = NULL;
   int url_length = -1;
 
   TransformCtx *ctx = ats_ctx_alloc();
-  ctx->txn = txnp;
+  ctx->txn          = txnp;
   TSHttpTxnArgSet(txnp, TXN_INDEX_ARG, (void *)ctx);
   TSHttpTxnArgSet(txnp, TXN_INDEX_OWNED_ARG, &TXN_INDEX_OWNED_ARG_SET);
 
@@ -750,20 +791,19 @@ handle_read_request_header(TSHttpTxn txnp)
       GoogleUrl gurl(s_url);
 
       ctx->url_string = new GoogleString(url, url_length);
-      ctx->gurl = new GoogleUrl(*(ctx->url_string));
-
+      ctx->gurl       = new GoogleUrl(*(ctx->url_string));
 
       if (!ctx->gurl->IsWebValid()) {
         TSDebug("ats-speed", "URL != WebValid(): %s", ctx->url_string->c_str());
       } else {
         const char *method;
         int method_len;
-        method = TSHttpHdrMethodGet(reqp, hdr_loc, &method_len);
-        bool head_or_get = method == TS_HTTP_METHOD_GET || method == TS_HTTP_METHOD_HEAD;
-        ctx->request_method = method;
+        method                  = TSHttpHdrMethodGet(reqp, hdr_loc, &method_len);
+        bool head_or_get        = method == TS_HTTP_METHOD_GET || method == TS_HTTP_METHOD_HEAD;
+        ctx->request_method     = method;
         GoogleString user_agent = get_header(reqp, hdr_loc, "User-Agent");
-        ctx->user_agent = new GoogleString(user_agent);
-        ctx->server_context = ats_process_context->server_context();
+        ctx->user_agent         = new GoogleString(user_agent);
+        ctx->server_context     = ats_process_context->server_context();
         TSDebug("ats-speed", "static asset prefix: %s",
                 ((AtsRewriteDriverFactory *)ctx->server_context->factory())->static_asset_prefix().c_str());
         if (user_agent.find(kModPagespeedSubrequestUserAgent) != user_agent.npos) {
@@ -787,12 +827,10 @@ handle_read_request_header(TSHttpTxn txnp)
           // TODO(oschaaf): fix host/ip(?)
           SystemRequestContext *system_request_context = new SystemRequestContext(
             server_context->thread_system()->NewMutex(), server_context->timer(), "www.foo.com", 80, "127.0.0.1");
+          RequestContextPtr rptr(system_request_context);
 
-          ctx->base_fetch = new AtsBaseFetch(server_context, RequestContextPtr(system_request_context), ctx->downstream_vio,
-                                             ctx->downstream_buffer, false);
+          ctx->base_fetch = new AtsBaseFetch(server_context, rptr, ctx->downstream_vio, ctx->downstream_buffer, false);
 
-
-          RewriteOptions *options = NULL;
           RequestHeaders *request_headers = new RequestHeaders();
           ctx->base_fetch->SetRequestHeadersTakingOwnership(request_headers);
           copy_request_headers_to_psol(reqp, hdr_loc, request_headers);
@@ -802,26 +840,35 @@ handle_read_request_header(TSHttpTxn txnp)
           // ctx->base_fetch->response_headers()->set_status_code(status);
           // copy_response_headers_to_psol(bufp, hdr_loc, ctx->base_fetch->response_headers());
           // ctx->base_fetch->response_headers()->ComputeCaching();
-          const char *host = ctx->gurl->HostAndPort().as_string().c_str();
+          std::string host = ctx->gurl->HostAndPort().as_string();
           // request_headers->Lookup1(HttpAttributes::kHost);
-          if (host != NULL && strlen(host) > 0) {
-            ctx->options = get_host_options(host);
+          RewriteOptions *options = NULL;
+          if (host.size() > 0) {
+            options = get_host_options(host.c_str(), server_context);
           }
-          bool ok = ps_determine_options(server_context, ctx->options, request_headers, ctx->base_fetch->response_headers(),
-                                         &options, ctx->gurl);
+          if (options == NULL) {
+            options = server_context->global_options()->Clone();
+          }
 
+          // GoogleString pagespeed_query_params;
+          // GoogleString pagespeed_option_cookies;
+          // bool ok = ps_determine_options(server_context,
+          //                               ctx->base_fetch->request_headers(),
+          //                               NULL /*ResponseHeaders* */,
+          //                               &options,
+          //                               rptr,
+          //                              ctx->gurl,
+          //                               &pagespeed_query_params,
+          //                               &pagespeed_option_cookies,
+          //                               false /*html rewrite*/);
           // Take ownership of custom_options.
           scoped_ptr<RewriteOptions> custom_options(options);
 
-          if (!ok) {
-            TSError("Failure while determining request options for psol");
-            options = server_context->global_options();
-          } else {
-            // ps_determine_options modified url, removing any ModPagespeedFoo=Bar query
-            // parameters.  Keep url_string in sync with url.
-            ctx->gurl->Spec().CopyToString(ctx->url_string);
-          }
+          // ps_determine_options modified url, removing any ModPagespeedFoo=Bar query
+          // parameters.  Keep url_string in sync with url.
+          // ctx->gurl->Spec().CopyToString(ctx->url_string);
 
+          rptr->set_options(options->ComputeHttpOptions());
           if (options->in_place_rewriting_enabled() && options->enabled() && options->IsAllowed(ctx->gurl->Spec())) {
             RewriteDriver *driver;
             if (custom_options.get() == NULL) {
@@ -834,6 +881,8 @@ handle_read_request_header(TSHttpTxn txnp)
               driver->SetUserAgent(ctx->user_agent->c_str());
             }
             driver->SetRequestHeaders(*ctx->base_fetch->request_headers());
+            // driver->set_pagespeed_query_params(pagespeed_query_params);
+            // driver->set_pagespeed_option_cookies(pagespeed_option_cookies);
             ctx->driver = driver;
             ctx->server_context->message_handler()->Message(kInfo, "Trying to serve rewritten resource in-place: %s",
                                                             ctx->url_string->c_str());
@@ -841,6 +890,7 @@ handle_read_request_header(TSHttpTxn txnp)
             ctx->in_place = true;
             ctx->base_fetch->set_handle_error(false);
             ctx->base_fetch->set_is_ipro(true);
+
             // ctx->driver->FetchInPlaceResource(
             //    *ctx->gurl, false /* proxy_mode */, ctx->base_fetch);
           }
@@ -899,8 +949,7 @@ transform_plugin(TSCont contp, TSEvent event, void *edata)
     if (ctx != NULL) {
       bool is_owned = TSHttpTxnArgGet(txn, TXN_INDEX_OWNED_ARG) == &TXN_INDEX_OWNED_ARG_SET
                       // TODO(oschaaf): rewrite this.
-                      &&
-                      !ctx->serve_in_place;
+                      && !ctx->serve_in_place;
       if (is_owned) {
         ats_ctx_destroy(ctx);
       }
@@ -913,7 +962,7 @@ transform_plugin(TSCont contp, TSEvent event, void *edata)
     return 0;
   } else if (event == TS_EVENT_HTTP_SEND_REQUEST_HDR) {
     TSMBuffer request_header_buf = NULL;
-    TSMLoc request_header_loc = NULL;
+    TSMLoc request_header_loc    = NULL;
 
     if (TSHttpTxnServerReqGet(txn, &request_header_buf, &request_header_loc) == TS_SUCCESS) {
       hide_accept_encoding(request_header_buf, request_header_loc, "@xxAccept-Encoding");
@@ -927,7 +976,7 @@ transform_plugin(TSCont contp, TSEvent event, void *edata)
     return 0;
   } else if (event == TS_EVENT_HTTP_READ_RESPONSE_HDR) {
     TSMBuffer request_header_buf = NULL;
-    TSMLoc request_header_loc = NULL;
+    TSMLoc request_header_loc    = NULL;
 
     if (TSHttpTxnServerReqGet(txn, &request_header_buf, &request_header_loc) == TS_SUCCESS) {
       restore_accept_encoding(request_header_buf, request_header_loc, "@xxAccept-Encoding");
@@ -952,9 +1001,9 @@ transform_plugin(TSCont contp, TSEvent event, void *edata)
   }
   std::string *to_host = new std::string();
   to_host->append(get_remapped_host(ctx->txn));
-  ctx->to_host = to_host;
+  ctx->to_host                  = to_host;
   TSMBuffer response_header_buf = NULL;
-  TSMLoc response_header_loc = NULL;
+  TSMLoc response_header_loc    = NULL;
 
   // TODO(oschaaf): from configuration!
   bool override_expiry = false;
@@ -964,7 +1013,6 @@ transform_plugin(TSCont contp, TSEvent event, void *edata)
   if (host != NULL && strlen(host) > 0) {
     override_expiry = get_override_expiry(host);
   }
-
 
   if (ctx->mps_user_agent && override_expiry) {
     if (TSHttpTxnServerRespGet(txn, &response_header_buf, &response_header_loc) == TS_SUCCESS) {
@@ -1019,7 +1067,7 @@ transform_plugin(TSCont contp, TSEvent event, void *edata)
   }
 
   if (ok) {
-    StringPiece s_content_type = get_header(response_header_buf, response_header_loc, "Content-Type");
+    StringPiece s_content_type                    = get_header(response_header_buf, response_header_loc, "Content-Type");
     const net_instaweb::ContentType *content_type = net_instaweb::MimeTypeToContentType(s_content_type);
 
     if (ctx->record_in_place && content_type != NULL) {
@@ -1036,14 +1084,15 @@ transform_plugin(TSCont contp, TSEvent event, void *edata)
       // (or at least a note that it cannot be cached stored there).
       // We do that using an Apache output filter.
       // TODO(oschaaf): fix host/ip(?)
-      SystemRequestContext *system_request_context = new SystemRequestContext(
-        ctx->server_context->thread_system()->NewMutex(), ctx->server_context->timer(), "www.foo.com", 80, "127.0.0.1");
+      RequestContextPtr system_request_context(new SystemRequestContext(
+        ctx->server_context->thread_system()->NewMutex(), ctx->server_context->timer(), "www.foo.com", 80, "127.0.0.1"));
 
-      ctx->recorder = new InPlaceResourceRecorder(
-        RequestContextPtr(system_request_context), cache_url, ctx->driver->CacheFragment(), request_headers.GetProperties(),
-        options->respect_vary(), options->ipro_max_response_bytes(), options->ipro_max_concurrent_recordings(),
-        options->implicit_cache_ttl_ms(), ctx->server_context->http_cache(), ctx->server_context->statistics(),
-        ctx->server_context->message_handler());
+      system_request_context->set_options(options->ComputeHttpOptions());
+
+      ctx->recorder = new InPlaceResourceRecorder(system_request_context, cache_url, ctx->driver->CacheFragment(),
+                                                  request_headers.GetProperties(), options->ipro_max_response_bytes(),
+                                                  options->ipro_max_concurrent_recordings(), ctx->server_context->http_cache(),
+                                                  ctx->server_context->statistics(), ctx->server_context->message_handler());
       // TODO(oschaaf): does this make sense for ats? perhaps we don't need it.
       ctx->ipro_response_headers = new ResponseHeaders();
       ctx->ipro_response_headers->set_status_code(status);
@@ -1064,10 +1113,10 @@ transform_plugin(TSCont contp, TSEvent event, void *edata)
     bool is_encoded = false;
 
     if (StringCaseEqual(content_encoding, "deflate")) {
-      is_encoded = true;
+      is_encoded   = true;
       inflate_type = GzipInflater::kDeflate;
     } else if (StringCaseEqual(content_encoding, "gzip")) {
-      is_encoded = true;
+      is_encoded   = true;
       inflate_type = GzipInflater::kGzip;
     }
 
@@ -1099,12 +1148,12 @@ RegisterPlugin()
 {
   TSPluginRegistrationInfo info;
 
-  info.plugin_name = (char *)"ats_pagespeed";
-  info.vendor_name = (char *)"Apache Software Foundation";
+  info.plugin_name   = (char *)"ats_pagespeed";
+  info.vendor_name   = (char *)"Apache Software Foundation";
   info.support_email = (char *)"dev@trafficserver.apache.org";
 
-  if (TSPluginRegister(TS_SDK_VERSION_3_0, &info) != TS_SUCCESS) {
-    TSError("Failed to register ATSSpeed");
+  if (TSPluginRegister(&info) != TS_SUCCESS) {
+    TSError("[ats_pagespeed] Failed to register");
     return false;
   }
 
@@ -1141,7 +1190,7 @@ process_configuration()
       s.append(ent->d_name);
       fprintf(stderr, "parse [%s]\n", s.c_str());
       if (!new_config->Parse(s.c_str())) {
-        TSError("Error parsing %s", s.c_str());
+        TSError("[ats_pagespeed] Error parsing %s", s.c_str());
       }
     }
     closedir(dir);
@@ -1151,7 +1200,7 @@ process_configuration()
   TSMutexLock(config_mutex);
   fprintf(stderr, "Update configuration\n");
   old_config = config;
-  config = new_config;
+  config     = new_config;
   TSMutexUnlock(config_mutex);
   if (old_config != NULL) {
     delete old_config;
@@ -1175,15 +1224,15 @@ config_notification_callback(void *data)
   wd = inotify_add_watch(fd, "/usr/local/etc/trafficserver/psol/", IN_MODIFY | IN_CREATE | IN_DELETE);
 
   while (1) {
-    int len = read(fd, buf, BUF_MAX);
-    int i = 0;
+    int len        = read(fd, buf, BUF_MAX);
+    int i          = 0;
     bool do_update = false;
     while (i < len) {
       struct inotify_event *event = (struct inotify_event *)&buf[i];
       if (event->len) {
         if (!(event->mask & IN_ISDIR)) {
           const char *name = event->name;
-          size_t name_len = strlen(event->name);
+          size_t name_len  = strlen(event->name);
           if (name_len > 0 && name[0] != '.' && name[0] != '#' && name[name_len - 1] != '~') {
             do_update = true;
           }
@@ -1201,7 +1250,6 @@ config_notification_callback(void *data)
 
   return NULL;
 }
-
 
 void
 TSPluginInit(int argc, const char *argv[])

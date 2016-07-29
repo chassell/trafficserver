@@ -34,9 +34,9 @@
 #include <string.h>
 #include <stdlib.h>
 
-static char *redirect_url_header = NULL;
+static char *redirect_url_header   = NULL;
 static int redirect_url_header_len = 0;
-static int return_code = TS_HTTP_STATUS_NONE;
+static int return_code             = TS_HTTP_STATUS_NONE;
 
 static void
 handle_response(TSHttpTxn txnp, TSCont /* contp ATS_UNUSED */)
@@ -51,13 +51,13 @@ handle_response(TSHttpTxn txnp, TSCont /* contp ATS_UNUSED */)
   int redirect_url_length;
 
   if (TSHttpTxnServerRespGet(txnp, &resp_bufp, &resp_loc) != TS_SUCCESS) {
-    TSError("couldn't retrieve server response header\n");
+    TSError("[custom_redirect] Couldn't retrieve server response header");
   } else {
     if ((status = TSHttpHdrStatusGet(resp_bufp, resp_loc)) == TS_HTTP_STATUS_NONE) {
-      TSError("couldn't retrieve status from client response header\n");
+      TSError("[custom_redirect] Couldn't retrieve status from client response header");
     } else {
       if (TSHttpTxnClientReqGet(txnp, &req_bufp, &req_loc) != TS_SUCCESS) {
-        TSError("couldn't retrieve server response header\n");
+        TSError("[custom_redirect] Couldn't retrieve server response header");
       } else {
         int method_len;
         const char *method = TSHttpHdrMethodGet(req_bufp, req_loc, &method_len);
@@ -87,7 +87,6 @@ handle_response(TSHttpTxn txnp, TSCont /* contp ATS_UNUSED */)
   TSHttpTxnReenable(txnp, TS_EVENT_HTTP_CONTINUE);
 }
 
-
 static int
 plugin_main_handler(TSCont contp, TSEvent event, void *edata)
 {
@@ -98,7 +97,6 @@ plugin_main_handler(TSCont contp, TSEvent event, void *edata)
     handle_response(txnp, contp);
     break;
   }
-
 
   default: {
     TSDebug("[custom_redirect]", "default event");
@@ -123,13 +121,11 @@ isNumber(const char *str)
 void
 TSPluginInit(int argc, const char *argv[])
 {
-  // TSPluginRegistrationInfo info;
+  TSPluginRegistrationInfo info;
 
-  /*
-      info.plugin_name = (char*)"";
-      info.vendor_name = (char*)"Apache Software Foundation";
-      info.support_email = (char*)"dev@trafficserver.apache.org";
-  */
+  info.plugin_name   = (char *)"";
+  info.vendor_name   = (char *)"Apache Software Foundation";
+  info.support_email = (char *)"dev@trafficserver.apache.org";
   /* This plugin supports following types of url redirect here:
    *
    * 1. User can specify a particular redirect-url header name in the plugin command line,
@@ -145,21 +141,19 @@ TSPluginInit(int argc, const char *argv[])
   */
   if (argc > 1) {
     if (isNumber(argv[1])) {
-      return_code = atoi(argv[1]);
+      return_code         = atoi(argv[1]);
       redirect_url_header = TSstrdup(TS_MIME_FIELD_LOCATION);
     } else {
       redirect_url_header = TSstrdup(argv[1]);
     }
   } else {
     // default header name is x-redirect-url
-    redirect_url_header = TSstrdup("x-redirect-url");
+    redirect_url_header     = TSstrdup("x-redirect-url");
     redirect_url_header_len = strlen(redirect_url_header);
   }
-  /*
-  if (TSPluginRegister (TS_SDK_VERSION_5_2 , &info) != TS_SUCCESS) {
-      TSError ("[custom_redirect] Plugin registration failed.");
+  if (TSPluginRegister(&info) != TS_SUCCESS) {
+    TSError("[custom_redirect] Plugin registration failed.");
   }
-  */
   TSError("[custom_redirect] Plugin registered successfully.");
   TSCont mainCont = TSContCreate(plugin_main_handler, NULL);
   TSHttpHookAdd(TS_HTTP_READ_RESPONSE_HDR_HOOK, mainCont);

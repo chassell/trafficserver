@@ -21,17 +21,21 @@
   limitations under the License.
  */
 
-#include "libts.h"
+#include "ts/ink_platform.h"
+#include "ts/ink_string.h"
+#include "ts/ink_memory.h"
+#include "ts/ink_time.h"
+#include "ts/ink_file.h"
 #include "LocalManager.h"
 #include "Rollback.h"
 #include "WebMgmtUtils.h"
-#include "WebGlobals.h"
 #include "MgmtUtils.h"
 #include "ExpandingArray.h"
 #include "MgmtSocket.h"
-#include "ink_cap.h"
-#include "I_Layout.h"
+#include "ts/ink_cap.h"
+#include "ts/I_Layout.h"
 #include "FileManager.h"
+#include "ProxyConfig.h"
 
 #define MAX_VERSION_DIGITS 11
 #define DEFAULT_BACKUPS 2
@@ -40,7 +44,14 @@
 const char *RollbackStrings[] = {"Rollback Ok", "File was not found", "Version was out of date", "System Call Error",
                                  "Invalid Version - Version Numbers Must Increase"};
 
-Rollback::Rollback(const char *baseFileName, bool root_access_needed_) : configFiles(NULL), root_access_needed(root_access_needed_)
+Rollback::Rollback(const char *fileName_, bool root_access_needed_, Rollback *parentRollback_, unsigned flags)
+  : configFiles(NULL),
+    root_access_needed(root_access_needed_),
+    parentRollback(parentRollback_),
+    currentVersion(0),
+    fileLastModified(0),
+    numVersions(0),
+    numberBackups(0)
 {
   version_t highestSeen;             // the highest backup version
   ExpandingArray existVer(25, true); // Exsisting versions
@@ -57,21 +68,26 @@ Rollback::Rollback(const char *baseFileName, bool root_access_needed_) : configF
   char *activeVerStr;
   bool needZeroLength;
 
-  ink_assert(baseFileName != NULL);
+  ink_assert(fileName_ != NULL);
 
-  // Copy the file name
-  fileNameLen = strlen(baseFileName);
-  fileName = (char *)ats_malloc(fileNameLen + 1);
-  ink_strlcpy(fileName, baseFileName, fileNameLen + 1);
-
-  // TODO: Use the runtime directory for storing mutable data
-  // XXX: Sysconfdir should be imutable!!!
-
-  ats_scoped_str sysconfdir(RecConfigReadConfigDir());
-  if (access(sysconfdir, F_OK) < 0) {
-    mgmt_fatal(0, "[Rollback::Rollback] unable to access() directory '%s': %d, %s\n", (const char *)sysconfdir, errno,
-               strerror(errno));
+  // parent must not also have a parent
+  if (parentRollback) {
+    ink_assert(parentRollback->parentRollback == NULL);
   }
+
+  // Copy the file name.
+  fileNameLen = strlen(fileName_);
+  fileName    = ats_strdup(fileName_);
+
+  // Extract the file base name.
+  fileBaseName = strrchr(fileName, '/');
+  if (fileBaseName) {
+    fileBaseName++;
+  } else {
+    fileBaseName = fileName;
+  }
+
+  ink_mutex_init(&fileAccessLock, "RollBack Mutex");
 
   if (varIntFromName("proxy.config.admin.number_config_bak", &numBak) == true) {
     if (numBak > 1) {
@@ -83,10 +99,16 @@ Rollback::Rollback(const char *baseFileName, bool root_access_needed_) : configF
     numberBackups = DEFAULT_BACKUPS;
   }
 
-  ink_mutex_init(&fileAccessLock, "RollBack Mutex");
+  // If we are not doing backups, bail early.
+  if ((numberBackups <= 0) || (flags & CONFIG_FLAG_UNVERSIONED)) {
+    currentVersion = 0;
+    setLastModifiedTime();
+    numberBackups = 0;
+    return;
+  }
 
   currentVersion = 0; // Prevent UMR with stat file
-  highestSeen = findVersions_ml(versionQ);
+  highestSeen    = findVersions_ml(versionQ);
 
   // Check to make sure that our configuratio file exists
   //
@@ -105,7 +127,7 @@ Rollback::Rollback(const char *baseFileName, bool root_access_needed_) : configF
 
       if (highestSeen > 0) {
         highestSeenStr = createPathStr(highestSeen);
-        activeVerStr = createPathStr(ACTIVE_VERSION);
+        activeVerStr   = createPathStr(ACTIVE_VERSION);
 
         if (rename(highestSeenStr, activeVerStr) < 0) {
           mgmt_log(stderr, "[RollBack::Rollback] Automatic Rollback to prior version failed for %s : %s\n", fileName,
@@ -151,12 +173,12 @@ Rollback::Rollback(const char *baseFileName, bool root_access_needed_) : configF
     }
   } else {
     fileLastModified = TS_ARCHIVE_STAT_MTIME(fileInfo);
-    currentVersion = highestSeen + 1;
+    currentVersion   = highestSeen + 1;
 
     // Make sure that we have a backup of the file
     if (highestSeen == 0) {
       textBuffer *version0 = NULL;
-      char failStr[] = "[Rollback::Rollback] Automatic Roll of Version 1 failed: %s";
+      char failStr[]       = "[Rollback::Rollback] Automatic Roll of Version 1 failed: %s";
       if (getVersion_ml(ACTIVE_VERSION, &version0) != OK_ROLLBACK) {
         mgmt_log(stderr, failStr, fileName);
       } else {
@@ -179,7 +201,7 @@ Rollback::Rollback(const char *baseFileName, bool root_access_needed_) : configF
   if (testFD < 0) {
     // We failed to open read-write
     alarmMsg = (char *)ats_malloc(2048);
-    testFD = openFile(ACTIVE_VERSION, O_RDONLY, &testErrno);
+    testFD   = openFile(ACTIVE_VERSION, O_RDONLY, &testErrno);
 
     if (testFD < 0) {
       // We are unable to either read or write the file
@@ -205,7 +227,6 @@ Rollback::~Rollback()
   ats_free(fileName);
 }
 
-
 // Rollback::createPathStr(version_t version)
 //
 //   CALLEE DELETES STORAGE
@@ -213,12 +234,12 @@ Rollback::~Rollback()
 char *
 Rollback::createPathStr(version_t version)
 {
+  int bufSize  = 0;
+  char *buffer = NULL;
   ats_scoped_str sysconfdir(RecConfigReadConfigDir());
-  int bufSize = strlen(sysconfdir) + fileNameLen + MAX_VERSION_DIGITS + 1;
-  char *buffer = (char *)ats_malloc(bufSize);
-
+  bufSize = strlen(sysconfdir) + fileNameLen + MAX_VERSION_DIGITS + 1;
+  buffer  = (char *)ats_malloc(bufSize);
   Layout::get()->relative_to(buffer, bufSize, sysconfdir, fileName);
-
   if (version != ACTIVE_VERSION) {
     size_t pos = strlen(buffer);
     snprintf(buffer + pos, bufSize - pos, "_%d", version);
@@ -243,7 +264,7 @@ Rollback::statFile(version_t version, struct stat *buf)
   }
 
   ats_scoped_str filePath(createPathStr(version));
-  ElevateAccess access(root_access_needed);
+  ElevateAccess access(root_access_needed ? ElevateAccess::FILE_PRIVILEGE : 0);
 
   statResult = stat(filePath, buf);
 
@@ -261,7 +282,7 @@ Rollback::openFile(version_t version, int oflags, int *errnoPtr)
   int fd;
 
   ats_scoped_str filePath(createPathStr(version));
-  ElevateAccess access(root_access_needed);
+  ElevateAccess access(root_access_needed ? ElevateAccess::FILE_PRIVILEGE : 0);
 
   // TODO: Use the original permissions
   //       Anyhow the _1 files should not be created inside Syconfdir.
@@ -297,7 +318,6 @@ Rollback::closeFile(int fd, bool callSync)
   return result;
 }
 
-
 RollBackCodes
 Rollback::updateVersion(textBuffer *buf, version_t basedOn, version_t newVersion, bool notifyChange, bool incVersion)
 {
@@ -323,7 +343,6 @@ Rollback::updateVersion_ml(textBuffer *buf, version_t basedOn, version_t newVers
 
   return returnCode;
 }
-
 
 RollBackCodes
 Rollback::forceUpdate(textBuffer *buf, version_t newVersion)
@@ -360,8 +379,7 @@ Rollback::internalUpdate(textBuffer *buf, version_t newVersion, bool notifyChang
   versionInfo *toRemove;
   versionInfo *newBak;
   bool failedLink = false;
-  char *alarmMsg = NULL;
-
+  char *alarmMsg  = NULL;
 
   // Check to see if the callee has specified a newVersion number
   //   If the newVersion argument is less than zero, the callee
@@ -384,9 +402,8 @@ Rollback::internalUpdate(textBuffer *buf, version_t newVersion, bool notifyChang
         newVersion);
 
   currentVersion_local = createPathStr(this->currentVersion);
-  activeVersion = createPathStr(ACTIVE_VERSION);
-  nextVersion = createPathStr(newVersion);
-
+  activeVersion        = createPathStr(ACTIVE_VERSION);
+  nextVersion          = createPathStr(newVersion);
   // Create the new configuration file
   // TODO: Make sure they are not created in Sysconfigdir!
   diskFD = openFile(newVersion, O_WRONLY | O_CREAT | O_TRUNC);
@@ -399,7 +416,7 @@ Rollback::internalUpdate(textBuffer *buf, version_t newVersion, bool notifyChang
   }
   // Write the buffer into the new configuration file
   writeBytes = write(diskFD, buf->bufPtr(), buf->spaceUsed());
-  ret = closeFile(diskFD, true);
+  ret        = closeFile(diskFD, true);
   if ((ret < 0) || ((size_t)writeBytes != buf->spaceUsed())) {
     mgmt_log(stderr, "[Rollback::internalUpdate] Unable to write new version of %s : %s\n", fileName, strerror(errno));
     returnCode = SYS_CALL_ERROR_ROLLBACK;
@@ -450,7 +467,7 @@ Rollback::internalUpdate(textBuffer *buf, version_t newVersion, bool notifyChang
   // If we created a backup version add it to the
   //  List of backup Versions
   if (failedLink == false) {
-    newBak = new versionInfo;
+    newBak          = new versionInfo;
     newBak->version = this->currentVersion;
     newBak->modTime = 0;
     versionQ.enqueue(newBak);
@@ -458,7 +475,6 @@ Rollback::internalUpdate(textBuffer *buf, version_t newVersion, bool notifyChang
   // Update instance varibles
   this->numVersions++;
   this->currentVersion = newVersion;
-
 
   returnCode = OK_ROLLBACK;
 
@@ -491,7 +507,6 @@ UPDATE_CLEANUP:
 
   return returnCode;
 }
-
 
 RollBackCodes
 Rollback::getVersion(version_t version, textBuffer **buffer)
@@ -629,7 +644,7 @@ Rollback::findVersions(ExpandingArray *listNames)
 version_t
 Rollback::findVersions_ml(ExpandingArray *listNames)
 {
-  int count = 0;
+  int count             = 0;
   version_t highestSeen = 0, version = 0;
   ats_scoped_str sysconfdir(RecConfigReadConfigDir());
 
@@ -709,7 +724,7 @@ Rollback::extractVersionInfo(ExpandingArray *listNames, const char *testFileName
             versionInfo *verInfo;
 
             if (statFile(version, &fileInfo) >= 0) {
-              verInfo = (versionInfo *)ats_malloc(sizeof(versionInfo));
+              verInfo          = (versionInfo *)ats_malloc(sizeof(versionInfo));
               verInfo->version = version;
               verInfo->modTime = fileInfo.st_mtime;
               listNames->addEntry((void *)verInfo);
@@ -741,7 +756,7 @@ Rollback::findVersions_ml(Queue<versionInfo> &q)
 
   // Get the version info and sort it
   highest = this->findVersions_ml(&versions);
-  num = versions.getNumEntries();
+  num     = versions.getNumEntries();
   versions.sortWithFunction(versionCmp);
 
   // Add the entries on to our passed in q
@@ -749,7 +764,7 @@ Rollback::findVersions_ml(Queue<versionInfo> &q)
     foundVer = (versionInfo *)versions[i];
     //  We need to create our own copy so that
     //   constructor gets run
-    addInfo = new versionInfo;
+    addInfo          = new versionInfo;
     addInfo->version = foundVer->version;
     addInfo->modTime = foundVer->modTime;
     q.enqueue(addInfo);
@@ -757,7 +772,6 @@ Rollback::findVersions_ml(Queue<versionInfo> &q)
 
   return highest;
 }
-
 
 RollBackCodes
 Rollback::removeVersion(version_t version)
@@ -777,7 +791,7 @@ Rollback::removeVersion_ml(version_t version)
   struct stat statInfo;
   char *versionPath;
   versionInfo *removeInfo = NULL;
-  bool infoFound = false;
+  bool infoFound          = false;
 
   if (this->statFile(version, &statInfo) < 0) {
     mgmt_log(stderr, "[Rollback::removeVersion] Stat failed on %s version %d\n", fileName, version);
@@ -903,7 +917,7 @@ Rollback::checkForUserUpdate(RollBackCheckType how)
     if (how == ROLLBACK_CHECK_AND_UPDATE) {
       // We've been modified, Roll a new version
       currentVersion_local = this->getCurrentVersion();
-      r = this->getVersion_ml(currentVersion_local, &buf);
+      r                    = this->getVersion_ml(currentVersion_local, &buf);
       if (r == OK_ROLLBACK) {
         r = this->updateVersion_ml(buf, currentVersion_local);
         delete buf;

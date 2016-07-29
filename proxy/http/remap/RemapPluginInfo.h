@@ -23,7 +23,7 @@
 
 #if !defined(_REMAPPLUGININFO_h_)
 #define _REMAPPLUGININFO_h_
-#include "libts.h"
+#include "ts/ink_platform.h"
 #include "api/ts/ts.h"
 #include "api/ts/remap.h"
 
@@ -68,7 +68,6 @@ public:
   void delete_my_list();
 };
 
-
 /**
  * struct host_hdr_info;
  * Used to store info about host header
@@ -78,6 +77,5 @@ struct host_hdr_info {
   int host_len;
   int request_port;
 };
-
 
 #endif

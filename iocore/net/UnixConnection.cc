@@ -51,9 +51,9 @@ Connection::setup_mc_send(sockaddr const *mc_addr, sockaddr const *my_addr, bool
 {
   (void)c;
   ink_assert(fd == NO_FD);
-  int res = 0;
+  int res              = 0;
   int enable_reuseaddr = 1;
-  in_addr_t mc_if = ats_ip4_addr_cast(my_addr);
+  in_addr_t mc_if      = ats_ip4_addr_cast(my_addr);
 
   if ((res = socketManager.mc_socket(my_addr->sa_family, SOCK_DGRAM, 0, non_blocking)) < 0)
     goto Lerror;
@@ -102,7 +102,6 @@ Lerror:
   return res;
 }
 
-
 int
 Connection::setup_mc_receive(sockaddr const *mc_addr, sockaddr const *my_addr, bool non_blocking, Connection *sendChan,
                              Continuation *c)
@@ -110,7 +109,7 @@ Connection::setup_mc_receive(sockaddr const *mc_addr, sockaddr const *my_addr, b
   ink_assert(fd == NO_FD);
   (void)sendChan;
   (void)c;
-  int res = 0;
+  int res              = 0;
   int enable_reuseaddr = 1;
   IpAddr inaddr_any(INADDR_ANY);
 
@@ -224,7 +223,7 @@ Connection::open(NetVCOptions const &opt)
 {
   ink_assert(fd == NO_FD);
   int enable_reuseaddr = 1; // used for sockopt setting
-  int res = 0;              // temp result
+  int res              = 0; // temp result
   IpEndpoint local_addr;
   sock_type = NetVCOptions::USE_UDP == opt.ip_proto ? SOCK_DGRAM : SOCK_STREAM;
   int family;
@@ -245,7 +244,7 @@ Connection::open(NetVCOptions const &opt)
     // No local address specified, so use family option if possible.
     family = ats_is_ip(opt.ip_family) ? opt.ip_family : AF_INET;
     local_addr.setToAnyAddr(family);
-    is_any_address = true;
+    is_any_address    = true;
     local_addr.port() = htons(opt.local_port);
   }
 
@@ -323,6 +322,9 @@ Connection::connect(sockaddr const *target, NetVCOptions const &opt)
 
   this->setRemote(target);
 
+  // apply dynamic options with this.addr initialized
+  apply_options(opt);
+
   cleaner<Connection> cleanup(this, &Connection::_cleanup); // mark for close until we succeed.
 
   res = ::connect(fd, target, ats_ip_size(target));
@@ -369,7 +371,7 @@ Connection::apply_options(NetVCOptions const &opt)
     }
     if (opt.sockopt_flags & NetVCOptions::SOCK_OPT_LINGER_ON) {
       struct linger l;
-      l.l_onoff = 1;
+      l.l_onoff  = 1;
       l.l_linger = 0;
       safe_setsockopt(fd, SOL_SOCKET, SO_LINGER, (char *)&l, sizeof(l));
       Debug("socket", "::open:: setsockopt() turn on SO_LINGER on socket");
@@ -392,24 +394,25 @@ Connection::apply_options(NetVCOptions const &opt)
 }
 
 void
-UnixNetVConnection::add_to_keep_alive_lru()
+UnixNetVConnection::add_to_keep_alive_queue()
 {
-  Debug("socket", "UnixNetVConnection::add_to_keep_alive_lru NetVC=%p", this);
-  if (nh->keep_alive_list.in(this)) {
-    nh->keep_alive_list.remove(this);
-    nh->keep_alive_list.enqueue(this);
-  } else {
-    nh->keep_alive_list.enqueue(this);
-    ++nh->keep_alive_lru_size;
-  }
+  nh->add_to_keep_alive_queue(this);
 }
 
 void
-UnixNetVConnection::remove_from_keep_alive_lru()
+UnixNetVConnection::remove_from_keep_alive_queue()
 {
-  Debug("socket", "UnixNetVConnection::remove_from_keep_alive_lru NetVC=%p", this);
-  if (nh->keep_alive_list.in(this)) {
-    nh->keep_alive_list.remove(this);
-    --nh->keep_alive_lru_size;
-  }
+  nh->remove_from_keep_alive_queue(this);
+}
+
+bool
+UnixNetVConnection::add_to_active_queue()
+{
+  return nh->add_to_active_queue(this);
+}
+
+void
+UnixNetVConnection::remove_from_active_queue()
+{
+  nh->remove_from_active_queue(this);
 }
