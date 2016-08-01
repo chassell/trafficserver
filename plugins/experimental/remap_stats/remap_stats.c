@@ -92,7 +92,7 @@ stat_add(char *name, TSMgmtInt amount, TSStatPersistence persist_type, TSMutex c
     TSDebug(DEBUG_TAG, "stat cache hash init");
   }
 
-  search.key = name;
+  search.key  = name;
   search.data = 0;
   hsearch_r(search, FIND, &result, &stat_cache);
 
@@ -103,11 +103,11 @@ stat_add(char *name, TSMgmtInt amount, TSStatPersistence persist_type, TSMutex c
     stat_id = lookup_stat(name, persist_type, create_mutex);
 
     if (stat_id >= 0) {
-      search.key = TSstrdup(name);
-      val = (value_t *)TSmalloc(sizeof(value_t));
-      val->stat_id = stat_id;
+      search.key       = TSstrdup(name);
+      val              = (value_t *)TSmalloc(sizeof(value_t));
+      val->stat_id     = stat_id;
       val->last_update = now();
-      search.data = (void *)val;
+      search.data      = (void *)val;
       hsearch_r(search, ENTER, &result, &stat_cache);
       TSDebug(DEBUG_TAG, "Cached stat_name: %s stat_id: %d", name, stat_id);
     }
@@ -122,7 +122,7 @@ stat_add(char *name, TSMgmtInt amount, TSStatPersistence persist_type, TSMutex c
       if (unlikely(val->stat_id != stat_id)) {
         TSError("[%s:%d] Found difference stat_name: %s old stat_id: %d new stat_id: %d", __FILE__, __LINE__, name, val->stat_id,
                 stat_id);
-        val->stat_id = stat_id;
+        val->stat_id     = stat_id;
         val->last_update = now();
       }
     } else {
@@ -147,13 +147,13 @@ get_effective_host(TSHttpTxn txn)
   TSMLoc url_loc;
 
   effective_url = TSHttpTxnEffectiveUrlStringGet(txn, &len);
-  buf = TSMBufferCreate();
+  buf           = TSMBufferCreate();
   TSUrlCreate(buf, &url_loc);
   tmp = effective_url;
   TSUrlParse(buf, url_loc, (const char **)(&tmp), (const char *)(effective_url + len));
   TSfree(effective_url);
   host = TSUrlHostGet(buf, url_loc, &len);
-  tmp = TSstrndup(host, len);
+  tmp  = TSstrndup(host, len);
   TSHandleMLocRelease(buf, TS_NULL_MLOC, url_loc);
   TSMBufferDestroy(buf);
   return tmp;
@@ -167,7 +167,7 @@ handle_read_req_hdr(TSCont cont, TSEvent event ATS_UNUSED, void *edata)
   void *txnd;
 
   config = (config_t *)TSContDataGet(cont);
-  txnd = (void *)get_effective_host(txn); // low bit left 0 because we do not know that remap succeeded yet
+  txnd   = (void *)get_effective_host(txn); // low bit left 0 because we do not know that remap succeeded yet
   TSHttpTxnArgSet(txn, config->txn_slot, txnd);
 
   TSHttpTxnReenable(txn, TS_EVENT_HTTP_CONTINUE);
@@ -213,7 +213,7 @@ handle_txn_close(TSCont cont, TSEvent event ATS_UNUSED, void *edata)
   char stat_name[MAX_STAT_LENGTH];
 
   config = (config_t *)TSContDataGet(cont);
-  txnd = TSHttpTxnArgGet(txn, config->txn_slot);
+  txnd   = TSHttpTxnArgGet(txn, config->txn_slot);
 
   hostname = (char *)((uintptr_t)txnd & (~((uintptr_t)0x01))); // Get hostname
 
@@ -282,7 +282,6 @@ do_time_update(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
   config_t *config = (config_t *)TSContDataGet(cont);
   TSDebug(DEBUG_TAG, "do_time_update() called, updating config->last_update.");
 
-
   while (!__sync_bool_compare_and_swap(&(config->last_update), config->last_update, now()))
     ;
 
@@ -315,8 +314,8 @@ TSPluginInit(int argc, const char *argv[])
   TSCont pre_remap_cont, post_remap_cont, global_cont, update_cont;
   config_t *config;
 
-  info.plugin_name = PLUGIN_NAME;
-  info.vendor_name = "Apache Software Foundation";
+  info.plugin_name   = PLUGIN_NAME;
+  info.vendor_name   = "Apache Software Foundation";
   info.support_email = "dev@trafficserver.apache.org";
 
   if (TSPluginRegister(&info) != TS_SUCCESS) {
@@ -325,16 +324,16 @@ TSPluginInit(int argc, const char *argv[])
   } else
     TSDebug(DEBUG_TAG, "Plugin registration succeeded.");
 
-  config = TSmalloc(sizeof(config_t));
-  config->post_remap_host = false;
-  config->persist_type = TS_STAT_NON_PERSISTENT;
+  config                      = TSmalloc(sizeof(config_t));
+  config->post_remap_host     = false;
+  config->persist_type        = TS_STAT_NON_PERSISTENT;
   config->stat_creation_mutex = TSMutexCreate();
-  config->schedule_delay = 0;
-  config->last_update = 0;
+  config->schedule_delay      = 0;
+  config->last_update         = 0;
 
   if (argc > 1) {
     int c;
-    optind = 1;
+    optind                                = 1;
     static const struct option longopts[] = {{"post-remap-host", no_argument, NULL, 'P'},
                                              {"persistent", no_argument, NULL, 'p'},
                                              {"delay", required_argument, NULL, 'd'},

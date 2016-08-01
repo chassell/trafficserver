@@ -131,7 +131,7 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char *errbuf, int errbuf_s
       TSError("Error parsing line %d of file %s (%s).", line_no, config_file, line);
       continue;
     }
-    *pos = '\0';
+    *pos        = '\0';
     char *value = pos + 1;
     while (isspace(*value)) // remove whitespace
       value++;
@@ -304,7 +304,7 @@ urlParse(bool *https, char *anchor, char *url, char *new_path_seg, int new_path_
 {
   char *segment[MAX_SEGMENTS];
   unsigned char decoded_string[2048] = {'\0'};
-  char new_url[8192] = {'\0'};
+  char new_url[8192]                 = {'\0'};
   char *p = NULL, *sig_anchor = NULL, *saveptr = NULL;
   int i = 0, numtoks = 0, cp_len = 0, l, decoded_len = 0, sig_anchor_seg = 0;
 
@@ -425,36 +425,36 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   struct config *cfg;
   cfg = (struct config *)ih;
 
-  int url_len = 0;
+  int url_len       = 0;
   time_t expiration = 0;
-  int algorithm = -1;
-  int keyindex = -1;
+  int algorithm     = -1;
+  int keyindex      = -1;
   int cmp_res;
   int rval;
-  int i = 0;
-  int j = 0;
+  int i                = 0;
+  int j                = 0;
   unsigned int sig_len = 0;
 
   bool has_path_params = false;
-  bool https_scheme = false;
-  bool isClient_ipv6 = false;
+  bool https_scheme    = false;
+  bool isClient_ipv6   = false;
 
   /* all strings are locally allocated except url... about 25k per instance */
   char *url, *new_url;
   char path_params[8192] = {'\0'}, new_path[8192] = {'\0'};
-  char signed_part[8192] = {'\0'}; // this initializes the whole array and is needed
-  char urltokstr[8192] = {'\0'};
-  char client_ipv4[INET_ADDRSTRLEN] = {'\0'};
-  char ipstr_v4[INET_ADDRSTRLEN] = {'\0'};
+  char signed_part[8192]             = {'\0'}; // this initializes the whole array and is needed
+  char urltokstr[8192]               = {'\0'};
+  char client_ipv4[INET_ADDRSTRLEN]  = {'\0'};
+  char ipstr_v4[INET_ADDRSTRLEN]     = {'\0'};
   char client_ipv6[INET6_ADDRSTRLEN] = {'\0'};
-  char ipstr_v6[INET6_ADDRSTRLEN] = {'\0'};
+  char ipstr_v6[INET6_ADDRSTRLEN]    = {'\0'};
   unsigned char sig[MAX_SIG_SIZE + 1];
   char sig_string[2 * MAX_SIG_SIZE + 1];
 
   /* these are just pointers into other allocations */
   char *signature = NULL;
-  char *parts = NULL;
-  char *part = NULL;
+  char *parts     = NULL;
+  char *part      = NULL;
   char *p = NULL, *pp = NULL;
   char *query = NULL, *app_qry = NULL;
 
@@ -472,7 +472,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   if (cfg->regex) {
     int offset = 0, options = 0;
     int ovector[30];
-    int len = url_len;
+    int len      = url_len;
     char *anchor = strstr(url, "#");
     if (query && !anchor) {
       len -= (query - url);
@@ -495,7 +495,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
     TSDebug(PLUGIN_NAME, "new_url: %s", new_url);
     has_path_params = true;
     TSfree(url);
-    url = new_url;
+    url   = new_url;
     query = strstr(url, ";");
 
     if (query == NULL) {
@@ -719,7 +719,7 @@ deny:
     TSDebug(PLUGIN_NAME, "Redirecting to %s", cfg->err_url);
     char *start, *end;
     start = cfg->err_url;
-    end = start + strlen(cfg->err_url);
+    end   = start + strlen(cfg->err_url);
     if (TSUrlParse(rri->requestBufp, rri->requestUrl, (const char **)&start, end) != TS_PARSE_DONE) {
       err_log("url", "Error inn TSUrlParse!");
     }

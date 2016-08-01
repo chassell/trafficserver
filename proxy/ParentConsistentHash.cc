@@ -157,7 +157,7 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
         result->last_parent = pRec->idx;
         result->last_lookup = last_lookup;
         result->retry       = true;
-        result->result = PARENT_SPECIFIED;
+        result->result      = PARENT_SPECIFIED;
         Debug("parent_select", "Down parent %s is now retryable, pRec: %p, result->retry: %d.", pRec->hostname, pRec,
               result->retry);
       } else { // if not retryable find an available host on the primary ring.
@@ -180,7 +180,7 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
 
   // use the available parent.
   if (pRec && (pRec->available || result->retry)) {
-    result->result = PARENT_SPECIFIED;
+    result->result      = PARENT_SPECIFIED;
     result->hostname    = pRec->hostname;
     result->port        = pRec->port;
     result->last_parent = pRec->idx;

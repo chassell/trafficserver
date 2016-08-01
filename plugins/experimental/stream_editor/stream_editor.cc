@@ -141,7 +141,6 @@ typedef struct contdata_t {
   }
 } contdata_t;
 
-
 struct edit_t;
 typedef std::set<edit_t> editset_t;
 typedef editset_t::const_iterator edit_p;
@@ -152,13 +151,14 @@ struct edit_t {
   const std::string repl;
   const int priority;
   edit_t(size_t s, size_t b, const std::string &r, int p) : start(s), bytes(b), repl(r), priority(p) { ; }
-
-  bool operator!=(const edit_t &x) const
+  bool
+  operator!=(const edit_t &x) const
   {
     return start != x.start || bytes != x.bytes || repl != x.repl || priority != x.priority;
   }
 
-  bool operator<(const edit_t &x) const
+  bool
+  operator<(const edit_t &x) const
   {
     if ((start == x.start) || (start < x.start && start + bytes > x.start) || (x.start < start && x.start + x.bytes > start)) {
       /* conflicting edits.  Throw back to resolve conflict */
@@ -194,7 +194,6 @@ struct edit_t {
     }
   }
 };
-
 
 class scope_t
 {
@@ -241,10 +240,8 @@ public:
   }
 
   scope_t(const bool u) : uri(u) { ; }
-
   virtual ~scope_t() {}
 };
-
 
 class rxscope : public scope_t
 {
@@ -274,7 +271,6 @@ public:
   virtual ~rxscope() { regfree(&rx); }
 };
 
-
 class strscope : public scope_t
 {
 private:
@@ -289,14 +285,12 @@ private:
 
 public:
   strscope(const bool u, const bool i, const char *pattern, int len) : scope_t(u), icase(i) { str = TSstrndup(pattern, len); }
-
   virtual ~strscope()
   {
     if (str)
       TSfree(str);
   }
 };
-
 
 class match_t
 {
@@ -305,7 +299,6 @@ public:
   virtual size_t cont_size() const = 0;
   virtual ~match_t() {}
 };
-
 
 class strmatch : public match_t
 {
@@ -319,9 +312,9 @@ public:
   {
     const char *match = icase ? strcasestr(buf, str) : strstr(buf, str);
     if (match) {
-      found = match - buf;
+      found     = match - buf;
       found_len = slen;
-      repl = to;
+      repl      = to;
       return (found + slen > len) ? false : true;
     } else {
       return false;
@@ -342,7 +335,6 @@ public:
   }
 };
 
-
 class rxmatch : public match_t
 {
   size_t match_len;
@@ -356,7 +348,7 @@ public:
     if (regexec(&rx, buf, MAX_RX_MATCH, pmatch, REG_NOTEOL) == 0) {
       char c;
       int n;
-      found = pmatch[0].rm_so;
+      found     = pmatch[0].rm_so;
       found_len = pmatch[0].rm_eo - found;
       while (c = *tmpl++, c != '\0') {
         switch (c) {
@@ -423,7 +415,6 @@ public:
     else                           \
   break
 
-
 class rule_t
 {
 private:
@@ -437,12 +428,12 @@ public:
   rule_t(const char *line) : scope(NULL), priority(5), from(NULL), to(NULL), refcount(NULL)
   {
     const char *scope_spec = strcasestr(line, "scope:");
-    const char *from_spec = strcasestr(line, "from:");
-    const char *to_spec = strcasestr(line, "to:");
-    const char *prio_spec = strcasestr(line, "prio:");
-    const char *len_spec = strcasestr(line, "len:");
-    bool icase = false;
-    bool rx = false;
+    const char *from_spec  = strcasestr(line, "from:");
+    const char *to_spec    = strcasestr(line, "to:");
+    const char *prio_spec  = strcasestr(line, "prio:");
+    const char *len_spec   = strcasestr(line, "len:");
+    bool icase             = false;
+    bool rx                = false;
     bool uri;
     size_t len, match_len;
     char delim;
@@ -498,8 +489,8 @@ public:
 
     if (scope_spec) {
       icase = false;
-      rx = false;
-      uri = true;
+      rx    = false;
+      uri   = true;
       for (scope_spec += 6; *scope_spec != ':'; ++scope_spec) {
         switch (*scope_spec) {
         case 'i':
@@ -608,20 +599,20 @@ process_block(contdata_t *contdata, TSIOBufferReader reader)
   TSIOBufferBlock block;
 
   if (reader == NULL) { // We're just flushing anything we have buffered
-    keep = 0;
-    buf = contdata->contbuf.c_str();
+    keep   = 0;
+    buf    = contdata->contbuf.c_str();
     buflen = contdata->contbuf.length();
     nbytes = 0;
   } else {
     block = TSIOBufferReaderStart(reader);
-    buf = TSIOBufferBlockReadStart(block, reader, &nbytes);
+    buf   = TSIOBufferBlockReadStart(block, reader, &nbytes);
 
     if (contdata->contbuf.empty()) {
       /* Use the data as-is */
       buflen = nbytes;
     } else {
       contdata->contbuf.append(buf, nbytes);
-      buf = contdata->contbuf.c_str();
+      buf    = contdata->contbuf.c_str();
       buflen = contdata->contbuf.length();
     }
     keep = contdata->contbuf_sz;
@@ -685,13 +676,13 @@ streamedit_process(TSCont contp)
   // Loop over edits, and apply them to the stream
   // Retain buffered data at the end
   int64_t ntodo, nbytes;
-  contdata_t *contdata = (contdata_t *)TSContDataGet(contp);
-  TSVIO input_vio = TSVConnWriteVIOGet(contp);
+  contdata_t *contdata      = (contdata_t *)TSContDataGet(contp);
+  TSVIO input_vio           = TSVConnWriteVIOGet(contp);
   TSIOBufferReader input_rd = TSVIOReaderGet(input_vio);
 
   if (contdata->out_buf == NULL) {
     contdata->out_buf = TSIOBufferCreate();
-    contdata->out_rd = TSIOBufferReaderAlloc(contdata->out_buf);
+    contdata->out_rd  = TSIOBufferReaderAlloc(contdata->out_buf);
     contdata->out_vio = TSVConnWrite(TSTransformOutputVConnGet(contp), contp, contdata->out_rd, INT64_MAX);
   }
 
@@ -772,8 +763,8 @@ streamedit_filter(TSCont contp, TSEvent event, void *edata)
 static int
 streamedit_setup(TSCont contp, TSEvent event, void *edata)
 {
-  TSHttpTxn txn = (TSHttpTxn)edata;
-  ruleset_t *rules_in = (ruleset_t *)TSContDataGet(contp);
+  TSHttpTxn txn        = (TSHttpTxn)edata;
+  ruleset_t *rules_in  = (ruleset_t *)TSContDataGet(contp);
   contdata_t *contdata = NULL;
 
   assert((event == TS_EVENT_HTTP_READ_RESPONSE_HDR) || (event == TS_EVENT_HTTP_READ_REQUEST_HDR));
@@ -790,9 +781,9 @@ streamedit_setup(TSCont contp, TSEvent event, void *edata)
       TSMLoc url_loc = NULL;
 
       if (TSHttpTxnPristineUrlGet(txn, &bufp, &url_loc) == TS_SUCCESS) {
-        int query_len = 0;
-        const char *query = TSUrlHttpQueryGet(bufp, url_loc, &query_len);
-        contdata->query = TSstrndup(query, query_len);
+        int query_len       = 0;
+        const char *query   = TSUrlHttpQueryGet(bufp, url_loc, &query_len);
+        contdata->query     = TSstrndup(query, query_len);
         contdata->query_len = query_len;
       }
       if (url_loc)
@@ -856,11 +847,11 @@ TSPluginInit(int argc, const char *argv[])
 {
   TSPluginRegistrationInfo info;
   TSCont inputcont, outputcont;
-  ruleset_t *rewrites_in = NULL;
+  ruleset_t *rewrites_in  = NULL;
   ruleset_t *rewrites_out = NULL;
 
-  info.plugin_name = (char *)"stream-editor";
-  info.vendor_name = (char *)"Apache Software Foundation";
+  info.plugin_name   = (char *)"stream-editor";
+  info.vendor_name   = (char *)"Apache Software Foundation";
   info.support_email = (char *)"users@trafficserver.apache.org";
 
   if (TSPluginRegister(&info) != TS_SUCCESS) {

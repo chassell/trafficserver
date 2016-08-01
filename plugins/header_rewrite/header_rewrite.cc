@@ -28,7 +28,7 @@
 #include "pluginconfig.h"
 
 // Debugs
-const char PLUGIN_NAME[] = "header_rewrite";
+const char PLUGIN_NAME[]     = "header_rewrite";
 const char PLUGIN_NAME_DBG[] = "dbg_header_rewrite";
 
 // Forward declaration for the main continuation.
@@ -45,7 +45,7 @@ public:
     memset(_resids, 0, sizeof(_resids));
 
     this->default_hook = default_hook;
-    _cont = 0;
+    _cont              = 0;
   }
 
   ~RulesConfig()
@@ -84,7 +84,7 @@ public:
   {
     TSDebug(PLUGIN_NAME, "pr_list::load(TSFile fh)");
     RulesConfig *conf = new RulesConfig(this->default_hook);
-    conf->_cont = this->_cont;
+    conf->_cont       = this->_cont;
     return conf;
   }
 
@@ -316,7 +316,7 @@ RulesConfig::rewrite_headers(TSEvent event, TSHttpTxn txnp)
 static int
 holder_rewrite_headers(TSCont contp, TSEvent event, void *edata)
 {
-  TSHttpTxn txnp = static_cast<TSHttpTxn>(edata);
+  TSHttpTxn txnp    = static_cast<TSHttpTxn>(edata);
   RulesConfig *conf = static_cast<RulesConfig *>(ConfigHolder::get_config(contp));
 
   conf->rewrite_headers(event, txnp);
@@ -335,8 +335,8 @@ TSPluginInit(int argc, const char *argv[])
   TSPluginRegistrationInfo info;
   const char *path = NULL;
 
-  info.plugin_name = (char *)PLUGIN_NAME;
-  info.vendor_name = (char *)"Apache Software Foundation";
+  info.plugin_name   = (char *)PLUGIN_NAME;
+  info.vendor_name   = (char *)"Apache Software Foundation";
   info.support_email = (char *)"dev@trafficserver.apache.org";
 
   if (TS_SUCCESS != TSPluginRegister(&info)) {
@@ -407,7 +407,7 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char * /* errbuf ATS_UNUSE
 
   ConfigHolder *config_holder;
   config_holder = new ConfigHolder(conf, DEFAULT_CONFIG_NAME, PLUGIN_NAME);
-  TSCont contp = TSContCreate(holder_rewrite_headers, NULL);
+  TSCont contp  = TSContCreate(holder_rewrite_headers, NULL);
   TSContDataSet(contp, config_holder);
   conf->continuation(contp);
 
@@ -459,7 +459,7 @@ void
 TSRemapDeleteInstance(void *ih)
 {
   ConfigHolder *config_holder = static_cast<ConfigHolder *>(ih);
-  RulesConfig *conf = static_cast<RulesConfig *>(config_holder->config);
+  RulesConfig *conf           = static_cast<RulesConfig *>(config_holder->config);
   TSContDestroy(conf->continuation());
   config_holder->removeUpdateRegister();
   delete config_holder;
@@ -477,9 +477,9 @@ TSRemapDoRemap(void *ih, TSHttpTxn rh, TSRemapRequestInfo *rri)
     return TSREMAP_NO_REMAP;
   }
 
-  TSRemapStatus rval = TSREMAP_NO_REMAP;
+  TSRemapStatus rval          = TSREMAP_NO_REMAP;
   ConfigHolder *config_holder = static_cast<ConfigHolder *>(ih);
-  RulesConfig *conf = static_cast<RulesConfig *>(config_holder->config);
+  RulesConfig *conf           = static_cast<RulesConfig *>(config_holder->config);
 
   // Go through all hooks we support, and setup the txn hook(s) as necessary
   for (int i = TS_HTTP_READ_REQUEST_HDR_HOOK; i < TS_HTTP_LAST_HOOK; ++i) {

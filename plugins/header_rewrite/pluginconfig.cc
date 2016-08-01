@@ -160,7 +160,7 @@ ConfigHolder::addUpdateRegister()
 bool
 ConfigHolder::removeUpdateRegister()
 {
-  //TSMgmtUnRegister(uniqueID);
+  // TSMgmtUnRegister(uniqueID);
   TSContDestroy(config_cont);
   return true;
 }

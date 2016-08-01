@@ -87,12 +87,12 @@ ts_free(void *s)
 static invalidate_t *
 init_invalidate_t(invalidate_t *i)
 {
-  i->regex_text = NULL;
-  i->regex = NULL;
+  i->regex_text  = NULL;
+  i->regex       = NULL;
   i->regex_extra = NULL;
-  i->epoch = 0;
-  i->expiry = 0;
-  i->next = NULL;
+  i->epoch       = 0;
+  i->expiry      = 0;
+  i->next        = NULL;
   return i;
 }
 
@@ -130,7 +130,7 @@ prune_config(invalidate_t **i)
   now = time(NULL);
 
   if (*i) {
-    iptr = *i;
+    iptr  = *i;
     ilast = NULL;
     while (iptr) {
       if (difftime(iptr->expiry, now) < 0) {
@@ -153,13 +153,12 @@ prune_config(invalidate_t **i)
         pruned = true;
       } else {
         ilast = iptr;
-        iptr = iptr->next;
+        iptr  = iptr->next;
       }
     }
   }
   return pruned;
 }
-
 
 static void
 list_config(config_holder_t *config_holder, invalidate_t *i)
@@ -191,7 +190,7 @@ config_pruner(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
 
   TSDebug(PLUGIN_TAG, "config_pruner");
   config_holder_t *configh = (config_holder_t *)TSContDataGet(cont);
-  i = configh->config;
+  i                        = configh->config;
 
   prune_config(&i);
 
@@ -228,7 +227,7 @@ main_handler(TSCont cont, TSEvent event, void *edata)
   invalidate_t *iptr;
 
   time_t date = 0, now = 0;
-  char *url = NULL;
+  char *url   = NULL;
   int url_len = 0;
 
   switch (event) {
@@ -239,7 +238,7 @@ main_handler(TSCont cont, TSEvent event, void *edata)
         while (iptr) {
           if (!date) {
             date = get_date_from_cached_hdr(txn);
-            now = time(NULL);
+            now  = time(NULL);
           }
           if ((difftime(iptr->epoch, date) >= 0) && (difftime(iptr->expiry, now) >= 0)) {
             if (!url)
@@ -302,7 +301,7 @@ TSPluginInit(int argc, const char *argv[])
   config_holder = new_config_holder();
 
   int c;
-  optind = 1;
+  optind                                = 1;
   static const struct option longopts[] = {
     {"config", required_argument, NULL, 'c'}, {"log", required_argument, NULL, 'l'}, {NULL, 0, NULL, 0}};
 
@@ -337,8 +336,8 @@ TSPluginInit(int argc, const char *argv[])
     list_config(config_holder, config_holder->config);
   }
 
-  info.plugin_name = PLUGIN_TAG;
-  info.vendor_name = "Apache Software Foundation";
+  info.plugin_name   = PLUGIN_TAG;
+  info.vendor_name   = "Apache Software Foundation";
   info.support_email = "dev@trafficserver.apache.org";
 
   if (TSPluginRegister(&info) != TS_SUCCESS) {
@@ -355,7 +354,7 @@ TSPluginInit(int argc, const char *argv[])
   }
 
   pcre_malloc = &ts_malloc;
-  pcre_free = &ts_free;
+  pcre_free   = &ts_free;
 
   main_cont = TSContCreate(main_handler, NULL);
   TSContDataSet(main_cont, (void *)config_holder);
@@ -394,9 +393,9 @@ new_config(TSFile fs)
       i = (invalidate_t *)TSmalloc(sizeof(invalidate_t));
       init_invalidate_t(i);
       pcre_get_substring(line, ovector, rc, 1, &i->regex_text);
-      i->epoch = now;
+      i->epoch  = now;
       i->expiry = atoi(line + ovector[4]);
-      i->regex = pcre_compile(i->regex_text, 0, &errptr, &erroffset, NULL);
+      i->regex  = pcre_compile(i->regex_text, 0, &errptr, &erroffset, NULL);
       if (i->expiry <= i->epoch) {
         TSDebug(PLUGIN_TAG, "NOT Loaded, already expired! %s %d %d", i->regex_text, (int)i->epoch, (int)i->expiry);
         TSError(PLUGIN_TAG " - NOT Loaded, already expired: %s %d %d", i->regex_text, (int)i->epoch, (int)i->expiry);
@@ -416,7 +415,7 @@ new_config(TSFile fs)
             if (strcmp(i->regex_text, iptr->regex_text) == 0) {
               if (iptr->expiry != i->expiry) {
                 TSDebug(PLUGIN_TAG, "Updating duplicate %s", i->regex_text);
-                iptr->epoch = i->epoch;
+                iptr->epoch  = i->epoch;
                 iptr->expiry = i->expiry;
               }
               free_invalidate_t(i);
@@ -512,8 +511,8 @@ load_config_file(config_holder_t *config_holder)
   newconfig = new_config(fh);
   if (newconfig) {
     config_holder->last_load = time(NULL);
-    config_t **confp = &(config_holder->config);
-    oldconfig = __sync_lock_test_and_set(confp, newconfig);
+    config_t **confp         = &(config_holder->config);
+    oldconfig                = __sync_lock_test_and_set(confp, newconfig);
     if (oldconfig) {
       TSDebug(PLUGIN_TAG, "scheduling free: %p (%p)", oldconfig, newconfig);
       free_cont = TSContCreate(free_handler, NULL);
@@ -536,16 +535,16 @@ new_config_holder(void)
 static config_holder_t *
 init_config_holder(config_holder_t *config_holder, const char *path)
 {
-  int path_len = 0;
+  int path_len               = 0;
   config_holder->config_path = 0;
-  config_holder->config = 0;
-  config_holder->last_load = 0;
-  config_holder->log = 0;
+  config_holder->config      = 0;
+  config_holder->last_load   = 0;
+  config_holder->log         = 0;
 
   if (!path)
     path = DEFAULT_CONFIG_NAME;
   if (path[0] != '/') {
-    path_len = strlen(TSConfigDirGet()) + strlen(path) + 2;
+    path_len                   = strlen(TSConfigDirGet()) + strlen(path) + 2;
     config_holder->config_path = ts_malloc(path_len);
     snprintf(config_holder->config_path, path_len, "%s/%s", TSConfigDirGet(), path);
     TSDebug(PLUGIN_TAG, "path: '%s' len=%d", config_holder->config_path, path_len);
