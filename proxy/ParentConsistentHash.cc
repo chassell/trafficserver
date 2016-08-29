@@ -101,6 +101,7 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
   URL *url = request_info->hdr->url_get();
   time_t now;
 
+  result->retry = false;
   Debug("parent_select", "ParentConsistentHash::%s(): Using a consistent hash parent selection strategy.", __func__);
   ink_assert(numParents(result) > 0 || result->rec->go_direct == true);
 
@@ -123,8 +124,9 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
     fhash       = chash[PRIMARY];
     if (path_hash) {
       prtmp = (pRecord *)fhash->lookup_by_hashval(path_hash, &result->chashIter[last_lookup], &wrap_around[last_lookup]);
-      if (prtmp)
+      if (prtmp) {
         pRec = (parents[last_lookup] + prtmp->idx);
+      }
     }
     // else called by nextParent().
   } else {
@@ -133,15 +135,19 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
       fhash       = chash[SECONDARY];
       path_hash   = getPathHash(request_info, (ATSHash64 *)&hash);
       prtmp       = (pRecord *)fhash->lookup_by_hashval(path_hash, &result->chashIter[last_lookup], &wrap_around[last_lookup]);
-      if (prtmp)
+      if (prtmp) {
         pRec = (parents[last_lookup] + prtmp->idx);
+      }
     } else {
       last_lookup = PRIMARY;
       fhash       = chash[PRIMARY];
       do { // search until we've selected a different parent.
         prtmp = (pRecord *)fhash->lookup(NULL, &result->chashIter[last_lookup], &wrap_around[last_lookup], &hash);
-        if (prtmp)
+        if (prtmp) {
           pRec = (parents[last_lookup] + prtmp->idx);
+        } else {
+          pRec = NULL;
+        }
       } while (prtmp && strcmp(prtmp->hostname, result->hostname) == 0);
     }
   }
@@ -172,6 +178,8 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
           prtmp       = (pRecord *)fhash->lookup_available(NULL, &result->chashIter[last_lookup], &wrap_around[last_lookup], &hash);
           if (prtmp) {
             pRec = (parents[last_lookup] + prtmp->idx);
+          } else {
+            pRec = NULL;
           }
         }
       }
@@ -202,14 +210,6 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
         }
         ink_atomic_swap(&last_unavailable, now);
       }
-      result->result = PARENT_FAIL;
-    }
-    result->hostname = NULL;
-    result->port     = 0;
-    result->retry    = false;
-    if (result->rec->go_direct == true && result->rec->parent_is_proxy == true) {
-      result->result = PARENT_DIRECT;
-    } else {
       result->result = PARENT_FAIL;
     }
     result->hostname = NULL;
