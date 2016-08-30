@@ -6,7 +6,7 @@ use warnings;
 
 use File::Copy;
 
-my %el_versions = ( "EL6" => 1, "EL7" => 1);
+my %el_versions = ( "6" => 1, "7" => 1);
 my %modes = ("install" => 1, "upgrade" => 1, "uninstall" => 1);
 my %phases = ("pre-uninstall" => 1, "post-install" => 1);
 my $installdir; 
@@ -15,9 +15,13 @@ my $phase;
 
 # returns the enterprise linux version.
 sub el_version {
-	my @el_version = split(/\./, `/bin/uname -r`);
-	exists $el_versions{uc $el_version[3]} ? return uc $el_version[3] 
-		: die("unsupported el_version: $el_version[3]");
+  my $el_version = 0;
+	
+  if (`uname -r` =~ m/.+el(\d)\.x86_64/) {
+    $el_version = $1;
+  }
+	exists $el_versions{$el_version} ? return $el_version 
+		: die("unsupported el_version: $el_version");
 }
 
 sub usage {
