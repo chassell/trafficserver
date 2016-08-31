@@ -446,25 +446,25 @@ ParentRecord::ProcessParents(char *val, bool isPrimary)
     if (isPrimary) {
       memcpy(this->parents[i].hostname, current, tmp - current);
       this->parents[i].hostname[tmp - current] = '\0';
-      this->parents[i].port = port;
-      this->parents[i].failedAt = 0;
-      this->parents[i].failCount = 0;
-      this->parents[i].scheme = scheme;
-      this->parents[i].idx = i;
-      this->parents[i].name = this->parents[i].hostname;
-      this->parents[i].available = true;
-      this->parents[i].weight = weight;
+      this->parents[i].port                    = port;
+      this->parents[i].failedAt                = 0;
+      this->parents[i].failCount               = 0;
+      this->parents[i].scheme                  = scheme;
+      this->parents[i].idx                     = i;
+      this->parents[i].name                    = this->parents[i].hostname;
+      this->parents[i].available               = true;
+      this->parents[i].weight                  = weight;
     } else {
       memcpy(this->secondary_parents[i].hostname, current, tmp - current);
       this->secondary_parents[i].hostname[tmp - current] = '\0';
-      this->secondary_parents[i].port = port;
-      this->secondary_parents[i].failedAt = 0;
-      this->secondary_parents[i].failCount = 0;
-      this->secondary_parents[i].scheme = scheme;
-      this->secondary_parents[i].idx = i;
-      this->secondary_parents[i].name = this->secondary_parents[i].hostname;
-      this->secondary_parents[i].available = true;
-      this->secondary_parents[i].weight = weight;
+      this->secondary_parents[i].port                    = port;
+      this->secondary_parents[i].failedAt                = 0;
+      this->secondary_parents[i].failCount               = 0;
+      this->secondary_parents[i].scheme                  = scheme;
+      this->secondary_parents[i].idx                     = i;
+      this->secondary_parents[i].name                    = this->secondary_parents[i].hostname;
+      this->secondary_parents[i].available               = true;
+      this->secondary_parents[i].weight                  = weight;
     }
   }
 
