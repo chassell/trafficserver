@@ -1518,6 +1518,12 @@ HostDBContinuation::dnsEvent(int event, HostEnt *e)
     // @c lookup_done should always return a valid value so @a r should be null @c NULL.
     ink_assert(r && r->app.allotment.application1 == 0 && r->app.allotment.application2 == 0);
 
+    // lookup_done() returned null due to full hostdb database.
+    if (!r) {
+      Debug("hostdb", "HostDBInfo pointer 'r' is NULL");
+      failed = true;
+    }
+
     if (is_rr) {
       const int rrsize          = HostDBRoundRobin::size(n, e->srv_hosts.srv_hosts_length);
       HostDBRoundRobin *rr_data = (HostDBRoundRobin *)hostDB.alloc(&r->app.rr.offset, rrsize);
