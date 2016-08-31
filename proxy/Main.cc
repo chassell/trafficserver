@@ -1896,8 +1896,7 @@ main(int /* argc ATS_UNUSED */, const char **argv)
     pmgmt->registerMgmtCallback(MGMT_EVENT_STORAGE_DEVICE_CMD_OFFLINE, mgmt_storage_device_cmd_callback,
                                 reinterpret_cast<void *>(static_cast<int>(MGMT_EVENT_STORAGE_DEVICE_CMD_OFFLINE)));
 
-    // The main thread also becomes a net thread.
-    ink_set_thread_name("[ET_NET 0]");
+    ink_set_thread_name("[TS_MAIN]");
 
     Note("traffic server running");
 
@@ -1917,7 +1916,10 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   }
 #endif
 
-  this_thread()->execute();
+  while (!shutdown_event_system) {
+    sleep(1);
+  }
+
   delete main_thread;
 }
 
