@@ -52,7 +52,7 @@ if (-d "$installdir/rc") {
 }
 
 if ($phase eq "post-install") {
-	if ($EL_VERSION eq "EL6" && $mode eq "install") {
+	if ($EL_VERSION eq "6" && $mode eq "install") {
 		print "installing /etc/init.d/trafficserver.\n";
 		`/bin/cp trafficserver /etc/init.d/`;			
 		if ($? != 0) {
@@ -65,7 +65,7 @@ if ($phase eq "post-install") {
 			print "Failed running /sbin/chkconfig --add  trafficsever";
 		} 
 
-	} elsif ("$EL_VERSION" eq "EL7" && $mode eq "install") {
+	} elsif ("$EL_VERSION" eq "7" && $mode eq "install") {
 		print "installing /usr/lib/systemd/system/trafficserver.service.\n";
 		`/bin/cp trafficserver.service /usr/lib/systemd/system/`;			
 		if ($? != 0) {
@@ -93,7 +93,7 @@ if ($phase eq "post-install") {
 
 	if ($mode eq "uninstall") {
 		print "disabling trafficserver.\n";
-		if ($EL_VERSION eq "EL6") {
+		if ($EL_VERSION eq "6") {
 			`/sbin/chkconfig --del trafficserver`;
 			if ($? != 0) {
 				print "Failed running /sbin/chkconfig --del trafficsever";
@@ -101,7 +101,7 @@ if ($phase eq "post-install") {
 				print "trafficserver has been disabled.\n";
 			}
 			unlink("/etc/init.d/trafficserver");
-		} elsif ($EL_VERSION eq "EL7") {
+		} elsif ($EL_VERSION eq "7") {
 			`/bin/systemctl disable trafficserver`;
 			if ($? != 0) {
 				print "Failed running /sbin/systemctl disable trafficsever";
