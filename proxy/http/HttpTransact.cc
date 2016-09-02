@@ -79,7 +79,7 @@ simple_or_unavailable_server_retry(HttpTransact::State *s)
   // simple retry is enabled, 0x1
   if ((s->parent_result.retry_type() & PARENT_RETRY_SIMPLE) &&
       s->current.simple_retry_attempts < s->parent_result.max_retries(PARENT_RETRY_SIMPLE) &&
-      server_response == HTTP_STATUS_NOT_FOUND) {
+      s->parent_result.response_is_retryable(PARENT_RETRY_SIMPLE, server_response)) {
     DebugTxn("parent_select", "RECEIVED A SIMPLE RETRY RESPONSE");
     if (s->current.simple_retry_attempts < s->parent_params->numParents(&s->parent_result)) {
       s->current.state      = HttpTransact::PARENT_ORIGIN_RETRY;
@@ -93,7 +93,7 @@ simple_or_unavailable_server_retry(HttpTransact::State *s)
   // unavailable server retry is enabled 0x2
   else if ((s->parent_result.retry_type() & PARENT_RETRY_UNAVAILABLE_SERVER) &&
            s->current.unavailable_server_retry_attempts < s->parent_result.max_retries(PARENT_RETRY_UNAVAILABLE_SERVER) &&
-           s->parent_result.response_is_retryable(server_response)) {
+           s->parent_result.response_is_retryable(PARENT_RETRY_UNAVAILABLE_SERVER, server_response)) {
     DebugTxn("parent_select", "RECEIVED A PARENT_RETRY_UNAVAILABLE_SERVER RESPONSE");
     if (s->current.unavailable_server_retry_attempts < s->parent_params->numParents(&s->parent_result)) {
       s->current.state      = HttpTransact::PARENT_ORIGIN_RETRY;

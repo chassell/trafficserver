@@ -69,9 +69,9 @@ enum ParentRetry_t {
   PARENT_RETRY_BOTH = 3
 };
 
-struct UnavailableServerResponseCodes {
-  UnavailableServerResponseCodes(char *val);
-  ~UnavailableServerResponseCodes(){};
+struct ServerRetryResponseCodes {
+  ServerRetryResponseCodes(ParentRetry_t type, char *val);
+  ~ServerRetryResponseCodes(){};
 
   bool
   contains(int code)
@@ -119,6 +119,7 @@ public:
       parent_is_proxy(true),
       selection_strategy(NULL),
       unavailable_server_retry_responses(NULL),
+      simple_retry_responses(NULL),
       parent_retry(PARENT_RETRY_NONE),
       max_simple_retries(1),
       max_unavailable_server_retries(1)
@@ -150,7 +151,8 @@ public:
   bool go_direct;
   bool parent_is_proxy;
   ParentSelectionStrategy *selection_strategy;
-  UnavailableServerResponseCodes *unavailable_server_retry_responses;
+  ServerRetryResponseCodes *unavailable_server_retry_responses;
+  ServerRetryResponseCodes *simple_retry_responses;
   ParentRetry_t parent_retry;
   int max_simple_retries;
   int max_unavailable_server_retries;
@@ -235,9 +237,13 @@ struct ParentResult {
   }
 
   bool
-  response_is_retryable(HTTPStatus response_code) const
+  response_is_retryable(ParentRetry_t type, HTTPStatus response_code) const
   {
-    return (retry_type() & PARENT_RETRY_UNAVAILABLE_SERVER) && rec->unavailable_server_retry_responses->contains(response_code);
+    if (type == PARENT_RETRY_UNAVAILABLE_SERVER) {
+      return (retry_type() & PARENT_RETRY_UNAVAILABLE_SERVER) && rec->unavailable_server_retry_responses->contains(response_code);
+    } else if (type == PARENT_RETRY_SIMPLE) {
+      return (retry_type() & PARENT_RETRY_SIMPLE) && rec->simple_retry_responses->contains(response_code);
+    }
   }
 
   bool

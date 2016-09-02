@@ -321,29 +321,65 @@ ParentConfig::print()
   ParentConfig::release(params);
 }
 
-UnavailableServerResponseCodes::UnavailableServerResponseCodes(char *val)
+ServerRetryResponseCodes::ServerRetryResponseCodes(ParentRetry_t type, char *val)
 {
   Tokenizer pTok(", \t\r");
   int numTok = 0, c;
 
-  if (val == NULL) {
-    Warning("UnavailableServerResponseCodes - unavailable_server_retry_responses is null loading default 503 code.");
-    codes.push_back(HTTP_STATUS_SERVICE_UNAVAILABLE);
-    return;
-  }
-  numTok = pTok.Initialize(val, SHARE_TOKS);
-  if (numTok == 0) {
-    c = atoi(val);
-    if (c > 500 && c < 600)
+  ink_release_assert(type == PARENT_RETRY_SIMPLE || type == PARENT_RETRY_UNAVAILABLE_SERVER);
+
+  if (val == NULL) { // load defaults
+    if (type == PARENT_RETRY_UNAVAILABLE_SERVER) {
+      Note("ServerRetryResponseCodes - unavailable_server_retry_responses is null loading default %d code.",
+           HTTP_STATUS_SERVICE_UNAVAILABLE);
       codes.push_back(HTTP_STATUS_SERVICE_UNAVAILABLE);
-  }
-  for (int i = 0; i < numTok; i++) {
-    c = atoi(pTok[i]);
-    if (c > 500 && c < 600) {
-      TSDebug("parent_select", "loading response code: %d", c);
-      codes.push_back(c);
+    } else if (type == PARENT_RETRY_SIMPLE) {
+      Note("ServerRetryResponseCodes - unavailable_server_retry_responses is null loading default %d code.", HTTP_STATUS_NOT_FOUND);
+      codes.push_back(HTTP_STATUS_NOT_FOUND);
+    }
+    return;
+  } else { // load list of codes from the configuration file
+    numTok = pTok.Initialize(val, SHARE_TOKS);
+
+    if (type == PARENT_RETRY_UNAVAILABLE_SERVER) {
+      if (numTok == 0) {
+        c = atoi(val);
+        if (c >= 500 && c < 600) {
+          codes.push_back(c);
+        } else {
+          Error("Invalid response code %d for unavailable server retry, only use 5xx codes.", c);
+        }
+      } else {
+        for (int i = 0; i < numTok; i++) {
+          c = atoi(pTok[i]);
+          if (c >= 500 && c < 600) {
+            codes.push_back(c);
+          } else {
+            Error("Invalid response code %d for unavailable server retry, only use 5xx codes.", c);
+          }
+        }
+      }
+    } else if (type == PARENT_RETRY_SIMPLE) {
+      if (numTok == 0) {
+        c = atoi(val);
+        if (c >= 400 && c < 500) {
+          codes.push_back(c);
+        } else {
+          Error("Invalid response code %d for simple server retry, only use 4xx codes.", c);
+        }
+      } else {
+        for (int i = 0; i < numTok; i++) {
+          c = atoi(pTok[i]);
+          if (c >= 400 && c < 500) {
+            codes.push_back(c);
+          } else {
+            Error("Invalid response code %d for simple server retry, only use 4xx codes.", c);
+          }
+        }
+      }
     }
   }
+
   std::sort(codes.begin(), codes.end());
 }
 
@@ -609,7 +645,7 @@ ParentRecord::Init(matcher_line *line_info)
       }
       used = true;
     } else if (strcasecmp(label, "unavailable_server_retry_responses") == 0 && unavailable_server_retry_responses == NULL) {
-      unavailable_server_retry_responses = new UnavailableServerResponseCodes(val);
+      unavailable_server_retry_responses = new ServerRetryResponseCodes(PARENT_RETRY_UNAVAILABLE_SERVER, val);
       used                               = true;
     } else if (strcasecmp(label, "max_simple_retries") == 0) {
       int v = atoi(val);
@@ -662,9 +698,9 @@ ParentRecord::Init(matcher_line *line_info)
       delete unavailable_server_retry_responses;
       unavailable_server_retry_responses = NULL;
     } else if (unavailable_server_retry_responses == NULL && (parent_retry & PARENT_RETRY_UNAVAILABLE_SERVER)) {
-      // initialize UnavailableServerResponseCodes to the default value if unavailable_server_retry is enabled.
-      Warning("%s initializing UnavailableServerResponseCodes on line %d to 503 default.", modulePrefix, line_num);
-      unavailable_server_retry_responses = new UnavailableServerResponseCodes(NULL);
+      // initialize unavailable_server_retry_responses to the default value if unavailable_server_retry is enabled.
+      Warning("%s initializing unavailable_server_retry_responses on line %d to 503 default.", modulePrefix, line_num);
+      unavailable_server_retry_responses = new ServerRetryResponseCodes(PARENT_RETRY_UNAVAILABLE_SERVER, NULL);
     }
   }
 
