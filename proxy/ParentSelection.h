@@ -239,11 +239,16 @@ struct ParentResult {
   bool
   response_is_retryable(ParentRetry_t type, HTTPStatus response_code) const
   {
+    bool result = false;
+    ink_assert(type == PARENT_RETRY_SIMPLE || type == PARENT_RETRY_UNAVAILABLE_SERVER);
+
     if (type == PARENT_RETRY_UNAVAILABLE_SERVER) {
-      return (retry_type() & PARENT_RETRY_UNAVAILABLE_SERVER) && rec->unavailable_server_retry_responses->contains(response_code);
+      result =
+        ((retry_type() & PARENT_RETRY_UNAVAILABLE_SERVER) && rec->unavailable_server_retry_responses->contains(response_code));
     } else if (type == PARENT_RETRY_SIMPLE) {
-      return (retry_type() & PARENT_RETRY_SIMPLE) && rec->simple_retry_responses->contains(response_code);
+      result = ((retry_type() & PARENT_RETRY_SIMPLE) && rec->simple_retry_responses->contains(response_code));
     }
+    return result;
   }
 
   bool
