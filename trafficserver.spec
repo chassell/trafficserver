@@ -26,7 +26,7 @@ Apache Traffic Server with Comcast modifications and environment specific modifi
 rm -rf %{name}
 git clone git@github.comcast.com:cdneng/trafficserver.git %{name}
 %setup -D -n %{name} -T
-git checkout build-master
+git checkout build-master-6.2.x
 git checkout %{commit} .
 autoreconf -vfi
 
@@ -77,7 +77,7 @@ fi
 /opt/trafficserver/bin
 /opt/trafficserver/include
 /opt/trafficserver/lib
-/opt/trafficserver/lib64
+/opt/trafficserver/man
 /opt/trafficserver/libexec
 /opt/trafficserver/share
 /opt/trafficserver/rc
@@ -98,6 +98,7 @@ fi
 %config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/ip_allow.config
 %config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/log_hosts.config
 %config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/logs_xml.config
+%config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/metrics.config
 %config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/parent.config
 %config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/plugin.config
 %config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/records.config
@@ -106,10 +107,8 @@ fi
 %config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/splitdns.config
 %config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/ssl_multicert.config
 %config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/storage.config
-%config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/update.config
 %config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/vaddrs.config
 %config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/volume.config
-%config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/prefetch.config
 %config(noreplace) %attr(644,ats,ats) /opt/trafficserver/etc/trafficserver/stats.config.xml
 
 %changelog
