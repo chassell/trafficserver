@@ -84,7 +84,7 @@ ConfigHolder::load_config_file()
       oldconfig            = __sync_lock_test_and_set(confp, newconfig);
       if (oldconfig) {
         TSDebug(pluginName, "scheduling free: %p (%p)", oldconfig, newconfig);
-        free_cont = TSContCreate(free_handler, NULL);
+        free_cont = TSContCreate(free_handler, TSMutexCreate());
         TSContDataSet(free_cont, (void *)oldconfig);
         TSContSchedule(free_cont, FREE_TMOUT, TS_THREAD_POOL_TASK);
       }
