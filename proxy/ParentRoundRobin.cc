@@ -102,7 +102,7 @@ ParentRoundRobin::selectParent(const ParentSelectionPolicy *policy, bool first_c
         cur_index = result->start_parent = 0;
         break;
       case P_LATCHED_ROUND_ROBIN:
-        cur_index = latched_parent;
+        cur_index = result->start_parent = latched_parent;
         break;
       default:
         ink_release_assert(0);
