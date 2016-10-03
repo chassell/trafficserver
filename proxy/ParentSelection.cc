@@ -637,6 +637,9 @@ ParentRecord::Init(matcher_line *line_info)
     } else if (strcasecmp(label, "unavailable_server_retry_responses") == 0 && unavailable_server_retry_responses == NULL) {
       unavailable_server_retry_responses = new ServerRetryResponseCodes(PARENT_RETRY_UNAVAILABLE_SERVER, val);
       used                               = true;
+    } else if (strcasecmp(label, "simple_retry_responses") == 0 && simple_retry_responses == NULL) {
+      simple_retry_responses = new ServerRetryResponseCodes(PARENT_RETRY_SIMPLE, val);
+      used                   = true;
     } else if (strcasecmp(label, "max_simple_retries") == 0) {
       int v = atoi(val);
       if (v >= 1 && v < MAX_SIMPLE_RETRIES) {
@@ -691,6 +694,16 @@ ParentRecord::Init(matcher_line *line_info)
       // initialize unavailable_server_retry_responses to the default value if unavailable_server_retry is enabled.
       Warning("%s initializing unavailable_server_retry_responses on line %d to 503 default.", modulePrefix, line_num);
       unavailable_server_retry_responses = new ServerRetryResponseCodes(PARENT_RETRY_UNAVAILABLE_SERVER, NULL);
+    }
+    if (simple_retry_responses != NULL && !(parent_retry & PARENT_RETRY_SIMPLE)) {
+      Warning("%s ignoring simple_retry_responses directive on line %d, as simple_retry_responses is not enabled.", modulePrefix,
+              line_num);
+      delete simple_retry_responses;
+      simple_retry_responses = NULL;
+    } else if (simple_retry_responses == NULL && (parent_retry & PARENT_RETRY_SIMPLE)) {
+      // initialize simple_retry_responses to the default value if simple_retry is enabled.
+      Warning("%s initializing simple_retry_responses on line %d to 404 default.", modulePrefix, line_num);
+      simple_retry_responses = new ServerRetryResponseCodes(PARENT_RETRY_SIMPLE, NULL);
     }
   }
 
