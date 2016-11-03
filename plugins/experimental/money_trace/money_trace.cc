@@ -123,7 +123,7 @@ mt_check_request_header(TSHttpTxn txnp)
   int length               = 0;
   struct txndata *txn_data = NULL;
   TSMBuffer bufp;
-  TSMLoc hdr_loc = NULL, field_loc = NULL;
+  TSMLoc hdr_loc = nullptr, field_loc = nullptr;
   TSCont contp;
 
   // check for a money trace header.  If there is one, schedule appropriate continuations.
@@ -165,7 +165,7 @@ static void
 mt_send_client_response(TSHttpTxn txnp, struct txndata *txn_data)
 {
   TSMBuffer bufp;
-  TSMLoc hdr_loc, field_loc;
+  TSMLoc hdr_loc = nullptr, field_loc = nullptr;
 
   if (txn_data->client_request_mt_header == NULL) {
     LOG_DEBUG("no client request header to return.");
@@ -204,7 +204,7 @@ static void
 mt_send_server_request(TSHttpTxn txnp, struct txndata *txn_data)
 {
   TSMBuffer bufp;
-  TSMLoc hdr_loc, field_loc;
+  TSMLoc hdr_loc = nullptr, field_loc = nullptr;
 
   if (txn_data->new_span_mt_header == NULL) {
     LOG_DEBUG("there is no new mt request header to send.");
@@ -353,7 +353,12 @@ MT::moneyTraceHdr(const char *mt_request_hdr)
 
   if (strncmp(toks[0], "trace-id", strlen("trace-id")) == 0 && strncmp(toks[2], "span-id", strlen("span-id")) == 0 &&
       (p = strchr(toks[2], '=')) != NULL) {
-    temp_str << toks[0] << ";parent-id=" << p << ";span-id=0x" << std::hex << spanId() << std::ends;
+    p++;
+    if (strncmp("0x", p, 2) == 0) { 
+      temp_str << toks[0] << ";parent-id=" << p << ";span-id=0x" << std::hex << spanId() << std::ends;
+    } else {
+      temp_str << toks[0] << ";parent-id=" << p << ";span-id=" << spanId() << std::ends;
+    }
   } else {
     LOG_DEBUG("invalid money_trace_header: %s", mt_request_hdr);
     return NULL;
