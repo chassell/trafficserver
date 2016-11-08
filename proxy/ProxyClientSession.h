@@ -43,7 +43,8 @@ class ProxyClientSession : public VConnection
 public:
   ProxyClientSession();
 
-  virtual void destroy();
+  virtual void destroy() = 0;
+  virtual void free();
   virtual void start() = 0;
 
   virtual void new_connection(NetVConnection *new_vc, MIOBuffer *iobuf, IOBufferReader *reader, bool backdoor) = 0;
@@ -176,6 +177,15 @@ public:
   {
   }
 
+  void set_session_active();
+  void clear_session_active();
+
+  bool
+  is_client_closed() const
+  {
+    return get_netvc() == NULL;
+  }
+
 protected:
   // XXX Consider using a bitwise flags variable for the following flags, so that we can make the best
   // use of internal alignment padding.
@@ -185,6 +195,9 @@ protected:
   bool hooks_on;
 
   int64_t con_id;
+
+  Event *schedule_event;
+  bool in_destroy;
 
 private:
   APIHookScope api_scope;
@@ -197,6 +210,12 @@ private:
   ProxyClientSession &operator=(const ProxyClientSession &); // noncopyable
 
   void handle_api_return(int event);
+
+  // for DI. An active connection is one that a request has
+  // been successfully parsed (PARSE_DONE) and it remains to
+  // be active until the transaction goes through or the client
+  // aborts.
+  bool m_active;
 
   friend void TSHttpSsnDebugSet(TSHttpSsn, int);
 };

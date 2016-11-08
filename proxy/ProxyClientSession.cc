@@ -28,9 +28,27 @@
 static int64_t next_cs_id = 0;
 
 ProxyClientSession::ProxyClientSession()
-  : VConnection(NULL), acl_record(NULL), host_res_style(HOST_RES_IPV4), debug_on(false), hooks_on(true), con_id(0)
+  : VConnection(NULL), acl_record(NULL), host_res_style(HOST_RES_IPV4), debug_on(false), hooks_on(true), con_id(0), m_active(false)
 {
   ink_zero(this->user_args);
+}
+
+void
+ProxyClientSession::set_session_active()
+{
+  if (!m_active) {
+    m_active = true;
+    HTTP_INCREMENT_DYN_STAT(http_current_active_client_connections_stat);
+  }
+}
+
+void
+ProxyClientSession::clear_session_active()
+{
+  if (m_active) {
+    m_active = false;
+    HTTP_DECREMENT_DYN_STAT(http_current_active_client_connections_stat);
+  }
 }
 
 int64_t
@@ -67,7 +85,7 @@ is_valid_hook(TSHttpHookID hookid)
 }
 
 void
-ProxyClientSession::destroy()
+ProxyClientSession::free()
 {
   this->api_hooks.clear();
   this->mutex.clear();
@@ -126,7 +144,7 @@ ProxyClientSession::state_api_callout(int event, void * /* data ATS_UNUSED */)
 
   // coverity[unterminated_default]
   default:
-    ink_assert(false);
+    ink_release_assert(false);
   }
 
   return 0;
@@ -174,7 +192,7 @@ ProxyClientSession::handle_api_return(int event)
       vc->do_io_close();
       this->release_netvc();
     }
-    this->destroy();
+    free(); // You can now clean things up
     break;
   }
   default:

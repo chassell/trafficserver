@@ -263,8 +263,9 @@ rcv_headers_frame(Http2ConnectionState &cstate, const Http2Frame &frame)
     if (node != NULL) {
       stream->priority_node = node;
     } else {
-      DebugHttp2Stream(cstate.ua_session, stream_id, "PRIORITY - dep: %d, weight: %d, excl: %d", params.priority.stream_dependency,
-                       params.priority.weight, params.priority.exclusive_flag);
+      DebugHttp2Stream(cstate.ua_session, stream_id, "PRIORITY - dep: %d, weight: %d, excl: %d, tree size: %d",
+                       params.priority.stream_dependency, params.priority.weight, params.priority.exclusive_flag,
+                       cstate.dependency_tree->size());
 
       stream->priority_node = cstate.dependency_tree->add(params.priority.stream_dependency, stream_id, params.priority.weight,
                                                           params.priority.exclusive_flag, stream);
@@ -299,6 +300,8 @@ rcv_headers_frame(Http2ConnectionState &cstate, const Http2Frame &frame)
     if (result != HTTP2_ERROR_NO_ERROR) {
       if (result == HTTP2_ERROR_COMPRESSION_ERROR) {
         return Http2Error(HTTP2_ERROR_CLASS_CONNECTION, HTTP2_ERROR_COMPRESSION_ERROR);
+      } else if (result == HTTP2_ERROR_ENHANCE_YOUR_CALM) {
+        return Http2Error(HTTP2_ERROR_CLASS_CONNECTION, HTTP2_ERROR_ENHANCE_YOUR_CALM);
       } else {
         return Http2Error(HTTP2_ERROR_CLASS_STREAM, HTTP2_ERROR_PROTOCOL_ERROR);
       }
@@ -356,8 +359,8 @@ rcv_priority_frame(Http2ConnectionState &cstate, const Http2Frame &frame)
     return Http2Error(HTTP2_ERROR_CLASS_CONNECTION, HTTP2_ERROR_PROTOCOL_ERROR);
   }
 
-  DebugHttp2Stream(cstate.ua_session, stream_id, "PRIORITY - dep: %d, weight: %d, excl: %d", priority.stream_dependency,
-                   priority.weight, priority.exclusive_flag);
+  DebugHttp2Stream(cstate.ua_session, stream_id, "PRIORITY - dep: %d, weight: %d, excl: %d, tree size: %d",
+                   priority.stream_dependency, priority.weight, priority.exclusive_flag, cstate.dependency_tree->size());
 
   DependencyTree::Node *node = cstate.dependency_tree->find(stream_id);
 
@@ -366,11 +369,12 @@ rcv_priority_frame(Http2ConnectionState &cstate, const Http2Frame &frame)
     DebugHttp2Stream(cstate.ua_session, stream_id, "Reprioritize");
     cstate.dependency_tree->reprioritize(node, priority.stream_dependency, priority.exclusive_flag);
   } else {
-    cstate.dependency_tree->add(priority.stream_dependency, stream_id, priority.weight, priority.exclusive_flag, NULL);
+    // PRIORITY frame is received before HEADERS frame.
 
-    Http2Stream *stream = cstate.find_stream(stream_id);
-    if (stream != NULL) {
-      stream->priority_node = node;
+    // Restrict number of inactive node in dependency tree smaller than max_concurrent_streams.
+    // Current number of inactive node is size of tree minus active node count.
+    if (Http2::max_concurrent_streams_in > cstate.dependency_tree->size() - cstate.get_client_stream_count() + 1) {
+      cstate.dependency_tree->add(priority.stream_dependency, stream_id, priority.weight, priority.exclusive_flag, NULL);
     }
   }
 
@@ -730,6 +734,8 @@ rcv_continuation_frame(Http2ConnectionState &cstate, const Http2Frame &frame)
     if (result != HTTP2_ERROR_NO_ERROR) {
       if (result == HTTP2_ERROR_COMPRESSION_ERROR) {
         return Http2Error(HTTP2_ERROR_CLASS_CONNECTION, HTTP2_ERROR_COMPRESSION_ERROR);
+      } else if (result == HTTP2_ERROR_ENHANCE_YOUR_CALM) {
+        return Http2Error(HTTP2_ERROR_CLASS_CONNECTION, HTTP2_ERROR_ENHANCE_YOUR_CALM);
       } else {
         return Http2Error(HTTP2_ERROR_CLASS_STREAM, HTTP2_ERROR_PROTOCOL_ERROR);
       }
@@ -763,6 +769,7 @@ static const http2_frame_dispatch frame_handlers[HTTP2_FRAME_TYPE_MAX] = {
 int
 Http2ConnectionState::main_event_handler(int event, void *edata)
 {
+  ++recursion;
   switch (event) {
   // Initialize HTTP/2 Connection
   case HTTP2_SESSION_EVENT_INIT: {
@@ -787,16 +794,17 @@ Http2ConnectionState::main_event_handler(int event, void *edata)
       send_window_update_frame(0, server_settings.get(HTTP2_SETTINGS_INITIAL_WINDOW_SIZE) - HTTP2_INITIAL_WINDOW_SIZE);
     }
 
-    return 0;
+    break;
   }
 
   // Finalize HTTP/2 Connection
   case HTTP2_SESSION_EVENT_FINI: {
-    this->ua_session = NULL;
+    ink_assert(this->fini_received == false);
+    this->fini_received = true;
     cleanup_streams();
     SET_HANDLER(&Http2ConnectionState::state_closed);
-    return 0;
-  }
+    this->release_stream(NULL);
+  } break;
 
   case HTTP2_SESSION_EVENT_XMIT: {
     SCOPED_MUTEX_LOCK(lock, this->mutex, this_ethread());
@@ -816,7 +824,7 @@ Http2ConnectionState::main_event_handler(int event, void *edata)
     //   Implementations MUST discard frames that have unknown or unsupported types.
     if (frame->header().type >= HTTP2_FRAME_TYPE_MAX) {
       DebugHttp2Stream(ua_session, stream_id, "Discard a frame which has unknown type, type=%x", frame->header().type);
-      return 0;
+      break;
     }
 
     if (frame_handlers[frame->header().type]) {
@@ -844,13 +852,22 @@ Http2ConnectionState::main_event_handler(int event, void *edata)
       }
     }
 
-    return 0;
+    break;
   }
 
   default:
     DebugHttp2Con(ua_session, "unexpected event=%d edata=%p", event, edata);
     ink_release_assert(0);
-    return 0;
+    break;
+  }
+
+  --recursion;
+  if (recursion == 0 && ua_session && !ua_session->is_recursing()) {
+    if (this->ua_session->ready_to_free()) {
+      this->ua_session->free();
+      // After the free, the Http2ConnectionState object is also freed.
+      // The Http2ConnectionState object is allocted within the Http2ClientSession object
+    }
   }
 
   return 0;
@@ -881,11 +898,16 @@ Http2ConnectionState::create_stream(Http2StreamId new_id)
 
   Http2Stream *new_stream = THREAD_ALLOC_INIT(http2StreamAllocator, this_ethread());
   new_stream->init(new_id, client_settings.get(HTTP2_SETTINGS_INITIAL_WINDOW_SIZE));
+
+  ink_assert(NULL != new_stream);
+  ink_assert(!stream_list.in(new_stream));
+
   stream_list.push(new_stream);
   latest_streamid = new_id;
 
   ink_assert(client_streams_count < UINT32_MAX);
   ++client_streams_count;
+  ++total_client_streams_count;
   new_stream->set_parent(ua_session);
   new_stream->mutex = ua_session->mutex;
   ua_session->get_netvc()->add_to_active_queue();
@@ -897,8 +919,10 @@ Http2Stream *
 Http2ConnectionState::find_stream(Http2StreamId id) const
 {
   for (Http2Stream *s = stream_list.head; s; s = s->link.next) {
-    if (s->get_id() == id)
+    if (s->get_id() == id) {
       return s;
+    }
+    ink_assert(s != s->link.next);
   }
   return NULL;
 }
@@ -913,6 +937,7 @@ Http2ConnectionState::restart_streams()
     if (s->get_state() == HTTP2_STREAM_STATE_HALF_CLOSED_REMOTE && min(this->client_rwnd, s->client_rwnd) > 0) {
       s->send_response_body();
     }
+    ink_assert(s != next);
     s = next;
   }
 }
@@ -924,33 +949,65 @@ Http2ConnectionState::cleanup_streams()
   while (s) {
     Http2Stream *next = s->link.next;
     this->delete_stream(s);
+    ink_assert(s != next);
     s = next;
   }
+  ink_assert(stream_list.empty());
 
-  client_streams_count = 0;
   if (!is_state_closed()) {
     ua_session->get_netvc()->add_to_keep_alive_queue();
   }
 }
 
-void
+bool
 Http2ConnectionState::delete_stream(Http2Stream *stream)
 {
+  ink_assert(NULL != stream);
+
+  // If stream has already been removed from the list, just go on
+  if (!stream_list.in(stream)) {
+    return false;
+  }
+
+  DebugHttp2Stream(ua_session, stream->get_id(), "Delete stream");
+
   if (Http2::stream_priority_enabled) {
     DependencyTree::Node *node = stream->priority_node;
-    if (node != NULL && node->active) {
-      dependency_tree->deactivate(node, 0);
+    if (node != NULL) {
+      if (node->active) {
+        dependency_tree->deactivate(node, 0);
+      }
+      dependency_tree->remove(node);
     }
   }
 
   stream_list.remove(stream);
   stream->initiating_close();
 
-  ink_assert(client_streams_count > 0);
-  --client_streams_count;
+  return true;
+}
 
-  if (client_streams_count == 0 && ua_session) {
-    ua_session->get_netvc()->add_to_keep_alive_queue();
+void
+Http2ConnectionState::release_stream(Http2Stream *stream)
+{
+  // Update stream counts
+  if (stream) {
+    --total_client_streams_count;
+    stream_list.remove(stream);
+  }
+
+  // If the number of clients is 0, then mark the connection as inactive
+  if (total_client_streams_count == 0 && ua_session) {
+    ua_session->clear_session_active();
+    if (ua_session->get_netvc()) {
+      ua_session->get_netvc()->add_to_keep_alive_queue();
+      ua_session->get_netvc()->cancel_active_timeout();
+    }
+  }
+
+  if (ua_session && fini_received && total_client_streams_count == 0) {
+    // We were shutting down, go ahead and terminate the session
+    ua_session->destroy();
   }
 }
 
@@ -1096,7 +1153,11 @@ Http2ConnectionState::send_a_data_frame(Http2Stream *stream, size_t &payload_len
 void
 Http2ConnectionState::send_data_frames(Http2Stream *stream)
 {
-  if (stream->get_state() == HTTP2_STREAM_STATE_CLOSED) {
+  // To follow RFC 7540 must not send more frames other than priority on
+  // a closed stream.  So we return without sending
+  if (stream->get_state() == HTTP2_STREAM_STATE_HALF_CLOSED_LOCAL || stream->get_state() == HTTP2_STREAM_STATE_CLOSED) {
+    DebugSsn(this->ua_session, "http2_cs", "Shutdown half closed local stream %d", stream->get_id());
+    this->delete_stream(stream);
     return;
   }
 
@@ -1158,6 +1219,15 @@ Http2ConnectionState::send_headers_frame(Http2Stream *stream)
   headers.alloc(buffer_size_index[HTTP2_FRAME_TYPE_HEADERS]);
   http2_write_headers(buf, payload_length, headers.write());
   headers.finalize(payload_length);
+
+  // Change stream state
+  if (!stream->change_state(HTTP2_FRAME_TYPE_HEADERS, flags)) {
+    this->send_goaway_frame(stream->get_id(), HTTP2_ERROR_PROTOCOL_ERROR);
+    h2_hdr.destroy();
+    ats_free(buf);
+    return;
+  }
+
   // xmit event
   SCOPED_MUTEX_LOCK(lock, this->ua_session->mutex, this_ethread());
   this->ua_session->handleEvent(HTTP2_SESSION_EVENT_XMIT, &headers);

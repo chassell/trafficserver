@@ -768,10 +768,7 @@ HttpSM::state_read_client_request_header(int event, void *data)
   case PARSE_DONE:
     DebugSM("http", "[%" PRId64 "] done parsing client request header", sm_id);
 
-    if (ua_session->m_active == false) {
-      ua_session->m_active = true;
-      HTTP_INCREMENT_DYN_STAT(http_current_active_client_connections_stat);
-    }
+    ua_session->set_session_active();
 
     if (t_state.hdr_info.client_request.version_get() == HTTPVersion(1, 1) &&
         (t_state.hdr_info.client_request.method_get_wksidx() == HTTP_WKSIDX_POST ||
@@ -902,10 +899,7 @@ HttpSM::state_watch_for_client_abort(int event, void *data)
         netvc->do_io_shutdown(IO_SHUTDOWN_READ);
       ua_entry->eos = true;
     } else {
-      if (netvc)
-        netvc->do_io_close();
       ua_session->do_io_close();
-      ua_session       = NULL;
       ua_buffer_reader = NULL;
       vc_table.cleanup_entry(ua_entry);
       ua_entry = NULL;
@@ -1119,6 +1113,14 @@ HttpSM::state_raw_http_server_open(int event, void *data)
 
   pending_action = NULL;
   switch (event) {
+  case EVENT_INTERVAL:
+    // If we get EVENT_INTERNAL it means that we moved the transaction
+    // to a different thread in do_http_server_open.  Since we didn't
+    // do any of the actual work in do_http_server_open, we have to
+    // go back and do it now.
+    do_http_server_open(true);
+    return 0;
+
   case NET_EVENT_OPEN:
 
     if (t_state.pCongestionEntry != NULL) {
@@ -1153,11 +1155,6 @@ HttpSM::state_raw_http_server_open(int event, void *data)
   case CONGESTION_EVENT_CONGESTED_ON_M:
     t_state.current.state = HttpTransact::CONGEST_CONTROL_CONGESTED_ON_M;
     break;
-
-  case EVENT_INTERVAL:
-    Error("[HttpSM::state_raw_http_server_open] event: EVENT_INTERVAL state: %d server_entry: %p", t_state.current.state,
-          server_entry);
-    return 0;
 
   default:
     ink_release_assert(0);
@@ -2999,12 +2996,6 @@ HttpSM::tunnel_handler_server(int event, HttpTunnelProducer *p)
     if (is_http_server_eos_truncation(p)) {
       DebugSM("http", "[%" PRId64 "] [HttpSM::tunnel_handler_server] aborting HTTP tunnel due to server truncation", sm_id);
       tunnel.chain_abort_all(p);
-      // UA session may not be in the tunnel yet, don't NULL out the pointer in that case.
-      // Note: This is a hack. The correct solution is for the UA session to signal back to the SM
-      // when the UA is about to be destroyed and clean up the pointer there. That should be done once
-      // the TS-3612 changes are in place (and similarly for the server session).
-      if (ua_entry->in_tunnel)
-        ua_session = NULL;
 
       t_state.current.server->abort      = HttpTransact::ABORTED;
       t_state.client_info.keep_alive     = HTTP_NO_KEEPALIVE;
@@ -3318,12 +3309,11 @@ HttpSM::tunnel_handler_ua(int event, HttpTunnelConsumer *c)
     }
 
     ua_session->do_io_close();
-    ua_session = NULL;
   } else {
     ink_assert(ua_buffer_reader != NULL);
     ua_session->release(ua_buffer_reader);
     ua_buffer_reader = NULL;
-    ua_session       = NULL;
+    // ua_session       = NULL;
   }
 
   return 0;
@@ -6137,8 +6127,8 @@ HttpSM::setup_error_transfer()
   } else {
     DebugSM("http", "[setup_error_transfer] Now closing connection ...");
     vc_table.cleanup_entry(ua_entry);
-    ua_entry       = NULL;
-    ua_session     = NULL;
+    ua_entry = NULL;
+    // ua_session     = NULL;
     terminate_sm   = true;
     t_state.source = HttpTransact::SOURCE_INTERNAL;
   }
@@ -6747,7 +6737,6 @@ HttpSM::kill_this()
       plugin_tunnel = NULL;
     }
 
-    ua_session     = NULL;
     server_session = NULL;
 
     // So we don't try to nuke the state machine
@@ -6776,6 +6765,10 @@ HttpSM::kill_this()
   //   then the value of kill_this_async_done has changed so
   //   we must check it again
   if (kill_this_async_done == true) {
+    if (ua_session) {
+      ua_session->transaction_done();
+    }
+
     // In the async state, the plugin could have been
     // called resulting in the creation of a plugin_tunnel.
     // So it needs to be deleted now.
@@ -7759,6 +7752,7 @@ HttpSM::redirect_request(const char *redirect_url, const int redirect_len)
         t_state.hdr_info.client_request.value_set(MIME_FIELD_HOST, MIME_LEN_HOST, host, host_len);
       }
       t_state.hdr_info.client_request.m_target_cached = false;
+      t_state.hdr_info.server_request.m_target_cached = false;
     } else {
       // the client request didn't have a host, so use the current origin host
       if (valid_origHost) {
@@ -7796,6 +7790,7 @@ HttpSM::redirect_request(const char *redirect_url, const int redirect_len)
         url_nuke_proxy_stuff(t_state.hdr_info.client_request.m_url_cached.m_url_impl);
         t_state.hdr_info.client_request.method_set(origMethod, origMethod_len);
         t_state.hdr_info.client_request.m_target_cached = false;
+        t_state.hdr_info.server_request.m_target_cached = false;
         clientUrl.scheme_set(scheme_str, scheme_len);
       } else {
       LhostError:

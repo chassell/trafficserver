@@ -119,8 +119,11 @@ public:
       stream_list(),
       latest_streamid(0),
       client_streams_count(0),
+      total_client_streams_count(0),
       continued_stream_id(0),
-      _scheduled(false)
+      _scheduled(false),
+      fini_received(false),
+      recursion(0)
   {
     SET_HANDLER(&Http2ConnectionState::main_event_handler);
   }
@@ -143,7 +146,7 @@ public:
     continued_buffer.iov_base = NULL;
     continued_buffer.iov_len  = 0;
 
-    dependency_tree = new DependencyTree();
+    dependency_tree = new DependencyTree(Http2::max_concurrent_streams_in);
   }
 
   void
@@ -168,7 +171,8 @@ public:
   Http2Stream *create_stream(Http2StreamId new_id);
   Http2Stream *find_stream(Http2StreamId id) const;
   void restart_streams();
-  void delete_stream(Http2Stream *stream);
+  bool delete_stream(Http2Stream *stream);
+  void release_stream(Http2Stream *stream);
   void cleanup_streams();
 
   void update_initial_rwnd(Http2WindowSize new_size);
@@ -196,6 +200,12 @@ public:
     continued_stream_id = 0;
   }
 
+  uint32_t
+  get_client_stream_count() const
+  {
+    return client_streams_count;
+  }
+
   // Connection level window size
   ssize_t client_rwnd, server_rwnd;
 
@@ -214,7 +224,13 @@ public:
   bool
   is_state_closed() const
   {
-    return ua_session == NULL;
+    return ua_session == NULL || fini_received;
+  }
+
+  bool
+  is_recursing() const
+  {
+    return recursion > 0;
   }
 
 private:
@@ -232,8 +248,10 @@ private:
   DLL<Http2Stream> stream_list;
   Http2StreamId latest_streamid;
 
-  // Counter for current acive streams which is started by client
+  // Counter for current active streams which is started by client
   uint32_t client_streams_count;
+  // Counter for current active streams and streams in the process of shutting down
+  uint32_t total_client_streams_count;
 
   // NOTE: Id of stream which MUST receive CONTINUATION frame.
   //   - [RFC 7540] 6.2 HEADERS
@@ -245,6 +263,8 @@ private:
   Http2StreamId continued_stream_id;
   IOVec continued_buffer;
   bool _scheduled;
+  bool fini_received;
+  int recursion;
 };
 
 #endif // __HTTP2_CONNECTION_STATE_H__

@@ -29,11 +29,6 @@
 #define STATE_VIO_OFFSET ((uintptr_t) & ((NetState *)0)->vio)
 #define STATE_FROM_VIO(_x) ((NetState *)(((char *)(_x)) - STATE_VIO_OFFSET))
 
-#define disable_read(_vc) (_vc)->read.enabled   = 0
-#define disable_write(_vc) (_vc)->write.enabled = 0
-#define enable_read(_vc) (_vc)->read.enabled    = 1
-#define enable_write(_vc) (_vc)->write.enabled  = 1
-
 #ifndef UIO_MAXIOV
 #define NET_MAX_IOV 16 // UIO_MAXIOV shall be at least 16 1003.1g (5.4.1.1)
 #else
@@ -624,8 +619,7 @@ UnixNetVConnection::get_data(int id, void *data)
 VIO *
 UnixNetVConnection::do_io_read(Continuation *c, int64_t nbytes, MIOBuffer *buf)
 {
-  ink_assert(c || 0 == nbytes);
-  if (closed) {
+  if (closed && !(c == NULL && nbytes == 0 && buf == NULL)) {
     Error("do_io_read invoked on closed vc %p, cont %p, nbytes %" PRId64 ", buf %p", this, c, nbytes, buf);
     return NULL;
   }
@@ -641,7 +635,7 @@ UnixNetVConnection::do_io_read(Continuation *c, int64_t nbytes, MIOBuffer *buf)
       read.vio.reenable();
   } else {
     read.vio.buffer.clear();
-    disable_read(this);
+    read.enabled = 0;
   }
   return &read.vio;
 }
@@ -649,7 +643,7 @@ UnixNetVConnection::do_io_read(Continuation *c, int64_t nbytes, MIOBuffer *buf)
 VIO *
 UnixNetVConnection::do_io_write(Continuation *c, int64_t nbytes, IOBufferReader *reader, bool owner)
 {
-  if (closed) {
+  if (closed && !(c == NULL && nbytes == 0 && reader == NULL)) {
     Error("do_io_write invoked on closed vc %p, cont %p, nbytes %" PRId64 ", reader %p", this, c, nbytes, reader);
     return NULL;
   }
@@ -665,7 +659,7 @@ UnixNetVConnection::do_io_write(Continuation *c, int64_t nbytes, IOBufferReader 
     if (nbytes && !write.enabled)
       write.vio.reenable();
   } else {
-    disable_write(this);
+    write.enabled = 0;
   }
   return &write.vio;
 }
@@ -673,8 +667,8 @@ UnixNetVConnection::do_io_write(Continuation *c, int64_t nbytes, IOBufferReader 
 void
 UnixNetVConnection::do_io_close(int alerrno /* = -1 */)
 {
-  disable_read(this);
-  disable_write(this);
+  read.enabled  = 0;
+  write.enabled = 0;
   read.vio.buffer.clear();
   read.vio.nbytes = 0;
   read.vio.op     = VIO::NONE;
@@ -705,22 +699,22 @@ UnixNetVConnection::do_io_shutdown(ShutdownHowTo_t howto)
   switch (howto) {
   case IO_SHUTDOWN_READ:
     socketManager.shutdown(((UnixNetVConnection *)this)->con.fd, 0);
-    disable_read(this);
+    read.enabled = 0;
     read.vio.buffer.clear();
     read.vio.nbytes = 0;
     f.shutdown      = NET_VC_SHUTDOWN_READ;
     break;
   case IO_SHUTDOWN_WRITE:
     socketManager.shutdown(((UnixNetVConnection *)this)->con.fd, 1);
-    disable_write(this);
+    write.enabled = 0;
     write.vio.buffer.clear();
     write.vio.nbytes = 0;
     f.shutdown       = NET_VC_SHUTDOWN_WRITE;
     break;
   case IO_SHUTDOWN_READWRITE:
     socketManager.shutdown(((UnixNetVConnection *)this)->con.fd, 2);
-    disable_read(this);
-    disable_write(this);
+    read.enabled  = 0;
+    write.enabled = 0;
     read.vio.buffer.clear();
     read.vio.nbytes = 0;
     write.vio.buffer.clear();
@@ -803,7 +797,7 @@ UnixNetVConnection::reenable(VIO *vio)
     return;
   EThread *t = vio->mutex->thread_holding;
   ink_assert(t == this_ethread());
-  ink_assert(!closed);
+  ink_release_assert(!closed);
   if (nh->mutex->thread_holding == t) {
     if (vio == &read.vio) {
       ep.modify(EVENTIO_READ);
@@ -917,7 +911,7 @@ void
 UnixNetVConnection::set_enabled(VIO *vio)
 {
   ink_assert(vio->mutex->thread_holding == this_ethread() && thread);
-  ink_assert(!closed);
+  ink_release_assert(!closed);
   STATE_FROM_VIO(vio)->enabled = 1;
 #ifdef INACTIVITY_TIMEOUT
   if (!inactivity_timeout && inactivity_timeout_in) {
@@ -1143,8 +1137,8 @@ UnixNetVConnection::mainEvent(int event, Event *e)
       (write.vio.mutex.m_ptr && wlock.get_mutex() != write.vio.mutex.m_ptr)) {
 #ifdef INACTIVITY_TIMEOUT
     if (e == active_timeout)
-#endif
       e->schedule_in(HRTIME_MSECONDS(net_retry_delay));
+#endif
     return EVENT_CONT;
   }
 
@@ -1267,6 +1261,7 @@ UnixNetVConnection::connectUp(EThread *t, int fd)
   // If this is getting called from the TS API, then we are wiring up a file descriptor
   // provided by the caller. In that case, we know that the socket is already connected.
   if (fd == NO_FD) {
+    // Due to multi-threads system, the fd returned from con.open() may exceed the limitation of check_net_throttle().
     res = con.open(options);
     if (res != 0) {
       goto fail;
@@ -1284,14 +1279,24 @@ UnixNetVConnection::connectUp(EThread *t, int fd)
     con.is_bound     = true;
   }
 
+  if (check_emergency_throttle(con)) {
+    // The `con' could be closed if there is hyper emergency
+    if (con.fd == NO_FD) {
+      // We need to decrement the stat because close_UnixNetVConnection only decrements with a valid connection descriptor.
+      NET_SUM_GLOBAL_DYN_STAT(net_connections_currently_open_stat, -1);
+      // Set errno force to EMFILE (reached limit for open file descriptors)
+      errno = EMFILE;
+      res   = -errno;
+      goto fail;
+    }
+  }
+
   // Must connect after EventIO::Start() to avoid a race condition
   // when edge triggering is used.
   if (ep.start(get_PollDescriptor(t), this, EVENTIO_READ | EVENTIO_WRITE) < 0) {
-    lerrno = errno;
-    Debug("iocore_net", "connectUp : Failed to add to epoll list\n");
-    action_.continuation->handleEvent(NET_EVENT_OPEN_FAILED, (void *)0); // 0 == res
-    free(t);
-    return CONNECT_FAILURE;
+    res = -errno;
+    Debug("iocore_net", "connectUp : Failed to add to epoll list : %s", strerror(errno));
+    goto fail;
   }
 
   if (fd == NO_FD) {
@@ -1300,8 +1305,6 @@ UnixNetVConnection::connectUp(EThread *t, int fd)
       goto fail;
     }
   }
-
-  check_emergency_throttle(con);
 
   // start up next round immediately
 

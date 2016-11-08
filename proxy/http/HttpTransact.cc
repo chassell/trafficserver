@@ -3583,7 +3583,7 @@ HttpTransact::handle_response_from_parent(State *s)
           s->current.retry_type = PARENT_RETRY_NONE;
           next_lookup           = find_server_and_update_current_info(s);
         }
-      } else { // try unavailable server retry if we have a unavailable server retry response from the parent.
+      } else if (s->current.retry_type == PARENT_RETRY_UNAVAILABLE_SERVER) {
         if (s->current.unavailable_server_retry_attempts >= s->parent_result.max_retries(PARENT_RETRY_UNAVAILABLE_SERVER)) {
           DebugTxn("http_trans", "PARENT_RETRY_UNAVAILABLE_SERVER: retried all parents, send error to client.");
           s->current.retry_type = PARENT_RETRY_NONE;
@@ -3642,9 +3642,6 @@ HttpTransact::handle_response_from_parent(State *s)
         // Done trying parents... fail over to origin server if that is
         //   appropriate
         DebugTxn("http_trans", "[handle_response_from_parent] Error. No more retries.");
-        // Only mark the parent down if we failed to connect
-        //  to the parent otherwise slow origin servers cause
-        //  us to mark the parent down
         if (s->current.state == CONNECTION_ERROR) {
           s->parent_params->markParentDown(&s->parent_result);
         }
