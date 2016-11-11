@@ -47,8 +47,10 @@ BgFetchConfig::readConfig(const char *config_file)
       TSDebug(PLUGIN_NAME, "Failed to open config file %s, trying config path", config_file);
       snprintf(file_path, sizeof(file_path), "%s/%s", TSConfigDirGet(), config_file);
       file = TSfopen(file_path, "r");
-      TSError("[%s] invalid config file", PLUGIN_NAME);
-      return false;
+      if (NULL == file) {
+        TSError("[%s] invalid config file", PLUGIN_NAME);
+        return false;
+      }
     }
   }
 
