@@ -354,7 +354,7 @@ MT::moneyTraceHdr(const char *mt_request_hdr)
   if (strncmp(toks[0], "trace-id", strlen("trace-id")) == 0 && strncmp(toks[2], "span-id", strlen("span-id")) == 0 &&
       (p = strchr(toks[2], '=')) != NULL) {
     p++;
-    if (strncmp("0x", p, 2) == 0) { 
+    if (strncmp("0x", p, 2) == 0) {
       temp_str << toks[0] << ";parent-id=" << p << ";span-id=0x" << std::hex << spanId() << std::ends;
     } else {
       temp_str << toks[0] << ";parent-id=" << p << ";span-id=" << spanId() << std::ends;
