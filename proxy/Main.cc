@@ -405,7 +405,9 @@ proxy_signal_handler(int signo, siginfo_t *info, void *)
   shutdown_event_system = true;
   sleep(1);
 
-  exit(signo);
+  // just terminate. don't get fancy and use the libc exit() function otherwise, all hell breaks loose
+  // with copius ammounts of random memory corruption on ats shutdown.
+  _exit(signo);
 }
 
 //
