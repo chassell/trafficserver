@@ -147,6 +147,7 @@ ATSConsistentHash::lookup_available(const char *url, ATSConsistentHashIter *i, b
 
   if (i) {
     iter = i;
+    *iter = NodeMap.begin();
   } else {
     iter = &NodeMapIterUp;
   }

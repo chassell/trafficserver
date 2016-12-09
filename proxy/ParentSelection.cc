@@ -1317,7 +1317,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
   sleep(1);
   RE(verify(result, PARENT_SPECIFIED, "furry", 80), 175);
 
-  params->markParentDown(result); // frisky is down.
+  params->markParentDown(result); // furry is down.
 
   // Test 176
   ST(176);
