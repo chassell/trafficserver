@@ -65,12 +65,7 @@ VariableExpander::expand(const Resources &res)
       // Protocol of the incoming request
       if (TSHttpTxnPristineUrlGet(res.txnp, &bufp, &url_loc) == TS_SUCCESS) {
         int len;
-        const char *tmp = TSUrlSchemeGet(bufp, url_loc, &len);
-        if ((tmp != NULL) && (len > 0)) {
-          resolved_variable.assign(tmp, len);
-        } else {
-          resolved_variable.assign("");
-        }
+        resolved_variable = TSUrlSchemeGet(bufp, url_loc, &len);
         TSHandleMLocRelease(bufp, TS_NULL_MLOC, url_loc);
       }
     } else if (variable == "%<port>") {

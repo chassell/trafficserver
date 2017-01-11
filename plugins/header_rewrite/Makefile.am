@@ -24,14 +24,17 @@ header_rewrite_la_SOURCES = \
   factory.cc \
   header_rewrite.cc \
   lulu.cc \
-  matcher.cc \
   operator.cc \
   operators.cc \
   parser.cc \
-  pluginconfig.cc \
   regex_helper.cc \
   resources.cc \
   ruleset.cc \
   statement.cc
 
 header_rewrite_la_LDFLAGS = $(TS_PLUGIN_LDFLAGS)
+header_rewrite_la_LIBADD = $(GEO_LIBS)
+
+bin_PROGRAMS = header_rewrite_test
+header_rewrite_test_SOURCES = parser.cc header_rewrite_test.cc
+header_rewrite_test_CXXFLAGS = $(AM_CXXFLAGS)
