@@ -208,7 +208,10 @@ RulesConfig::parse_config(const std::string fname, TSHttpHookID default_hook)
 
       // Special case for specifying the HOOK this rule applies to.
       // These can only be at the beginning of a rule, and have an implicit [AND].
-      if (p.cond_op_is("READ_RESPONSE_HDR_HOOK")) {
+      if (p.cond_op_is("TXN_START_HOOK")) {
+        rule->set_hook(TS_HTTP_TXN_START_HOOK);
+        continue;
+      } else if (p.cond_op_is("READ_RESPONSE_HDR_HOOK")) {
         rule->set_hook(TS_HTTP_READ_RESPONSE_HDR_HOOK);
         continue;
       } else if (p.cond_op_is("READ_REQUEST_HDR_HOOK")) {
@@ -226,7 +229,9 @@ RulesConfig::parse_config(const std::string fname, TSHttpHookID default_hook)
       } else if (p.cond_op_is("REMAP_PSEUDO_HOOK")) {
         rule->set_hook(TS_REMAP_PSEUDO_HOOK);
         continue;
-      }
+      } else if (p.cond_op_is("TXN_CLOSE_HOOK")) {
+        rule->set_hook(TS_HTTP_TXN_CLOSE_HOOK);
+        continue;
     }
 
     if (p.is_cond()) {
@@ -260,6 +265,9 @@ cont_rewrite_headers(TSCont contp, TSEvent event, void *edata)
   RulesConfig *conf = static_cast<RulesConfig *>(TSContDataGet(contp));
 
   switch (event) {
+  case TS_EVENT_HTTP_TXN_START:
+    hook = TS_HTTP_TXN_START_HOOK;
+    break;
   case TS_EVENT_HTTP_READ_RESPONSE_HDR:
     hook = TS_HTTP_READ_RESPONSE_HDR_HOOK;
     break;
