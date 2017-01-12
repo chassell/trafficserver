@@ -232,6 +232,7 @@ RulesConfig::parse_config(const std::string fname, TSHttpHookID default_hook)
       } else if (p.cond_op_is("TXN_CLOSE_HOOK")) {
         rule->set_hook(TS_HTTP_TXN_CLOSE_HOOK);
         continue;
+      }
     }
 
     if (p.is_cond()) {
