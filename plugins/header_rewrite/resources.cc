@@ -40,8 +40,6 @@ Resources::gather(const ResourceIDs ids, TSHttpHookID hook)
   }
 
   switch (hook) {
-  case TS_HTTP_TXN_START_HOOK:
-    break;
   case TS_HTTP_READ_RESPONSE_HDR_HOOK:
     // Read response headers from server
     if (ids & RSRC_SERVER_RESPONSE_HEADERS) {
@@ -101,6 +99,8 @@ Resources::gather(const ResourceIDs ids, TSHttpHookID hook)
     }
     break;
 
+  case TS_HTTP_TXN_START_HOOK:
+  case TS_HTTP_TXN_CLOSE_HOOK:
   default:
     break;
   }
