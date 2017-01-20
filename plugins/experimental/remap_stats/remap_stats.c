@@ -297,7 +297,7 @@ handle_config_update(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUS
   TSDebug(DEBUG_TAG, "handle_config_update() called due to management update.");
 
   if (config->schedule_delay > 0) {
-    TSCont do_update_cont = TSContCreate(do_time_update, NULL);
+    TSCont do_update_cont = TSContCreate(do_time_update, TSMutexCreate());
     TSContDataSet(do_update_cont, (void *)config);
     TSContSchedule(do_update_cont, config->schedule_delay * 1000, TS_THREAD_POOL_TASK);
   } else {
