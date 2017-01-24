@@ -459,7 +459,7 @@ static void
 schedule_free_invalidate_t(invalidate_t *iptr)
 {
   TSCont free_cont;
-  free_cont = TSContCreate(free_invalidate_handler, NULL);
+  free_cont = TSContCreate(free_invalidate_handler, TSMutexCreate());
   TSContDataSet(free_cont, (void *)iptr);
   TSContSchedule(free_cont, FREE_TMOUT, TS_THREAD_POOL_TASK);
   return;
