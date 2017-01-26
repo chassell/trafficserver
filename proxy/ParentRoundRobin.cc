@@ -114,6 +114,7 @@ ParentRoundRobin::selectParent(const ParentSelectionPolicy *policy, bool first_c
 
     // Check to see if we have wrapped around
     if ((unsigned int)cur_index == result->start_parent) {
+      result->wrap_around = true;
       // We've wrapped around so bypass if we can
       if (result->rec->go_direct == true) {
         // Could not find a parent
@@ -132,7 +133,7 @@ ParentRoundRobin::selectParent(const ParentSelectionPolicy *policy, bool first_c
   //   should be retried
   do {
     Debug("parent_select", "cur_index: %d, result->start_parent: %d", cur_index, result->start_parent);
-    // DNS ParentOnly inhibits bypassing the parent so always return that t
+    // Parent is available
     if ((result->rec->parents[cur_index].failedAt == 0) || (result->rec->parents[cur_index].failCount < policy->FailThreshold)) {
       Debug("parent_select", "FailThreshold = %d", policy->FailThreshold);
       Debug("parent_select", "Selecting a parent due to little failCount (faileAt: %u failCount: %d)",
@@ -232,7 +233,16 @@ ParentRoundRobin::markParentDown(const ParentSelectionPolicy *policy, ParentResu
     Note("Parent %s marked as down %s:%d", (result->retry) ? "retry" : "initially", pRec->hostname, pRec->port);
 
   } else {
-    int old_count = ink_atomic_increment(&pRec->failCount, 1);
+    int old_count = 0;
+
+    now = time(NULL);
+
+    // if the last failure was outside the retry window, clear and set the failcount to 1.
+    if ((pRec->failedAt + policy->ParentRetryTime) < now) {
+      ink_atomic_swap(&pRec->failCount, 1);
+    } else {
+      old_count = ink_atomic_increment(&pRec->failCount, 1);
+    }
 
     Debug("parent_select", "Parent fail count increased to %d for %s:%d", old_count + 1, pRec->hostname, pRec->port);
     new_fail_count = old_count + 1;
