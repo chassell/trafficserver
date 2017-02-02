@@ -154,51 +154,46 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
   //
   if (!pRec || (pRec && !pRec->available)) {
     do {
-      if (pRec) {
-        // selected host is not available.
-        if (!pRec->available) {
-          Debug("parent_select", "Parent.failedAt = %u, retry = %u, xact_start = %u", (unsigned int)pRec->failedAt,
-                (unsigned int)policy->ParentRetryTime, (unsigned int)request_info->xact_start);
-          // check to see if the host is available for retry, last failure is outside of the retry window.
-          if ((pRec->failedAt + policy->ParentRetryTime) < request_info->xact_start) {
-            // host is availble for retry, make sure that the proper state is recorded in the result structure
-            result->last_parent = pRec->idx;
-            result->last_lookup = last_lookup;
-            result->retry       = true;
-            result->result      = PARENT_SPECIFIED;
-            Debug("parent_select", "Down parent %s is now retryable, marked it available.", pRec->hostname);
-            break;
-            // host was not available for retry, try another search.
-          } else {
-            // first search the secondary ring if available and a search has not wrapped  around the ring.
-            if (chash[SECONDARY] && !wrap_around[SECONDARY]) {
-              last_lookup = SECONDARY;
-              // if this is the first call search the secondary ring using the url hash.
-              if (firstCall) {
-                prtmp =
-                  (pRecord *)chash[SECONDARY]->lookup_by_hashval(path_hash, &result->chashIter[SECONDARY], &wrap_around[SECONDARY]);
-                firstCall = false;
-                if (prtmp) {
-                  pRec = (parents[SECONDARY] + prtmp->idx);
-                }
-                continue;
-              } else { // otherwise search for the next parent.
-                prtmp = (pRecord *)chash[SECONDARY]->lookup(NULL, &result->chashIter[SECONDARY], &wrap_around[SECONDARY], &hash);
-                if (prtmp) {
-                  pRec = (parents[SECONDARY] + prtmp->idx);
-                }
-                continue;
-              }
-            } else if (!wrap_around[PRIMARY]) { // no secondary or we've wrapped on the secondary ring.
-              last_lookup = PRIMARY;
-              prtmp       = (pRecord *)chash[PRIMARY]->lookup(NULL, &result->chashIter[PRIMARY], &wrap_around[PRIMARY], &hash);
-              if (prtmp) {
-                pRec = (parents[PRIMARY] + prtmp->idx);
-              }
-              continue;
-            }
-          }
+      // check if selected host is available for retry.
+      if (pRec && !pRec->available) {
+        Debug("parent_select", "Parent.failedAt = %u, retry = %u, xact_start = %u", (unsigned int)pRec->failedAt,
+              (unsigned int)policy->ParentRetryTime, (unsigned int)request_info->xact_start);
+        // check to see if the host is available for retry, last failure is outside of the retry window.
+        if ((pRec->failedAt + policy->ParentRetryTime) < request_info->xact_start) {
+          // host is availble for retry, make sure that the proper state is recorded in the result structure
+          result->last_parent = pRec->idx;
+          result->last_lookup = last_lookup;
+          result->retry       = true;
+          result->result      = PARENT_SPECIFIED;
+          Debug("parent_select", "Down parent %s is now retryable, marked it available.", pRec->hostname);
+          break;
         }
+      }
+      // if there is a seoncdary ring, search it if searching has not wrapped.
+      if (chash[SECONDARY] && !wrap_around[SECONDARY]) {
+        last_lookup = SECONDARY;
+        // if this is the first call search the secondary ring using the url hash.
+        if (firstCall) {
+          prtmp = (pRecord *)chash[SECONDARY]->lookup_by_hashval(path_hash, &result->chashIter[SECONDARY], &wrap_around[SECONDARY]);
+          firstCall = false;
+          if (prtmp) {
+            pRec = (parents[SECONDARY] + prtmp->idx);
+          }
+          continue;
+        } else { // otherwise search for the next parent.
+          prtmp = (pRecord *)chash[SECONDARY]->lookup(NULL, &result->chashIter[SECONDARY], &wrap_around[SECONDARY], &hash);
+          if (prtmp) {
+            pRec = (parents[SECONDARY] + prtmp->idx);
+          }
+          continue;
+        }
+      } else if (!wrap_around[PRIMARY]) { // no secondary or we've wrapped on the secondary ring.
+        last_lookup = PRIMARY;
+        prtmp       = (pRecord *)chash[PRIMARY]->lookup(NULL, &result->chashIter[PRIMARY], &wrap_around[PRIMARY], &hash);
+        if (prtmp) {
+          pRec = (parents[PRIMARY] + prtmp->idx);
+        }
+        continue;
       }
       // if we haven't found an available or retryable parent and we've wrapped around the ring(s), no further searching is useful.
       if (chash[SECONDARY] != NULL) {
@@ -210,7 +205,7 @@ ParentConsistentHash::selectParent(const ParentSelectionPolicy *policy, bool fir
         Debug("parent_select", "wrapped around both rings without finding an available or retryable parent.");
         break;
       }
-    } while (!prtmp || !pRec->available);
+    } while (!pRec || !pRec->available);
   }
 
   // use the available parent.
