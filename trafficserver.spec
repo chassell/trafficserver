@@ -26,7 +26,7 @@ Apache Traffic Server with Comcast modifications and environment specific modifi
 rm -rf %{name}
 git clone git@github.comcast.com:cdneng/trafficserver.git %{name}
 %setup -D -n %{name} -T
-git checkout 6.2.x-ps-testing
+git checkout build-master-6.2.x
 git checkout %{commit} .
 autoreconf -vfi
 

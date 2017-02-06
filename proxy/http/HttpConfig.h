@@ -429,6 +429,7 @@ struct OverridableHttpConfigParams {
       origin_max_connections(0),
       origin_max_connections_queue(0),
       attach_server_session_to_client(0),
+      safe_requests_retryable(1),
       connect_attempts_max_retries(0),
       connect_attempts_max_retries_dead_server(3),
       connect_attempts_rr_retries(3),
@@ -610,6 +611,8 @@ struct OverridableHttpConfigParams {
   MgmtInt origin_max_connections_queue;
 
   MgmtInt attach_server_session_to_client;
+
+  MgmtByte safe_requests_retryable;
 
   ////////////////////////////////////
   // origin server connect attempts //
