@@ -4157,6 +4157,11 @@ HttpSM::do_hostdb_update_if_necessary()
 {
   int issue_update = 0;
 
+  // do not update parent proxy servers in hostdb if the configuration does not allow it.
+  if (t_state.current.request_to == HttpTransact::PARENT_PROXY && !t_state.http_config_param->parent_failures_update_hostdb) {
+    return;
+  }
+
   if (t_state.current.server == NULL || plugin_tunnel_type != HTTP_NO_PLUGIN_TUNNEL) {
     // No server, so update is not necessary
     return;

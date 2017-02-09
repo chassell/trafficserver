@@ -750,6 +750,7 @@ public:
   ////////////////////////////////////
   MgmtInt per_parent_connect_attempts;
   MgmtInt parent_connect_timeout;
+  MgmtInt parent_failures_update_hostdb;
 
   ///////////////////////////////////////////////////////////////////
   // Privacy: fields which are removed from the user agent request //
@@ -948,6 +949,7 @@ inline HttpConfigParams::HttpConfigParams()
     accept_no_activity_timeout(120),
     per_parent_connect_attempts(2),
     parent_connect_timeout(30),
+    parent_failures_update_hostdb(1),
     anonymize_other_header_list(NULL),
     enable_http_stats(1),
     icp_enabled(0),
