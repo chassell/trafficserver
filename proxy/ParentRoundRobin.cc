@@ -221,7 +221,7 @@ ParentRoundRobin::markParentDown(const ParentSelectionPolicy *policy, ParentResu
     //   it relates to how long the parent has been down.
     now = time(NULL);
 
-    // Mark the parent as down
+    // Mark the parent failure time.
     ink_atomic_swap(&pRec->failedAt, now);
 
     // If this is clean mark down and not a failed retry, we
@@ -240,6 +240,7 @@ ParentRoundRobin::markParentDown(const ParentSelectionPolicy *policy, ParentResu
     // if the last failure was outside the retry window, clear and set the failcount to 1.
     if ((pRec->failedAt + policy->ParentRetryTime) < now) {
       ink_atomic_swap(&pRec->failCount, 1);
+      ink_atomic_swap(&pRec->failedAt, now);
     } else {
       old_count = ink_atomic_increment(&pRec->failCount, 1);
     }
@@ -248,7 +249,7 @@ ParentRoundRobin::markParentDown(const ParentSelectionPolicy *policy, ParentResu
     new_fail_count = old_count + 1;
   }
 
-  if (new_fail_count > 0 && new_fail_count >= policy->FailThreshold) {
+  if (new_fail_count >= policy->FailThreshold) {
     Note("Failure threshold met, http parent proxy %s:%d marked down", pRec->hostname, pRec->port);
     ink_atomic_swap(&pRec->available, false);
     Debug("parent_select", "Parent marked unavailable, pRec->available=%d", pRec->available);
