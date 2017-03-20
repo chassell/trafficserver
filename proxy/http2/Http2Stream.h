@@ -106,12 +106,13 @@ public:
     bytes_sent += num_bytes;
   }
 
-  const Http2StreamId
+  Http2StreamId
   get_id() const
   {
     return _id;
   }
-  const Http2StreamState
+
+  Http2StreamState
   get_state() const
   {
     return _state;
@@ -201,9 +202,7 @@ public:
   {
     return chunked;
   }
-  bool response_initialize_data_handling();
-  bool response_process_data();
-  bool response_is_data_available() const;
+
   void release(IOBufferReader *r);
 
   virtual bool
@@ -225,8 +224,16 @@ public:
   void clear_active_timer();
   void clear_timers();
   void clear_io_events();
+  bool
+  is_client_state_writeable()
+  {
+    return _state == HTTP2_STREAM_STATE_OPEN || _state == HTTP2_STREAM_STATE_HALF_CLOSED_REMOTE;
+  }
 
 private:
+  void response_initialize_data_handling(bool &is_done);
+  void response_process_data(bool &is_done);
+  bool response_is_data_available() const;
   Event *send_tracked_event(Event *event, int send_event, VIO *vio);
   HTTPParser http_parser;
   ink_hrtime _start_time;

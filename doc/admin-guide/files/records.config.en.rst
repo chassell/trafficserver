@@ -910,6 +910,19 @@ Value Effect
    according to this setting then it will be used, otherwise it will be released to the pool and a different session
    selected or created.
 
+.. ts:cv:: CONFIG proxy.config.http.safe_requests_retryable INT 1
+   :overridable:
+
+   This setting, on by default, allows requests which are considered safe to be retried on an error.
+   See https://tools.ietf.org/html/rfc7231#section-4.2.1 to RFC for details on which request methods are considered safe.
+
+   If this setting is ``0`` then ATS retries a failed origin server request only if the bytes sent by ATS
+   are not acknowledged by the origin server.
+
+   If this setting is ``1`` then ATS retries all the safe methods to a failed origin server irrespective of
+   previous connection failure status.
+
+
 .. ts:cv:: CONFIG proxy.config.http.record_heartbeat INT 0
    :reloadable:
 
@@ -1074,6 +1087,15 @@ Parent Proxy Configuration
    :reloadable:
 
    The timeout value (in seconds) for parent cache connection attempts.
+
+.. ts:cv:: CONFIG proxy.config.http.parent_proxy.mark_down_hostdb INT 0
+   :reloadable:
+   :overridable:
+
+   Enables (``1``) or disables (``0``) marking parent proxies down in hostdb when a connection
+   error is detected.  Normally parent selection manages parent proxies and will mark them as unavailable
+   as needed.  But when parents are defined in dns with multiple ip addresses, it may be useful to mark the
+   failing ip down in hostdb.  In this case you would enable these updates.
 
 .. ts:cv:: CONFIG proxy.config.http.forward.proxy_auth_to_parent INT 0
    :reloadable:

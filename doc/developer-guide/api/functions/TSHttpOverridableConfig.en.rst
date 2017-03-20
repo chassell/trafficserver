@@ -81,6 +81,7 @@ The following configurations (from ``records.config``) are overridable.
 |   :ts:cv:`proxy.config.http.anonymize_remove_cookie`
 |   :ts:cv:`proxy.config.http.anonymize_remove_client_ip`
 |   :ts:cv:`proxy.config.http.anonymize_insert_client_ip`
+|   :ts:cv:`proxy.config.http.safe_requests_retryable`
 |   :ts:cv:`proxy.config.http.response_server_enabled`
 |   :ts:cv:`proxy.config.http.insert_squid_x_forwarded_for`
 |   :ts:cv:`proxy.config.http.server_tcp_init_cwnd`
@@ -151,6 +152,7 @@ The following configurations (from ``records.config``) are overridable.
 |   :ts:cv:`proxy.config.http.number_of_redirections`
 |   :ts:cv:`proxy.config.http.cache.max_open_write_retries`
 |   :ts:cv:`proxy.config.http.redirect_use_orig_cache_key`
+|   :ts:cv:`proxy.config.http.parent_proxy.mark_down_hostdb`
 
 Examples
 ========
