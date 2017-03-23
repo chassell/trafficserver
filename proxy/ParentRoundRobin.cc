@@ -20,6 +20,7 @@
   See the License for the specific language governing permissions and
   limitations under the License.
  */
+#include "HttpConfig.h"
 #include "ParentRoundRobin.h"
 
 ParentRoundRobin::ParentRoundRobin(ParentRecord *parent_record, ParentRR_t _round_robin_type)
@@ -54,14 +55,24 @@ ParentRoundRobin::~ParentRoundRobin()
 }
 
 void
-ParentRoundRobin::selectParent(const ParentSelectionPolicy *policy, bool first_call, ParentResult *result, RequestData *rdata)
+ParentRoundRobin::selectParent(const ParentSelectionPolicy *policy, const OverridableHttpConfigParams *txn_conf, bool first_call,
+                               ParentResult *result, RequestData *rdata)
 {
   Debug("parent_select", "In ParentRoundRobin::selectParent(): Using a round robin parent selection strategy.");
-  int cur_index    = 0;
-  bool parentUp    = false;
-  bool parentRetry = false;
+  int cur_index         = 0;
+  bool parentUp         = false;
+  bool parentRetry      = false;
+  int parent_retry_time = 0, parent_fail_threshold = 0;
 
   HttpRequestData *request_info = static_cast<HttpRequestData *>(rdata);
+
+  if (txn_conf != NULL) {
+    parent_retry_time     = txn_conf->parent_retry_time;
+    parent_fail_threshold = txn_conf->parent_fail_threshold;
+  } else {
+    parent_retry_time = policy->ParentRetryTime;
+    parent_fail_threshold = policy->FailThreshold;
+  }
 
   ink_assert(numParents(result) > 0 || result->rec->go_direct == true);
 
@@ -134,16 +145,15 @@ ParentRoundRobin::selectParent(const ParentSelectionPolicy *policy, bool first_c
   do {
     Debug("parent_select", "cur_index: %d, result->start_parent: %d", cur_index, result->start_parent);
     // Parent is available
-    if ((result->rec->parents[cur_index].failedAt == 0) || (result->rec->parents[cur_index].failCount < policy->FailThreshold)) {
-      Debug("parent_select", "FailThreshold = %d", policy->FailThreshold);
+    if ((result->rec->parents[cur_index].failedAt == 0) || (result->rec->parents[cur_index].failCount < parent_fail_threshold)) {
+      Debug("parent_select", "FailThreshold = %d", parent_fail_threshold);
       Debug("parent_select", "Selecting a parent due to little failCount (faileAt: %u failCount: %d)",
             (unsigned)result->rec->parents[cur_index].failedAt, result->rec->parents[cur_index].failCount);
       parentUp = true;
     } else {
-      if ((result->wrap_around) ||
-          ((result->rec->parents[cur_index].failedAt + policy->ParentRetryTime) < request_info->xact_start)) {
+      if ((result->wrap_around) || ((result->rec->parents[cur_index].failedAt + parent_retry_time) < request_info->xact_start)) {
         Debug("parent_select", "Parent[%d].failedAt = %u, retry = %u,xact_start = %" PRId64 " but wrap = %d", cur_index,
-              (unsigned)result->rec->parents[cur_index].failedAt, policy->ParentRetryTime, (int64_t)request_info->xact_start,
+              (unsigned)result->rec->parents[cur_index].failedAt, parent_retry_time, (int64_t)request_info->xact_start,
               result->wrap_around);
         // Reuse the parent
         parentUp    = true;
@@ -186,13 +196,25 @@ ParentRoundRobin::numParents(ParentResult *result) const
 }
 
 void
-ParentRoundRobin::markParentDown(const ParentSelectionPolicy *policy, ParentResult *result)
+ParentRoundRobin::markParentDown(const ParentSelectionPolicy *policy, const OverridableHttpConfigParams *txn_conf,
+                                 ParentResult *result)
 {
   time_t now;
   pRecord *pRec;
-  int new_fail_count = 0;
+  int new_fail_count    = 0;
+  int old_count         = 0;
+  int parent_retry_time = 0, parent_fail_threshold = 0;
 
   Debug("parent_select", "Starting ParentRoundRobin::markParentDown()");
+
+  if (txn_conf != NULL) {
+    parent_retry_time     = txn_conf->parent_retry_time;
+    parent_fail_threshold = txn_conf->parent_fail_threshold;
+  } else {
+    parent_retry_time = policy->ParentRetryTime;
+    parent_fail_threshold = policy->FailThreshold;
+  }
+
   //  Make sure that we are being called back with with a
   //   result structure with a parent
   ink_assert(result->result == PARENT_SPECIFIED);
@@ -228,17 +250,18 @@ ParentRoundRobin::markParentDown(const ParentSelectionPolicy *policy, ParentResu
     //   must set the count to reflect this
     if (result->retry == false) {
       new_fail_count = pRec->failCount = 1;
+    } else {
+      old_count      = ink_atomic_increment(&pRec->failCount, 1);
+      new_fail_count = old_count + 1;
     }
 
     Note("Parent %s marked as down %s:%d", (result->retry) ? "retry" : "initially", pRec->hostname, pRec->port);
 
   } else {
-    int old_count = 0;
-
     now = time(NULL);
 
     // if the last failure was outside the retry window, clear and set the failcount to 1.
-    if ((pRec->failedAt + policy->ParentRetryTime) < now) {
+    if ((pRec->failedAt + parent_retry_time) < now) {
       ink_atomic_swap(&pRec->failCount, 1);
       ink_atomic_swap(&pRec->failedAt, now);
     } else {
@@ -249,7 +272,7 @@ ParentRoundRobin::markParentDown(const ParentSelectionPolicy *policy, ParentResu
     new_fail_count = old_count + 1;
   }
 
-  if (new_fail_count >= policy->FailThreshold) {
+  if (new_fail_count >= parent_fail_threshold) {
     Note("Failure threshold met, http parent proxy %s:%d marked down", pRec->hostname, pRec->port);
     ink_atomic_swap(&pRec->available, false);
     Debug("parent_select", "Parent marked unavailable, pRec->available=%d", pRec->available);

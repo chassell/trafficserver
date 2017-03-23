@@ -7489,6 +7489,9 @@ const char *SDK_Overridable_Configs[TS_CONFIG_LAST_ENTRY] = {
   "proxy.config.http.parent_proxy.total_connect_attempts",
   "proxy.config.http.transaction_active_timeout_in",
   "proxy.config.http.parent_proxy.mark_down_hostdb",
+  "proxy.config.http.parent_proxy.fail_threshold",
+  "proxy.config.http.parent_proxy.retry_time",
+  "proxy.config.http.parent_proxy.per_parent_connect_attempts",
 };
 
 REGRESSION_TEST(SDK_API_OVERRIDABLE_CONFIGS)(RegressionTest *test, int /* atype ATS_UNUSED */, int *pstatus)

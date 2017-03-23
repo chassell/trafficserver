@@ -101,7 +101,7 @@ ParentConfigParams::apiParentExists(HttpRequestData *rdata)
 }
 
 void
-ParentConfigParams::findParent(HttpRequestData *rdata, ParentResult *result)
+ParentConfigParams::findParent(OverridableHttpConfigParams *txn_conf, HttpRequestData *rdata, ParentResult *result)
 {
   P_table *tablePtr        = parent_table;
   ParentRecord *defaultPtr = DefaultParent;
@@ -150,7 +150,7 @@ ParentConfigParams::findParent(HttpRequestData *rdata, ParentResult *result)
   }
 
   if (rec != extApiRecord) {
-    selectParent(true, result, rdata);
+    selectParent(txn_conf, true, result, rdata);
   }
 
   const char *host = rdata->get_host();
@@ -179,7 +179,7 @@ ParentConfigParams::findParent(HttpRequestData *rdata, ParentResult *result)
 }
 
 void
-ParentConfigParams::nextParent(HttpRequestData *rdata, ParentResult *result)
+ParentConfigParams::nextParent(OverridableHttpConfigParams *txn_conf, HttpRequestData *rdata, ParentResult *result)
 {
   P_table *tablePtr = parent_table;
 
@@ -205,7 +205,7 @@ ParentConfigParams::nextParent(HttpRequestData *rdata, ParentResult *result)
 
   // Find the next parent in the array
   Debug("parent_select", "Calling selectParent() from nextParent");
-  selectParent(false, result, rdata);
+  selectParent(txn_conf, false, result, rdata);
 
   const char *host = rdata->get_host();
 
@@ -233,11 +233,11 @@ ParentConfigParams::nextParent(HttpRequestData *rdata, ParentResult *result)
 }
 
 bool
-ParentConfigParams::parentExists(HttpRequestData *rdata)
+ParentConfigParams::parentExists(OverridableHttpConfigParams *txn_conf, HttpRequestData *rdata)
 {
   ParentResult result;
 
-  findParent(rdata, &result);
+  findParent(txn_conf, rdata, &result);
 
   if (result.result == PARENT_SPECIFIED) {
     return true;
@@ -1016,9 +1016,9 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
     }                                                                  \
   } while (0)
 
-#define FP                               \
-  do {                                   \
-    params->findParent(request, result); \
+#define FP                                     \
+  do {                                         \
+    params->findParent(NULL, request, result); \
   } while (0)
 
   // Test 1
@@ -1144,7 +1144,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
   br(request, "i.am.rabbit.net");
   FP;
   RE(verify(result, PARENT_SPECIFIED, "fuzzy", 80), 7);
-  params->markParentDown(result);
+  params->markParentDown(NULL, result);
 
   // Test 9
   ST(9);
@@ -1189,7 +1189,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
   br(request, "i.am.rabbit.net");
   FP;
   RE(verify(result, PARENT_SPECIFIED, "frisky", 80), 14);
-  params->markParentDown(result);
+  params->markParentDown(NULL, result);
 
   // restart the loop
 
@@ -1236,7 +1236,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
   br(request, "i.am.rabbit.net");
   FP;
   RE(verify(result, PARENT_SPECIFIED, "furry", 80), 21);
-  params->markParentDown(result);
+  params->markParentDown(NULL, result);
 
   // Test 23 - 32
   for (i = 23; i < 33; i++) {
@@ -1247,7 +1247,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
     RE(verify(result, PARENT_SPECIFIED, "fluffy", 80), i);
   }
 
-  params->markParentDown(result); // now they're all down
+  params->markParentDown(NULL, result); // now they're all down
 
   // Test 33 - 132
   for (i = 33; i < 133; i++) {
@@ -1300,7 +1300,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
   FP;
   sleep(1);
   RE(verify(result, PARENT_SPECIFIED, "fuzzy", 80), 173);
-  params->markParentDown(result); // fuzzy is down.
+  params->markParentDown(NULL, result); // fuzzy is down.
 
   // Test 174
   ST(174);
@@ -1310,7 +1310,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
   sleep(1);
   RE(verify(result, PARENT_SPECIFIED, "frisky", 80), 174);
 
-  params->markParentDown(result); // frisky is down.
+  params->markParentDown(NULL, result); // frisky is down.
 
   // Test 175
   ST(175);
@@ -1320,7 +1320,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
   sleep(1);
   RE(verify(result, PARENT_SPECIFIED, "furry", 80), 175);
 
-  params->markParentDown(result); // furry is down.
+  params->markParentDown(NULL, result); // furry is down.
 
   // Test 176
   ST(176);
@@ -1330,7 +1330,7 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
   sleep(1);
   RE(verify(result, PARENT_SPECIFIED, "fluffy", 80), 176);
 
-  params->markParentDown(result); // all are down now.
+  params->markParentDown(NULL, result); // all are down now.
 
   // Test 177
   ST(177);

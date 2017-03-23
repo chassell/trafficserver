@@ -153,6 +153,9 @@ The following configurations (from ``records.config``) are overridable.
 |   :ts:cv:`proxy.config.http.cache.max_open_write_retries`
 |   :ts:cv:`proxy.config.http.redirect_use_orig_cache_key`
 |   :ts:cv:`proxy.config.http.parent_proxy.mark_down_hostdb`
+|   :ts:cv:`proxy.config.http.parent_proxy.retry_time`
+|   :ts:cv:`proxy.config.http.parent_proxy.per_parent_connect_attempts`
+|   :ts:cv:`proxy.config.http.parent_proxy.fail_threshold`
 
 Examples
 ========

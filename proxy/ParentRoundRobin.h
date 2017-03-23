@@ -40,8 +40,9 @@ class ParentRoundRobin : public ParentSelectionStrategy
 public:
   ParentRoundRobin(ParentRecord *_parent_record, ParentRR_t _round_robin_type);
   ~ParentRoundRobin();
-  void selectParent(const ParentSelectionPolicy *policy, bool firstCall, ParentResult *result, RequestData *rdata);
-  void markParentDown(const ParentSelectionPolicy *policy, ParentResult *result);
+  void selectParent(const ParentSelectionPolicy *policy, const OverridableHttpConfigParams *txn_conf, bool firstCall,
+                    ParentResult *result, RequestData *rdata);
+  void markParentDown(const ParentSelectionPolicy *policy, const OverridableHttpConfigParams *txn_conf, ParentResult *result);
   uint32_t numParents(ParentResult *result) const;
   void markParentUp(ParentResult *result);
 };
