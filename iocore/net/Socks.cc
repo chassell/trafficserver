@@ -89,18 +89,18 @@ SocksEntry::findServer()
 #ifdef SOCKS_WITH_TS
   if (nattempts == 1) {
     ink_assert(server_result.result == PARENT_UNDEFINED);
-    server_params->findParent(&req_data, &server_result);
+    server_params->findParent(NULL, &req_data, &server_result);
   } else {
     socks_conf_struct *conf = netProcessor.socks_conf_stuff;
     if ((nattempts - 1) % conf->per_server_connection_attempts)
       return; // attempt again
 
-    server_params->markParentDown(&server_result);
+    server_params->markParentDown(NULL, &server_result);
 
     if (nattempts > conf->connection_attempts)
       server_result.result = PARENT_FAIL;
     else
-      server_params->nextParent(&req_data, &server_result);
+      server_params->nextParent(NULL, &req_data, &server_result);
   }
 
   switch (server_result.result) {

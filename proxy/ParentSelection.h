@@ -48,6 +48,8 @@
 struct RequestData;
 struct matcher_line;
 struct ParentResult;
+struct OverridableHttpConfigParams;
+
 class ParentRecord;
 class ParentSelectionStrategy;
 
@@ -295,17 +297,20 @@ struct ParentSelectionPolicy {
 class ParentSelectionStrategy
 {
 public:
-  // void selectParent(const ParentSelectionPolicy *policy, bool firstCall, ParentResult *result, RequestData *rdata)
+  // void selectParent(const ParentSelectionPolicy *policy, const OverridableHttpConfigParams *txn_conf, bool firstCall,
+  // ParentResult *result, RequestData *rdata)
   //
   // The implementation parent lookup.
   //
-  virtual void selectParent(const ParentSelectionPolicy *policy, bool firstCall, ParentResult *result, RequestData *rdata) = 0;
+  virtual void selectParent(const ParentSelectionPolicy *policy, const OverridableHttpConfigParams *txn_conf, bool firstCall,
+                            ParentResult *result, RequestData *rdata) = 0;
 
-  // void markParentDown(const ParentSelectionPolicy *policy, ParentResult *result)
+  // void markParentDown(const ParentSelectionPolicy *policy, Sconst OverridableHttpConfigParams *txn_conf, ParentResult *result)
   //
   //    Marks the parent pointed to by result as down
   //
-  virtual void markParentDown(const ParentSelectionPolicy *policy, ParentResult *result) = 0;
+  virtual void markParentDown(const ParentSelectionPolicy *policy, const OverridableHttpConfigParams *txn_conf,
+                              ParentResult *result) = 0;
 
   // uint32_t numParents(ParentResult *result);
   //
@@ -331,26 +336,26 @@ public:
   ~ParentConfigParams(){};
 
   bool apiParentExists(HttpRequestData *rdata);
-  void findParent(HttpRequestData *rdata, ParentResult *result);
-  void nextParent(HttpRequestData *rdata, ParentResult *result);
-  bool parentExists(HttpRequestData *rdata);
+  void findParent(OverridableHttpConfigParams *txn_conf, HttpRequestData *rdata, ParentResult *result);
+  void nextParent(OverridableHttpConfigParams *txn_conf, HttpRequestData *rdata, ParentResult *result);
+  bool parentExists(OverridableHttpConfigParams *txn_conf, HttpRequestData *rdata);
 
   // implementation of functions from ParentSelectionStrategy.
   void
-  selectParent(bool firstCall, ParentResult *result, RequestData *rdata)
+  selectParent(OverridableHttpConfigParams *txn_conf, bool firstCall, ParentResult *result, RequestData *rdata)
   {
     if (!result->is_api_result()) {
       ink_release_assert(result->rec->selection_strategy != NULL);
-      return result->rec->selection_strategy->selectParent(&policy, firstCall, result, rdata);
+      return result->rec->selection_strategy->selectParent(&policy, txn_conf, firstCall, result, rdata);
     }
   }
 
   void
-  markParentDown(ParentResult *result)
+  markParentDown(OverridableHttpConfigParams *txn_conf, ParentResult *result)
   {
     if (!result->is_api_result()) {
       ink_release_assert(result->rec->selection_strategy != NULL);
-      result->rec->selection_strategy->markParentDown(&policy, result);
+      result->rec->selection_strategy->markParentDown(&policy, txn_conf, result);
     }
   }
 

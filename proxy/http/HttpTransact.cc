@@ -252,7 +252,7 @@ find_server_and_update_current_info(HttpTransact::State *s)
     // wanted it for all requests to local_host.
     s->parent_result.result = PARENT_DIRECT;
   } else if (s->method == HTTP_WKSIDX_CONNECT && s->http_config_param->disable_ssl_parenting) {
-    s->parent_params->findParent(&s->request_data, &s->parent_result);
+    s->parent_params->findParent(s->txn_conf, &s->request_data, &s->parent_result);
     if (!s->parent_result.is_some() || s->parent_result.is_api_result() || s->parent_result.parent_is_proxy()) {
       DebugTxn("http_trans", "request not cacheable, so bypass parent");
       s->parent_result.result = PARENT_DIRECT;
@@ -265,7 +265,7 @@ find_server_and_update_current_info(HttpTransact::State *s)
     // we are assuming both child and parent have similar configuration
     // with respect to whether a request is cacheable or not.
     // For example, the cache_urls_that_look_dynamic variable.
-    s->parent_params->findParent(&s->request_data, &s->parent_result);
+    s->parent_params->findParent(s->txn_conf, &s->request_data, &s->parent_result);
     if (!s->parent_result.is_some() || s->parent_result.is_api_result() || s->parent_result.parent_is_proxy()) {
       DebugTxn("http_trans", "request not cacheable, so bypass parent");
       s->parent_result.result = PARENT_DIRECT;
@@ -273,10 +273,10 @@ find_server_and_update_current_info(HttpTransact::State *s)
   } else {
     switch (s->parent_result.result) {
     case PARENT_UNDEFINED:
-      s->parent_params->findParent(&s->request_data, &s->parent_result);
+      s->parent_params->findParent(s->txn_conf, &s->request_data, &s->parent_result);
       break;
     case PARENT_SPECIFIED:
-      s->parent_params->nextParent(&s->request_data, &s->parent_result);
+      s->parent_params->nextParent(s->txn_conf, &s->request_data, &s->parent_result);
 
       // Hack!
       // We already have a parent that failed, if we are now told
@@ -1386,7 +1386,7 @@ HttpTransact::HandleRequest(State *s)
       ats_ip_copy(&s->request_data.dest_ip, &addr);
     }
 
-    if (s->parent_params->parentExists(&s->request_data)) {
+    if (s->parent_params->parentExists(s->txn_conf, &s->request_data)) {
       // If the proxy is behind and firewall and there is no
       //  DNS service available, we just want to forward the request
       //  the parent proxy.  In this case, we never find out the
@@ -1547,7 +1547,7 @@ HttpTransact::PPDNSLookup(State *s)
   ink_assert(s->dns_info.looking_up == PARENT_PROXY);
   if (!s->dns_info.lookup_success) {
     // Mark parent as down due to resolving failure
-    s->parent_params->markParentDown(&s->parent_result);
+    s->parent_params->markParentDown(s->txn_conf, &s->parent_result);
     // DNS lookup of parent failed, find next parent or o.s.
     find_server_and_update_current_info(s);
     if (!s->current.server->dst_addr.isValid()) {
@@ -3592,7 +3592,7 @@ HttpTransact::handle_response_from_parent(State *s)
           s->current.unavailable_server_retry_attempts++;
           DebugTxn("http_trans", "PARENT_RETRY_UNAVAILABLE_SERVER: marking parent down and trying another.");
           s->current.retry_type = PARENT_RETRY_NONE;
-          s->parent_params->markParentDown(&s->parent_result);
+          s->parent_params->markParentDown(s->txn_conf, &s->parent_result);
           next_lookup = find_server_and_update_current_info(s);
         }
       }
@@ -3615,7 +3615,7 @@ HttpTransact::handle_response_from_parent(State *s)
 
       // If the request is not retryable, just give up!
       if (!is_request_retryable(s)) {
-        s->parent_params->markParentDown(&s->parent_result);
+        s->parent_params->markParentDown(s->txn_conf, &s->parent_result);
         s->parent_result.result = PARENT_FAIL;
         handle_parent_died(s);
         return;
@@ -3625,11 +3625,11 @@ HttpTransact::handle_response_from_parent(State *s)
         s->current.attempts++;
 
         // Are we done with this particular parent?
-        if ((s->current.attempts - 1) % s->http_config_param->per_parent_connect_attempts != 0) {
+        if ((s->current.attempts - 1) % s->txn_conf->per_parent_connect_attempts != 0) {
           // No we are not done with this parent so retry
           s->next_action = how_to_open_connection(s);
           DebugTxn("http_trans", "%s Retrying parent for attempt %d, max %" PRId64, "[handle_response_from_parent]",
-                   s->current.attempts, s->http_config_param->per_parent_connect_attempts);
+                   s->current.attempts, s->txn_conf->per_parent_connect_attempts);
           return;
         } else {
           DebugTxn("http_trans", "%s %d per parent attempts exhausted", "[handle_response_from_parent]", s->current.attempts);
@@ -3638,7 +3638,7 @@ HttpTransact::handle_response_from_parent(State *s)
           //  to the parent otherwise slow origin servers cause
           //  us to mark the parent down
           if (s->current.state == CONNECTION_ERROR) {
-            s->parent_params->markParentDown(&s->parent_result);
+            s->parent_params->markParentDown(s->txn_conf, &s->parent_result);
           }
           // We are done so look for another parent if any
           next_lookup = find_server_and_update_current_info(s);
@@ -3648,7 +3648,7 @@ HttpTransact::handle_response_from_parent(State *s)
         //   appropriate
         DebugTxn("http_trans", "[handle_response_from_parent] Error. No more retries.");
         if (s->current.state == CONNECTION_ERROR) {
-          s->parent_params->markParentDown(&s->parent_result);
+          s->parent_params->markParentDown(s->txn_conf, &s->parent_result);
         }
         s->parent_result.result = PARENT_FAIL;
         next_lookup             = find_server_and_update_current_info(s);

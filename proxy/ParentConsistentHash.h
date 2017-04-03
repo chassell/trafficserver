@@ -54,8 +54,9 @@ public:
   ParentConsistentHash(ParentRecord *_parent_record);
   ~ParentConsistentHash();
   uint64_t getPathHash(HttpRequestData *hrdata, ATSHash64 *h);
-  void selectParent(const ParentSelectionPolicy *policy, bool firstCall, ParentResult *result, RequestData *rdata);
-  void markParentDown(const ParentSelectionPolicy *policy, ParentResult *result);
+  void selectParent(const ParentSelectionPolicy *policy, const OverridableHttpConfigParams *txn_conf, bool firstCall,
+                    ParentResult *result, RequestData *rdata);
+  void markParentDown(const ParentSelectionPolicy *policy, const OverridableHttpConfigParams *txn_conf, ParentResult *result);
   uint32_t numParents(ParentResult *result) const;
   void markParentUp(ParentResult *result);
 };
