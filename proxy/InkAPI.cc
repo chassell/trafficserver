@@ -7987,12 +7987,15 @@ _conf_to_memberp(TSOverridableConfigKey conf, OverridableHttpConfigParams *overr
     ret = &overridableHttpConfig->parent_failures_update_hostdb;
     break;
   case TS_CONFIG_HTTP_PARENT_PROXY_RETRY_TIME:
+    typ = OVERRIDABLE_TYPE_INT;
     ret = &overridableHttpConfig->parent_retry_time;
     break;
   case TS_CONFIG_HTTP_PARENT_PROXY_PER_PARENT_CONNECT_ATTEMPTS:
+    typ = OVERRIDABLE_TYPE_INT;
     ret = &overridableHttpConfig->per_parent_connect_attempts;
     break;
   case TS_CONFIG_HTTP_PARENT_PROXY_FAIL_THRESHOLD:
+    typ = OVERRIDABLE_TYPE_INT;
     ret = &overridableHttpConfig->parent_fail_threshold;
     break;
   // This helps avoiding compiler warnings, yet detect unhandled enum members.
