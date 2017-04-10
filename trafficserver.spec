@@ -4,6 +4,7 @@
 %global git_serial %(git rev-list HEAD | wc -l)
 %global install_prefix "/opt"
 %global api_stats "4096"
+%global _find_debuginfo_dwz_opts %{nil}
 
 Name:		trafficserver
 Version:	%{tag}
