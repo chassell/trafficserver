@@ -58,11 +58,15 @@ static const char *tcpi_headers[] = {
 };
 
 struct Config {
-  int sample;
-  unsigned log_level;
+  int sample = 1000;
+  unsigned int log_level = 1;
+  unsigned int rolling_enabled = 1;
+  unsigned int rolling_interval_sec = 86400;
+  unsigned int rolling_offset_hr = 0;
+  unsigned int rolling_size_mb = 1024;
   TSTextLogObject log;
 
-  Config() : sample(1000), log_level(1), log(NULL) {}
+  Config(){}
   ~Config()
   {
     if (log) {
@@ -298,18 +302,26 @@ parse_hook_list(const char *hook_list)
 void
 TSPluginInit(int argc, const char *argv[])
 {
-  static const char usage[]             = "tcpinfo.so [--log-file=PATH] [--log-level=LEVEL] [--hooks=LIST] [--sample-rate=COUNT]";
+  static const char usage[] = "tcpinfo.so [--log-file=PATH] [--log-level=LEVEL] [--hooks=LIST] [--sample-rate=COUNT] "
+                              "[--rolling-enabled=VALUE] [--rolling-offset-hr=HOUR] [--rolling-interval-sec=SECONDS] "
+                              "[--rolling-size-mb=MB]";
   static const struct option longopts[] = {{const_cast<char *>("sample-rate"), required_argument, NULL, 'r'},
                                            {const_cast<char *>("log-file"), required_argument, NULL, 'f'},
                                            {const_cast<char *>("log-level"), required_argument, NULL, 'l'},
                                            {const_cast<char *>("hooks"), required_argument, NULL, 'h'},
+                                           {const_cast<char *>("rolling-enabled"), required_argument, NULL, 'e'},
+                                           {const_cast<char *>("rolling-offset-hr"), required_argument, NULL, 'H'},
+                                           {const_cast<char *>("rolling-interval-sec"), required_argument, NULL, 'S'},
+                                           {const_cast<char *>("rolling-size-mb"), required_argument, NULL, 'M'},
                                            {NULL, 0, NULL, 0}};
 
+  unsigned int i      = 0;
   TSPluginRegistrationInfo info;
   Config *config       = new Config();
   const char *filename = "tcpinfo";
   TSCont cont;
   unsigned hooks = 0;
+  char *endptr;
 
   info.plugin_name   = (char *)"tcpinfo";
   info.vendor_name   = (char *)"Apache Software Foundation";
@@ -322,7 +334,7 @@ TSPluginInit(int argc, const char *argv[])
   for (;;) {
     unsigned long lval;
 
-    switch (getopt_long(argc, (char *const *)argv, "r:f:l:h:", longopts, NULL)) {
+    switch (getopt_long(argc, (char *const *)argv, "r:f:l:h:e:H:S:M:", longopts, NULL)) {
     case 'r':
       if (parse_unsigned(optarg, lval)) {
         config->sample = atoi(optarg);
@@ -342,6 +354,41 @@ TSPluginInit(int argc, const char *argv[])
       break;
     case 'h':
       hooks = parse_hook_list(optarg);
+      break;
+    case 'e':
+      i = strtoul(optarg, &endptr, 10);
+      if (*endptr != '\0' || i > 4) {
+        TSError("[tcpinfo invalid rolling-enabled argument, using default of %d, valid values are 0-4", config->rolling_enabled);
+      } else {
+        config->rolling_enabled = i;
+      }
+      break;
+    case 'H':
+      i = strtoul(optarg, &endptr, 10);
+      if (*endptr != '\0' || i > 23) {
+        TSError("[tcpinfo invalid rolling-offset-hr argument, using default of %d, valid values are 0-23",
+                config->rolling_offset_hr);
+      } else {
+        config->rolling_offset_hr = i;
+      }
+      break;
+    case 'S':
+      i = strtoul(optarg, &endptr, 10);
+      if (*endptr != '\0' || i < 60 || i > 86400) {
+        TSError("[tcpinfo invalid rolling-interval-sec argument, using default of %d, valid values are 60-86400",
+                config->rolling_interval_sec);
+      } else {
+        config->rolling_interval_sec = i;
+      }
+      break;
+    case 'M':
+      i = strtoul(optarg, &endptr, 10);
+      if (*endptr != '\0' || i < 10) {
+        TSError("[tcpinfo invalid rolling-size-mb argument, using default of %d, values must be 10 or greater",
+                config->rolling_interval_sec);
+      } else {
+        config->rolling_size_mb = i;
+      }
       break;
     case -1:
       goto init;
@@ -365,6 +412,15 @@ init:
     TSError("[tcpinfo] failed to create log file '%s'", filename);
     delete config;
     return;
+  }
+  if (TSTextLogObjectRollingEnabledSet(config->log, config->rolling_enabled) != TS_SUCCESS) {
+    TSError("[tcpinfo] failed to enable log file rolling to: '%d'", config->rolling_enabled);
+    delete config;
+    return;
+  } else {
+    TSTextLogObjectRollingIntervalSecSet(config->log, config->rolling_interval_sec);
+    TSTextLogObjectRollingOffsetHrSet(config->log, config->rolling_offset_hr);
+    TSTextLogObjectRollingSizeMbSet(config->log, config->rolling_size_mb);
   }
 
   TSTextLogObjectHeaderSet(config->log, tcpi_headers[config->log_level - 1]);
