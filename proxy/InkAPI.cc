@@ -7990,13 +7990,18 @@ _conf_to_memberp(TSOverridableConfigKey conf, OverridableHttpConfigParams *overr
     typ = OVERRIDABLE_TYPE_INT;
     ret = &overridableHttpConfig->parent_retry_time;
     break;
-  case TS_CONFIG_HTTP_PARENT_PROXY_PER_PARENT_CONNECT_ATTEMPTS:
+  case TS_CONFIG_HTTP_PER_PARENT_CONNECT_ATTEMPTS:
     typ = OVERRIDABLE_TYPE_INT;
     ret = &overridableHttpConfig->per_parent_connect_attempts;
     break;
   case TS_CONFIG_HTTP_PARENT_PROXY_FAIL_THRESHOLD:
     typ = OVERRIDABLE_TYPE_INT;
     ret = &overridableHttpConfig->parent_fail_threshold;
+    break;
+  case TS_CONFIG_HTTP_PARENT_CONNECT_ATTEMPT_TIMEOUT:
+    typ = OVERRIDABLE_TYPE_INT;
+    ret = &overridableHttpConfig->parent_connect_timeout;
+    ;
     break;
   // This helps avoiding compiler warnings, yet detect unhandled enum members.
   case TS_CONFIG_NULL:
@@ -8663,6 +8668,11 @@ TSHttpTxnConfigFind(const char *name, int length, TSOverridableConfigKey *conf, 
     }
     break;
 
+  case 55:
+    if (!strncmp(name, "proxy.config.http.parent_proxy.connect_attempts_timeout", length)) {
+      cnf = TS_CONFIG_HTTP_PARENT_CONNECT_ATTEMPT_TIMEOUT;
+    }
+    break;
   case 58:
     switch (name[length - 1]) {
     case 'r':
@@ -8671,7 +8681,7 @@ TSHttpTxnConfigFind(const char *name, int length, TSOverridableConfigKey *conf, 
       break;
     case 's':
       if (!strncmp(name, "proxy.config.http.parent_proxy.per_parent_connect_attempts", length))
-        cnf = TS_CONFIG_HTTP_PARENT_PROXY_PER_PARENT_CONNECT_ATTEMPTS;
+        cnf = TS_CONFIG_HTTP_PER_PARENT_CONNECT_ATTEMPTS;
       break;
     }
     break;

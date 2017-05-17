@@ -440,6 +440,7 @@ struct OverridableHttpConfigParams {
       parent_retry_time(300),
       parent_fail_threshold(10),
       per_parent_connect_attempts(2),
+      parent_connect_timeout(30),
       down_server_timeout(300),
       client_abort_threshold(10),
       freshness_fuzz_time(240),
@@ -635,6 +636,7 @@ struct OverridableHttpConfigParams {
   MgmtInt parent_retry_time;
   MgmtInt parent_fail_threshold;
   MgmtInt per_parent_connect_attempts;
+  MgmtInt parent_connect_timeout;
 
   MgmtInt down_server_timeout;
   MgmtInt client_abort_threshold;
@@ -757,10 +759,9 @@ public:
   MgmtByte session_auth_cache_keep_alive_enabled;
   MgmtInt accept_no_activity_timeout;
 
-  ////////////////////////////////////
-  // origin server connect attempts //
-  ////////////////////////////////////
-  MgmtInt parent_connect_timeout;
+  /////////////////////////////////////////
+  // mark parent failures down in hostdb //
+  /////////////////////////////////////////
   MgmtInt parent_failures_update_hostdb;
 
   ///////////////////////////////////////////////////////////////////
@@ -958,7 +959,6 @@ inline HttpConfigParams::HttpConfigParams()
     num_url_expansions(0),
     session_auth_cache_keep_alive_enabled(1),
     accept_no_activity_timeout(120),
-    parent_connect_timeout(30),
     parent_failures_update_hostdb(1),
     anonymize_other_header_list(NULL),
     enable_http_stats(1),
