@@ -70,7 +70,7 @@ ParentRoundRobin::selectParent(const ParentSelectionPolicy *policy, const Overri
     parent_retry_time     = txn_conf->parent_retry_time;
     parent_fail_threshold = txn_conf->parent_fail_threshold;
   } else {
-    parent_retry_time = policy->ParentRetryTime;
+    parent_retry_time     = policy->ParentRetryTime;
     parent_fail_threshold = policy->FailThreshold;
   }
 
@@ -211,7 +211,7 @@ ParentRoundRobin::markParentDown(const ParentSelectionPolicy *policy, const Over
     parent_retry_time     = txn_conf->parent_retry_time;
     parent_fail_threshold = txn_conf->parent_fail_threshold;
   } else {
-    parent_retry_time = policy->ParentRetryTime;
+    parent_retry_time     = policy->ParentRetryTime;
     parent_fail_threshold = policy->FailThreshold;
   }
 

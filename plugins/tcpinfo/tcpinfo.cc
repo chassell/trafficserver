@@ -58,15 +58,15 @@ static const char *tcpi_headers[] = {
 };
 
 struct Config {
-  int sample = 1000;
-  unsigned int log_level = 1;
-  unsigned int rolling_enabled = 1;
+  int sample                        = 1000;
+  unsigned int log_level            = 1;
+  unsigned int rolling_enabled      = 1;
   unsigned int rolling_interval_sec = 86400;
-  unsigned int rolling_offset_hr = 0;
-  unsigned int rolling_size_mb = 1024;
+  unsigned int rolling_offset_hr    = 0;
+  unsigned int rolling_size_mb      = 1024;
   TSTextLogObject log;
 
-  Config(){}
+  Config() {}
   ~Config()
   {
     if (log) {
@@ -315,7 +315,7 @@ TSPluginInit(int argc, const char *argv[])
                                            {const_cast<char *>("rolling-size-mb"), required_argument, NULL, 'M'},
                                            {NULL, 0, NULL, 0}};
 
-  unsigned int i      = 0;
+  unsigned int i = 0;
   TSPluginRegistrationInfo info;
   Config *config       = new Config();
   const char *filename = "tcpinfo";
