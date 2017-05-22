@@ -386,7 +386,7 @@ inline void
 Queue<C, L>::remove(C *e)
 {
   if (tail == e)
-    tail = (C *)this->prev(e);
+    tail = static_cast<C *>(this->prev(e));
   DLL<C, L>::remove(e);
 }
 
@@ -695,12 +695,12 @@ template <class C, class L = typename C::Link_link> struct AtomicSLL {
   C *
   pop()
   {
-    return (C *)ink_atomiclist_pop(&al);
+    return static_cast<C *>(ink_atomiclist_pop(&al));
   }
   C *
   popall()
   {
-    return (C *)ink_atomiclist_popall(&al);
+    return static_cast<C *>(ink_atomiclist_popall(&al));
   }
   bool
   empty()
@@ -717,17 +717,17 @@ template <class C, class L = typename C::Link_link> struct AtomicSLL {
   C *
   remove(C *c)
   {
-    return (C *)ink_atomiclist_remove(&al, c);
+    return static_cast<C *>(ink_atomiclist_remove(&al, c));
   }
   C *
   head()
   {
-    return (C *)TO_PTR(FREELIST_POINTER(al.head));
+    return static_cast<C *>(TO_PTR(FREELIST_POINTER(al.head)));
   }
   C *
   next(C *c)
   {
-    return (C *)TO_PTR(c);
+    return static_cast<C *>(TO_PTR(c));
   }
 
   InkAtomicList al;
@@ -740,7 +740,7 @@ template <class C, class L = typename C::Link_link> struct AtomicSLL {
 
 template <class C, class L> inline AtomicSLL<C, L>::AtomicSLL()
 {
-  ink_atomiclist_init(&al, "AtomicSLL", (uint32_t)(uintptr_t)&L::next_link((C *)0));
+  ink_atomiclist_init(&al, "AtomicSLL", reinterpret_cast<uint32_t>(&L::next_link(NULL)));
 }
 
 #endif /*_List_h_*/
