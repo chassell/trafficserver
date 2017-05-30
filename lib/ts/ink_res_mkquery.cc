@@ -140,7 +140,7 @@ int ink_res_mkquery(ink_res_state statp, int op,               /*!< opcode of qu
      */
     if ((ep - cp) < RRFIXEDSZ)
       return (-1);
-    n = dn_comp((const char *)data, cp, ep - cp - RRFIXEDSZ, dnptrs, lastdnptr);
+    n = dn_comp(reinterpret_cast<const char*>(data), cp, ep - cp - RRFIXEDSZ, dnptrs, lastdnptr);
     if (n < 0)
       return (-1);
     cp += n;
@@ -354,7 +354,7 @@ ink_ns_name_ntop(const u_char *src, char *dst, size_t dstsiz)
           return (-1);
         }
         *dn++ = '\\';
-        *dn++ = (char)c;
+        *dn++ = c;
       } else if (!printable(c)) {
         if (dn + 3 >= eom) {
           errno = EMSGSIZE;
@@ -369,7 +369,7 @@ ink_ns_name_ntop(const u_char *src, char *dst, size_t dstsiz)
           errno = EMSGSIZE;
           return (-1);
         }
-        *dn++ = (char)c;
+        *dn++ = c;
       }
     }
   }
@@ -460,7 +460,7 @@ ns_name_ntop(const u_char *src, char *dst, size_t dstsiz)
           return (-1);
         }
         *dn++ = '\\';
-        *dn++ = (char)c;
+        *dn++ = c;
       } else if (!printable(c)) {
         if (dn + 3 >= eom) {
           errno = EMSGSIZE;
@@ -475,7 +475,7 @@ ns_name_ntop(const u_char *src, char *dst, size_t dstsiz)
           errno = EMSGSIZE;
           return (-1);
         }
-        *dn++ = (char)c;
+        *dn++ = c;
       }
     }
   }

@@ -58,7 +58,7 @@ check_valid_sockaddr(sockaddr *sa, char *file, int line)
 #endif
 
 int
-safe_setsockopt(int s, int level, int optname, char *optval, int optlevel)
+safe_setsockopt(int s, int level, int optname, const char *optval, int optlevel)
 {
   int r;
   do {
@@ -72,7 +72,7 @@ safe_getsockopt(int s, int level, int optname, char *optval, int *optlevel)
 {
   int r;
   do {
-    r = getsockopt(s, level, optname, optval, (socklen_t *)optlevel);
+    r = getsockopt(s, level, optname, optval, reinterpret_cast<socklen_t *>(optlevel));
   } while (r < 0 && (errno == EAGAIN || errno == EINTR));
   return r;
 }
@@ -189,7 +189,7 @@ safe_getsockname(int s, struct sockaddr *name, int *namelen)
 {
   int r;
   do {
-    r = getsockname(s, name, (socklen_t *)namelen);
+    r = getsockname(s, name, reinterpret_cast<socklen_t *>(namelen));
   } while (r < 0 && (errno == EAGAIN || errno == EINTR));
   return r;
 }
@@ -199,7 +199,7 @@ safe_getpeername(int s, struct sockaddr *name, int *namelen)
 {
   int r;
   do {
-    r = getpeername(s, name, (socklen_t *)namelen);
+    r = getpeername(s, name, reinterpret_cast<socklen_t *>(namelen));
   } while (r < 0 && (errno == EAGAIN || errno == EINTR));
   return r;
 }
@@ -255,13 +255,13 @@ close_socket(int s)
 int
 write_socket(int s, const char *buffer, int length)
 {
-  return write(s, (const void *)buffer, length);
+  return write(s, buffer, length);
 }
 
 int
 read_socket(int s, char *buffer, int length)
 {
-  return read(s, (void *)buffer, length);
+  return read(s, buffer, length);
 }
 
 int
@@ -296,7 +296,7 @@ bind_unix_domain_socket(const char *path, mode_t mode)
     goto fail;
   }
 
-  if (bind(sockfd, (struct sockaddr *)&sockaddr, socklen) < 0) {
+  if (bind(sockfd, reinterpret_cast<struct sockaddr *>(&sockaddr), socklen) < 0) {
     goto fail;
   }
 

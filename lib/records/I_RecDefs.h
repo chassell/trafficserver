@@ -28,6 +28,8 @@
 #include "ts/ink_rwlock.h"
 #include "I_RecMutex.h"
 
+#include <string>
+
 #define STAT_PROCESSOR
 
 //-------------------------------------------------------------------------

@@ -120,14 +120,14 @@ bitops_first_unset(unsigned char *start, unsigned char *end, unsigned char **p)
 
 */
 static inline int
-bitops_next_set(unsigned char *start, unsigned char *end, int offset)
+bitops_next_set(unsigned char *start, unsigned char *end, unsigned offset)
 {
   extern unsigned char bit_table[];
 
   unsigned char *p;
   unsigned char c;
   size_t idx;
-  int t;
+  size_t t;
 
   idx = 0;
   p   = start + offset / 8;
@@ -137,7 +137,7 @@ bitops_next_set(unsigned char *start, unsigned char *end, int offset)
     idx = bit_table[*p];
     if (idx) {
       c = *p;
-      while (idx && (idx <= (size_t)t)) {
+      while (idx && (idx+0 <= t)) {
         c &= ~(1 << (idx - 1));
         idx = bit_table[c];
       }
@@ -154,21 +154,21 @@ bitops_next_set(unsigned char *start, unsigned char *end, int offset)
     idx -= 1;
     idx += (p - start) * 8;
   } else {
-    idx = (size_t)-1;
+    idx = ~0U;
   }
 
-  return (int)idx;
+  return static_cast<int>(idx);
 }
 
 static inline int
-bitops_next_unset(unsigned char *start, unsigned char *end, int offset)
+bitops_next_unset(unsigned char *start, unsigned char *end, unsigned offset)
 {
   extern unsigned char bit_table[];
 
   unsigned char *p;
   unsigned char c;
   size_t idx;
-  int t;
+  size_t t;
 
   idx = 0;
   p   = start + offset / 8;
@@ -178,7 +178,7 @@ bitops_next_unset(unsigned char *start, unsigned char *end, int offset)
     c   = ~(*p);
     idx = bit_table[c];
     if (idx) {
-      while (idx && (idx <= (size_t)t)) {
+      while (idx && idx <= t) {
         c &= ~(1 << (idx - 1));
         idx = bit_table[c];
       }
@@ -195,10 +195,10 @@ bitops_next_unset(unsigned char *start, unsigned char *end, int offset)
     idx -= 1;
     idx += (p - start) * 8;
   } else {
-    idx = (size_t)-1;
+    idx = ~0U;
   }
 
-  return (int)idx;
+  return static_cast<int>(idx);
 }
 
 static inline int

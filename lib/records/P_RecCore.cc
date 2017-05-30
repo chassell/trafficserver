@@ -290,7 +290,7 @@ _RecRegisterStatFloat(RecT rec_type, const char *name, RecFloat data_default, Re
 }
 
 RecErrT
-_RecRegisterStatString(RecT rec_type, const char *name, RecString data_default, RecPersistT persist_type)
+_RecRegisterStatString(RecT rec_type, const char *name, RecStringConst data_default, RecPersistT persist_type)
 {
   REC_REGISTER_STAT_XXX(rec_string, RECD_STRING);
 }
@@ -340,7 +340,7 @@ RecErrT
 RecRegisterConfigString(RecT rec_type, const char *name, const char *data_default_tmp, RecUpdateT update_type, RecCheckT check_type,
                         const char *check_regex, RecSourceT source, RecAccessT access_type)
 {
-  RecString data_default = (RecString)data_default_tmp;
+  RecStringConst data_default = data_default_tmp;
   ink_assert((rec_type == RECT_CONFIG) || (rec_type == RECT_LOCAL));
   REC_REGISTER_CONFIG_XXX(rec_string, RECD_STRING);
 }
@@ -964,7 +964,7 @@ RecWriteConfigFile(TextBuffer *tb)
       break;
     }
 
-    if (nbytes != (int)tb->spaceUsed()) {
+    if (static_cast<size_t>(nbytes) != tb->spaceUsed()) {
       RecLog(DL_Warning, "write to file: %s fail, disk maybe full", tmp_filename);
       result = REC_ERR_FAIL;
       break;

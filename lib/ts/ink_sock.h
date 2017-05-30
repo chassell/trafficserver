@@ -35,7 +35,7 @@
 
 #include "ts/ink_apidefs.h"
 
-int safe_setsockopt(int s, int level, int optname, char *optval, int optlevel);
+int safe_setsockopt(int s, int level, int optname, const char *optval, int optlevel);
 int safe_getsockopt(int s, int level, int optname, char *optval, int *optlevel);
 int safe_bind(int s, struct sockaddr const *name, int namelen);
 int safe_listen(int s, int backlog);
