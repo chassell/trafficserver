@@ -435,18 +435,17 @@ UnixNetVConnection::set_tcp_congestion_control(int side)
   }
 
   if (ret == REC_ERR_OKAY) {
-    int len = strlen(congestion_control);
+    int len = strlen(congestion_control.c_str());
     if (len > 0) {
       int rv = 0;
-      rv     = setsockopt(con.fd, IPPROTO_TCP, TCP_CONGESTION, reinterpret_cast<void *>(congestion_control), len);
+      rv     = setsockopt(con.fd, IPPROTO_TCP, TCP_CONGESTION, reinterpret_cast<const void *>(congestion_control.c_str()), len);
       if (rv < 0) {
-        Error("Unable to set TCP congestion control on socket %d to \"%.*s\", errno=%d (%s)", con.fd, len, congestion_control,
+        Error("Unable to set TCP congestion control on socket %d to \"%.*s\", errno=%d (%s)", con.fd, len, congestion_control.c_str(),
               errno, strerror(errno));
       } else {
-        Debug("socket", "Setting TCP congestion control on socket [%d] to \"%.*s\" -> %d", con.fd, len, congestion_control, rv);
+        Debug("socket", "Setting TCP congestion control on socket [%d] to \"%.*s\" -> %d", con.fd, len, congestion_control.c_str(), rv);
       }
     }
-    ats_free(congestion_control);
     return 0;
   }
   return -1;

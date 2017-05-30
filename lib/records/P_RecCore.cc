@@ -204,7 +204,7 @@ recv_message_cb(RecMessage *msg, RecMessageT msg_type, void * /* cookie */)
     if (RecMessageUnmarshalFirst(msg, &itr, &r) != REC_ERR_FAIL) {
       do {
         if (REC_TYPE_IS_STAT(r->rec_type)) {
-          RecResetStatRecord(r->name);
+          RecResetStatRecord(r->name.c_str());
         } else {
           RecSetRecord(r->rec_type, r->name, r->data_type, &(r->data), nullptr, REC_SOURCE_EXPLICIT);
         }
@@ -217,9 +217,9 @@ recv_message_cb(RecMessage *msg, RecMessageT msg_type, void * /* cookie */)
     if (RecMessageUnmarshalFirst(msg, &itr, &r) != REC_ERR_FAIL) {
       do {
         if (REC_TYPE_IS_STAT(r->rec_type)) {
-          RecRegisterStat(r->rec_type, r->name, r->data_type, r->data_default, r->stat_meta.persist_type);
+          RecRegisterStat(r->rec_type, r->name.c_str(), r->data_type, r->data_default, r->stat_meta.persist_type);
         } else if (REC_TYPE_IS_CONFIG(r->rec_type)) {
-          RecRegisterConfig(r->rec_type, r->name, r->data_type, r->data_default, r->config_meta.update_type,
+          RecRegisterConfig(r->rec_type, r->name.c_str(), r->data_type, r->data_default, r->config_meta.update_type,
                             r->config_meta.check_type, r->config_meta.check_expr, r->config_meta.source,
                             r->config_meta.access_type);
         }
@@ -378,8 +378,8 @@ RecSetRecord(RecT rec_type, const char *name, RecDataT data_type, RecData *data,
         if (data_type == RECD_NULL) {
           // If the caller didn't know the data type, they gave us a string
           // and we should convert based on the record's data type.
-          ink_release_assert(data->rec_string != nullptr);
-          RecDataSetFromString(r1->data_type, &(r1->data), data->rec_string);
+          ink_release_assert(data->rec_string.empty());
+          RecDataSetFromString(r1->data_type, &(r1->data), data->rec_string.c_str());
         } else {
           RecDataSet(data_type, &(r1->data), data);
         }
@@ -509,21 +509,23 @@ RecReadStatsFile()
   if ((m = RecMessageReadFromDisk(snap_fpath)) != nullptr) {
     if (RecMessageUnmarshalFirst(m, &itr, &r) != REC_ERR_FAIL) {
       do {
-        if ((r->name == nullptr) || (!strlen(r->name))) {
+        if ( r->name.empty() ) {
           continue;
         }
 
+        const char *name = r->name.c_str();
+
         // If we don't have a persistence type for this record, it means that it is not a stat, or it is
         // not registered yet. Either way, it's ok to just set the persisted value and keep going.
-        if (RecGetRecordPersistenceType(r->name, &persist_type, false /* lock */) != REC_ERR_OKAY) {
-          RecDebug(DL_Debug, "restoring value for persisted stat '%s'", r->name);
+        if (RecGetRecordPersistenceType(name, &persist_type, false /* lock */) != REC_ERR_OKAY) {
+          RecDebug(DL_Debug, "restoring value for persisted stat '%s'", name);
           RecSetRecord(r->rec_type, r->name, r->data_type, &(r->data), &(r->stat_meta.data_raw), REC_SOURCE_EXPLICIT, false);
           continue;
         }
 
         if (!REC_TYPE_IS_STAT(r->rec_type)) {
           // This should not happen, but be defensive against records changing their type ..
-          RecLog(DL_Warning, "skipping restore of non-stat record '%s'", r->name);
+          RecLog(DL_Warning, "skipping restore of non-stat record '%s'", name);
           continue;
         }
 
@@ -531,11 +533,11 @@ RecReadStatsFile()
         // already registered with an updated persistence type, then we don't want to set it. We should
         // keep the registered value.
         if (persist_type == RECP_NON_PERSISTENT) {
-          RecDebug(DL_Debug, "preserving current value of formerly persistent stat '%s'", r->name);
+          RecDebug(DL_Debug, "preserving current value of formerly persistent stat '%s'", name);
           continue;
         }
 
-        RecDebug(DL_Debug, "restoring value for persisted stat '%s'", r->name);
+        RecDebug(DL_Debug, "restoring value for persisted stat '%s'", name);
         RecSetRecord(r->rec_type, r->name, r->data_type, &(r->data), &(r->stat_meta.data_raw), REC_SOURCE_EXPLICIT, false);
       } while (RecMessageUnmarshalNext(m, &itr, &r) != REC_ERR_FAIL);
     }
@@ -652,15 +654,16 @@ RecSyncConfigToTB(TextBuffer *tb, bool *inc_version)
     sync_to_disk = false;
     for (i = 0; i < num_records; i++) {
       r = &(g_records[i]);
+      const char *name = r->name.c_str();
       rec_mutex_acquire(&(r->lock));
       if (REC_TYPE_IS_CONFIG(r->rec_type)) {
         if (r->sync_required & REC_DISK_SYNC_REQUIRED) {
-          if (!ink_hash_table_isbound(g_rec_config_contents_ht, r->name)) {
+          if (!ink_hash_table_isbound(g_rec_config_contents_ht, name)) {
             cfe             = (RecConfigFileEntry *)ats_malloc(sizeof(RecConfigFileEntry));
             cfe->entry_type = RECE_RECORD;
-            cfe->entry      = ats_strdup(r->name);
+            cfe->entry      = ats_strdup(name);
             enqueue(g_rec_config_contents_llq, (void *)cfe);
-            ink_hash_table_insert(g_rec_config_contents_ht, r->name, nullptr);
+            ink_hash_table_insert(g_rec_config_contents_ht, name, nullptr);
           }
           r->sync_required = r->sync_required & ~REC_DISK_SYNC_REQUIRED;
           sync_to_disk     = true;
@@ -728,8 +731,8 @@ RecSyncConfigToTB(TextBuffer *tb, bool *inc_version)
               break;
             case RECD_STRING:
               tb->copyFrom("STRING ", 7);
-              if (r->data.rec_string) {
-                tb->copyFrom(r->data.rec_string, strlen(r->data.rec_string));
+              if (! r->data.rec_string.empty()) {
+                tb->copyFrom(r->data.rec_string.data(), r->data.rec_string.length());
               } else {
                 tb->copyFrom("NULL", strlen("NULL"));
               }
@@ -771,6 +774,7 @@ RecExecConfigUpdateCbs(unsigned int update_required_type)
   for (i = 0; i < num_records; i++) {
     r = &(g_records[i]);
     rec_mutex_acquire(&(r->lock));
+    const char *name = r->name.c_str();
     if (REC_TYPE_IS_CONFIG(r->rec_type)) {
       /* -- upgrade to support a list of callback functions
          if ((r->config_meta.update_required & update_required_type) &&
@@ -791,7 +795,7 @@ RecExecConfigUpdateCbs(unsigned int update_required_type)
       if ((r->config_meta.update_required & update_required_type) && (r->config_meta.update_cb_list)) {
         RecConfigUpdateCbList *cur_callback = nullptr;
         for (cur_callback = r->config_meta.update_cb_list; cur_callback; cur_callback = cur_callback->next) {
-          (*(cur_callback->update_cb))(r->name, r->data_type, r->data, cur_callback->update_cookie);
+          (*(cur_callback->update_cb))(name, r->data_type, r->data, cur_callback->update_cookie);
         }
         r->config_meta.update_required = r->config_meta.update_required & ~update_required_type;
       }

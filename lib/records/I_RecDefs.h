@@ -43,11 +43,9 @@ enum RecErrT {
 //-------------------------------------------------------------------------
 // Types
 //-------------------------------------------------------------------------
-#define RecStringNull nullptr
-
 typedef int64_t RecInt;
 typedef float RecFloat;
-typedef char *RecString;
+typedef std::string RecString;
 typedef const char *RecStringConst;
 typedef int64_t RecCounter;
 typedef int8_t RecByte;
@@ -147,11 +145,13 @@ enum RecAccessT {
 //-------------------------------------------------------------------------
 // Data Union
 //-------------------------------------------------------------------------
-union RecData {
-  RecInt rec_int;
-  RecFloat rec_float;
-  RecString rec_string;
-  RecCounter rec_counter;
+struct RecData {
+    union {
+      RecInt rec_int;
+      RecFloat rec_float;
+      RecCounter rec_counter;
+    };
+    RecString rec_string;
 };
 
 //-------------------------------------------------------------------------

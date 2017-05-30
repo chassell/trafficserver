@@ -102,7 +102,7 @@ struct RecConfigMeta {
 
 struct RecRecord {
   RecT rec_type;
-  const char *name;
+  std::string name;
   RecDataT data_type;
   RecData data;
   RecData data_default;

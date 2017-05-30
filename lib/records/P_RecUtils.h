@@ -42,7 +42,7 @@
 //-------------------------------------------------------------------------
 void RecRecordInit(RecRecord *r);
 void RecRecordFree(RecRecord *r);
-RecRecord *RecAlloc(RecT rec_type, const char *name, RecDataT data_type);
+RecRecord *RecAlloc(RecT rec_type, const std::string &name, RecDataT data_type);
 
 //-------------------------------------------------------------------------
 // RecData Utils

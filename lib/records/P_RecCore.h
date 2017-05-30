@@ -67,11 +67,14 @@ RecRecord *RecForceInsert(RecRecord *record);
 //-------------------------------------------------------------------------
 // Setting/Getting
 //-------------------------------------------------------------------------
-
 RecErrT RecSetRecord(RecT rec_type, const char *name, RecDataT data_type, RecData *data, RecRawStat *raw_stat, RecSourceT source,
                      bool lock = true, bool inc_version = true);
 
 RecErrT RecGetRecord_Xmalloc(const char *name, RecDataT data_type, RecData *data, bool lock = true);
+
+RecErrT RecSetRecord(RecT rec_type, const std::string &name, RecDataT data_type, RecData *data, RecRawStat *raw_stat, RecSourceT source,
+                     bool lock = true, bool inc_version = true)
+       { return RecSetRecord(rec_type, name.c_str(), data_type, data, raw_stat, source, lock, inc_version); }
 
 //-------------------------------------------------------------------------
 // Read/Sync to Disk

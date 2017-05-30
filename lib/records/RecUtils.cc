@@ -59,7 +59,7 @@ RecAlloc(RecT rec_type, const char *name, RecDataT data_type)
 
   RecRecordInit(r);
   r->rec_type  = rec_type;
-  r->name      = ats_strdup(name);
+  r->name      = name;
   r->order     = i;
   r->data_type = data_type;
 
@@ -72,10 +72,8 @@ RecAlloc(RecT rec_type, const char *name, RecDataT data_type)
 void
 RecDataZero(RecDataT data_type, RecData *data)
 {
-  if ((data_type == RECD_STRING) && (data->rec_string)) {
-    ats_free(data->rec_string);
-  }
-  memset(data, 0, sizeof(RecData));
+  data->rec_counter = 0;
+  data->rec_string.clear();
 }
 
 void
@@ -126,33 +124,19 @@ RecDataSetMin(RecDataT type, RecData *data)
 // RecDataSet
 //-------------------------------------------------------------------------
 bool
-RecDataSet(RecDataT data_type, RecData *data_dst, RecData *data_src)
+RecDataSet(RecDataT data_type, RecData *data_dst, const RecData *data_src)
 {
   bool rec_set = false;
 
   switch (data_type) {
   case RECD_STRING:
-    if (data_src->rec_string == nullptr) {
-      if (data_dst->rec_string != nullptr) {
-        ats_free(data_dst->rec_string);
-        data_dst->rec_string = nullptr;
-        rec_set              = true;
-      }
-    } else if (((data_dst->rec_string) && (strcmp(data_dst->rec_string, data_src->rec_string) != 0)) ||
-               ((data_dst->rec_string == nullptr) && (data_src->rec_string != nullptr))) {
-      if (data_dst->rec_string) {
-        ats_free(data_dst->rec_string);
-      }
-
-      data_dst->rec_string = ats_strdup(data_src->rec_string);
+    if ( data_src->rec_string != data_dst->rec_string ) {
       rec_set              = true;
       // Chop trailing spaces
-      char *end = data_dst->rec_string + strlen(data_dst->rec_string) - 1;
-
-      while (end >= data_dst->rec_string && isspace(*end)) {
-        end--;
+      auto n = data_src->rec_string.find_last_not_of(' ');
+      if ( n != std::string::npos ) {
+          data_src->rec_string.resize(n+1);
       }
-      *(end + 1) = '\0';
     }
     break;
   case RECD_INT:
@@ -342,9 +326,8 @@ RecDataSetFromInk64(RecDataT data_type, RecData *data_dst, int64_t data_int64)
   case RECD_STRING: {
     char buf[32 + 1];
 
-    ats_free(data_dst->rec_string);
     snprintf(buf, 32, "%" PRId64 "", data_int64);
-    data_dst->rec_string = ats_strdup(buf);
+    data_dst->rec_string = buf;
     break;
   }
   case RECD_COUNTER:
@@ -380,9 +363,8 @@ RecDataSetFromFloat(RecDataT data_type, RecData *data_dst, float data_float)
   case RECD_STRING: {
     char buf[32 + 1];
 
-    ats_free(data_dst->rec_string);
     snprintf(buf, 32, "%f", data_float);
-    data_dst->rec_string = ats_strdup(buf);
+    data_dst->rec_string = buf;
     break;
   }
   case RECD_COUNTER:
@@ -420,10 +402,10 @@ RecDataSetFromString(RecDataT data_type, RecData *data_dst, const char *data_str
     break;
   case RECD_STRING:
     if (data_string && (strlen(data_string) == 4) && strncmp((data_string), "NULL", 4) == 0) {
-      data_src.rec_string = nullptr;
+      data_src.rec_string.clear();
     } else {
       // It's OK to cast away the const here, because RecDataSet will copy the string.
-      data_src.rec_string = (char *)data_string;
+      data_src.rec_string = data_string;
     }
     break;
   case RECD_COUNTER:
