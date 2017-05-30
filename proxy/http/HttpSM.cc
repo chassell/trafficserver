@@ -236,16 +236,13 @@ HttpVCTable::cleanup_all()
 
 #define REMEMBER_EVENT_FILTER(e) 1
 
-#define __REMEMBER(x) #x
-#define _REMEMBER(x) __REMEMBER(x)
+#define RECORD_FILE_LINE() history[pos].location = MakeSourceLocation();
 
-#define RECORD_FILE_LINE() history[pos].fileline = __FILE__ ":" _REMEMBER(__LINE__);
-
-#define REMEMBER(e, r)                                           \
-  {                                                              \
-    if (REMEMBER_EVENT_FILTER(e)) {                              \
-      add_history_entry(__FILE__ ":" _REMEMBER(__LINE__), e, r); \
-    }                                                            \
+#define REMEMBER(e, r)                               \
+  {                                                  \
+    if (REMEMBER_EVENT_FILTER(e)) {                  \
+      add_history_entry(MakeSourceLocation(), e, r); \
+    }                                                \
   }
 
 #define DebugSM(tag, ...) DebugSpecific(debug_on, tag, __VA_ARGS__)
@@ -267,74 +264,10 @@ HttpVCTable::cleanup_all()
 
 static int next_sm_id = 0;
 
-HttpSM::HttpSM()
-  : Continuation(nullptr),
-    sm_id(-1),
-    magic(HTTP_SM_MAGIC_DEAD),
-    // YTS Team, yamsat Plugin
-    enable_redirection(false),
-    redirect_url(nullptr),
-    redirect_url_len(0),
-    redirection_tries(0),
-    transfered_bytes(0),
-    post_failed(false),
-    debug_on(false),
-    plugin_tunnel_type(HTTP_NO_PLUGIN_TUNNEL),
-    plugin_tunnel(nullptr),
-    reentrancy_count(0),
-    history_pos(0),
-    tunnel(),
-    ua_entry(nullptr),
-    ua_session(nullptr),
-    background_fill(BACKGROUND_FILL_NONE),
-    ua_raw_buffer_reader(nullptr),
-    server_entry(nullptr),
-    server_session(nullptr),
-    will_be_private_ss(false),
-    shared_session_retries(0),
-    server_buffer_reader(nullptr),
-    transform_info(),
-    post_transform_info(),
-    has_active_plugin_agents(false),
-    second_cache_sm(nullptr),
-    default_handler(nullptr),
-    pending_action(nullptr),
-    last_action(HttpTransact::SM_ACTION_UNDEFINED),
-    // TODO:  Now that bodies can be empty, should the body counters be set to -1 ? TS-2213
-    client_request_hdr_bytes(0),
-    client_request_body_bytes(0),
-    server_request_hdr_bytes(0),
-    server_request_body_bytes(0),
-    server_response_hdr_bytes(0),
-    server_response_body_bytes(0),
-    client_response_hdr_bytes(0),
-    client_response_body_bytes(0),
-    cache_response_hdr_bytes(0),
-    cache_response_body_bytes(0),
-    pushed_response_hdr_bytes(0),
-    pushed_response_body_bytes(0),
-    client_tcp_reused(false),
-    client_ssl_reused(false),
-    client_connection_is_ssl(false),
-    client_protocol("-"),
-    client_sec_protocol("-"),
-    client_cipher_suite("-"),
-    server_transact_count(0),
-    server_connection_is_ssl(false),
-    plugin_tag(nullptr),
-    plugin_id(0),
-    hooks_set(false),
-    cur_hook_id(TS_HTTP_LAST_HOOK),
-    cur_hook(nullptr),
-    cur_hooks(0),
-    callout_state(HTTP_API_NO_CALLOUT),
-    terminate_sm(false),
-    kill_this_async_done(false),
-    parse_range_done(false)
+HttpSM::HttpSM() : Continuation(nullptr)
 {
-  memset(&history, 0, sizeof(history));
-  memset(&vc_table, 0, sizeof(vc_table));
-  memset(&http_parser, 0, sizeof(http_parser));
+  ink_zero(vc_table);
+  ink_zero(http_parser);
 }
 
 void
@@ -3383,7 +3316,8 @@ HttpSM::tunnel_handler_cache_write(int event, HttpTunnelConsumer *c)
     } else {
       *status_ptr      = HttpTransact::CACHE_WRITE_COMPLETE;
       c->write_success = true;
-      c->write_vio     = c->vc->do_io(VIO::CLOSE);
+      c->vc->do_io_close();
+      c->write_vio = nullptr;
     }
     break;
   default:
@@ -3796,7 +3730,7 @@ HttpSM::tunnel_handler_transform_write(int event, HttpTunnelConsumer *c)
       //   has already completed (possible when the
       //   transform intentionally truncates the response).
       //   So close it
-      c->vc->do_io(VIO::CLOSE);
+      c->vc->do_io_close();
     }
     break;
   default:
@@ -3891,7 +3825,7 @@ HttpSM::tunnel_handler_plugin_agent(int event, HttpTunnelConsumer *c)
   // FALLTHROUGH
   case VC_EVENT_WRITE_COMPLETE:
     c->write_success = true;
-    c->vc->do_io(VIO::CLOSE);
+    c->vc->do_io_close();
     break;
   default:
     ink_release_assert(0);
@@ -5345,12 +5279,19 @@ HttpSM::handle_http_server_open()
   //          server session's first transaction.
   if (nullptr != server_session) {
     NetVConnection *vc = server_session->get_netvc();
-    if (vc != nullptr && (vc->options.sockopt_flags != t_state.txn_conf->sock_option_flag_out ||
-                          vc->options.packet_mark != t_state.txn_conf->sock_packet_mark_out ||
-                          vc->options.packet_tos != t_state.txn_conf->sock_packet_tos_out)) {
-      vc->options.sockopt_flags = t_state.txn_conf->sock_option_flag_out;
-      vc->options.packet_mark   = t_state.txn_conf->sock_packet_mark_out;
-      vc->options.packet_tos    = t_state.txn_conf->sock_packet_tos_out;
+
+    //    SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+    //    if (ssl_vc) {
+    //      ssl_vc->setClientVerifyEnable(t_state.txn_conf->ssl_client_verify_server);
+    //    }
+    if (vc != NULL && (vc->options.sockopt_flags != t_state.txn_conf->sock_option_flag_out ||
+                       vc->options.packet_mark != t_state.txn_conf->sock_packet_mark_out ||
+                       vc->options.packet_tos != t_state.txn_conf->sock_packet_tos_out ||
+                       vc->options.clientVerificationFlag != t_state.txn_conf->ssl_client_verify_server)) {
+      vc->options.sockopt_flags          = t_state.txn_conf->sock_option_flag_out;
+      vc->options.packet_mark            = t_state.txn_conf->sock_packet_mark_out;
+      vc->options.packet_tos             = t_state.txn_conf->sock_packet_tos_out;
+      vc->options.clientVerificationFlag = t_state.txn_conf->ssl_client_verify_server;
       vc->apply_options();
     }
   }
@@ -7042,9 +6983,10 @@ HttpSM::dump_state_on_assert()
   }
   // Loop through the history and dump it
   for (int i = 0; i < hist_size; i++) {
+    char buf[256];
     int r = history[i].reentrancy;
     int e = history[i].event;
-    Error("%d   %d   %s", e, r, history[i].fileline);
+    Error("%d   %d   %s", e, r, history[i].location.str(buf, sizeof(buf)));
   }
 
   // Dump the via string
@@ -7757,6 +7699,8 @@ HttpSM::redirect_request(const char *redirect_url, const int redirect_len)
   // we have a new OS and need to have DNS lookup the new OS
   t_state.dns_info.lookup_success = false;
   t_state.force_dns               = false;
+  t_state.server_info.clear();
+  t_state.parent_info.clear();
 
   if (t_state.txn_conf->cache_http) {
     t_state.cache_info.object_read = nullptr;
