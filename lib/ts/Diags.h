@@ -49,10 +49,10 @@
 class Diags;
 
 // extern int diags_on_for_plugins;
-typedef enum {
+enum DiagsTagType {
   DiagsTagType_Debug  = 0, // do not renumber --- used as array index
   DiagsTagType_Action = 1
-} DiagsTagType;
+};
 
 struct DiagsModeOutput {
   bool to_stdout;
@@ -61,7 +61,7 @@ struct DiagsModeOutput {
   bool to_diagslog;
 };
 
-typedef enum {  // do not renumber --- used as array index
+enum DiagsLevel {  // do not renumber --- used as array index
   DL_Diag = 0,  // process does not die
   DL_Debug,     // process does not die
   DL_Status,    // process does not die
@@ -72,7 +72,10 @@ typedef enum {  // do not renumber --- used as array index
   DL_Alert,     // causes process termination
   DL_Emergency, // causes process termination
   DL_Undefined  // must be last, used for size!
-} DiagsLevel;
+};
+
+inline DiagsLevel operator++(DiagsLevel &self) 
+   { return (self = static_cast<DiagsLevel>( static_cast<int>(self) + 1) ); }
 
 enum RollingEnabledValues { NO_ROLLING = 0, ROLL_ON_TIME, ROLL_ON_SIZE, ROLL_ON_TIME_OR_SIZE, INVALID_ROLLING_VALUE };
 

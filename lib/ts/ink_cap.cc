@@ -64,7 +64,7 @@ ink_mutex ElevateAccess::lock = INK_MUTEX_INIT;
       cap_t caps      = cap_get_proc();                                                                          \
       char *caps_text = cap_to_text(caps, nullptr);                                                              \
       Debug(tag, "caps='%s', core=%s, death signal=%d, thread=0x%llx", caps_text, is_dumpable(), death_signal(), \
-            (unsigned long long)pthread_self());                                                                 \
+            static_cast<unsigned long long>(pthread_self()));                                                    \
       cap_free(caps_text);                                                                                       \
       cap_free(caps);                                                                                            \
     }                                                                                                            \
@@ -76,7 +76,7 @@ ink_mutex ElevateAccess::lock = INK_MUTEX_INIT;
   do {                                                                                              \
     if (is_debug_tag_set(tag)) {                                                                    \
       Debug(tag, "caps='', core=%s, death signal=%d, thread=0x%llx", is_dumpable(), death_signal(), \
-            (unsigned long long)pthread_self());                                                    \
+            static_cast<unsigned long long>(pthread_self()));                                       \
     }                                                                                               \
   } while (0)
 
@@ -108,7 +108,7 @@ max_passwd_size()
 #if defined(_SC_GETPW_R_SIZE_MAX)
   long val = sysconf(_SC_GETPW_R_SIZE_MAX);
   if (val > 0) {
-    return (unsigned)val;
+    return val;
   }
 #endif
 

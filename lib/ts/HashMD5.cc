@@ -52,7 +52,7 @@ const void *
 ATSHashMD5::get() const
 {
   if (finalized) {
-    return (void *)md_value;
+    return md_value;
   } else {
     return nullptr;
   }

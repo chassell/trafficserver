@@ -17,7 +17,7 @@ using namespace std;
 
 #define ROTL64(a, b) (((a) << (b)) | ((a) >> (64 - b)))
 
-#define U8TO64_LE(p) *(const uint64_t *)(p)
+#define U8TO64_LE(p) *reinterpret_cast<const uint64_t*>(&((p)[0]))
 
 #define SIPCOMPRESS(x0, x1, x2, x3) \
   x0 += x1;                         \
@@ -54,12 +54,12 @@ void
 ATSHash64Sip24::update(const void *data, size_t len)
 {
   size_t i, blocks;
-  unsigned char *m;
+  const unsigned char *m;
   uint64_t mi;
   uint8_t block_off = 0;
 
   if (!finalized) {
-    m = (unsigned char *)data;
+    m = static_cast<const uint8_t*>(data);
     total_len += len;
 
     if (len + block_buffer_len < SIP_BLOCK_SIZE) {
@@ -98,10 +98,10 @@ ATSHash64Sip24::final()
   int i;
 
   if (!finalized) {
-    last7 = (uint64_t)(total_len & 0xff) << 56;
+    last7 = static_cast<uint64_t>(total_len & 0xff) << 56;
 
     for (i = block_buffer_len - 1; i >= 0; i--) {
-      last7 |= (uint64_t)block_buffer[i] << (i * 8);
+      last7 |= static_cast<uint64_t>(block_buffer[i]) << (i * 8);
     }
 
     v3 ^= last7;

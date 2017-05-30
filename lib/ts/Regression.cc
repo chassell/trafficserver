@@ -49,11 +49,10 @@ progname(const char *path)
   return slash ? slash + 1 : path;
 }
 
-char *
+const char *
 regression_status_string(int status)
 {
-  return (
-    char *)(status == REGRESSION_TEST_NOT_RUN ?
+  return (status == REGRESSION_TEST_NOT_RUN ?
               "NOT_RUN" :
               (status == REGRESSION_TEST_PASSED ? "PASSED" : (status == REGRESSION_TEST_INPROGRESS ? "INPROGRESS" : "FAILED")));
 }
@@ -81,7 +80,7 @@ start_test(RegressionTest *t, int regression_level)
   (*t->function)(t, regression_level, &t->status);
   int tresult = t->status;
   if (tresult != REGRESSION_TEST_INPROGRESS) {
-    fprintf(stderr, "    REGRESSION_RESULT %s:%*s %s\n", t->name, 40 - (int)strlen(t->name), " ",
+    fprintf(stderr, "    REGRESSION_RESULT %s:%*s %s\n", t->name, 40 - static_cast<int>(strlen(t->name)), " ",
             regression_status_string(tresult));
     t->printed = true;
   }
@@ -141,7 +140,7 @@ RegressionTest::run_some(int regression_level)
     if (current->status != REGRESSION_TEST_NOT_RUN) {
       if (!current->printed) {
         current->printed = true;
-        fprintf(stderr, "    REGRESSION_RESULT %s:%*s %s\n", current->name, 40 - (int)strlen(current->name), " ",
+        fprintf(stderr, "    REGRESSION_RESULT %s:%*s %s\n", current->name, 40 - static_cast<int>(strlen(current->name)), " ",
                 regression_status_string(current->status));
       }
       current = current->next;
@@ -177,7 +176,7 @@ check_test_list:
   while (t) {
     if ((t->status == REGRESSION_TEST_PASSED || t->status == REGRESSION_TEST_FAILED) && !t->printed) {
       t->printed = true;
-      fprintf(stderr, "    REGRESSION_RESULT %s:%*s %s\n", t->name, 40 - (int)strlen(t->name), " ",
+      fprintf(stderr, "    REGRESSION_RESULT %s:%*s %s\n", t->name, 40 - static_cast<int>(strlen(t->name)), " ",
               regression_status_string(t->status));
     }
 

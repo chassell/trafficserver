@@ -85,7 +85,7 @@ public:
   size_t
   spaceUsed() const
   {
-    return (size_t)(nextAdd - bufferStart);
+    return nextAdd - bufferStart;
   };
 
   bool

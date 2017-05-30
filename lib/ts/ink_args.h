@@ -47,8 +47,8 @@ class AppVersionInfo;
 typedef void ArgumentFunction(const ArgumentDescription *argument_descriptions, unsigned n_argument_descriptions, const char *arg);
 
 struct ArgumentDescription {
-  const char *name;
-  char key; // set to '-' if no single character key.
+  const char *const name;
+  const char        key; // set to '-' if no single character key.
             /*
                "I" = integer
                "L" = int64_t

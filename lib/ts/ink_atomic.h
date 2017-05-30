@@ -79,11 +79,11 @@ ink_atomic_swap(volatile T *mem, T value)
 // ink_atomic_cas(mem, prev, next)
 // Atomically store the value @next into the pointer @mem, but only if the current value at @mem is @prev.
 // Returns true if @next was successfully stored.
-template <typename T>
+template <typename T, typename TP, typename TN>
 static inline bool
-ink_atomic_cas(volatile T *mem, T prev, T next)
+ink_atomic_cas(volatile T *mem, TP prev, TN next)
 {
-  return __sync_bool_compare_and_swap(mem, prev, next);
+  return __sync_bool_compare_and_swap(mem, static_cast<T>(prev), static_cast<T>(next));
 }
 
 // ink_atomic_increment(ptr, count)

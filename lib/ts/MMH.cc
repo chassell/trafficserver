@@ -21,11 +21,15 @@
   limitations under the License.
  */
 
-#include <cstdlib>
-#include <cstring>
 #include "ts/ink_assert.h"
 #include "ts/ink_platform.h"
 #include "ts/MMH.h"
+
+#include <cstdlib>
+#include <cstring>
+#include <memory>
+
+#include <endian.h>
 
 #define MMH_X_SIZE 512
 
@@ -101,27 +105,27 @@ ink_code_incr_MMH_init(MMH_CTX *ctx)
 {
   ctx->buffer_size = 0;
   ctx->blocks      = 0;
-  ctx->state[0]    = ((uint64_t)MMH_x[MMH_X_SIZE + 0] << 32) + MMH_x[MMH_X_SIZE + 1];
-  ctx->state[1]    = ((uint64_t)MMH_x[MMH_X_SIZE + 2] << 32) + MMH_x[MMH_X_SIZE + 3];
-  ctx->state[2]    = ((uint64_t)MMH_x[MMH_X_SIZE + 4] << 32) + MMH_x[MMH_X_SIZE + 5];
-  ctx->state[3]    = ((uint64_t)MMH_x[MMH_X_SIZE + 6] << 32) + MMH_x[MMH_X_SIZE + 7];
+  ctx->state[0]    = static_cast<uint64_t>(MMH_x[MMH_X_SIZE + 0] << 32) + MMH_x[MMH_X_SIZE + 1];
+  ctx->state[1]    = static_cast<uint64_t>(MMH_x[MMH_X_SIZE + 2] << 32) + MMH_x[MMH_X_SIZE + 3];
+  ctx->state[2]    = static_cast<uint64_t>(MMH_x[MMH_X_SIZE + 4] << 32) + MMH_x[MMH_X_SIZE + 5];
+  ctx->state[3]    = static_cast<uint64_t>(MMH_x[MMH_X_SIZE + 6] << 32) + MMH_x[MMH_X_SIZE + 7];
   return 0;
 }
 
 int
-ink_code_MMH(unsigned char *input, int len, unsigned char *sixteen_byte_hash)
+ink_code_MMH(const unsigned char *input, int len, unsigned char *sixteen_byte_hash)
 {
   MMH_CTX ctx;
   ink_code_incr_MMH_init(&ctx);
-  ink_code_incr_MMH_update(&ctx, (const char *)input, len);
+  ink_code_incr_MMH_update(&ctx, input, len);
   ink_code_incr_MMH_final(sixteen_byte_hash, &ctx);
   return 0;
 }
 
 static inline void
-MMH_update(MMH_CTX *ctx, unsigned char *ab)
+MMH_update(MMH_CTX *ctx, const uint8_t *ab)
 {
-  uint32_t *b = (uint32_t *)ab;
+  const uint32_t *b = reinterpret_cast<const uint32_t*>(ab);
   ctx->state[0] += b[0] * MMH_x[(ctx->blocks + 0) % MMH_X_SIZE];
   ctx->state[1] += b[1] * MMH_x[(ctx->blocks + 1) % MMH_X_SIZE];
   ctx->state[2] += b[2] * MMH_x[(ctx->blocks + 2) % MMH_X_SIZE];
@@ -368,7 +372,7 @@ MMHContext::MMHContext()
 bool
 MMHContext::update(void const *data, int length)
 {
-  return 0 == ink_code_incr_MMH_update(&_ctx, static_cast<const char *>(data), length);
+  return 0 == ink_code_incr_MMH_update(&_ctx, static_cast<const unsigned char *>(data), length);
 }
 
 bool
@@ -405,28 +409,28 @@ main()
   } h;
 
   xxh = (i4_t *)ats_malloc(4 * sizeof(uint32_t) * TEST_COLLISIONS);
-  xf  = (double *)ats_malloc(sizeof(double) * TEST_COLLISIONS);
+  xf  = static_cast<double *>(malloc(sizeof(double) * TEST_COLLISIONS));
 
   printf("test collisions\n");
-  char *sc1 = "http://npdev:19080/1.6664000000/4000";
-  char *sc2 = "http://npdev:19080/1.8666000000/4000";
-  char *sc3 = "http://:@npdev/1.6664000000/4000;?";
-  char *sc4 = "http://:@npdev/1.8666000000/4000;?";
-  ink_code_MMH((unsigned char *)sc1, strlen(sc1), h.hash);
+  const uint8_t *sc1 = "http://npdev:19080/1.6664000000/4000";
+  const uint8_t *sc2 = "http://npdev:19080/1.8666000000/4000";
+  const uint8_t *sc3 = "http://:@npdev/1.6664000000/4000;?";
+  const uint8_t *sc4 = "http://:@npdev/1.8666000000/4000;?";
+  ink_code_MMH(sc1, strlen(sc1), h.hash);
   printf("%X %X %X %X\n", h.h[0], h.h[1], h.h[2], h.h[3]);
-  ink_code_MMH((unsigned char *)sc2, strlen(sc2), h.hash);
+  ink_code_MMH(sc2, strlen(sc2), h.hash);
   printf("%X %X %X %X\n", h.h[0], h.h[1], h.h[2], h.h[3]);
-  ink_code_MMH((unsigned char *)sc3, strlen(sc3), h.hash);
+  ink_code_MMH(sc3, strlen(sc3), h.hash);
   printf("%X %X %X %X\n", h.h[0], h.h[1], h.h[2], h.h[3]);
-  ink_code_MMH((unsigned char *)sc4, strlen(sc4), h.hash);
+  ink_code_MMH(sc4, strlen(sc4), h.hash);
   printf("%X %X %X %X\n", h.h[0], h.h[1], h.h[2], h.h[3]);
 
   srand48(time(nullptr));
   for (int xx = 0; xx < TEST_COLLISIONS; xx++) {
-    char xs[256];
+    unsigned char xs[256];
     xf[xx] = drand48();
     sprintf(xs, "http://@npdev/%16.14f/4000;?", xf[xx]);
-    ink_code_MMH((unsigned char *)xs, strlen(xs), (unsigned char *)&xxh[xx]);
+    ink_code_MMH(xs, strlen(xs), (unsigned char *)&xxh[xx]);
   }
   qsort(xxh, TEST_COLLISIONS, 16, xxcompar);
   for (int xy = 0; xy < TEST_COLLISIONS - 1; xy++) {
@@ -437,13 +441,13 @@ main()
 
   unsigned char *s  = (unsigned char *)MMH_x;
   int l             = sizeof(MMH_x);
-  unsigned char *s1 = (unsigned char *)ats_malloc(l + 3);
+  unsigned char *s1 = static_cast<unsigned char *>(malloc(l + 3));
   s1 += 1;
   memcpy(s1, s, l);
-  unsigned char *s2 = (unsigned char *)ats_malloc(l + 3);
+  unsigned char *s2 = static_cast<unsigned char *>(malloc(l + 3));
   s2 += 2;
   memcpy(s2, s, l);
-  unsigned char *s3 = (unsigned char *)ats_malloc(l + 3);
+  unsigned char *s3 = static_cast<unsigned char *>(malloc(l + 3));
   s3 += 3;
   memcpy(s3, s, l);
 

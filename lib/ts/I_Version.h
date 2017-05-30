@@ -72,11 +72,11 @@ enum ModuleHeaderType {
 };
 
 #define makeModuleVersion(_major_version, _minor_version, _module_type) \
-  ((ModuleVersion)((((int)_module_type) << 24) + (((int)_major_version) << 16) + (((int)_minor_version) << 8)))
+  static_cast<ModuleVersion>(((_module_type) << 24) + ((_major_version) << 16) + ((_minor_version) << 8))
 
-#define majorModuleVersion(_v) ((((int)_v) >> 16) & 255)
-#define minorModuleVersion(_v) ((((int)_v) >> 8) & 255)
-#define moduleVersionType(_v) ((((int)_v) >> 24) & 127)
+#define majorModuleVersion(_v) (((_v) >> 16) & 255)
+#define minorModuleVersion(_v) (((_v) >> 8) & 255)
+#define moduleVersionType(_v) (((_v) >> 24) & 127)
 
 static inline int
 checkModuleVersion(ModuleVersion userVersion, ModuleVersion libVersion)

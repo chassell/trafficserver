@@ -177,7 +177,7 @@ StrListOverflow::create_heap(int user_size)
   //  aren't aligned, again mirroring the previous implemnetation
   int total_size = overflow_head_hdr_size + user_size;
 
-  StrListOverflow *o = (StrListOverflow *)ats_malloc(total_size);
+  StrListOverflow *o = static_cast<StrListOverflow *>(malloc(total_size));
   o->init();
   o->heap_size = user_size;
 

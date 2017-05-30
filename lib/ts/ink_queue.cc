@@ -181,7 +181,7 @@ ink_freelist_new(InkFreeList *f)
   void *ptr;
 
   if (likely(ptr = freelist_freelist_ops->fl_new(f))) {
-    ink_atomic_increment((int *)&f->used, 1);
+    ink_atomic_increment(&f->used, 1);
   }
 
   return ptr;

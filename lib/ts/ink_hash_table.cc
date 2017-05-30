@@ -69,7 +69,7 @@ ink_hash_table_create(InkHashTableKeyType key_type)
 
   Tcl_InitHashTable(tcl_ht_ptr, tcl_key_type);
 
-  ht_ptr = (InkHashTable *)tcl_ht_ptr;
+  ht_ptr = tcl_ht_ptr;
   return (ht_ptr);
 } /* End ink_hash_table_create */
 
