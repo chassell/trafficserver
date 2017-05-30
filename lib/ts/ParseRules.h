@@ -70,23 +70,9 @@ typedef unsigned int CTypeResult;
 /* shut up the DEC compiler */
 #define is_http_field_value_BIT (1U << 31)
 
-template <typename T_ELT>
-struct CTypeCharIndexMap { 
-      template <size_t N_LEN>
-      CTypeCharIndexMap(const T_ELT (&arrRef)[N_LEN]) : m_ref{arrRef} 
-         { }
-      const T_ELT *(&m_ref);
-      inline const T_ELT operator[](char c) 
-         { return m_ref[reinterpret_cast<uint8_t>(c)]; }
-};
-
-extern ink_undoc_liapi const CTypeResult _parseRulesCType[];
-inkcoreapi extern const char _parseRulesCTypeToUpper[];
-inkcoreapi extern const char _parseRulesCTypeToLower[];
-
-extern ink_undoc_liapi CTypeCharIndexMap<CTypeResult> parseRulesCType;
-inkcoreapi extern CTypeCharIndexMap<CTypeResult> parseRulesCTypeToUpper;
-inkcoreapi extern CTypeCharIndexMap<CTypeResult> parseRulesCTypeToLower;
+extern ink_undoc_liapi ts::CTypeCharLookup<const unsigned int> parseRulesCType;
+inkcoreapi extern ts::CTypeCharLookup<const char>              parseRulesCTypeToUpper;
+inkcoreapi extern ts::CTypeCharLookup<const char>              parseRulesCTypeToLower;
 
 class ParseRules
 {

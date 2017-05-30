@@ -157,7 +157,7 @@ load_buffer(int fd, hdr_type h_type)
     mbuf_size *= 2;
   }
 
-  char *mbuf     = (char *)ats_malloc(mbuf_size);
+  char *mbuf     = static_cast<char *>(malloc(mbuf_size));
   int bytes_read = 0;
   int cur_line   = 0;
 

@@ -261,7 +261,7 @@ Tokenizer::addToken(char *startAddr, int length)
   //   if there is not a next one
   if (add_index >= TOK_NODE_ELEMENTS) {
     if (add_node->next == nullptr) {
-      add_node->next = (tok_node *)ats_malloc(sizeof(tok_node));
+      add_node->next = new tok_node; // sizeof(tok_node)
       memset(add_node->next, 0, sizeof(tok_node));
     }
     add_node  = add_node->next;

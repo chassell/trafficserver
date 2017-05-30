@@ -108,7 +108,7 @@ int ink_res_mkquery(ink_res_state statp, int op,               /*!< opcode of qu
   if ((buf == nullptr) || (buflen < HFIXEDSZ))
     return (-1);
   memset(buf, 0, HFIXEDSZ);
-  hp         = (HEADER *)buf;
+  hp         = new(buf) HEADER;
   hp->id     = htons(++statp->id);
   hp->opcode = op;
   hp->rd     = (statp->options & INK_RES_RECURSE) != 0U;

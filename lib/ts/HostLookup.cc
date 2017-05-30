@@ -174,7 +174,7 @@ hostcmp(const char *c1, const char *c2)
 //
 //   Illegal characters map to 255
 //
-static const unsigned char asciiToTable[256] = {
+static const unsigned char _asciiToTable[256] = {
   255, 255, 255, 255, 255, 255, 255, 255, // 0 - 7
   255, 255, 255, 255, 255, 255, 255, 255, // 8 - 15
   255, 255, 255, 255, 255, 255, 255, 255, // 16 - 23
@@ -196,6 +196,8 @@ static const unsigned char asciiToTable[256] = {
   255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
   255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
   255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
+
+static ts::CTypeCharLookup<const uint8_t> asciiToTable{_asciiToTable};
 
 // Number of legal characters in the acssiToTable array
 static const int numLegalChars = 38;
@@ -367,7 +369,7 @@ charIndex::Insert(const char *match_data, HostBranch *toInsert)
   }
 
   while (true) {
-    index = asciiToTable[(unsigned char)(*match_data)];
+    index = asciiToTable[*match_data];
 
     // Check to see if our index into table is for an
     //  'illegal' DNS character
@@ -422,7 +424,7 @@ charIndex::Lookup(const char *match_data)
   }
 
   while (true) {
-    index = asciiToTable[(unsigned char)(*match_data)];
+    index = asciiToTable[*match_data];
 
     // Check to see if our index into table is for an
     //  'illegal' DNS character

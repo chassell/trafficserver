@@ -34,8 +34,8 @@ restart(unsigned argc, const char **argv)
   unsigned flags    = TS_RESTART_OPT_NONE;
 
   const ArgumentDescription opts[] = {
-    {"drain", '-', "Wait for client connections to drain before restarting", "F", &drain, nullptr, nullptr},
-    {"manager", '-', "Restart traffic_manager as well as traffic_server", "F", &manager, nullptr, nullptr},
+    {"drain", '-', "Wait for client connections to drain before restarting", "F", drain, nullptr, nullptr},
+    {"manager", '-', "Restart traffic_manager as well as traffic_server", "F", manager, nullptr, nullptr},
   };
 
   if (!CtrlProcessArguments(argc, argv, opts, countof(opts)) || n_file_arguments != 0) {
@@ -142,8 +142,8 @@ server_start(unsigned argc, const char **argv)
   unsigned clear = TS_CACHE_CLEAR_NONE;
 
   const ArgumentDescription opts[] = {
-    {"clear-cache", '-', "Clear the disk cache on startup", "F", &cache, nullptr, nullptr},
-    {"clear-hostdb", '-', "Clear the DNS cache on startup", "F", &hostdb, nullptr, nullptr},
+    {"clear-cache", '-', "Clear the disk cache on startup", "F", cache, nullptr, nullptr},
+    {"clear-hostdb", '-', "Clear the DNS cache on startup", "F", hostdb, nullptr, nullptr},
   };
 
   if (!CtrlProcessArguments(argc, argv, opts, countof(opts)) || n_file_arguments != 0) {

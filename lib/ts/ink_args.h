@@ -35,6 +35,8 @@ Process arguments
 #include <sysexits.h>
 #endif
 
+#include <new>
+
 #ifndef EX_USAGE
 #define EX_USAGE 64
 #endif
@@ -60,20 +62,34 @@ struct ArgumentDescription {
                "S80" = read string, 80 chars max
                "S*" = read unbounded string, allocating
              */
-  const char *description;
-  const char *type;
-  void *location;
-  const char *env;
-  ArgumentFunction *pfn;
+  const char *const description;
+  const char *const type;
+  union {
+      int        &u_int;
+      int64_t    &u_int64;
+      double     &u_double;
+      const char *(&u_cstr);
+      char *const u_buffer; // i.e. same as (&u_buffer)[]
+  };
+  const char *const env;
+  ArgumentFunction *const pfn;
+
+  ArgumentDescription &operator=(const ArgumentDescription &other) 
+  {
+      this->~ArgumentDescription();         // a no-op
+      new(this) ArgumentDescription{other}; // simple mem copy of const ptrs
+      return *this;
+  }
+
 };
 
 #define VERSION_ARGUMENT_DESCRIPTION()                                         \
   {                                                                            \
-    "version", 'V', "Print version string", nullptr, nullptr, nullptr, nullptr \
+    "version", 'V', "Print version string", nullptr, { .u_buffer=nullptr }, nullptr, nullptr \
   }
 #define HELP_ARGUMENT_DESCRIPTION()                                          \
   {                                                                          \
-    "help", 'h', "Print usage information", nullptr, nullptr, nullptr, usage \
+    "help", 'h', "Print usage information", nullptr, { .u_buffer=nullptr }, nullptr, usage \
   }
 
 /* Global Data

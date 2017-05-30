@@ -83,6 +83,10 @@ public:
     {                                  \
       return c->_f.next;               \
     }                                  \
+    static size_t next_offset() {      \
+       return offsetof(_c,_f)          \
+            + offsetof(decltype(std::declval<_c>()._f),next);  \
+    }                                  \
   };                                   \
   SLink<_c> _f
 #define SLINKM(_c, _m, _f)                    \
@@ -93,6 +97,11 @@ public:
     next_link(_c *c)                          \
     {                                         \
       return c->_m._f.next;                   \
+    }                                         \
+    static size_t next_offset() {             \
+       return offsetof(_c,_m)                 \
+            + offsetof(decltype(std::declval<_c>()._m),_f)  \
+            + offsetof(decltype(std::declval<_c>()._m._f),next);  \
     }                                         \
   };
 
@@ -127,6 +136,10 @@ template <class C> struct Link : public SLink<C> {
     {                                 \
       return c->_f.prev;              \
     }                                 \
+    static size_t next_offset() {     \
+       return offsetof(_c,_f)  \
+            + offsetof(decltype(std::declval<_c>()._f),next);  \
+    }                                  \
   };                                  \
   Link<_c> _f
 #define LINKM(_c, _m, _f)                    \
@@ -143,6 +156,11 @@ template <class C> struct Link : public SLink<C> {
     {                                        \
       return c->_m._f.prev;                  \
     }                                        \
+    static size_t next_offset() {            \
+       return offsetof(_c,_m)  \
+            + offsetof(decltype(std::declval<_c>()._m),_f)  \
+            + offsetof(decltype(std::declval<_c>()._m._f),next);  \
+    }                                  \
   };
 #define LINK_FORWARD_DECLARATION(_c, _f)     \
   class Link##_##_c##_##_f : public Link<_c> \
@@ -150,6 +168,7 @@ template <class C> struct Link : public SLink<C> {
   public:                                    \
     static _c *&next_link(_c *c);            \
     static _c *&prev_link(_c *c);            \
+    static size_t next_offset();             \
   };
 #define LINK_DEFINITION(_c, _f)                                           \
   inline _c *&Link##_##_c##_##_f::next_link(_c *c) { return c->_f.next; } \
@@ -740,7 +759,7 @@ template <class C, class L = typename C::Link_link> struct AtomicSLL {
 
 template <class C, class L> inline AtomicSLL<C, L>::AtomicSLL()
 {
-  ink_atomiclist_init(&al, "AtomicSLL", reinterpret_cast<uint32_t>(&L::next_link(NULL)));
+  ink_atomiclist_init(&al, "AtomicSLL", L::next_offset() );
 }
 
 #endif /*_List_h_*/

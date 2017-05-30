@@ -194,7 +194,7 @@ config_get(unsigned argc, const char **argv)
 {
   int recfmt                       = 0;
   const ArgumentDescription opts[] = {
-    {"records", '-', "Emit output in records.config format", "F", &recfmt, nullptr, nullptr},
+    {"records", '-', "Emit output in records.config format", "F", recfmt, nullptr, nullptr},
   };
 
   if (!CtrlProcessArguments(argc, argv, opts, countof(opts)) || n_file_arguments < 1) {
@@ -303,7 +303,7 @@ config_match(unsigned argc, const char **argv)
 {
   int recfmt                       = 0;
   const ArgumentDescription opts[] = {
-    {"records", '-', "Emit output in records.config format", "F", &recfmt, nullptr, nullptr},
+    {"records", '-', "Emit output in records.config format", "F", recfmt, nullptr, nullptr},
   };
 
   if (!CtrlProcessArguments(argc, argv, opts, countof(opts)) || n_file_arguments < 1) {
@@ -395,7 +395,7 @@ config_defaults(unsigned argc, const char **argv)
 {
   int recfmt                       = 0;
   const ArgumentDescription opts[] = {
-    {"records", '-', "Emit output in records.config format", "F", &recfmt, nullptr, nullptr},
+    {"records", '-', "Emit output in records.config format", "F", recfmt, nullptr, nullptr},
   };
 
   if (!CtrlProcessArguments(argc, argv, opts, countof(opts)) || n_file_arguments != 0) {
@@ -432,7 +432,7 @@ config_diff(unsigned argc, const char **argv)
 {
   int recfmt                       = 0;
   const ArgumentDescription opts[] = {
-    {"records", '-', "Emit output in records.config format", "F", &recfmt, nullptr, nullptr},
+    {"records", '-', "Emit output in records.config format", "F", recfmt, nullptr, nullptr},
   };
 
   if (!CtrlProcessArguments(argc, argv, opts, countof(opts)) || n_file_arguments != 0) {

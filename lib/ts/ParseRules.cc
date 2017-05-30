@@ -31,19 +31,19 @@
 #include "ts/ink_platform.h"
 #include "ts/ParseRules.h"
 
-const unsigned int _parseRulesCType[256] = {
+static const unsigned int _parseRulesCType[256] = {
 #include "ParseRulesCType"
 };
-const char _parseRulesCTypeToUpper[256] = {
+static const char _parseRulesCTypeToUpper[256] = {
 #include "ParseRulesCTypeToUpper"
 };
-const char _parseRulesCTypeToLower[256] = {
+static const char _parseRulesCTypeToLower[256] = {
 #include "ParseRulesCTypeToLower"
 };
 
-CTypeCharIndexMap<CTypeResult> parseRulesCType{_parseRulesCType};
-CTypeCharIndexMap<int8_t> parseRulesCTypeToUpper{_parseRulesCTypeToUpper};
-CTypeCharIndexMap<int8_t> parseRulesCTypeToLower{_parseRulesCTypeToLower};
+ts::CTypeCharLookup<const unsigned int>    parseRulesCType{_parseRulesCType};
+ts::CTypeCharLookup<const char>            parseRulesCTypeToUpper{_parseRulesCTypeToUpper};
+ts::CTypeCharLookup<const char>            parseRulesCTypeToLower{_parseRulesCTypeToLower};
 
 // Implement our atol() / strtol() utility functions. Note that these will
 // deal with two cases atol does not:

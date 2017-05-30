@@ -121,10 +121,10 @@ ink_freelist_init(InkFreeList **fl, const char *name, uint32_t type_size, uint32
 
   /* its safe to add to this global list because ink_freelist_init()
      is only called from single-threaded initialization code. */
-  f = (InkFreeList *)ats_memalign(alignment, sizeof(InkFreeList));
+  f = new(ats_memalign(alignment, sizeof(InkFreeList))) InkFreeList; // sizeof InkFreeList
   ink_zero(*f);
 
-  fll       = (ink_freelist_list *)ats_malloc(sizeof(ink_freelist_list));
+  fll       = new ink_freelist_list;
   fll->fl   = f;
   fll->next = freelists;
   freelists = fll;

@@ -633,25 +633,25 @@ struct CommandLineArgs {
 static CommandLineArgs cl;
 
 static ArgumentDescription argument_descriptions[] = {
-  {"log_file", 'f', "Specific logfile to parse", "S1023", cl.log_file, NULL, NULL},
-  {"origin_list", 'o', "Only show stats for listed Origins", "S4095", cl.origin_list, NULL, NULL},
-  {"origin_file", 'O', "File listing Origins to show", "S1023", cl.origin_file, NULL, NULL},
-  {"max_orgins", 'M', "Max number of Origins to show", "I", &cl.max_origins, NULL, NULL},
-  {"urls", 'u', "Produce JSON stats for URLs, argument is LRU size", "I", &cl.urls, NULL, NULL},
-  {"show_urls", 'U', "Only show max this number of URLs", "I", &cl.show_urls, NULL, NULL},
-  {"as_object", 'A', "Produce URL stats as a JSON object instead of array", "T", &cl.as_object, NULL, NULL},
-  {"concise", 'C', "Eliminate metrics that can be inferred from other values", "T", &cl.concise, NULL, NULL},
-  {"incremental", 'i', "Incremental log parsing", "T", &cl.incremental, NULL, NULL},
-  {"statetag", 'S', "Name of the state file to use", "S1023", cl.state_tag, NULL, NULL},
-  {"tail", 't', "Parse the last <sec> seconds of log", "I", &cl.tail, NULL, NULL},
-  {"summary", 's', "Only produce the summary", "T", &cl.summary, NULL, NULL},
-  {"json", 'j', "Produce JSON formatted output", "T", &cl.json, NULL, NULL},
-  {"cgi", 'c', "Produce HTTP headers suitable as a CGI", "T", &cl.cgi, NULL, NULL},
-  {"min_hits", 'm', "Minimum total hits for an Origin", "L", &cl.min_hits, NULL, NULL},
-  {"max_age", 'a', "Max age for log entries to be considered", "I", &cl.max_age, NULL, NULL},
-  {"line_len", 'l', "Output line length", "I", &cl.line_len, NULL, NULL},
-  {"debug_tags", 'T', "Colon-Separated Debug Tags", "S1023", &error_tags, NULL, NULL},
-  {"report_per_user", 'r', "Report stats per user instead of host", "T", &cl.report_per_user, NULL, NULL},
+  {"log_file", 'f', "Specific logfile to parse", "S1023", { .u_buffer=cl.log_file }, NULL, NULL},
+  {"origin_list", 'o', "Only show stats for listed Origins", "S4095", { .u_buffer=cl.origin_list }, NULL, NULL},
+  {"origin_file", 'O', "File listing Origins to show", "S1023", { .u_buffer=cl.origin_file }, NULL, NULL},
+  {"max_orgins", 'M', "Max number of Origins to show", "I", cl.max_origins, NULL, NULL},
+  {"urls", 'u', "Produce JSON stats for URLs, argument is LRU size", "I", cl.urls, NULL, NULL},
+  {"show_urls", 'U', "Only show max this number of URLs", "I", cl.show_urls, NULL, NULL},
+  {"as_object", 'A', "Produce URL stats as a JSON object instead of array", "T", cl.as_object, NULL, NULL},
+  {"concise", 'C', "Eliminate metrics that can be inferred from other values", "T", cl.concise, NULL, NULL},
+  {"incremental", 'i', "Incremental log parsing", "T", cl.incremental, NULL, NULL},
+  {"statetag", 'S', "Name of the state file to use", "S1023", { .u_buffer=cl.state_tag }, NULL, NULL},
+  {"tail", 't', "Parse the last <sec> seconds of log", "I", cl.tail, NULL, NULL},
+  {"summary", 's', "Only produce the summary", "T", cl.summary, NULL, NULL},
+  {"json", 'j', "Produce JSON formatted output", "T", cl.json, NULL, NULL},
+  {"cgi", 'c', "Produce HTTP headers suitable as a CGI", "T", cl.cgi, NULL, NULL},
+  {"min_hits", 'm', "Minimum total hits for an Origin", "L", { .u_int64=cl.min_hits }, NULL, NULL},
+  {"max_age", 'a', "Max age for log entries to be considered", "I", cl.max_age, NULL, NULL},
+  {"line_len", 'l', "Output line length", "I", cl.line_len, NULL, NULL},
+  {"debug_tags", 'T', "Colon-Separated Debug Tags", "S1023", { .u_buffer=error_tags }, NULL, NULL},
+  {"report_per_user", 'r', "Report stats per user instead of host", "T", cl.report_per_user, NULL, NULL},
   HELP_ARGUMENT_DESCRIPTION(),
   VERSION_ARGUMENT_DESCRIPTION()};
 
@@ -1181,7 +1181,7 @@ find_or_create_stats(const char *key)
   if (origin_set->empty() || (origin_set->find(key) != origin_set->end())) {
     o_iter = origins.find(key);
     if (origins.end() == o_iter) {
-      o_stats = (OriginStats *)ats_malloc(sizeof(OriginStats));
+      o_stats = new OriginStats;
       memset(o_stats, 0, sizeof(OriginStats));
       init_elapsed(o_stats);
       o_server = ats_strdup(key);
@@ -1722,13 +1722,13 @@ process_file(int in_fd, off_t offset, unsigned max_age)
   char buffer[MAX_LOGBUFFER_SIZE];
   int nread, buffer_bytes;
 
-  Debug("logstats", "Processing file [offset=%" PRId64 "].", (int64_t)offset);
+  Debug("logstats", "Processing file [offset=%" PRId64 "].", static_cast<int64_t>(offset));
   while (true) {
     Debug("logstats", "Reading initial header.");
     buffer[0] = '\0';
 
     unsigned first_read_size = sizeof(uint32_t) + sizeof(uint32_t);
-    LogBufferHeader *header  = (LogBufferHeader *)&buffer[0];
+    LogBufferHeader *header  = new(&buffer[0]) LogBufferHeader;
 
     // Find the next log header, aligning us properly. This is not
     // particularly optimal, but we should only have to do this

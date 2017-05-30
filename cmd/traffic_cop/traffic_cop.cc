@@ -1680,9 +1680,9 @@ init()
 }
 
 static const ArgumentDescription argument_descriptions[] = {
-  {"debug", 'd', "Enable debug logging", "F", &debug_flag, nullptr, nullptr},
-  {"stdout", 'o', "Print log messages to standard output", "F", &stdout_flag, nullptr, nullptr},
-  {"stop", 's', "Send child processes SIGSTOP instead of SIGKILL", "F", &stop_flag, nullptr, nullptr},
+  {"debug", 'd', "Enable debug logging", "F", debug_flag, nullptr, nullptr},
+  {"stdout", 'o', "Print log messages to standard output", "F", stdout_flag, nullptr, nullptr},
+  {"stop", 's', "Send child processes SIGSTOP instead of SIGKILL", "F", stop_flag, nullptr, nullptr},
   HELP_ARGUMENT_DESCRIPTION(),
   VERSION_ARGUMENT_DESCRIPTION()};
 

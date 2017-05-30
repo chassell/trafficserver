@@ -84,9 +84,9 @@ process_arg(const AppVersionInfo *appinfo, const ArgumentDescription *argument_d
   if (argument_descriptions[i].type) {
     char type = argument_descriptions[i].type[0];
     if (type == 'F' || type == 'f') {
-      *(int *)argument_descriptions[i].location = type == 'F' ? 1 : 0;
+      argument_descriptions[i].u_int = type == 'F' ? 1 : 0;
     } else if (type == 'T') {
-      *(int *)argument_descriptions[i].location = !*(int *)argument_descriptions[i].location;
+      argument_descriptions[i].u_int = !argument_descriptions[i].u_int;
     } else {
       arg = *++(**argv) ? **argv : *++(*argv);
       if (!arg) {
@@ -94,20 +94,19 @@ process_arg(const AppVersionInfo *appinfo, const ArgumentDescription *argument_d
       }
       switch (type) {
       case 'I':
-        *(int *)argument_descriptions[i].location = atoi(arg);
+        argument_descriptions[i].u_int = atoi(arg);
         break;
       case 'D':
-        *(double *)argument_descriptions[i].location = atof(arg);
+        argument_descriptions[i].u_double = atof(arg);
         break;
       case 'L':
-        *(int64_t *)argument_descriptions[i].location = ink_atoi64(arg);
+        argument_descriptions[i].u_int64 = ink_atoi64(arg);
         break;
       case 'S':
         if (argument_descriptions[i].type[1] == '*') {
-          char **out = (char **)argument_descriptions[i].location;
-          *out       = ats_strdup(arg);
+          argument_descriptions[i].u_cstr = ats_strdup(arg); // assign dup to ptr-reference
         } else {
-          ink_strlcpy((char *)argument_descriptions[i].location, arg, atoi(argument_descriptions[i].type + 1));
+          ink_strlcpy(argument_descriptions[i].u_buffer, arg, atoi(argument_descriptions[i].type + 1));
         }
         break;
       default:
@@ -136,19 +135,23 @@ show_argument_configuration(const ArgumentDescription *argument_descriptions, un
       case 'F':
       case 'f':
       case 'T':
-        printf(*(int *)argument_descriptions[i].location ? "TRUE" : "FALSE");
+        printf(argument_descriptions[i].u_int ? "TRUE" : "FALSE");
         break;
       case 'I':
-        printf("%d", *(int *)argument_descriptions[i].location);
+        printf("%d", argument_descriptions[i].u_int);
         break;
       case 'D':
-        printf("%f", *(double *)argument_descriptions[i].location);
+        printf("%f", argument_descriptions[i].u_double);
         break;
       case 'L':
-        printf("%" PRId64 "", *(int64_t *)argument_descriptions[i].location);
+        printf("%" PRId64 "", argument_descriptions[i].u_int64);
         break;
       case 'S':
-        printf("%s", (char *)argument_descriptions[i].location);
+        if (argument_descriptions[i].type[1] == '*') {
+           printf("%s", argument_descriptions[i].u_cstr);
+        } else {
+           printf("%s", argument_descriptions[i].u_buffer);
+        }
         break;
       default:
         ink_fatal("bad argument description");
@@ -186,16 +189,20 @@ process_args_ex(const AppVersionInfo *appinfo, const ArgumentDescription *argume
       case 'f':
       case 'F':
       case 'I':
-        *(int *)argument_descriptions[i].location = atoi(env);
+        argument_descriptions[i].u_int = atoi(env);
         break;
       case 'D':
-        *(double *)argument_descriptions[i].location = atof(env);
+        argument_descriptions[i].u_double = atof(env);
         break;
       case 'L':
-        *(int64_t *)argument_descriptions[i].location = atoll(env);
+        argument_descriptions[i].u_int64 = atoll(env);
         break;
       case 'S':
-        ink_strlcpy((char *)argument_descriptions[i].location, env, atoi(argument_descriptions[i].type + 1));
+        if (argument_descriptions[i].type[1] == '*') {
+           argument_descriptions[i].u_cstr = ats_strdup(env);
+        } else {
+           ink_strlcpy(argument_descriptions[i].u_buffer, env, atoi(argument_descriptions[i].type + 1));
+        }
         break;
       }
     }
@@ -289,14 +296,14 @@ usage(const ArgumentDescription *argument_descriptions, unsigned n_argument_desc
       fprintf(stderr, "          ");
       break;
     case 'L':
-      fprintf(stderr, " %-9" PRId64 "", *(int64_t *)argument_descriptions[i].location);
+      fprintf(stderr, " %-9" PRId64 "", argument_descriptions[i].u_int64);
       break;
     case 'S': {
-      char *location;
+      const char *location;
       if (argument_descriptions[i].type[1] == '*') {
-        location = *(char **)argument_descriptions[i].location;
+        location = argument_descriptions[i].u_cstr;
       } else {
-        location = (char *)argument_descriptions[i].location;
+        location = argument_descriptions[i].u_buffer;
       }
 
       if (location) {
@@ -311,16 +318,16 @@ usage(const ArgumentDescription *argument_descriptions, unsigned n_argument_desc
       break;
     }
     case 'D':
-      fprintf(stderr, " %-9.3f", *(double *)argument_descriptions[i].location);
+      fprintf(stderr, " %-9.3f", argument_descriptions[i].u_double);
       break;
     case 'I':
-      fprintf(stderr, " %-9d", *(int *)argument_descriptions[i].location);
+      fprintf(stderr, " %-9d", argument_descriptions[i].u_int);
       break;
     case 'T':
     case 'f':
     case 'F':
-      if (argument_descriptions[i].location) {
-        fprintf(stderr, " %-9s", *(int *)argument_descriptions[i].location ? "true " : "false");
+      if (&argument_descriptions[i].u_int) {
+        fprintf(stderr, " %-9s", argument_descriptions[i].u_int ? "true " : "false");
       } else {
         fprintf(stderr, " %-9s", "false");
       }

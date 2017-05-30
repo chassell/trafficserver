@@ -131,7 +131,7 @@ initialize_record(const RecordElement *record, void *)
       break;
 
     case RECD_STRING:
-      RecRegisterStatString(type, record->name, (RecString)record->value, RECP_NON_PERSISTENT);
+      RecRegisterStatString(type, record->name, record->value, RECP_NON_PERSISTENT);
       break;
 
     case RECD_COUNTER:

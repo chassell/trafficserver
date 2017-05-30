@@ -25,13 +25,21 @@
 
 #include "ts/ParseRules.h"
 
-const unsigned int parseRulesCType[256] = {0};
-const char parseRulesCTypeToUpper[256]  = {0};
-const char parseRulesCTypeToLower[256]  = {0};
+static const unsigned int _parseRulesCType[256] = {0};
+static const char _parseRulesCTypeToUpper[256]  = {0};
+static const char _parseRulesCTypeToLower[256]  = {0};
 
-unsigned int tparseRulesCType[256];
-char tparseRulesCTypeToUpper[256];
-char tparseRulesCTypeToLower[256];
+ts::CTypeCharLookup<const CTypeResult> parseRulesCType{_parseRulesCType};
+ts::CTypeCharLookup<const char>        parseRulesCTypeToUpper{_parseRulesCTypeToUpper};
+ts::CTypeCharLookup<const char>        parseRulesCTypeToLower{_parseRulesCTypeToLower};
+
+static unsigned int _tparseRulesCType[256];
+static char _tparseRulesCTypeToUpper[256];
+static char _tparseRulesCTypeToLower[256];
+
+ts::CTypeCharLookup<unsigned int> tparseRulesCType{_tparseRulesCType};
+ts::CTypeCharLookup<char>         tparseRulesCTypeToUpper{_tparseRulesCTypeToUpper};
+ts::CTypeCharLookup<char>         tparseRulesCTypeToLower{_tparseRulesCTypeToLower};
 
 #include <cstdio>
 #include <cctype>
