@@ -50,8 +50,9 @@ StrList::dump(FILE *fp)
 {
   Str *str;
 
-  for (str = head; str != nullptr; str = str->next)
+  for (str = head; str != nullptr; str = str->next) {
     str->dump(fp);
+  }
 }
 
 /*-------------------------------------------------------------------------
@@ -70,8 +71,9 @@ StrList::_new_cell(const char *s, int len_not_counting_nul)
   } else {
     size_t extra = 8;
     p = static_cast<char*>(alloc(sizeof(Str) + extra));
-    if (p == nullptr)
-      return (nullptr);                         // FIX: scale heap
+    if (p == nullptr) {
+      return nullptr;   // FIX: scale heap
+    }
     std::align(8,0,p,extra);
     cell = reinterpret_cast<Str*>(p);
   }
@@ -80,8 +82,9 @@ StrList::_new_cell(const char *s, int len_not_counting_nul)
   // are we supposed to copy the string?
   if (copy_when_adding_string) {
     char *buf = static_cast<char*>(alloc(l + 1));
-    if (buf == nullptr)
+    if (buf == nullptr) {
       return (nullptr); // FIX: need to grow heap!
+    }
     memcpy(buf, s, l);
     buf[l] = '\0';
 
@@ -114,8 +117,9 @@ StrList::overflow_heap_alloc(int size)
 void
 StrList::overflow_heap_clean()
 {
-  if (overflow_first)
+  if (overflow_first) {
     overflow_first->clean();
+  }
 }
 
 #define INIT_OVERFLOW_ALIGNMENT 8
