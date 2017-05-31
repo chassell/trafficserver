@@ -50,8 +50,9 @@ StrList::dump(FILE *fp)
 {
   Str *str;
 
-  for (str = head; str != nullptr; str = str->next)
+  for (str = head; str != nullptr; str = str->next) {
     str->dump(fp);
+  }
 }
 
 /*-------------------------------------------------------------------------
@@ -68,20 +69,21 @@ StrList::_new_cell(const char *s, int len_not_counting_nul)
   if (cells_allocated < STRLIST_BASE_CELLS) {
     cell = &(base_cells[cells_allocated]);
   } else {
-    size_t extra = 8;
-    p = static_cast<char*>(alloc(sizeof(Str) + extra));
-    if (p == nullptr)
-      return (nullptr);                         // FIX: scale heap
-    std::align(8,0,p,extra);
-    cell = reinterpret_cast<Str*>(p);
+    p = (char *)alloc(sizeof(Str) + 7);
+    if (p == nullptr) {
+      return (nullptr); // FIX: scale heap
+    }
+    p    = (char *)((((uintptr_t)p) + 7) & ~7); // round up to multiple of 8
+    cell = (Str *)p;
   }
   ++cells_allocated;
 
   // are we supposed to copy the string?
   if (copy_when_adding_string) {
-    char *buf = static_cast<char*>(alloc(l + 1));
-    if (buf == nullptr)
+    char *buf = (char *)alloc(l + 1);
+    if (buf == nullptr) {
       return (nullptr); // FIX: need to grow heap!
+    }
     memcpy(buf, s, l);
     buf[l] = '\0';
 
@@ -114,8 +116,9 @@ StrList::overflow_heap_alloc(int size)
 void
 StrList::overflow_heap_clean()
 {
-  if (overflow_first)
+  if (overflow_first) {
     overflow_first->clean();
+  }
 }
 
 #define INIT_OVERFLOW_ALIGNMENT 8
