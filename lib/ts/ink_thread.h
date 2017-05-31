@@ -187,7 +187,7 @@ ink_thread_self()
 static inline ink_thread
 ink_thread_null()
 {
-  return 0;
+  return (ink_thread)0;
 }
 
 static inline int

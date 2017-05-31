@@ -120,8 +120,8 @@ public:
   {
     void *ptr = ink_freelist_new(this->fl);
 
-    memcpy(ptr, &this->proto.typeObject, sizeof(C));
-    return static_cast<C*>(ptr);
+    memcpy(ptr, (void *)&this->proto.typeObject, sizeof(C));
+    return (C *)ptr;
   }
 
   /**
@@ -155,7 +155,7 @@ public:
   void *
   alloc_void()
   {
-    return alloc();
+    return (void *)alloc();
   }
 
   /**
@@ -167,7 +167,7 @@ public:
   void
   free_void(void *ptr)
   {
-    free(static_cast<C*>(ptr));
+    free((C *)ptr);
   }
 
   /**
@@ -181,7 +181,7 @@ public:
   void
   free_void_bulk(void *head, void *tail, size_t num_item)
   {
-    free_bulk(static_cast<C*>(head), static_cast<C*>(tail), num_item);
+    free_bulk((C *)head, (C *)tail, num_item);
   }
 
   /**
@@ -193,7 +193,7 @@ public:
   */
   ClassAllocator(const char *name, unsigned int chunk_size = 128, unsigned int alignment = 16)
   {
-    ::new (&proto.typeObject) C();
+    ::new ((void *)&proto.typeObject) C();
     ink_freelist_init(&this->fl, name, RND16(sizeof(C)), chunk_size, RND16(alignment));
   }
 
@@ -223,7 +223,7 @@ public:
       symbol = callstack[2];
     }
 
-    tracker.increment(symbol, sizeof(C), this->fl->name);
+    tracker.increment(symbol, (int64_t)sizeof(C), this->fl->name);
     ink_mutex_acquire(&trackerLock);
     reverse_lookup[ptr] = symbol;
     ++allocations;
@@ -238,7 +238,7 @@ public:
     ink_mutex_acquire(&trackerLock);
     std::map<void *, const void *>::iterator it = reverse_lookup.find(ptr);
     if (it != reverse_lookup.end()) {
-      tracker.increment(it->second, sizeof(C) * -1, nullptr);
+      tracker.increment((const void *)it->second, (int64_t)sizeof(C) * -1, nullptr);
       reverse_lookup.erase(it);
     }
     ink_mutex_release(&trackerLock);

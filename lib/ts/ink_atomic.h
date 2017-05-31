@@ -92,7 +92,7 @@ template <typename Type, typename Amount>
 static inline Type
 ink_atomic_increment(volatile Type *mem, Amount count)
 {
-  return __sync_fetch_and_add(mem, static_cast<Type>(count));
+  return __sync_fetch_and_add(mem, (Type)count);
 }
 
 // ink_atomic_decrement(ptr, count)
@@ -101,7 +101,7 @@ template <typename Type, typename Amount>
 static inline Type
 ink_atomic_decrement(volatile Type *mem, Amount count)
 {
-  return __sync_fetch_and_sub(mem, static_cast<Type>(count));
+  return __sync_fetch_and_sub(mem, (Type)count);
 }
 
 // Special hacks for ARM 32-bit

@@ -68,11 +68,11 @@ typedef unsigned int CTypeResult;
 #define is_mime_sep_BIT (1 << 29)
 #define is_http_field_name_BIT (1 << 30)
 /* shut up the DEC compiler */
-#define is_http_field_value_BIT (1U << 31)
+#define is_http_field_value_BIT (((CTypeResult)1) << 31)
 
-extern ink_undoc_liapi ts::CTypeCharLookup<const unsigned int> parseRulesCType;
-inkcoreapi extern ts::CTypeCharLookup<const char>              parseRulesCTypeToUpper;
-inkcoreapi extern ts::CTypeCharLookup<const char>              parseRulesCTypeToLower;
+extern ink_undoc_liapi const CTypeResult parseRulesCType[];
+inkcoreapi extern const char parseRulesCTypeToUpper[];
+inkcoreapi extern const char parseRulesCTypeToLower[];
 
 class ParseRules
 {
@@ -151,14 +151,14 @@ public:
   // operations //
   ////////////////
 
-  static CTypeResult strncasecmp_eow(const char *s1, const char *s2, size_t n);
+  static CTypeResult strncasecmp_eow(const char *s1, const char *s2, int n);
   static const char *strcasestr(const char *s1, const char *s2);
   static int strlen_eow(const char *s);
   static const char *strstr_eow(const char *s1, const char *s2);
 
   static char ink_toupper(char c);
   static char ink_tolower(char c);
-  static const char *memchr(const char *s, char c, size_t max_length);
+  static const char *memchr(const char *s, char c, int max_length);
   static const char *strchr(const char *s, char c);
 
 private:
@@ -173,14 +173,14 @@ private:
 inline CTypeResult
 ParseRules::is_type(char c, uint32_t bitmask)
 {
-  return (parseRulesCType[c] & bitmask);
+  return (parseRulesCType[(unsigned char)c] & bitmask);
 }
 
 inline CTypeResult
 ParseRules::is_char(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_char_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_char_BIT);
 #else
   return ((c & 0x80) == 0);
 #endif
@@ -190,7 +190,7 @@ inline CTypeResult
 ParseRules::is_upalpha(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_upalpha_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_upalpha_BIT);
 #else
   return (c >= 'A' && c <= 'Z');
 #endif
@@ -200,7 +200,7 @@ inline CTypeResult
 ParseRules::is_loalpha(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_loalpha_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_loalpha_BIT);
 #else
   return (c >= 'a' && c <= 'z');
 #endif
@@ -210,7 +210,7 @@ inline CTypeResult
 ParseRules::is_alpha(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_alpha_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_alpha_BIT);
 #else
   return (is_upalpha(c) || is_loalpha(c));
 #endif
@@ -220,7 +220,7 @@ inline CTypeResult
 ParseRules::is_digit(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_digit_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_digit_BIT);
 #else
   return (c >= '0' && c <= '9');
 #endif
@@ -230,7 +230,7 @@ inline CTypeResult
 ParseRules::is_alnum(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_alnum_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_alnum_BIT);
 #else
   return (is_alpha(c) || is_digit(c));
 #endif
@@ -240,7 +240,7 @@ inline CTypeResult
 ParseRules::is_ctl(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_ctl_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_ctl_BIT);
 #else
   return ((!(c & 0x80) && c <= 31) || c == 127);
 #endif
@@ -250,7 +250,7 @@ inline CTypeResult
 ParseRules::is_ws(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_ws_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_ws_BIT);
 #else
   return (c == CHAR_SP || c == CHAR_HT);
 #endif
@@ -260,7 +260,7 @@ inline CTypeResult
 ParseRules::is_hex(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_hex_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_hex_BIT);
 #else
   return ((c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f') || (c >= '0' && c <= '9'));
 #endif
@@ -282,7 +282,7 @@ inline CTypeResult
 ParseRules::is_splf(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_splf_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_splf_BIT);
 #else
   return (c == CHAR_SP || c == CHAR_LF);
 #endif
@@ -292,7 +292,7 @@ inline CTypeResult
 ParseRules::is_spcr(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_spcr_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_spcr_BIT);
 #else
   return (c == CHAR_SP || c == CHAR_CR);
 #endif
@@ -302,7 +302,7 @@ inline CTypeResult
 ParseRules::is_wslfcr(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_wslfcr_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_wslfcr_BIT);
 #else
   return ParseRules::is_ws(c) || ParseRules::is_splf(c) || ParseRules::is_spcr(c);
 #endif
@@ -312,7 +312,7 @@ inline CTypeResult
 ParseRules::is_extra(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_extra_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_extra_BIT);
 #else
   switch (c) {
   case '!':
@@ -331,7 +331,7 @@ inline CTypeResult
 ParseRules::is_safe(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_safe_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_safe_BIT);
 #else
   return (c == '$' || c == '-' || c == '_' || c == '.' || c == '+');
 #endif
@@ -341,7 +341,7 @@ inline CTypeResult
 ParseRules::is_unsafe(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_unsafe_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_unsafe_BIT);
 #else
   if (is_ctl(c))
     return (true);
@@ -363,7 +363,7 @@ inline CTypeResult
 ParseRules::is_reserved(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_reserved_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_reserved_BIT);
 #else
   switch (c) {
   case ';':
@@ -383,7 +383,7 @@ inline CTypeResult
 ParseRules::is_national(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_national_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_national_BIT);
 #else
   switch (c) {
   case '{':
@@ -405,7 +405,7 @@ inline CTypeResult
 ParseRules::is_unreserved(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_unreserved_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_unreserved_BIT);
 #else
   return (is_alpha(c) || is_digit(c) || is_safe(c) || is_extra(c) || is_national(c));
 #endif
@@ -415,7 +415,7 @@ inline CTypeResult
 ParseRules::is_punct(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_punct_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_punct_BIT);
 #else
   switch (c) {
   case '!':
@@ -459,7 +459,7 @@ inline CTypeResult
 ParseRules::is_end_of_url(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_end_of_url_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_end_of_url_BIT);
 #else
   return (c == '\0' || c == '\n' || c == ' ' || ParseRules::is_ctl(c));
 #endif
@@ -485,7 +485,7 @@ ParseRules::is_pchar(const char *seq)
 {
 #ifndef COMPILE_PARSE_RULES
   if (*seq != '%')
-    return (parseRulesCType[*seq] & is_pchar_BIT);
+    return (parseRulesCType[(uint8_t)*seq] & is_pchar_BIT);
   else
     return is_hex(seq[1]) && is_hex(seq[2]);
 #else
@@ -508,7 +508,7 @@ inline CTypeResult
 ParseRules::is_tspecials(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_tspecials_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_tspecials_BIT);
 #else
   switch (c) {
   case '(':
@@ -540,7 +540,7 @@ inline CTypeResult
 ParseRules::is_token(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_token_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_token_BIT);
 #else
   return (is_char(c) && !(is_ctl(c) || is_tspecials(c)));
 #endif
@@ -550,7 +550,7 @@ inline char
 ParseRules::ink_toupper(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return parseRulesCTypeToUpper[c];
+  return parseRulesCTypeToUpper[(unsigned char)c];
 #else
   int up_case            = c;
   const int up_case_diff = 'a' - 'A';
@@ -566,7 +566,7 @@ inline char
 ParseRules::ink_tolower(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return parseRulesCTypeToLower[c];
+  return parseRulesCTypeToLower[(unsigned char)c];
 #else
   int lo_case            = c;
   const int lo_case_diff = 'a' - 'A';
@@ -582,7 +582,7 @@ inline CTypeResult
 ParseRules::is_eow(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_eow_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_eow_BIT);
 #else
   return (c == '\0' || c == '\r' || c == '\n');
 #endif
@@ -592,7 +592,7 @@ inline CTypeResult
 ParseRules::is_uri(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_uri_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_uri_BIT);
 #else
   if (is_alnum(c))
     return (true);
@@ -631,7 +631,7 @@ inline CTypeResult
 ParseRules::is_sep(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_sep_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_sep_BIT);
 #else
   return (!c || c == ',' || c == ':' || c == '!' || is_wslfcr(c));
 #endif
@@ -641,7 +641,7 @@ inline CTypeResult
 ParseRules::is_empty(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_empty_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_empty_BIT);
 #else
   return (c == '#' || is_wslfcr(c));
 #endif
@@ -651,7 +651,7 @@ inline CTypeResult
 ParseRules::is_space(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_space_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_space_BIT);
 #else
   switch (c) {
   case CHAR_SP:
@@ -670,9 +670,9 @@ inline CTypeResult
 ParseRules::is_control(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_control_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_control_BIT);
 #else
-  if ((static_cast<uint8_t>(c)) < 32 || c == 127)
+  if (((unsigned char)c) < 32 || ((unsigned char)c) == 127)
     return true;
   return false;
 #endif
@@ -682,7 +682,7 @@ inline CTypeResult
 ParseRules::is_mime_sep(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_mime_sep_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_mime_sep_BIT);
 #else
   if ((c == '(') || (c == ')') || (c == '<') || (c == '>') || (c == '@') || (c == ',') || (c == ';') || (c == '\\') ||
       (c == '\"') || (c == '/') || (c == '[') || (c == ']') || (c == '?') || (c == '{') || (c == '}') || (c == ' ') || (c == '\t'))
@@ -695,7 +695,7 @@ inline CTypeResult
 ParseRules::is_http_field_name(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return (parseRulesCType[c] & is_http_field_name_BIT);
+  return (parseRulesCType[(unsigned char)c] & is_http_field_name_BIT);
 #else
   if ((c == ':') || (is_mime_sep(c) && (c != '@')))
     return false;
@@ -707,7 +707,7 @@ inline CTypeResult
 ParseRules::is_http_field_value(char c)
 {
 #ifndef COMPILE_PARSE_RULES
-  return parseRulesCType[c] & is_http_field_value_BIT;
+  return (CTypeResult)(parseRulesCType[(unsigned char)c] & is_http_field_value_BIT);
 #else
   switch (c) {
   case CHAR_CR:
@@ -731,9 +731,9 @@ ParseRules::is_http_field_value(char c)
 //////////////////////////////////////////////////////////////////////////////
 
 inline CTypeResult
-ParseRules::strncasecmp_eow(const char *s1, const char *s2, size_t count)
+ParseRules::strncasecmp_eow(const char *s1, const char *s2, int count)
 {
-  for (size_t i = 0; i < count; i++) {
+  for (int i = 0; i < count; i++) {
     const char &a = s1[i];
     const char &b = s2[i];
 
@@ -793,16 +793,16 @@ ParseRules::strcasestr(const char *s1, const char *s2)
 
   for (i1 = 0; s1[i1] != '\0'; i1++)
     if (ink_tolower(s1[i1]) == ink_tolower(s2[0]))
-      if (strncasecmp_eow(&s1[i1], &s2[0], s2_len))
+      if (strncasecmp_eow(&s1[i1], &s2[0], (int)s2_len))
         return (&s1[i1]);
 
   return (0);
 }
 
 inline const char *
-ParseRules::memchr(const char *s, char c, size_t max_length)
+ParseRules::memchr(const char *s, char c, int max_length)
 {
-  for (size_t i = 0; i < max_length; i++)
+  for (int i = 0; i < max_length; i++)
     if (s[i] == c)
       return (&s[i]);
   return (0);
@@ -821,9 +821,9 @@ static inline int
 ink_get_hex(char c)
 {
   if (ParseRules::is_digit(c))
-    return c - '0';
+    return (int)(c - '0');
   c = ParseRules::ink_tolower(c);
-  return c - 'a' + 10;
+  return (int)((c - 'a') + 10);
 }
 
 int64_t ink_atoi64(const char *);
@@ -840,7 +840,7 @@ ink_atoi(const char *str)
   else if (val < INT_MIN)
     return INT_MIN;
   else
-    return val;
+    return static_cast<int>(val);
 }
 
 static inline int
@@ -853,7 +853,7 @@ ink_atoi(const char *str, int len)
   else if (val < INT_MIN)
     return INT_MIN;
   else
-    return val;
+    return static_cast<int>(val);
 }
 
 static inline unsigned int
@@ -864,7 +864,7 @@ ink_atoui(const char *str)
   if (val > INT_MAX)
     return INT_MAX;
   else
-    return val;
+    return static_cast<int>(val);
 }
 
 #endif /* #if !defined (_ParseRules_h_) */

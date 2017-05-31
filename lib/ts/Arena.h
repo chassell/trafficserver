@@ -59,10 +59,10 @@ private:
 inline size_t
 Arena::str_length(const char *str)
 {
-  const uint8_t *s, *e;
+  unsigned char *s, *e;
   size_t len;
 
-  e = reinterpret_cast<const uint8_t *>(str);
+  e = (unsigned char *)str;
   s = e - 1;
 
   while (*s >= 128) {
@@ -97,7 +97,7 @@ Arena::str_length(const char *str)
 inline char *
 Arena::str_alloc(size_t len)
 {
-  uint8_t *mem, *p;
+  unsigned char *mem, *p;
   size_t size;
   size_t tmp;
 
@@ -109,19 +109,19 @@ Arena::str_alloc(size_t len)
     tmp /= 128;
   }
 
-  mem = static_cast<uint8_t *>(alloc(size, 1));
+  mem = (unsigned char *)alloc(size, 1);
 
   mem += (size - len - 1);
   p   = mem - 1;
   tmp = len;
 
-  while (tmp >= 128U) {
-    *p-- = '\xff' - (tmp % 128U);
-    tmp /= 128U;
+  while (tmp >= 128) {
+    *p-- = (unsigned char)(255 - (tmp % 128));
+    tmp /= 128;
   }
-  *p = tmp;
+  *p = (unsigned char)tmp;
 
-  return reinterpret_cast<char*>(mem);
+  return (char *)mem;
 }
 
 /*-------------------------------------------------------------------------
@@ -130,10 +130,10 @@ Arena::str_alloc(size_t len)
 inline void
 Arena::str_free(char *str)
 {
-  uint8_t *p, *s, *e;
+  unsigned char *p, *s, *e;
   size_t len;
 
-  e = reinterpret_cast<uint8_t *>(str);
+  e = (unsigned char *)str;
   s = e - 1;
 
   while (*s >= 128) {

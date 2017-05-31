@@ -347,7 +347,7 @@ public:
   int64_t
   size()
   {
-    return _end - _start;
+    return (int64_t)(_end - _start);
   }
 
   /**
@@ -360,7 +360,7 @@ public:
   int64_t
   read_avail()
   {
-    return _end - _start;
+    return (int64_t)(_end - _start);
   }
 
   /**
@@ -372,7 +372,7 @@ public:
   int64_t
   write_avail()
   {
-    return _buf_end - _end;
+    return (int64_t)(_buf_end - _end);
   }
 
   /**

@@ -64,14 +64,14 @@ public:
   int
   refcount_inc()
   {
-    return ink_atomic_increment(&m_refcount, 1) + 1;
+    return ink_atomic_increment((int *)&m_refcount, 1) + 1;
   }
 
   // Decrement the reference count, returning the new count.
   int
   refcount_dec()
   {
-    return ink_atomic_increment(&m_refcount, -1) - 1;
+    return ink_atomic_increment((int *)&m_refcount, -1) - 1;
   }
 
   int

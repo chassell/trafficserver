@@ -50,10 +50,10 @@ inline C *
 thread_alloc(ClassAllocator<C> &a, ProxyAllocator &l)
 {
   if (l.freelist) {
-    C *v       = static_cast<C*>(l.freelist);
-    l.freelist = *static_cast<C**>(l.freelist);
+    C *v       = (C *)l.freelist;
+    l.freelist = *(C **)l.freelist;
     --(l.allocated);
-    *reinterpret_cast<void **>(v) = *reinterpret_cast<void **>(&a.proto.typeObject);
+    *(void **)v = *(void **)&a.proto.typeObject;
     return v;
   }
   return a.alloc();
@@ -64,10 +64,10 @@ inline C *
 thread_alloc_init(ClassAllocator<C> &a, ProxyAllocator &l)
 {
   if (l.freelist) {
-    C *v       = static_cast<C*>(l.freelist);
-    l.freelist = *static_cast<C**>(l.freelist);
+    C *v       = (C *)l.freelist;
+    l.freelist = *(C **)l.freelist;
     --(l.allocated);
-    memcpy(v, &a.proto.typeObject, sizeof(C));
+    memcpy((void *)v, (void *)&a.proto.typeObject, sizeof(C));
     return v;
   }
   return a.alloc();
@@ -90,12 +90,12 @@ template <class C>
 inline void
 thread_freeup(ClassAllocator<C> &a, ProxyAllocator &l)
 {
-  C *head      = static_cast<C*>(l.freelist);
-  C *tail      = static_cast<C*>(l.freelist);
+  C *head      = (C *)l.freelist;
+  C *tail      = (C *)l.freelist;
   size_t count = 0;
   while (l.freelist && l.allocated > thread_freelist_low_watermark) {
-    tail       = static_cast<C*>(l.freelist);
-    l.freelist = *reinterpret_cast<C **>(l.freelist);
+    tail       = (C *)l.freelist;
+    l.freelist = *(C **)l.freelist;
     --(l.allocated);
     ++count;
   }

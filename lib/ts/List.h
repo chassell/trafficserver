@@ -83,10 +83,6 @@ public:
     {                                  \
       return c->_f.next;               \
     }                                  \
-    static size_t next_offset() {      \
-       return offsetof(_c,_f)          \
-            + offsetof(decltype(std::declval<_c>()._f),next);  \
-    }                                  \
   };                                   \
   SLink<_c> _f
 #define SLINKM(_c, _m, _f)                    \
@@ -97,11 +93,6 @@ public:
     next_link(_c *c)                          \
     {                                         \
       return c->_m._f.next;                   \
-    }                                         \
-    static size_t next_offset() {             \
-       return offsetof(_c,_m)                 \
-            + offsetof(decltype(std::declval<_c>()._m),_f)  \
-            + offsetof(decltype(std::declval<_c>()._m._f),next);  \
     }                                         \
   };
 
@@ -405,7 +396,7 @@ inline void
 Queue<C, L>::remove(C *e)
 {
   if (tail == e)
-    tail = static_cast<C *>(this->prev(e));
+    tail = (C *)this->prev(e);
   DLL<C, L>::remove(e);
 }
 
@@ -714,12 +705,12 @@ template <class C, class L = typename C::Link_link> struct AtomicSLL {
   C *
   pop()
   {
-    return static_cast<C *>(ink_atomiclist_pop(&al));
+    return (C *)ink_atomiclist_pop(&al);
   }
   C *
   popall()
   {
-    return static_cast<C *>(ink_atomiclist_popall(&al));
+    return (C *)ink_atomiclist_popall(&al);
   }
   bool
   empty()
@@ -736,17 +727,17 @@ template <class C, class L = typename C::Link_link> struct AtomicSLL {
   C *
   remove(C *c)
   {
-    return static_cast<C *>(ink_atomiclist_remove(&al, c));
+    return (C *)ink_atomiclist_remove(&al, c);
   }
   C *
   head()
   {
-    return static_cast<C *>(TO_PTR(FREELIST_POINTER(al.head)));
+    return (C *)TO_PTR(FREELIST_POINTER(al.head));
   }
   C *
   next(C *c)
   {
-    return static_cast<C *>(TO_PTR(c));
+    return (C *)TO_PTR(c);
   }
 
   InkAtomicList al;
@@ -759,7 +750,7 @@ template <class C, class L = typename C::Link_link> struct AtomicSLL {
 
 template <class C, class L> inline AtomicSLL<C, L>::AtomicSLL()
 {
-  ink_atomiclist_init(&al, "AtomicSLL", L::next_offset() );
+  ink_atomiclist_init(&al, "AtomicSLL", (uint32_t)(uintptr_t)&L::next_link((C *)0));
 }
 
 #endif /*_List_h_*/

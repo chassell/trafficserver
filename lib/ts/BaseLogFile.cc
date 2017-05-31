@@ -167,8 +167,8 @@ BaseLogFile::roll(time_t interval_start, time_t interval_end)
 
   // Now that we have our timestamp values, convert them to the proper
   // timestamp formats and create the rolled file name.
-  timestamp_to_str(start, start_time_ext, sizeof(start_time_ext));
-  timestamp_to_str(end, end_time_ext, sizeof(start_time_ext));
+  timestamp_to_str((long)start, start_time_ext, sizeof(start_time_ext));
+  timestamp_to_str((long)end, end_time_ext, sizeof(start_time_ext));
   snprintf(roll_name, LOGFILE_ROLL_MAXPATHLEN, "%s%s%s.%s-%s%s", m_name.get(), (m_hostname.get() ? LOGFILE_SEPARATOR_STRING : ""),
            (m_hostname.get() ? m_hostname.get() : ""), start_time_ext, end_time_ext, LOGFILE_ROLLED_EXTENSION);
 
@@ -235,8 +235,8 @@ BaseLogFile::roll()
 bool
 BaseLogFile::rolled_logfile(char *path)
 {
-  const size_t target_len = strlen(LOGFILE_ROLLED_EXTENSION);
-  size_t len              = strlen(path);
+  const int target_len = (int)strlen(LOGFILE_ROLLED_EXTENSION);
+  int len              = (int)strlen(path);
   if (len > target_len) {
     char *str = &path[len - target_len];
     if (!strcmp(str, LOGFILE_ROLLED_EXTENSION)) {
@@ -301,9 +301,9 @@ BaseLogFile::open_file(int perm)
     // The log file does not exist, so we create a new MetaInfo object
     //  which will save itself to disk right away (in the constructor)
     if (m_has_signature)
-      m_meta_info = new BaseMetaInfo(m_name.get(), time(nullptr), m_signature);
+      m_meta_info = new BaseMetaInfo(m_name.get(), (long)time(nullptr), m_signature);
     else
-      m_meta_info = new BaseMetaInfo(m_name.get(), time(nullptr));
+      m_meta_info = new BaseMetaInfo(m_name.get(), (long)time(nullptr));
   }
 
   // open actual log file (not metainfo)
