@@ -303,7 +303,7 @@ UDPReadContinuation::setupPollDescriptor()
 {
 #if TS_USE_EPOLL
   Pollfd *pfd;
-  EThread *et  = this_ethread();
+  EThread *et  = (EThread *)this_thread();
   PollCont *pc = get_PollCont(et);
   if (pc->nextPollDescriptor == nullptr) {
     pc->nextPollDescriptor = new PollDescriptor();

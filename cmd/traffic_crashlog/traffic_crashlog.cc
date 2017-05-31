@@ -42,11 +42,11 @@ extern char __pid_size_static_assert[sizeof(pid_t) == sizeof(int) ? 0 : -1];
 
 static AppVersionInfo appVersionInfo;
 static const ArgumentDescription argument_descriptions[] = {
-  {"target", '-', "Target process ID", "I", target_pid, nullptr, nullptr},
-  {"host", '-', "Host triplet for the process being logged", "S*", { .u_cstr=host_triplet }, nullptr, nullptr},
-  {"wait", '-', "Stop until signalled at startup", "F", wait_mode, nullptr, nullptr},
-  {"syslog", '-', "Syslog after writing a crash log", "F", syslog_mode, nullptr, nullptr},
-  {"debug", '-', "Enable debugging mode", "F", debug_mode, nullptr, nullptr},
+  {"target", '-', "Target process ID", "I", &target_pid, nullptr, nullptr},
+  {"host", '-', "Host triplet for the process being logged", "S*", &host_triplet, nullptr, nullptr},
+  {"wait", '-', "Stop until signalled at startup", "F", &wait_mode, nullptr, nullptr},
+  {"syslog", '-', "Syslog after writing a crash log", "F", &syslog_mode, nullptr, nullptr},
+  {"debug", '-', "Enable debugging mode", "F", &debug_mode, nullptr, nullptr},
   HELP_ARGUMENT_DESCRIPTION(),
   VERSION_ARGUMENT_DESCRIPTION()};
 

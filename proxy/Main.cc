@@ -182,41 +182,41 @@ static volatile int delay_listen_for_cache_p = 0;
 AppVersionInfo appVersionInfo; // Build info for this application
 
 static ArgumentDescription argument_descriptions[] = {
-  {"net_threads", 'n', "Number of Net Threads", "I", num_of_net_threads, "PROXY_NET_THREADS", nullptr},
-  {"udp_threads", 'U', "Number of UDP Threads", "I", num_of_udp_threads, "PROXY_UDP_THREADS", nullptr},
-  {"accept_thread", 'a', "Use an Accept Thread", "T", num_accept_threads, "PROXY_ACCEPT_THREAD", nullptr},
-  {"accept_till_done", 'b', "Accept Till Done", "T", accept_till_done, "PROXY_ACCEPT_TILL_DONE", nullptr},
-  {"httpport", 'p', "Port descriptor for HTTP Accept", "S*", { .u_cstr=static_cast<const char*&>(http_accept_port_descriptor) }, "PROXY_HTTP_ACCEPT_PORT", nullptr},
-  {"dprintf_level", 'o', "Debug output level", "I", cmd_line_dprintf_level, "PROXY_DPRINTF_LEVEL", nullptr},
-  {"disable_freelist", 'f', "Disable the freelist memory allocator", "T", cmd_disable_freelist, "PROXY_DPRINTF_LEVEL", nullptr},
+  {"net_threads", 'n', "Number of Net Threads", "I", &num_of_net_threads, "PROXY_NET_THREADS", nullptr},
+  {"udp_threads", 'U', "Number of UDP Threads", "I", &num_of_udp_threads, "PROXY_UDP_THREADS", nullptr},
+  {"accept_thread", 'a', "Use an Accept Thread", "T", &num_accept_threads, "PROXY_ACCEPT_THREAD", nullptr},
+  {"accept_till_done", 'b', "Accept Till Done", "T", &accept_till_done, "PROXY_ACCEPT_TILL_DONE", nullptr},
+  {"httpport", 'p', "Port descriptor for HTTP Accept", "S*", &http_accept_port_descriptor, "PROXY_HTTP_ACCEPT_PORT", nullptr},
+  {"dprintf_level", 'o', "Debug output level", "I", &cmd_line_dprintf_level, "PROXY_DPRINTF_LEVEL", nullptr},
+  {"disable_freelist", 'f', "Disable the freelist memory allocator", "T", &cmd_disable_freelist, "PROXY_DPRINTF_LEVEL", nullptr},
 
 #if TS_HAS_TESTS
-  {"regression", 'R', "Regression Level (quick:1..long:3)", "I", regression_level, "PROXY_REGRESSION", nullptr},
-  {"regression_test", 'r', "Run Specific Regression Test", "S512", { .u_buffer=regression_test }, "PROXY_REGRESSION_TEST", nullptr},
-  {"regression_list", 'l', "List Regression Tests", "T", regression_list, "PROXY_REGRESSION_LIST", nullptr},
+  {"regression", 'R', "Regression Level (quick:1..long:3)", "I", &regression_level, "PROXY_REGRESSION", nullptr},
+  {"regression_test", 'r', "Run Specific Regression Test", "S512", regression_test, "PROXY_REGRESSION_TEST", nullptr},
+  {"regression_list", 'l', "List Regression Tests", "T", &regression_list, "PROXY_REGRESSION_LIST", nullptr},
 #endif // TS_HAS_TESTS
 
 #if TS_USE_DIAGS
-  {"debug_tags", 'T', "Vertical-bar-separated Debug Tags", "S1023", { .u_buffer=error_tags }, "PROXY_DEBUG_TAGS", nullptr},
-  {"action_tags", 'B', "Vertical-bar-separated Behavior Tags", "S1023", { .u_buffer=action_tags }, "PROXY_BEHAVIOR_TAGS", nullptr},
+  {"debug_tags", 'T', "Vertical-bar-separated Debug Tags", "S1023", error_tags, "PROXY_DEBUG_TAGS", nullptr},
+  {"action_tags", 'B', "Vertical-bar-separated Behavior Tags", "S1023", action_tags, "PROXY_BEHAVIOR_TAGS", nullptr},
 #endif
 
-  {"interval", 'i', "Statistics Interval", "I", show_statistics, "PROXY_STATS_INTERVAL", nullptr},
-  {"remote_management", 'M', "Remote Management", "T", remote_management_flag, "PROXY_REMOTE_MANAGEMENT", nullptr},
+  {"interval", 'i', "Statistics Interval", "I", &show_statistics, "PROXY_STATS_INTERVAL", nullptr},
+  {"remote_management", 'M', "Remote Management", "T", &remote_management_flag, "PROXY_REMOTE_MANAGEMENT", nullptr},
   {"command", 'C', "Maintenance Command to Execute\n"
                    "      Commands: list, check, clear, clear_cache, clear_hostdb, verify_config, help",
-   "S511", { .u_buffer=command_string }, "PROXY_COMMAND_STRING", nullptr},
-  {"conf_dir", 'D', "config dir to verify", "S511", { .u_buffer=conf_dir }, "PROXY_CONFIG_CONFIG_DIR", nullptr},
-  {"clear_hostdb", 'k', "Clear HostDB on Startup", "F", auto_clear_hostdb_flag, "PROXY_CLEAR_HOSTDB", nullptr},
-  {"clear_cache", 'K', "Clear Cache on Startup", "F", cacheProcessor.auto_clear_flag, "PROXY_CLEAR_CACHE", nullptr},
-  {"bind_stdout", '-', "Regular file to bind stdout to", "S512", { .u_buffer=bind_stdout }, "PROXY_BIND_STDOUT", nullptr},
-  {"bind_stderr", '-', "Regular file to bind stderr to", "S512", { .u_buffer=bind_stderr }, "PROXY_BIND_STDERR", nullptr},
+   "S511", &command_string, "PROXY_COMMAND_STRING", nullptr},
+  {"conf_dir", 'D', "config dir to verify", "S511", &conf_dir, "PROXY_CONFIG_CONFIG_DIR", nullptr},
+  {"clear_hostdb", 'k', "Clear HostDB on Startup", "F", &auto_clear_hostdb_flag, "PROXY_CLEAR_HOSTDB", nullptr},
+  {"clear_cache", 'K', "Clear Cache on Startup", "F", &cacheProcessor.auto_clear_flag, "PROXY_CLEAR_CACHE", nullptr},
+  {"bind_stdout", '-', "Regular file to bind stdout to", "S512", &bind_stdout, "PROXY_BIND_STDOUT", nullptr},
+  {"bind_stderr", '-', "Regular file to bind stderr to", "S512", &bind_stderr, "PROXY_BIND_STDERR", nullptr},
 #if defined(linux)
-  {"read_core", 'c', "Read Core file", "S255", { .u_buffer=core_file }, nullptr, nullptr},
+  {"read_core", 'c', "Read Core file", "S255", &core_file, nullptr, nullptr},
 #endif
 
-  {"accept_mss", '-', "MSS for client connections", "I", accept_mss, nullptr, nullptr},
-  {"poll_timeout", 't', "poll timeout in milliseconds", "I", poll_timeout, nullptr, nullptr},
+  {"accept_mss", '-', "MSS for client connections", "I", &accept_mss, nullptr, nullptr},
+  {"poll_timeout", 't', "poll timeout in milliseconds", "I", &poll_timeout, nullptr, nullptr},
   HELP_ARGUMENT_DESCRIPTION(),
   VERSION_ARGUMENT_DESCRIPTION()};
 

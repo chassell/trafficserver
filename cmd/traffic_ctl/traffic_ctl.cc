@@ -216,7 +216,7 @@ main(int argc, const char **argv)
   program_name = CtrlVersionInfo.AppStr;
 
   ArgumentDescription argument_descriptions[] = {
-    {"debug", '-', "Enable debugging output", "F", debug, nullptr, nullptr},
+    {"debug", '-', "Enable debugging output", "F", &debug, nullptr, nullptr},
     HELP_ARGUMENT_DESCRIPTION(),
     VERSION_ARGUMENT_DESCRIPTION(),
   };

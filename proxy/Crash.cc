@@ -39,7 +39,7 @@ static int crash_logger_fd    = NO_FD;
 static char *
 create_logger_path()
 {
-  RecStringConst name;
+  RecString name;
   ats_scoped_str bindir;
   ats_scoped_str fullpath;
 

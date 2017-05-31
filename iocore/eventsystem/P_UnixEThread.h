@@ -159,7 +159,7 @@ EThread::schedule_local(Event *e)
 TS_INLINE EThread *
 this_ethread()
 {
-  return static_cast<EThread*>(this_thread());
+  return (EThread *)this_thread();
 }
 
 TS_INLINE void

@@ -58,7 +58,7 @@ ink_hash_table_create(InkHashTableKeyType key_type)
   Tcl_HashTable *tcl_ht_ptr;
   int tcl_key_type;
 
-  tcl_ht_ptr = new Tcl_HashTable; // sizeof(Tcl_HashTable)
+  tcl_ht_ptr = (Tcl_HashTable *)ats_malloc(sizeof(Tcl_HashTable));
 
   if (key_type == InkHashTableKeyType_String)
     tcl_key_type = TCL_STRING_KEYS;

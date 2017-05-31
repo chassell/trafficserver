@@ -31,7 +31,6 @@
  * These routines return char*'s to malloc-ed strings.  The caller is
  * responsible for freeing the strings.
  */
-#include "ts/ink_defs.h"
 #include "ts/ink_platform.h"
 #include "ts/ink_base64.h"
 #include "ts/ink_assert.h"
@@ -94,16 +93,21 @@ ats_base64_encode(const unsigned char *inBuffer, size_t inBufferSize, char *outB
 bool
 ats_base64_encode(const char *inBuffer, size_t inBufferSize, char *outBuffer, size_t outBufSize, size_t *length)
 {
-  return ats_base64_encode(reinterpret_cast<const uint8_t*>(inBuffer), inBufferSize, outBuffer, outBufSize, length);
+  return ats_base64_encode((const unsigned char *)inBuffer, inBufferSize, outBuffer, outBufSize, length);
 }
 
 /*-------------------------------------------------------------------------
   This is a reentrant, and malloc free implemetnation of ats_base64_decode.
   -------------------------------------------------------------------------*/
+#ifdef DECODE
+#undef DECODE
+#endif
+
+#define DECODE(x) printableToSixBit[(unsigned char)x]
 #define MAX_PRINT_VAL 63
 
 /* Converts a printable character to it's six bit representation */
-static const unsigned char _printableToSixBit[256] = {
+const unsigned char printableToSixBit[256] = {
   64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
   64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 62, 64, 62, 64, 63, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 64, 64, 64, 64, 64, 64,
   64, 0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 64, 64, 64, 64, 63,
@@ -112,8 +116,6 @@ static const unsigned char _printableToSixBit[256] = {
   64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
   64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
   64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64};
-
-ts::CTypeCharLookup<const uint8_t> printableToSixBit{_printableToSixBit};
 
 bool
 ats_base64_decode(const char *inBuffer, size_t inBufferSize, unsigned char *outBuffer, size_t outBufSize, size_t *length)
@@ -129,13 +131,13 @@ ats_base64_decode(const char *inBuffer, size_t inBufferSize, unsigned char *outB
 
   // Ignore any trailing ='s or other undecodable characters.
   // TODO: Perhaps that ought to be an error instead?
-  while (printableToSixBit[inBuffer[inBytes]] <= MAX_PRINT_VAL)
+  while (printableToSixBit[(uint8_t)inBuffer[inBytes]] <= MAX_PRINT_VAL)
     ++inBytes;
 
   for (size_t i = 0; i < inBytes; i += 4) {
-    buf[0] = (printableToSixBit[inBuffer[0]] << 2 | printableToSixBit[inBuffer[1]] >> 4);
-    buf[1] = (printableToSixBit[inBuffer[1]] << 4 | printableToSixBit[inBuffer[2]] >> 2);
-    buf[2] = (printableToSixBit[inBuffer[2]] << 6 | printableToSixBit[inBuffer[3]]);
+    buf[0] = (unsigned char)(DECODE(inBuffer[0]) << 2 | DECODE(inBuffer[1]) >> 4);
+    buf[1] = (unsigned char)(DECODE(inBuffer[1]) << 4 | DECODE(inBuffer[2]) >> 2);
+    buf[2] = (unsigned char)(DECODE(inBuffer[2]) << 6 | DECODE(inBuffer[3]));
 
     buf += 3;
     inBuffer += 4;
@@ -146,7 +148,7 @@ ats_base64_decode(const char *inBuffer, size_t inBufferSize, unsigned char *outB
   // Check to see if we decoded a multiple of 4 four
   //    bytes
   if ((inBytes - inputBytesDecoded) & 0x3) {
-    if (printableToSixBit[inBuffer[-2]] > MAX_PRINT_VAL) {
+    if (DECODE(inBuffer[-2]) > MAX_PRINT_VAL) {
       decodedBytes -= 2;
     } else {
       decodedBytes -= 1;

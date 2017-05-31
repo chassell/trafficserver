@@ -129,33 +129,107 @@ MMH_update(MMH_CTX *ctx, unsigned char *ab)
   ctx->blocks += 4;
 }
 
-template <size_t N_BYTES_OVER>
 static inline void
-MMH_update_unaligned(MMH_CTX *ctx, const uint8_t *ab)
+MMH_updateb1(MMH_CTX *ctx, unsigned char *ab)
 {
-  // back up this many
-  const uint32_t *b = reinterpret_cast<const uint32_t*>(ab);
-  __int128_t i = *reinterpret_cast<const __int128_t*>(ab - N_BYTES_OVER);
-  // toss the earliest (aligned but unincluded) bytes
-  // add the just untouched (unaligned and needed) bytes
-  // at the correct (highest address) location
-#if BYTE_ORDER == LITTLE_ENDIAN
-  i >>= 8*N_BYTES_OVER; 
-  i |= static_cast<__int128_t>(b[4]) << (128-8*N_BYTES_OVER);
-#elif BYTE_ORDER == BIG_ENDIAN
-  i <<= 8*N_BYTES_OVER;
-  i |= static_cast<__int128_t>(b[4]) >> (128-8*N_BYTES_OVER);
-#else
-#error "Cannot find Endian choice"
-#endif
-  MMH_update(ctx, reinterpret_cast<unsigned char*>(&i));
+  uint32_t *b = (uint32_t *)(ab - 1);
+  uint32_t b0 = b[0], b1 = b[1], b2 = b[2], b3 = b[3], b4 = b[4];
+  b0 = (b0 << 8) + (b1 >> 24);
+  b1 = (b1 << 8) + (b2 >> 24);
+  b2 = (b2 << 8) + (b3 >> 24);
+  b3 = (b3 << 8) + (b4 >> 24);
+  ctx->state[0] += b0 * MMH_x[(ctx->blocks + 0) % MMH_X_SIZE];
+  ctx->state[1] += b1 * MMH_x[(ctx->blocks + 1) % MMH_X_SIZE];
+  ctx->state[2] += b2 * MMH_x[(ctx->blocks + 2) % MMH_X_SIZE];
+  ctx->state[3] += b3 * MMH_x[(ctx->blocks + 3) % MMH_X_SIZE];
+  ctx->blocks += 4;
+}
+
+static inline void
+MMH_updateb2(MMH_CTX *ctx, unsigned char *ab)
+{
+  uint32_t *b = (uint32_t *)(ab - 2);
+  uint32_t b0 = b[0], b1 = b[1], b2 = b[2], b3 = b[3], b4 = b[4];
+  b0 = (b0 << 16) + (b1 >> 16);
+  b1 = (b1 << 16) + (b2 >> 16);
+  b2 = (b2 << 16) + (b3 >> 16);
+  b3 = (b3 << 16) + (b4 >> 16);
+  ctx->state[0] += b0 * MMH_x[(ctx->blocks + 0) % MMH_X_SIZE];
+  ctx->state[1] += b1 * MMH_x[(ctx->blocks + 1) % MMH_X_SIZE];
+  ctx->state[2] += b2 * MMH_x[(ctx->blocks + 2) % MMH_X_SIZE];
+  ctx->state[3] += b3 * MMH_x[(ctx->blocks + 3) % MMH_X_SIZE];
+  ctx->blocks += 4;
+}
+
+static inline void
+MMH_updateb3(MMH_CTX *ctx, unsigned char *ab)
+{
+  uint32_t *b = (uint32_t *)(ab - 3);
+  uint32_t b0 = b[0], b1 = b[1], b2 = b[2], b3 = b[3], b4 = b[4];
+  b0 = (b0 << 24) + (b1 >> 8);
+  b1 = (b1 << 24) + (b2 >> 8);
+  b2 = (b2 << 24) + (b3 >> 8);
+  b3 = (b3 << 24) + (b4 >> 8);
+  ctx->state[0] += b0 * MMH_x[(ctx->blocks + 0) % MMH_X_SIZE];
+  ctx->state[1] += b1 * MMH_x[(ctx->blocks + 1) % MMH_X_SIZE];
+  ctx->state[2] += b2 * MMH_x[(ctx->blocks + 2) % MMH_X_SIZE];
+  ctx->state[3] += b3 * MMH_x[(ctx->blocks + 3) % MMH_X_SIZE];
+  ctx->blocks += 4;
+}
+
+static inline void
+MMH_updatel1(MMH_CTX *ctx, unsigned char *ab)
+{
+  uint32_t *b = (uint32_t *)(ab - 1);
+  uint32_t b0 = b[0], b1 = b[1], b2 = b[2], b3 = b[3], b4 = b[4];
+  b0 = (b0 >> 8) + (b1 << 24);
+  b1 = (b1 >> 8) + (b2 << 24);
+  b2 = (b2 >> 8) + (b3 << 24);
+  b3 = (b3 >> 8) + (b4 << 24);
+  ctx->state[0] += b0 * MMH_x[(ctx->blocks + 0) % MMH_X_SIZE];
+  ctx->state[1] += b1 * MMH_x[(ctx->blocks + 1) % MMH_X_SIZE];
+  ctx->state[2] += b2 * MMH_x[(ctx->blocks + 2) % MMH_X_SIZE];
+  ctx->state[3] += b3 * MMH_x[(ctx->blocks + 3) % MMH_X_SIZE];
+  ctx->blocks += 4;
+}
+
+static inline void
+MMH_updatel2(MMH_CTX *ctx, unsigned char *ab)
+{
+  uint32_t *b = (uint32_t *)(ab - 2);
+  uint32_t b0 = b[0], b1 = b[1], b2 = b[2], b3 = b[3], b4 = b[4];
+  b0 = (b0 >> 16) + (b1 << 16);
+  b1 = (b1 >> 16) + (b2 << 16);
+  b2 = (b2 >> 16) + (b3 << 16);
+  b3 = (b3 >> 16) + (b4 << 16);
+  ctx->state[0] += b0 * MMH_x[(ctx->blocks + 0) % MMH_X_SIZE];
+  ctx->state[1] += b1 * MMH_x[(ctx->blocks + 1) % MMH_X_SIZE];
+  ctx->state[2] += b2 * MMH_x[(ctx->blocks + 2) % MMH_X_SIZE];
+  ctx->state[3] += b3 * MMH_x[(ctx->blocks + 3) % MMH_X_SIZE];
+  ctx->blocks += 4;
+}
+
+static inline void
+MMH_updatel3(MMH_CTX *ctx, unsigned char *ab)
+{
+  uint32_t *b = (uint32_t *)(ab - 3);
+  uint32_t b0 = b[0], b1 = b[1], b2 = b[2], b3 = b[3], b4 = b[4];
+  b0 = (b0 >> 24) + (b1 << 8);
+  b1 = (b1 >> 24) + (b2 << 8);
+  b2 = (b2 >> 24) + (b3 << 8);
+  b3 = (b3 >> 24) + (b4 << 8);
+  ctx->state[0] += b0 * MMH_x[(ctx->blocks + 0) % MMH_X_SIZE];
+  ctx->state[1] += b1 * MMH_x[(ctx->blocks + 1) % MMH_X_SIZE];
+  ctx->state[2] += b2 * MMH_x[(ctx->blocks + 2) % MMH_X_SIZE];
+  ctx->state[3] += b3 * MMH_x[(ctx->blocks + 3) % MMH_X_SIZE];
+  ctx->blocks += 4;
 }
 
 int
-ink_code_incr_MMH_update(MMH_CTX *ctx, const unsigned char *ainput, int input_length)
+ink_code_incr_MMH_update(MMH_CTX *ctx, const char *ainput, int input_length)
 {
-  const unsigned char *in  = ainput;
-  const unsigned char *end = in + input_length;
+  unsigned char *in  = (unsigned char *)ainput;
+  unsigned char *end = in + input_length;
   if (ctx->buffer_size) {
     int l = 16 - ctx->buffer_size;
     if (input_length >= l) {
@@ -169,43 +243,65 @@ ink_code_incr_MMH_update(MMH_CTX *ctx, const unsigned char *ainput, int input_le
       goto Lstore;
   }
   {
-    // check alignment (i.e. bytes past correct alignment)
-    size_t alignment = sizeof(int32_t);
-
-    {
-        void *ain = const_cast<unsigned char*>(in);
-        std::align(sizeof(int32_t), 0, ain, alignment); // how many extra left after fwd-aligned?
-        alignment %= sizeof(int32_t); // back to 0 if needed
-    }
-
-    switch ( alignment ) 
-    {
-        case 0:
-          for ( ; in + 16 <= end ; in += 16 )
-            MMH_update(ctx, in);
-          break;
-        case 1:
-          for ( ; in + 16 <= end ; in += 16 )
-            MMH_update_unaligned<1>(ctx, in);
-          break;
-        case 2:
-          for ( ; in + 16 <= end ; in += 16 )
-            MMH_update_unaligned<2>(ctx, in);
-          break;
-        case 3:
-          for ( ; in + 16 <= end ; in += 16 )
-            MMH_update_unaligned<3>(ctx, in);
-          break;
+    // check alignment
+    int alignment = (int)((intptr_t)in & 0x3);
+    if (alignment) {
+#if defined(_BIG_ENDIAN)
+#define big_endian 1
+#elif defined(_LITTLE_ENDIAN)
+#define big_endian 0
+#else
+      unsigned int endian = 1;
+      int big_endian      = !*(char *)&endian;
+#endif
+      if (big_endian) {
+        if (alignment == 1) {
+          while (in + 16 <= end) {
+            MMH_updateb1(ctx, in);
+            in += 16;
+          }
+        } else if (alignment == 2) {
+          while (in + 16 <= end) {
+            MMH_updateb2(ctx, in);
+            in += 16;
+          }
+        } else if (alignment == 3)
+          while (in + 16 <= end) {
+            MMH_updateb3(ctx, in);
+            in += 16;
+          }
+      } else {
+        if (alignment == 1) {
+          while (in + 16 <= end) {
+            MMH_updatel1(ctx, in);
+            in += 16;
+          }
+        } else if (alignment == 2) {
+          while (in + 16 <= end) {
+            MMH_updatel2(ctx, in);
+            in += 16;
+          }
+        } else if (alignment == 3)
+          while (in + 16 <= end) {
+            MMH_updatel3(ctx, in);
+            in += 16;
+          }
+      }
+    } else {
+      while (in + 16 <= end) {
+        MMH_update(ctx, in);
+        in += 16;
+      }
     }
   }
 Lstore:
   if (end - in) {
     int oldbs = ctx->buffer_size;
-    ctx->buffer_size += end - in;
+    ctx->buffer_size += (int)(end - in);
 #ifndef TEST
     ink_assert(ctx->buffer_size < 16);
 #endif
-    memcpy(ctx->buffer + oldbs, in, end - in);
+    memcpy(ctx->buffer + oldbs, in, (int)(end - in));
   }
   return 0;
 }
@@ -237,16 +333,16 @@ ink_code_incr_MMH_final(uint8_t *presult, MMH_CTX *ctx)
     MMH_update(ctx, ctx->buffer);
   }
   // append length (before padding)
-  unsigned int *pbuffer = reinterpret_cast<unsigned int*>(ctx->buffer);
+  unsigned int *pbuffer = (unsigned int *)ctx->buffer;
   pbuffer[1] = pbuffer[2] = pbuffer[3] = pbuffer[0] = len;
   MMH_update(ctx, ctx->buffer);
   // final phase
-  uint32_t *b = reinterpret_cast<uint32_t*>(presult);
-  uint64_t d  = (1ULL << 32) + 15;
-  uint32_t b0 = ctx->state[0] % d;
-  uint32_t b1 = ctx->state[1] % d;
-  uint32_t b2 = ctx->state[2] % d;
-  uint32_t b3 = ctx->state[3] % d;
+  uint32_t *b = (uint32_t *)presult;
+  uint64_t d  = (((uint64_t)1) << 32) + 15;
+  uint32_t b0 = uint32_t(ctx->state[0] % d);
+  uint32_t b1 = uint32_t(ctx->state[1] % d);
+  uint32_t b2 = uint32_t(ctx->state[2] % d);
+  uint32_t b3 = uint32_t(ctx->state[3] % d);
   // scramble the bits, losslessly (reversibly)
   b[0] = b0;
   b[1] = b1 ^ (b0 >> 24) ^ (b0 << 8);

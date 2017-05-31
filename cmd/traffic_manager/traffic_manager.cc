@@ -442,20 +442,20 @@ main(int argc, const char **argv)
   BindingInstance *binding = nullptr;
 
   ArgumentDescription argument_descriptions[] = {
-    {"proxyOff", '-', "Disable proxy", "F", proxy_off, nullptr, nullptr},
-    {"aconfPort", '-', "Autoconf port", "I", aconf_port_arg, "MGMT_ACONF_PORT", nullptr},
-    {"path", '-', "Path to the management socket", "S*", { .u_cstr=mgmt_path }, nullptr, nullptr}, // const char ptr
-    {"recordsConf", '-', "Path to records.config", "S*", { .u_cstr=recs_conf }, nullptr, nullptr}, // const char ptr
-    {"tsArgs", '-', "Additional arguments for traffic_server", "S*", { .u_cstr=tsArgs }, nullptr, nullptr},
-    {"proxyPort", '-', "HTTP port descriptor", "S*", { .u_cstr=proxy_port }, nullptr, nullptr},
-    {"proxyBackDoor", '-', "Management port", "I", proxy_backdoor, nullptr, nullptr},
-    {TM_OPT_BIND_STDOUT, '-', "Regular file to bind stdout to", "S512", { .u_buffer=bind_stdout }, "PROXY_BIND_STDOUT", nullptr},
-    {TM_OPT_BIND_STDERR, '-', "Regular file to bind stderr to", "S512", { .u_buffer=bind_stderr }, "PROXY_BIND_STDERR", nullptr},
+    {"proxyOff", '-', "Disable proxy", "F", &proxy_off, nullptr, nullptr},
+    {"aconfPort", '-', "Autoconf port", "I", &aconf_port_arg, "MGMT_ACONF_PORT", nullptr},
+    {"path", '-', "Path to the management socket", "S*", &mgmt_path, nullptr, nullptr},
+    {"recordsConf", '-', "Path to records.config", "S*", &recs_conf, nullptr, nullptr},
+    {"tsArgs", '-', "Additional arguments for traffic_server", "S*", &tsArgs, nullptr, nullptr},
+    {"proxyPort", '-', "HTTP port descriptor", "S*", &proxy_port, nullptr, nullptr},
+    {"proxyBackDoor", '-', "Management port", "I", &proxy_backdoor, nullptr, nullptr},
+    {TM_OPT_BIND_STDOUT, '-', "Regular file to bind stdout to", "S512", &bind_stdout, "PROXY_BIND_STDOUT", nullptr},
+    {TM_OPT_BIND_STDERR, '-', "Regular file to bind stderr to", "S512", &bind_stderr, "PROXY_BIND_STDERR", nullptr},
 #if TS_USE_DIAGS
-    {"debug", 'T', "Vertical-bar-separated Debug Tags", "S1023", { .u_buffer=debug_tags }, nullptr, nullptr},
-    {"action", 'B', "Vertical-bar-separated Behavior Tags", "S1023", { .u_buffer=action_tags }, nullptr, nullptr},
+    {"debug", 'T', "Vertical-bar-separated Debug Tags", "S1023", debug_tags, nullptr, nullptr},
+    {"action", 'B', "Vertical-bar-separated Behavior Tags", "S1023", action_tags, nullptr, nullptr},
 #endif
-    {"nosyslog", '-', "Do not log to syslog", "F", disable_syslog, nullptr, nullptr},
+    {"nosyslog", '-', "Do not log to syslog", "F", &disable_syslog, nullptr, nullptr},
     HELP_ARGUMENT_DESCRIPTION(),
     VERSION_ARGUMENT_DESCRIPTION()
   };

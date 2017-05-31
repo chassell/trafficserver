@@ -159,26 +159,12 @@ int ink_login_name_max();
 hwloc_topology_t ink_get_topology();
 #endif
 
+/** Constants.
+ */
 #ifdef __cplusplus
-
 namespace ts
 {
 static const int NO_FD = -1; ///< No or invalid file descriptor.
-
-template <typename T_ELT=const char>
-struct CTypeCharLookup
-{
-    private:
-      T_ELT (&m_ref)[256];
-    public:
-      CTypeCharLookup(T_ELT (&arrRef)[256]) : m_ref(arrRef)   // NOTE: NO CURLY FOR REFS! 
-         { }
-      inline T_ELT &operator[](int c) 
-         { return m_ref[static_cast<uint8_t>(c)]; }
-      inline const T_ELT operator[](int c) const
-         { return m_ref[static_cast<uint8_t>(c)]; }
-};
-
 }
 #endif
 
