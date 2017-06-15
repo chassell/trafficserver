@@ -123,14 +123,14 @@ fastopen_bwrite(BIO *bio, const char *in, int insz)
 
     NET_INCREMENT_DYN_STAT(net_fastopen_attempts_stat);
 
-    err = socketManager.sendto(fd, (void *)in, insz, MSG_FASTOPEN, dst, ats_ip_size(dst));
+    err = socketManager.sendto(fd, in, insz, MSG_FASTOPEN, dst, ats_ip_size(dst));
     if (err >= 0) {
       NET_INCREMENT_DYN_STAT(net_fastopen_successes_stat);
     }
 
     BIO_set_data(bio, nullptr);
   } else {
-    err = socketManager.write(fd, (void *)in, insz);
+    err = socketManager.write(fd, in, insz);
   }
 
   if (err < 0) {

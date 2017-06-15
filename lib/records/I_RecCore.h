@@ -99,7 +99,7 @@ RecErrT _RecRegisterStatFloat(RecT rec_type, const char *name, RecFloat data_def
 #define RecRegisterStatFloat(rec_type, name, data_default, persist_type) \
   _RecRegisterStatFloat((rec_type), (name), (data_default), REC_PERSISTENCE_TYPE(persist_type))
 
-RecErrT _RecRegisterStatString(RecT rec_type, const char *name, RecString data_default, RecPersistT persist_type);
+RecErrT _RecRegisterStatString(RecT rec_type, const char *name, RecStringConst data_default, RecPersistT persist_type);
 #define RecRegisterStatString(rec_type, name, data_default, persist_type) \
   _RecRegisterStatString((rec_type), (name), (data_default), REC_PERSISTENCE_TYPE(persist_type))
 
@@ -152,11 +152,11 @@ RecErrT RecRegisterRawStatUpdateFunc(const char *name, RecRawStatBlock *rsb, int
 // already been taken out for the callback.
 
 // RecSetRecordConvert -> WebMgmtUtils.cc::varSetFromStr()
-RecErrT RecSetRecordConvert(const char *name, const RecString rec_string, RecSourceT source, bool lock = true,
+RecErrT RecSetRecordConvert(const char *name, const RecStringConst rec_string, RecSourceT source, bool lock = true,
                             bool inc_version = true);
 RecErrT RecSetRecordInt(const char *name, RecInt rec_int, RecSourceT source, bool lock = true, bool inc_version = true);
 RecErrT RecSetRecordFloat(const char *name, RecFloat rec_float, RecSourceT source, bool lock = true, bool inc_version = true);
-RecErrT RecSetRecordString(const char *name, const RecString rec_string, RecSourceT source, bool lock = true,
+RecErrT RecSetRecordString(const char *name, const RecStringConst rec_string, RecSourceT source, bool lock = true,
                            bool inc_version = true);
 RecErrT RecSetRecordCounter(const char *name, RecCounter rec_counter, RecSourceT source, bool lock = true, bool inc_version = true);
 
@@ -235,7 +235,7 @@ void RecConfigWarnIfUnregistered();
     _var = tmp;                                     \
   } while (0)
 
-#define REC_ReadConfigStringAlloc(_var, _config_var_name) RecGetRecordString_Xmalloc(_config_var_name, (RecString *)&_var)
+#define REC_ReadConfigStringAlloc(_var, _config_var_name) RecGetRecordString_Xmalloc(_config_var_name, &_var)
 
 #define REC_ReadConfigString(_var, _config_var_name, _len) RecGetRecordString(_config_var_name, _var, _len)
 
@@ -270,7 +270,7 @@ void RecConfigWarnIfUnregistered();
   do {                                                                \
     if (RecLinkConfigString(_config_var_name, &_var) == REC_ERR_OKAY) \
       ats_free(_var);                                                 \
-    _var = (RecString)REC_ConfigReadString(_config_var_name);         \
+    _var = REC_ConfigReadString(_config_var_name);         \
   } while (0)
 
 #define REC_EstablishStaticConfigFloat(_var, _config_var_name) \

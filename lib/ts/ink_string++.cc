@@ -61,30 +61,31 @@ Str *
 StrList::_new_cell(const char *s, int len_not_counting_nul)
 {
   Str *cell;
-  char *p;
+  void *p;
   int l = len_not_counting_nul;
 
   // allocate a cell from the array or heap
   if (cells_allocated < STRLIST_BASE_CELLS) {
     cell = &(base_cells[cells_allocated]);
   } else {
-    p = (char *)alloc(sizeof(Str) + 7);
+    size_t extra = 8;
+    p = static_cast<char*>(alloc(sizeof(Str) + extra));
     if (p == nullptr)
       return (nullptr);                         // FIX: scale heap
-    p    = (char *)((((uintptr_t)p) + 7) & ~7); // round up to multiple of 8
-    cell = (Str *)p;
+    std::align(8,0,p,extra);
+    cell = reinterpret_cast<Str*>(p);
   }
   ++cells_allocated;
 
   // are we supposed to copy the string?
   if (copy_when_adding_string) {
-    char *buf = (char *)alloc(l + 1);
+    char *buf = static_cast<char*>(alloc(l + 1));
     if (buf == nullptr)
       return (nullptr); // FIX: need to grow heap!
     memcpy(buf, s, l);
     buf[l] = '\0';
 
-    cell->str = (const char *)buf;
+    cell->str = buf;
   } else {
     cell->str = s;
   }
@@ -162,7 +163,7 @@ StrListOverflow::alloc(int size, StrListOverflow **new_heap_ptr)
   char *rval  = start + heap_used;
   heap_used += size;
   ink_assert(heap_used <= heap_size);
-  return (void *)rval;
+  return rval;
 }
 
 StrListOverflow *

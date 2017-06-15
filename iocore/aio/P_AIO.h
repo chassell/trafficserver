@@ -43,7 +43,7 @@
 TS_INLINE int
 AIOCallback::ok()
 {
-  return (off_t)aiocb.aio_nbytes == (off_t)aio_result;
+  return aiocb.aio_nbytes == static_cast<decltype(aiocb.aio_nbytes)>(aio_result);
 }
 
 #if AIO_MODE == AIO_MODE_NATIVE

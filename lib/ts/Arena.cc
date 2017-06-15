@@ -42,9 +42,9 @@ blk_alloc(int size)
   ArenaBlock *blk;
 
   if (size == DEFAULT_BLOCK_SIZE) {
-    blk = (ArenaBlock *)defaultSizeArenaBlock.alloc_void();
+    blk = static_cast<ArenaBlock *>(defaultSizeArenaBlock.alloc_void());
   } else {
-    blk = (ArenaBlock *)ats_malloc(size + sizeof(ArenaBlock) - 8);
+    blk = static_cast<ArenaBlock *>(ats_malloc(size + sizeof(ArenaBlock) - 8));
   }
 
   blk->next          = nullptr;
@@ -79,11 +79,11 @@ block_alloc(ArenaBlock *block, size_t size, size_t alignment)
   char *mem;
 
   mem = block->m_water_level;
-  if (((size_t)mem) & (alignment - 1)) {
-    mem += (alignment - ((size_t)mem)) & (alignment - 1);
+  if (reinterpret_cast<size_t>(mem) & (alignment - 1)) {
+    mem += alignment - (reinterpret_cast<size_t>(mem) & (alignment - 1));
   }
 
-  if ((block->m_heap_end >= mem) && (((size_t)block->m_heap_end - (size_t)mem) >= size)) {
+  if ( block->m_heap_end >= mem && block->m_heap_end >= mem + size ) {
     block->m_water_level = mem + size;
     return mem;
   }
@@ -109,7 +109,7 @@ Arena::alloc(size_t size, size_t alignment)
     b = b->next;
   }
 
-  block_size = (unsigned int)(size * 1.5);
+  block_size = size * 1.5;
   if (block_size < DEFAULT_BLOCK_SIZE) {
     block_size = DEFAULT_BLOCK_SIZE;
   }
@@ -136,8 +136,8 @@ Arena::free(void *mem, size_t size)
       b = b->next;
     }
 
-    if (b->m_water_level == ((char *)mem + size)) {
-      b->m_water_level = (char *)mem;
+    if (b->m_water_level == (static_cast<char*>(mem) + size)) {
+      b->m_water_level = static_cast<char*>(mem);
     }
   }
 }

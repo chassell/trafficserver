@@ -86,10 +86,10 @@ ink_hash_table_destroy(InkHashTable *ht_ptr)
 {
   Tcl_HashTable *tcl_ht_ptr;
 
-  tcl_ht_ptr = (Tcl_HashTable *)ht_ptr;
+  tcl_ht_ptr = ht_ptr;
   Tcl_DeleteHashTable(tcl_ht_ptr);
   ats_free(tcl_ht_ptr);
-  return (InkHashTable *)nullptr;
+  return nullptr;
 } /* End ink_hash_table_destroy */
 
 /*---------------------------------------------------------------------------*
@@ -120,7 +120,7 @@ ink_hash_table_destroy_and_free_values(InkHashTable *ht_ptr)
 {
   ink_hash_table_map(ht_ptr, _ink_hash_table_free_entry_value);
   ink_hash_table_destroy(ht_ptr);
-  return (InkHashTable *)nullptr;
+  return nullptr;
 } /* End ink_hash_table_destroy_and_free_values */
 
 /*---------------------------------------------------------------------------*
@@ -180,12 +180,12 @@ ink_hash_table_lookup(InkHashTable *ht_ptr, const char *key, InkHashTableValue *
 int
 ink_hash_table_delete(InkHashTable *ht_ptr, const char *key)
 {
-  char *tcl_key;
+  const char *tcl_key;
   Tcl_HashTable *tcl_ht_ptr;
   Tcl_HashEntry *tcl_he_ptr;
 
-  tcl_key    = (char *)key;
-  tcl_ht_ptr = (Tcl_HashTable *)ht_ptr;
+  tcl_key    = key;
+  tcl_ht_ptr = ht_ptr;
   tcl_he_ptr = Tcl_FindHashEntry(tcl_ht_ptr, tcl_key);
 
   if (!tcl_he_ptr)
@@ -212,9 +212,9 @@ ink_hash_table_lookup_entry(InkHashTable *ht_ptr, const char *key)
   Tcl_HashEntry *tcl_he_ptr;
   InkHashTableEntry *he_ptr;
 
-  tcl_ht_ptr = (Tcl_HashTable *)ht_ptr;
+  tcl_ht_ptr = ht_ptr;
   tcl_he_ptr = Tcl_FindHashEntry(tcl_ht_ptr, key);
-  he_ptr     = (InkHashTableEntry *)tcl_he_ptr;
+  he_ptr     = tcl_he_ptr;
 
   return (he_ptr);
 } /* End ink_hash_table_lookup_entry */
@@ -237,14 +237,14 @@ ink_hash_table_get_entry(InkHashTable *ht_ptr, const char *key, int *new_value)
   Tcl_HashTable *tcl_ht_ptr;
   Tcl_HashEntry *tcl_he_ptr;
 
-  tcl_ht_ptr = (Tcl_HashTable *)ht_ptr;
+  tcl_ht_ptr = ht_ptr;
   tcl_he_ptr = Tcl_CreateHashEntry(tcl_ht_ptr, key, new_value);
 
   if (tcl_he_ptr == nullptr) {
     ink_fatal("%s: Tcl_CreateHashEntry returned nullptr", "ink_hash_table_get_entry");
   }
 
-  return ((InkHashTableEntry *)tcl_he_ptr);
+  return tcl_he_ptr;
 } /* End ink_hash_table_get_entry */
 
 /*---------------------------------------------------------------------------*
@@ -259,14 +259,13 @@ ink_hash_table_get_entry(InkHashTable *ht_ptr, const char *key, int *new_value)
  *---------------------------------------------------------------------------*/
 
 void
-ink_hash_table_set_entry(InkHashTable *ht_ptr, InkHashTableEntry *he_ptr, InkHashTableValue value)
+ink_hash_table_set_entry(InkHashTable *, InkHashTableEntry *he_ptr, InkHashTableValue value)
 {
-  (void)ht_ptr;
   ClientData tcl_value;
   Tcl_HashEntry *tcl_he_ptr;
 
-  tcl_value  = (ClientData)value;
-  tcl_he_ptr = (Tcl_HashEntry *)he_ptr;
+  tcl_value  = value;
+  tcl_he_ptr = he_ptr;
   Tcl_SetHashValue(tcl_he_ptr, tcl_value);
 } /* End ink_hash_table_set_entry */
 
@@ -328,10 +327,10 @@ ink_hash_table_map(InkHashTable *ht_ptr, InkHashTableEntryFunction map)
 InkHashTableKey
 ink_hash_table_entry_key(InkHashTable *ht_ptr, InkHashTableEntry *entry_ptr)
 {
-  char *tcl_key;
+  void *tcl_key;
 
-  tcl_key = (char *)Tcl_GetHashKey((Tcl_HashTable *)ht_ptr, (Tcl_HashEntry *)entry_ptr);
-  return ((InkHashTableKey)tcl_key);
+  tcl_key = Tcl_GetHashKey(ht_ptr, entry_ptr);
+  return static_cast<InkHashTableKey>(tcl_key);
 } /* End ink_hash_table_entry_key */
 
 /*---------------------------------------------------------------------------*
@@ -345,13 +344,12 @@ ink_hash_table_entry_key(InkHashTable *ht_ptr, InkHashTableEntry *entry_ptr)
  *---------------------------------------------------------------------------*/
 
 InkHashTableValue
-ink_hash_table_entry_value(InkHashTable *ht_ptr, InkHashTableEntry *entry_ptr)
+ink_hash_table_entry_value(InkHashTable *, InkHashTableEntry *entry_ptr)
 {
-  (void)ht_ptr;
   ClientData tcl_value;
 
-  tcl_value = Tcl_GetHashValue((Tcl_HashEntry *)entry_ptr);
-  return ((InkHashTableValue)tcl_value);
+  tcl_value = Tcl_GetHashValue(entry_ptr);
+  return tcl_value;
 } /* End ink_hash_table_entry_value */
 
 /*---------------------------------------------------------------------------*
@@ -373,7 +371,7 @@ DumpStringEntry(InkHashTable *ht_ptr, InkHashTableEntry *e)
   key   = ink_hash_table_entry_key(ht_ptr, e);
   value = ink_hash_table_entry_value(ht_ptr, e);
 
-  fprintf(stderr, "key = '%s', value = '%s'\n", (char *)key, (char *)value);
+  fprintf(stderr, "key = '%s', value = '%s'\n", key, static_cast<char*>(value));
 
   return (0);
 }
@@ -400,7 +398,7 @@ void
 ink_hash_table_replace_string(InkHashTable *ht_ptr, char *string_key, char *string_value)
 {
   int new_value;
-  char *old_str;
+  void *old_str;
   InkHashTableEntry *he_ptr;
 
   /*
@@ -409,12 +407,12 @@ ink_hash_table_replace_string(InkHashTable *ht_ptr, char *string_key, char *stri
    * still dealing with pointers, and we aren't loosing any bits.
    */
 
-  he_ptr = ink_hash_table_get_entry(ht_ptr, (InkHashTableKey)string_key, &new_value);
+  he_ptr = ink_hash_table_get_entry(ht_ptr, string_key, &new_value);
   if (new_value == 0) {
-    old_str = (char *)ink_hash_table_entry_value(ht_ptr, he_ptr);
+    old_str = ink_hash_table_entry_value(ht_ptr, he_ptr);
     if (old_str)
       ats_free(old_str);
   }
 
-  ink_hash_table_set_entry(ht_ptr, he_ptr, (InkHashTableValue)(ats_strdup(string_value)));
+  ink_hash_table_set_entry(ht_ptr, he_ptr, ats_strdup(string_value));
 } /* End ink_hash_table_replace_string */

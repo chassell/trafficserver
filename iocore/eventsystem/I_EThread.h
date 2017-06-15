@@ -329,7 +329,7 @@ class ink_dummy_for_new
 inline void *
 operator new(size_t, ink_dummy_for_new *p)
 {
-  return (void *)p;
+  return p;
 }
 #define ETHREAD_GET_PTR(thread, offset) ((void *)((char *)(thread) + (offset)))
 

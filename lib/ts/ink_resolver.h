@@ -270,8 +270,7 @@ typedef ts_imp_res_state *ink_res_state;
 int ink_res_init(ink_res_state, IpEndpoint const *pHostList, size_t pHostListSize, int dnsSearch, const char *pDefDomain = nullptr,
                  const char *pSearchList = nullptr, const char *pResolvConf = NULL);
 
-int ink_res_mkquery(ink_res_state, int, const char *, int, int, const unsigned char *, int, const unsigned char *, unsigned char *,
-                    int);
+int ink_res_mkquery(ink_res_state, int, const char *, int, int, const u_char *, int, const u_char *, u_char *, int);
 
 int ink_ns_name_ntop(const u_char *src, char *dst, size_t dstsiz);
 

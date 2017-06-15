@@ -39,16 +39,16 @@ Process arguments
 //
 
 const char *file_arguments[MAX_FILE_ARGUMENTS] = {nullptr};
-const char *program_name                       = (char *)"Traffic Server";
+const char *program_name                       = "Traffic Server";
 unsigned n_file_arguments                      = 0;
 
 //
 //  Local variables
 //
 
-static const char *argument_types_keys           = (char *)"ISDfFTL";
-static const char *argument_types_descriptions[] = {(char *)"int  ", (char *)"str  ", (char *)"dbl  ", (char *)"off  ",
-                                                    (char *)"on   ", (char *)"tog  ", (char *)"i64  ", (char *)"     "};
+static const char *argument_types_keys           = "ISDfFTL";
+static const char *argument_types_descriptions[] = {"int  ", "str  ", "dbl  ", "off  ",
+                                                    "on   ", "tog  ", "i64  ", "     "};
 
 //
 // Functions

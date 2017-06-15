@@ -110,15 +110,15 @@ TS_INLINE int64_t
 SocketManager::vector_io(int fd, struct iovec *vector, size_t count, int read_request, void * /* pOLP ATS_UNUSED */)
 {
   const int max_iovecs_per_request = 16;
-  int n;
+  size_t n;
   int64_t r = 0;
-  int n_vec;
+  size_t n_vec;
   int64_t bytes_xfered = 0;
-  int current_count;
+  size_t current_count;
   int64_t current_request_bytes;
 
-  for (n_vec = 0; n_vec < (int)count; n_vec += max_iovecs_per_request) {
-    current_count = min(max_iovecs_per_request, ((int)(count - n_vec)));
+  for (n_vec = 0; n_vec < count; n_vec += max_iovecs_per_request) {
+    current_count = min(max_iovecs_per_request+size_t(), count - n_vec);
     do {
       // coverity[tainted_data_argument]
       r = read_request ? ::readv(fd, &vector[n_vec], current_count) : ::writev(fd, &vector[n_vec], current_count);
@@ -132,7 +132,7 @@ SocketManager::vector_io(int fd, struct iovec *vector, size_t count, int read_re
     }
     bytes_xfered += r;
 
-    if ((n_vec + max_iovecs_per_request) >= (int)count)
+    if ((n_vec + max_iovecs_per_request) >= count)
       break;
 
     // Compute bytes in current vector
@@ -158,7 +158,7 @@ SocketManager::recv(int fd, void *buf, int size, int flags)
 {
   int r;
   do {
-    if (unlikely((r = ::recv(fd, (char *)buf, size, flags)) < 0)) {
+    if (unlikely((r = ::recv(fd, buf, size, flags)) < 0)) {
       r = -errno;
     }
   } while (r == -EINTR);
@@ -170,7 +170,7 @@ SocketManager::recvfrom(int fd, void *buf, int size, int flags, struct sockaddr 
 {
   int r;
   do {
-    r = ::recvfrom(fd, (char *)buf, size, flags, addr, addrlen);
+    r = ::recvfrom(fd, buf, size, flags, addr, addrlen);
     if (unlikely(r < 0))
       r = -errno;
   } while (r == -EINTR);
@@ -178,7 +178,7 @@ SocketManager::recvfrom(int fd, void *buf, int size, int flags, struct sockaddr 
 }
 
 TS_INLINE int64_t
-SocketManager::write(int fd, void *buf, int size, void * /* pOLP ATS_UNUSED */)
+SocketManager::write(int fd, const void *buf, int size, void * /* pOLP ATS_UNUSED */)
 {
   int64_t r;
   do {
@@ -190,7 +190,7 @@ SocketManager::write(int fd, void *buf, int size, void * /* pOLP ATS_UNUSED */)
 }
 
 TS_INLINE int64_t
-SocketManager::pwrite(int fd, void *buf, int size, off_t offset, char * /* tag ATS_UNUSED */)
+SocketManager::pwrite(int fd, const void *buf, int size, off_t offset, char * /* tag ATS_UNUSED */)
 {
   int64_t r;
   do {
@@ -219,22 +219,22 @@ SocketManager::write_vector(int fd, struct iovec *vector, size_t count, void *pO
 }
 
 TS_INLINE int
-SocketManager::send(int fd, void *buf, int size, int flags)
+SocketManager::send(int fd, const void *buf, int size, int flags)
 {
   int r;
   do {
-    if (unlikely((r = ::send(fd, (char *)buf, size, flags)) < 0))
+    if (unlikely((r = ::send(fd, buf, size, flags)) < 0))
       r = -errno;
   } while (r == -EINTR);
   return r;
 }
 
 TS_INLINE int
-SocketManager::sendto(int fd, void *buf, int len, int flags, struct sockaddr const *to, int tolen)
+SocketManager::sendto(int fd, const void *buf, int len, int flags, struct sockaddr const *to, int tolen)
 {
   int r;
   do {
-    if (unlikely((r = ::sendto(fd, (char *)buf, len, flags, to, tolen)) < 0))
+    if (unlikely((r = ::sendto(fd, buf, len, flags, to, tolen)) < 0))
       r = -errno;
   } while (r == -EINTR);
   return r;
@@ -444,7 +444,7 @@ SocketManager::get_sndbuf_size(int s)
   int bszsz, r;
 
   bszsz = sizeof(bsz);
-  r     = safe_getsockopt(s, SOL_SOCKET, SO_SNDBUF, (char *)&bsz, &bszsz);
+  r     = safe_getsockopt(s, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<char*>(&bsz), &bszsz);
   return (r == 0 ? bsz : r);
 }
 
@@ -455,20 +455,20 @@ SocketManager::get_rcvbuf_size(int s)
   int bszsz, r;
 
   bszsz = sizeof(bsz);
-  r     = safe_getsockopt(s, SOL_SOCKET, SO_RCVBUF, (char *)&bsz, &bszsz);
+  r     = safe_getsockopt(s, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<char*>(&bsz), &bszsz);
   return (r == 0 ? bsz : r);
 }
 
 TS_INLINE int
 SocketManager::set_sndbuf_size(int s, int bsz)
 {
-  return safe_setsockopt(s, SOL_SOCKET, SO_SNDBUF, (char *)&bsz, sizeof(bsz));
+  return safe_setsockopt(s, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<char*>(&bsz), sizeof(bsz));
 }
 
 TS_INLINE int
 SocketManager::set_rcvbuf_size(int s, int bsz)
 {
-  return safe_setsockopt(s, SOL_SOCKET, SO_RCVBUF, (char *)&bsz, sizeof(bsz));
+  return safe_setsockopt(s, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<char*>(&bsz), sizeof(bsz));
 }
 
 TS_INLINE int

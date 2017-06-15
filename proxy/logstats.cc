@@ -1248,7 +1248,7 @@ parse_log_buff(LogBufferHeader *buf_header, bool summary = false, bool aggregate
   }
   // Loop over all entries
   while ((entry = buf_iter.next())) {
-    read_from = (char *)entry + sizeof(LogEntryHeader);
+    read_from = reinterpret_cast<char *>(entry) + sizeof(LogEntryHeader);
     // We read and skip over the first field, which is the timestamp.
     if ((field = fieldlist->first())) {
       read_from += INK_MIN_ALIGN;
@@ -1265,7 +1265,7 @@ parse_log_buff(LogBufferHeader *buf_header, bool summary = false, bool aggregate
       switch (state) {
       case P_STATE_ELAPSED:
         state   = P_STATE_IP;
-        elapsed = *((int64_t *)(read_from));
+        elapsed  = *reinterpret_cast<int64_t*>(read_from); // 8 bytes [likely little-endian]
         read_from += INK_MIN_ALIGN;
         break;
 
@@ -1286,7 +1286,7 @@ parse_log_buff(LogBufferHeader *buf_header, bool summary = false, bool aggregate
 
       case P_STATE_RESULT:
         state  = P_STATE_CODE;
-        result = *((int64_t *)(read_from));
+        result  = *reinterpret_cast<int64_t*>(read_from); // 8 bytes [likely little-endian]
         read_from += INK_MIN_ALIGN;
         if ((result < 32) || (result > 255)) {
           flag  = 1;
@@ -1296,7 +1296,7 @@ parse_log_buff(LogBufferHeader *buf_header, bool summary = false, bool aggregate
 
       case P_STATE_CODE:
         state     = P_STATE_SIZE;
-        http_code = *((int64_t *)(read_from));
+        http_code  = *reinterpret_cast<int64_t*>(read_from); // 8 bytes [likely little-endian]
         read_from += INK_MIN_ALIGN;
         if ((http_code < 0) || (http_code > 999)) {
           flag  = 1;
@@ -1308,7 +1308,7 @@ parse_log_buff(LogBufferHeader *buf_header, bool summary = false, bool aggregate
         // Warning: This is not 64-bit safe, when converting the log format,
         // this needs to be fixed as well.
         state = P_STATE_METHOD;
-        size  = *((int64_t *)(read_from));
+        size  = *reinterpret_cast<int64_t*>(read_from); // 8 bytes [likely little-endian]
         read_from += INK_MIN_ALIGN;
         break;
 
@@ -1430,7 +1430,7 @@ parse_log_buff(LogBufferHeader *buf_header, bool summary = false, bool aggregate
 
       case P_STATE_HIERARCHY:
         state = P_STATE_PEER;
-        hier  = *((int64_t *)(read_from));
+        hier  = *reinterpret_cast<int64_t*>(read_from); // 8 bytes [likely little-endian]
         switch (hier) {
         case SQUID_HIER_NONE:
           update_counter(totals.hierarchies.none, size);
@@ -1737,7 +1737,7 @@ process_file(int in_fd, off_t offset, unsigned max_age)
       Debug("logstats", "Re-aligning file read.");
       while (true) {
         if (lseek(in_fd, offset, SEEK_SET) < 0) {
-          Debug("logstats", "Internal seek failed (offset=%" PRId64 ").", (int64_t)offset);
+          Debug("logstats", "Internal seek failed (offset=%" PRId64 ").", static_cast<int64_t>(offset));
           return 1;
         }
 
@@ -1791,7 +1791,7 @@ process_file(int in_fd, off_t offset, unsigned max_age)
     }
 
     buffer_bytes = header->byte_count - sizeof(LogBufferHeader);
-    if (buffer_bytes <= 0 || (unsigned int)buffer_bytes > (sizeof(buffer) - sizeof(LogBufferHeader))) {
+    if (buffer_bytes <= 0 || buffer_bytes + sizeof(LogBufferHeader) > sizeof(buffer) ) {
       Debug("logstats", "Buffer payload [%d] is wrong.", buffer_bytes);
       return 1;
     }
@@ -1860,7 +1860,7 @@ inline void
 format_int(int64_t num)
 {
   if (num > 0) {
-    int64_t mult = (int64_t)pow((double)10, (int)(log10((double)num) / 3) * 3);
+    int64_t mult = pow(10, trunc(log10(num) / 3) * 3);
     int64_t div;
     std::stringstream ss;
 
@@ -1928,7 +1928,7 @@ format_line(const char *desc, const StatsCounter &stat, const StatsCounter &tota
 {
   static char metrics[] = "KKMGTP";
   static char buf[64];
-  int ix = (stat.bytes > 1024 ? (int)(log10((double)stat.bytes) / LOG10_1024) : 1);
+  int ix = (stat.bytes > 1024 ? log10(stat.bytes) / LOG10_1024 : 1);
 
   if (json) {
     std::cout << "    " << '"' << desc << "\" : "
@@ -1936,13 +1936,13 @@ format_line(const char *desc, const StatsCounter &stat, const StatsCounter &tota
     std::cout << "\"req\": \"" << stat.count << "\", ";
     if (!concise) {
       std::cout << "\"req_pct\": \"" << std::setiosflags(ios::fixed) << std::setprecision(2)
-                << (double)stat.count / total.count * 100 << "\", ";
+                << 1.0*stat.count / total.count * 100 << "\", ";
     }
     std::cout << "\"bytes\": \"" << stat.bytes << "\"";
 
     if (!concise) {
       std::cout << ", \"bytes_pct\": \"" << std::setiosflags(ios::fixed) << std::setprecision(2)
-                << (double)stat.bytes / total.bytes * 100 << "\"";
+                << 1.0*stat.bytes / total.bytes * 100 << "\"";
     }
     std::cout << " }," << std::endl;
   } else {
@@ -1951,13 +1951,13 @@ format_line(const char *desc, const StatsCounter &stat, const StatsCounter &tota
     std::cout << std::right << std::setw(15);
     format_int(stat.count);
 
-    snprintf(buf, sizeof(buf), "%10.2f%%", ((double)stat.count / total.count * 100));
+    snprintf(buf, sizeof(buf), "%10.2f%%", (1.0*stat.count / total.count * 100));
     std::cout << std::right << buf;
 
-    snprintf(buf, sizeof(buf), "%10.2f%cB", stat.bytes / pow((double)1024, ix), metrics[ix]);
+    snprintf(buf, sizeof(buf), "%10.2f%cB", 1.0*stat.bytes / pow(1024, ix), metrics[ix]);
     std::cout << std::right << buf;
 
-    snprintf(buf, sizeof(buf), "%10.2f%%", ((double)stat.bytes / total.bytes * 100));
+    snprintf(buf, sizeof(buf), "%10.2f%%", (1.0*stat.bytes / total.bytes * 100));
     std::cout << std::right << buf << std::endl;
   }
 }
@@ -2506,8 +2506,8 @@ main(int /* argc ATS_UNUSED */, const char *argv[])
     // Use more portable & standard fcntl() over flock()
     lck.l_type   = F_WRLCK;
     lck.l_whence = 0; /* offset l_start from beginning of file*/
-    lck.l_start  = (off_t)0;
-    lck.l_len    = (off_t)0; /* till end of file*/
+    lck.l_start  = 0;
+    lck.l_len    = 0; /* till end of file*/
     cnt          = 10;
     while (((res = fcntl(state_fd, F_SETLK, &lck)) < 0) && --cnt) {
       switch (errno) {

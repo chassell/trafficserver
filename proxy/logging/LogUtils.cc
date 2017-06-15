@@ -448,7 +448,7 @@ LogUtils::remove_content_type_attributes(char *type_str, int *type_len)
   -------------------------------------------------------------------------*/
 
 int
-LogUtils::timestamp_to_hex_str(unsigned ip, char *buf, size_t bufLen, size_t *numCharsPtr)
+LogUtils::timestamp_to_hex_str(time_t ip, char *buf, size_t bufLen, size_t *numCharsPtr)
 {
   static const char *table = "0123456789abcdef@";
   int retVal               = 1;

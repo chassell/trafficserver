@@ -75,7 +75,7 @@ struct Str {
   void
   dump(FILE *fp = stderr)
   {
-    fprintf(fp, "Str [\"%.*s\", len %d]\n", (int)len, str, (int)len);
+    fprintf(fp, "Str [\"%.*s\", len %lu]\n", static_cast<int>(len), str, len);
   }
 };
 
@@ -183,7 +183,7 @@ StrList::base_heap_alloc(int size)
   if (size <= (base_heap_size - base_heap_used)) {
     p = &(base_heap[base_heap_used]);
     base_heap_used += size;
-    return ((void *)p);
+    return p;
   } else
     return (nullptr);
 }
