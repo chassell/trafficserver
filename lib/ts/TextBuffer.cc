@@ -45,7 +45,7 @@ TextBuffer::TextBuffer(int size)
       size = 1024;
     }
 
-    bufferStart = (char *)ats_malloc(size);
+    bufferStart = static_cast<char *>(malloc(size));
     nextAdd     = bufferStart;
     currentSize = size;
     spaceLeft   = size - 1; // Leave room for a terminator;

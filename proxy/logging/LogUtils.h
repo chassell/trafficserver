@@ -36,16 +36,16 @@ enum AlarmType {
   LOG_ALARM_N_TYPES,
 };
 
-static inline long
+static inline time_t
 timestamp()
 {
-  return (long)time(0);
+  return time(0);
 }
 
-int timestamp_to_str(long timestamp, char *buf, int size);
-char *timestamp_to_netscape_str(long timestamp);
-char *timestamp_to_date_str(long timestamp);
-char *timestamp_to_time_str(long timestamp);
+int timestamp_to_str(time_t timestamp, char *buf, int size);
+char *timestamp_to_netscape_str(time_t timestamp);
+char *timestamp_to_date_str(time_t timestamp);
+char *timestamp_to_time_str(time_t timestamp);
 unsigned ip_from_host(char *host);
 void manager_alarm(AlarmType alarm_type, const char *msg, ...) TS_PRINTFLIKE(2, 3);
 void strip_trailing_newline(char *buf);
@@ -56,7 +56,7 @@ char *pure_escapify_url(Arena *arena, char *url, size_t len_in, int *len_out, ch
 char *int64_to_str(char *buf, unsigned int buf_size, int64_t val, unsigned int *total_chars, unsigned int req_width = 0,
                    char pad_char = '0');
 void remove_content_type_attributes(char *type_str, int *type_len);
-int timestamp_to_hex_str(unsigned timestamp, char *str, size_t len, size_t *n_chars = 0);
+int timestamp_to_hex_str(time_t timestamp, char *str, size_t len, size_t *n_chars = 0);
 int seconds_to_next_roll(time_t time_now, int rolling_offset, int rolling_interval);
 int file_is_writeable(const char *full_filename, off_t *size_bytes = 0, bool *has_size_limit = 0,
                       uint64_t *current_size_limit_bytes = 0);

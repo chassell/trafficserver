@@ -277,6 +277,8 @@ public:
 // The ClassAlocator for ProxyMutexes
 extern inkcoreapi ClassAllocator<ProxyMutex> mutexAllocator;
 
+extern EThread *this_ethread();
+
 inline bool
 Mutex_trylock(
 #ifdef DEBUG

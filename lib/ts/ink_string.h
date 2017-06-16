@@ -290,7 +290,7 @@ ptr_len_pbrk(const char *p1, int l1, const char *str)
 
     while (*str_cur != '\0') {
       if (*p1 == *str_cur) {
-        return (char *)p1;
+        return const_cast<char *>(p1);
       }
       str_cur++;
     }
@@ -358,7 +358,7 @@ ink_fast_itoa(int32_t val, char *buf, int buf_len)
     return (ret >= 0 ? ret : 0);
   }
 
-  return ink_small_itoa((int)val, buf, buf_len);
+  return ink_small_itoa(val, buf, buf_len);
 }
 
 inline int
@@ -370,7 +370,7 @@ ink_fast_uitoa(uint32_t val, char *buf, int buf_len)
     return (ret >= 0 ? ret : 0);
   }
 
-  return ink_small_itoa((int)val, buf, buf_len);
+  return ink_small_itoa(val, buf, buf_len);
 }
 
 inline int
@@ -382,7 +382,7 @@ ink_fast_ltoa(int64_t val, char *buf, int buf_len)
     return (ret >= 0 ? ret : 0);
   }
 
-  return ink_small_itoa((int)val, buf, buf_len);
+  return ink_small_itoa(val, buf, buf_len);
 }
 
 #endif

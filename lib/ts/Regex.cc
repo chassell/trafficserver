@@ -164,7 +164,7 @@ DFA::build(const char *pattern, unsigned flags)
     flags |= RE_ANCHORED;
   }
 
-  ret     = (dfa_pattern *)ats_malloc(sizeof(dfa_pattern));
+  ret     = new dfa_pattern; // sizeof(dfa_pattern)
   ret->_p = nullptr;
 
   ret->_re = new Regex();

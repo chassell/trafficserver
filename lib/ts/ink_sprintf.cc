@@ -153,5 +153,5 @@ ink_bvsprintf(char *buffer, const char *format, va_list ap)
   ++d;
 
   va_end(ap_local);
-  return (int)(d - buffer);
+  return d - buffer;
 }

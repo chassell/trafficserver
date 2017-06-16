@@ -96,16 +96,16 @@ ink_fputln(FILE *stream, const char *s)
  *---------------------------------------------------------------------------*/
 
 int
-ink_file_fd_readline(int fd, int bufsz, char *buf)
+ink_file_fd_readline(int fd, size_t bufsz, char *buf)
 {
   char c;
-  int i = 0;
+  size_t i = 0;
 
   if (bufsz < 2) {
     return (-EINVAL); /* bufsz must by >= 2 */
   }
 
-  while (i < bufsz - 1) {    /* leave 1 byte for NUL */
+  while (i + 1 < bufsz) {    /* leave 1 byte for NUL */
     int n = read(fd, &c, 1); /* read 1 byte */
     if (n == 0) {
       break; /* EOF */
@@ -127,9 +127,10 @@ ink_file_fd_readline(int fd, int bufsz, char *buf)
 int
 ink_file_fd_writestring(int fd, const char *buf)
 {
-  int len, i = 0;
+  size_t len;
+  size_t i = 0;
 
-  if (buf && (len = strlen(buf)) > 0 && (i = (int)write(fd, buf, (size_t)len) != len)) {
+  if (buf && (len=strlen(buf)) > 0U && (i=write(fd, buf, len)) != len) {
     i = -1;
   }
 
@@ -137,7 +138,7 @@ ink_file_fd_writestring(int fd, const char *buf)
 } /* End ink_file_fd_writestring */
 
 int
-ink_filepath_merge(char *path, int pathsz, const char *rootpath, const char *addpath, int flags)
+ink_filepath_merge(char *path, size_t pathsz, const char *rootpath, const char *addpath, int flags)
 {
   size_t rootlen; // is the length of the src rootpath
   size_t maxlen;  // maximum total path length
@@ -199,7 +200,7 @@ ink_filepath_merge(char *path, int pathsz, const char *rootpath, const char *add
   maxlen  = rootlen + strlen(addpath) + 4; // 4 for slashes at start, after
                                            // root, and at end, plus trailing
                                            // null
-  if (maxlen > (size_t)pathsz) {
+  if (maxlen > pathsz) {
     return E2BIG; // APR_ENAMETOOLONG;
   }
   if (addpath[0] == '/') {
@@ -337,7 +338,7 @@ ink_filepath_merge(char *path, int pathsz, const char *rootpath, const char *add
 }
 
 int
-ink_filepath_make(char *path, int pathsz, const char *rootpath, const char *addpath)
+ink_filepath_make(char *path, size_t pathsz, const char *rootpath, const char *addpath)
 {
   size_t rootlen; // is the length of the src rootpath
   size_t maxlen;  // maximum total path length
@@ -360,9 +361,9 @@ ink_filepath_make(char *path, int pathsz, const char *rootpath, const char *addp
   }
   rootlen = strlen(rootpath);
   maxlen  = strlen(addpath) + 2;
-  if (maxlen > (size_t)pathsz) {
+  if (maxlen > pathsz) {
     *path = '\0';
-    return (int)maxlen;
+    return maxlen;
   }
   ink_strlcpy(path, rootpath, pathsz);
   path += rootlen;
@@ -531,7 +532,7 @@ ink_fileperm_parse(const char *perms)
 {
   if (perms && strlen(perms) == 9) {
     int re  = 0;
-    char *c = (char *)perms;
+    const char *c = perms;
     if (*c == 'r') {
       re |= S_IRUSR;
     }

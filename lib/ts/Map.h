@@ -42,7 +42,7 @@ static inline char *
 _dupstr(cchar *s, cchar *e = 0)
 {
   int l    = e ? e - s : strlen(s);
-  char *ss = (char *)A::alloc(l + 1);
+  char *ss = A::alloc(l + 1);
   memcpy(ss, s, l);
   ss[l] = 0;
   return ss;
@@ -60,7 +60,7 @@ public:
   {
     return e.key == key;
   }
-  operator uintptr_t(void) { return (uintptr_t)(uintptr_t)key; }
+  operator uintptr_t(void) { return reinterpret_cast<uintptr_t>(key); }
   MapElem(K const &akey, C const &avalue) : key(akey), value(avalue) {}
   MapElem(MapElem const &e) : key(e.key), value(e.value) {}
   MapElem() : key(), value() {}
@@ -148,7 +148,7 @@ public:
     uintptr_t h = 0;
     // 31 changed to 27, to avoid prime2 in vec.cpp
     while (*s)
-      h = h * 27 + (unsigned char)*s++;
+      h = h * 27U + static_cast<uint8_t>(*s++);
     return h;
   }
   static int
@@ -183,7 +183,7 @@ public:
   static uintptr_t
   hash(void *s)
   {
-    return (uintptr_t)(uintptr_t)s;
+    return reinterpret_cast<uintptr_t>(s);
   }
   static int
   equal(void *a, void *b)
@@ -306,18 +306,18 @@ template <class K, class C, class A>
 inline C
 Map<K, C, A>::get(K akey)
 {
-  MapElem<K, C> e(akey, (C)0);
+  MapElem<K, C> e(akey, 0);
   MapElem<K, C> *x = this->set_in(e);
   if (x)
     return x->value;
-  return (C)0;
+  return 0;
 }
 
 template <class K, class C, class A>
 inline C *
 Map<K, C, A>::getp(K akey)
 {
-  MapElem<K, C> e(akey, (C)0);
+  MapElem<K, C> e(akey, 0);
   MapElem<K, C> *x = this->set_in(e);
   if (x)
     return &x->value;

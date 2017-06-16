@@ -36,14 +36,14 @@ EventProcessor::allocate(int size)
   static off_t loss  = start - offsetof(EThread, thread_private);
   size               = INK_ALIGN(size, 16); // 16 byte alignment
 
-  int old;
+  off_t old;
   do {
     old = thread_data_used;
     if (old + loss + size > PER_THREAD_DATA)
       return -1;
   } while (!ink_atomic_cas(&thread_data_used, old, old + size));
 
-  return (off_t)(old + start);
+  return old + start;
 }
 
 TS_INLINE EThread *

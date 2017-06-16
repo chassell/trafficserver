@@ -252,7 +252,7 @@ Tokenizer::addToken(char *startAddr, int length)
     startAddr[length] = '\0';
     add_ptr           = startAddr;
   } else {
-    add_ptr = (char *)ats_malloc(length + 1);
+    add_ptr = static_cast<char *>(malloc(length + 1));
     memcpy(add_ptr, startAddr, length);
     add_ptr[length] = '\0';
   }

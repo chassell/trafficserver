@@ -1392,7 +1392,7 @@ adjust_num_of_net_threads(int nthreads)
   } else { /* autoconfig is enabled */
     num_of_threads_tmp = nthreads;
     REC_ReadConfigFloat(autoconfig_scale, "proxy.config.exec_thread.autoconfig.scale");
-    num_of_threads_tmp = (int)((float)num_of_threads_tmp * autoconfig_scale);
+    num_of_threads_tmp = trunc(num_of_threads_tmp * autoconfig_scale);
 
     if (unlikely(num_of_threads_tmp > MAX_EVENT_THREADS)) {
       num_of_threads_tmp = MAX_EVENT_THREADS;
@@ -1700,7 +1700,7 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   }
   Machine::init(nullptr, &machine_addr.sa);
 
-  RecRegisterStatString(RECT_PROCESS, "proxy.process.version.server.uuid", (char *)Machine::instance()->uuid.getString(),
+  RecRegisterStatString(RECT_PROCESS, "proxy.process.version.server.uuid", Machine::instance()->uuid.getString(),
                         RECP_NON_PERSISTENT);
 
   // pmgmt->start() must occur after initialization of Diags but

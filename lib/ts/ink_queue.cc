@@ -182,7 +182,7 @@ ink_freelist_new(InkFreeList *f)
   void *ptr;
 
   if (likely(ptr = freelist_freelist_ops->fl_new(f))) {
-    ink_atomic_increment((int *)&f->used, 1);
+    ink_atomic_increment(&f->used, 1);
   }
 
   return ptr;
@@ -214,15 +214,15 @@ freelist_new(InkFreeList *f)
       }
 
       if (f->advice) {
-        ats_madvise((caddr_t)newp, INK_ALIGN(alloc_size, alignment), f->advice);
+        ats_madvise(newp, INK_ALIGN(alloc_size, alignment), f->advice);
       }
       SET_FREELIST_POINTER_VERSION(item, newp, 0);
 
-      ink_atomic_increment((int *)&f->allocated, f->chunk_size);
+      ink_atomic_increment(&f->allocated, f->chunk_size);
 
       /* free each of the new elements */
       for (i = 0; i < f->chunk_size; i++) {
-        char *a = ((char *)FREELIST_POINTER(item)) + i * f->type_size;
+        char *a = static_cast<char*>(FREELIST_POINTER(item)) + i * f->type_size;
 #ifdef DEADBEEF
         const char str[4] = {(char)0xde, (char)0xad, (char)0xbe, (char)0xef};
         for (int j = 0; j < (int)f->type_size; j++)

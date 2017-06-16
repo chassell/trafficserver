@@ -80,16 +80,16 @@
 #define INK_FILEPATH_TRUENAME 0x20
 
 int ink_fputln(FILE *stream, const char *s);
-int ink_file_fd_readline(int fd, int bufsize, char *buf);
+int ink_file_fd_readline(int fd, size_t bufsize, char *buf);
 int ink_file_fd_writestring(int fd, const char *buf);
-int ink_filepath_merge(char *buf, int bufsz, const char *rootpath, const char *addpath, int flags = INK_FILEPATH_TRUENAME);
+int ink_filepath_merge(char *buf, size_t bufsz, const char *rootpath, const char *addpath, int flags = INK_FILEPATH_TRUENAME);
 /**
  Add addpath to the rootpath prepending slash if rootpath
  is not nullptr and doesn't end with the slash already and put the
  result into path buffer. If the buffer is too small to hold the
  resulting string, required size is returned. On success zero is returned
  */
-int ink_filepath_make(char *path, int pathsz, const char *rootpath, const char *addpath);
+int ink_filepath_make(char *path, size_t pathsz, const char *rootpath, const char *addpath);
 
 /**
  Resize and zero-fill the given file.

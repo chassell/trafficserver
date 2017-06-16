@@ -23,12 +23,14 @@
 #ifndef _ink_memory_h_
 #define _ink_memory_h_
 
+#include "ts/ink_config.h"
+
+#include <type_traits>
+
 #include <ctype.h>
 #include <string.h>
 #include <strings.h>
 #include <inttypes.h>
-
-#include "ts/ink_config.h"
 
 #if HAVE_UNISTD_H
 #include <unistd.h>
@@ -100,9 +102,9 @@ void *ats_free_null(void *ptr);
 void ats_memalign_free(void *ptr);
 int ats_mallopt(int param, int value);
 
-int ats_msync(caddr_t addr, size_t len, caddr_t end, int flags);
-int ats_madvise(caddr_t addr, size_t len, int flags);
-int ats_mlock(caddr_t addr, size_t len);
+int ats_msync(void *addr, size_t len, void *end, int flags);
+int ats_madvise(void *addr, size_t len, int flags);
+int ats_mlock(void *addr, size_t len);
 
 void *ats_track_malloc(size_t size, uint64_t *stat);
 void *ats_track_realloc(void *ptr, size_t size, uint64_t *alloc_stat, uint64_t *free_stat);
@@ -180,9 +182,10 @@ template <typename PtrType, unsigned N> static inline IOVec make_iovec(PtrType (
     @endcode
 
  */
-template <typename T>
-inline void
-ink_zero(T &t)
+
+template <typename T> 
+//inline auto ink_zero(T &t) -> std::enable_if_t< std::is_trivially_copyable<T>::value >
+inline auto ink_zero(T &t) -> typename std::enable_if< std::is_trivially_copyable<T>::value >::type 
 {
   memset(&t, 0, sizeof(t));
 }

@@ -64,7 +64,7 @@ ink_mutex ElevateAccess::lock = INK_MUTEX_INIT;
       cap_t caps      = cap_get_proc();                                                                          \
       char *caps_text = cap_to_text(caps, nullptr);                                                              \
       Debug(tag, "caps='%s', core=%s, death signal=%d, thread=0x%llx", caps_text, is_dumpable(), death_signal(), \
-            (unsigned long long)pthread_self());                                                                 \
+            static_cast<unsigned long long>(pthread_self()));                                                    \
       cap_free(caps_text);                                                                                       \
       cap_free(caps);                                                                                            \
     }                                                                                                            \
@@ -76,7 +76,7 @@ ink_mutex ElevateAccess::lock = INK_MUTEX_INIT;
   do {                                                                                              \
     if (is_debug_tag_set(tag)) {                                                                    \
       Debug(tag, "caps='', core=%s, death signal=%d, thread=0x%llx", is_dumpable(), death_signal(), \
-            (unsigned long long)pthread_self());                                                    \
+            static_cast<unsigned long long>(pthread_self()));                                       \
     }                                                                                               \
   } while (0)
 
@@ -108,7 +108,7 @@ max_passwd_size()
 #if defined(_SC_GETPW_R_SIZE_MAX)
   long val = sysconf(_SC_GETPW_R_SIZE_MAX);
   if (val > 0) {
-    return (unsigned)val;
+    return val;
   }
 #endif
 
@@ -165,21 +165,21 @@ impersonate(const struct passwd *pwd, ImpersonationLevel level)
   switch (level) {
   case IMPERSONATE_PERMANENT:
     if (setregid(pwd->pw_gid, pwd->pw_gid) != 0) {
-      Fatal("switching to user %s, failed to set group ID %ld", pwd->pw_name, (long)pwd->pw_gid);
+      Fatal("switching to user %s, failed to set group ID %d", pwd->pw_name, pwd->pw_gid);
     }
 
     if (setreuid(pwd->pw_uid, pwd->pw_uid) != 0) {
-      Fatal("switching to user %s, failed to set user ID %ld", pwd->pw_name, (long)pwd->pw_uid);
+      Fatal("switching to user %s, failed to set user ID %d", pwd->pw_name, pwd->pw_uid);
     }
     break;
 
   case IMPERSONATE_EFFECTIVE:
     if (setegid(pwd->pw_gid) != 0) {
-      Fatal("switching to user %s, failed to set group ID %ld", pwd->pw_name, (long)pwd->pw_gid);
+      Fatal("switching to user %s, failed to set group ID %d", pwd->pw_name, pwd->pw_gid);
     }
 
     if (seteuid(pwd->pw_uid) != 0) {
-      Fatal("switching to user %s, failed to set effective user ID %ld", pwd->pw_name, (long)pwd->pw_gid);
+      Fatal("switching to user %s, failed to set effective user ID %d", pwd->pw_name, pwd->pw_gid);
     }
     break;
   }
@@ -205,12 +205,12 @@ ImpersonateUserID(uid_t uid, ImpersonationLevel level)
   char buf[max_passwd_size()];
 
   if (getpwuid_r(uid, &pbuf, buf, sizeof(buf), &pwd) != 0) {
-    Fatal("missing password database entry for UID %ld: %s", (long)uid, strerror(errno));
+    Fatal("missing password database entry for UID %d: %s", uid, strerror(errno));
   }
 
   if (pwd == nullptr) {
     // Password entry not found ...
-    Fatal("missing password database entry for UID %ld", (long)uid);
+    Fatal("missing password database entry for UID %d", uid);
   }
 
   impersonate(pwd, level);
@@ -225,9 +225,9 @@ ImpersonateUser(const char *user, ImpersonationLevel level)
 
   if (*user == '#') {
     // Numeric user notation.
-    uid_t uid = (uid_t)atoi(&user[1]);
+    uid_t uid = atoi(&user[1]);
     if (getpwuid_r(uid, &pbuf, buf, sizeof(buf), &pwd) != 0) {
-      Fatal("missing password database entry for UID %ld: %s", (long)uid, strerror(errno));
+      Fatal("missing password database entry for UID %d: %s", uid, strerror(errno));
     }
   } else {
     if (getpwnam_r(user, &pbuf, buf, sizeof(buf), &pwd) != 0) {

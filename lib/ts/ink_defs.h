@@ -81,8 +81,8 @@ countof(const T (&)[N])
 #define countof(x) ((unsigned)(sizeof(x) / sizeof((x)[0])))
 #endif
 
-#define SOCKOPT_ON ((char *)&on)
-#define SOCKOPT_OFF ((char *)&off)
+#define SOCKOPT_ON reinterpret_cast<const char *>(&on)
+#define SOCKOPT_OFF reinterpret_cast<const char *>(&off)
 
 #ifndef ABS
 #define ABS(x) (((x) < 0) ? (-(x)) : (x))
@@ -145,8 +145,8 @@ max(const T a, const T b)
 /* Variables
 */
 extern int debug_level;
-extern int off;
-extern int on;
+extern const int off;
+extern const int on;
 
 /* Functions
 */

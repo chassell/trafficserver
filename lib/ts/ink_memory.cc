@@ -168,12 +168,12 @@ ats_mallopt(int param ATS_UNUSED, int value ATS_UNUSED)
 }
 
 int
-ats_msync(caddr_t addr, size_t len, caddr_t end, int flags)
+ats_msync(char *addr, size_t len, caddr_t end, int flags)
 {
   size_t pagesize = ats_pagesize();
 
   // align start back to page boundary
-  caddr_t a = (caddr_t)(((uintptr_t)addr) & ~(pagesize - 1));
+  char *a = reinterpret_cast<char*>((reinterpret_cast<ptrdiff_t>(addr) & ~(pagesize - 1)));
   // align length to page boundry covering region
   size_t l = (len + (addr - a) + (pagesize - 1)) & ~(pagesize - 1);
   if ((a + l) > end) {
@@ -196,7 +196,7 @@ ats_msync(caddr_t addr, size_t len, caddr_t end, int flags)
 }
 
 int
-ats_madvise(caddr_t addr, size_t len, int flags)
+ats_madvise(void *addr, size_t len, int flags)
 {
 #if HAVE_POSIX_MADVISE
   return posix_madvise(addr, len, flags);
@@ -210,7 +210,7 @@ ats_mlock(caddr_t addr, size_t len)
 {
   size_t pagesize = ats_pagesize();
 
-  caddr_t a = (caddr_t)(((uintptr_t)addr) & ~(pagesize - 1));
+  char *a = reinterpret_cast<char*>((reinterpret_cast<ptrdiff_t>(addr) & ~(pagesize - 1)));
   size_t l  = (len + (addr - a) + pagesize - 1) & ~(pagesize - 1);
   int res   = mlock(a, l);
   return res;
@@ -271,7 +271,7 @@ _xstrdup(const char *str, int length, const char * /* path ATS_UNUSED */)
       length = strlen(str);
     }
 
-    newstr = (char *)ats_malloc(length + 1);
+    newstr = static_cast<char *>(malloc(length + 1));
     // If this is a zero length string just null terminate and return.
     if (unlikely(length == 0)) {
       *newstr = '\0';

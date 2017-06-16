@@ -178,7 +178,7 @@ DynArray<T>::resize(intptr_t new_size)
 
     for (; i < new_size; i++) {
       if (default_val)
-        new_data[i] = (T)*default_val;
+        new_data[i] = *default_val;
     }
 
     if (data) {

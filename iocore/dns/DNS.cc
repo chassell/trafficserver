@@ -556,9 +556,9 @@ DNSHandler::startEvent_sdns(int /* event ATS_UNUSED */, Event *e)
 }
 
 static inline int
-_ink_res_mkquery(ink_res_state res, char *qname, int qtype, char *buffer)
+_ink_res_mkquery(ink_res_state res, char *qname, int qtype, u_char *buffer)
 {
-  int r = ink_res_mkquery(res, QUERY, qname, C_IN, qtype, nullptr, 0, nullptr, (unsigned char *)buffer, MAX_DNS_PACKET_LEN);
+  int r = ink_res_mkquery(res, QUERY, qname, C_IN, qtype, nullptr, 0, nullptr, buffer, MAX_DNS_PACKET_LEN);
   return r;
 }
 
@@ -581,7 +581,7 @@ DNSHandler::retry_named(int ndx, ink_hrtime t, bool reopen)
     open_con(&m_res->nsaddr_list[ndx].sa, true, ndx);
   }
 
-  char buffer[MAX_DNS_PACKET_LEN];
+  u_char buffer[MAX_DNS_PACKET_LEN];
   Debug("dns", "trying to resolve '%s' from DNS connection, ndx %d", try_server_names[try_servers], ndx);
   int r       = _ink_res_mkquery(m_res, try_server_names[try_servers], T_A, buffer);
   try_servers = (try_servers + 1) % countof(try_server_names);
@@ -602,7 +602,7 @@ DNSHandler::try_primary_named(bool reopen)
     open_con(&ip.sa, true, 0);
   }
   if ((t - last_primary_retry) > DNS_PRIMARY_RETRY_PERIOD) {
-    char buffer[MAX_DNS_PACKET_LEN];
+    u_char buffer[MAX_DNS_PACKET_LEN];
 
     last_primary_retry = t;
     Debug("dns", "trying to resolve '%s' from primary DNS connection", try_server_names[try_servers]);
@@ -998,7 +998,7 @@ write_dns_event(DNSHandler *h, DNSEntry *e)
   ProxyMutex *mutex = h->mutex.get();
   union {
     HEADER _h;
-    char _b[MAX_DNS_PACKET_LEN];
+    u_char _b[MAX_DNS_PACKET_LEN];
   } blob;
   int r = 0;
 

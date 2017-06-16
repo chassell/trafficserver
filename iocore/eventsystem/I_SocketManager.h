@@ -85,13 +85,13 @@ struct SocketManager {
   int recv(int s, void *buf, int len, int flags);
   int recvfrom(int fd, void *buf, int size, int flags, struct sockaddr *addr, socklen_t *addrlen);
 
-  int64_t write(int fd, void *buf, int len, void *pOLP = nullptr);
+  int64_t write(int fd, const void *buf, int len, void *pOLP = nullptr);
   int64_t writev(int fd, struct iovec *vector, size_t count);
   int64_t write_vector(int fd, struct iovec *vector, size_t count, void *pOLP = 0);
-  int64_t pwrite(int fd, void *buf, int len, off_t offset, char *tag = nullptr);
+  int64_t pwrite(int fd, const void *buf, int len, off_t offset, char *tag = nullptr);
 
-  int send(int fd, void *buf, int len, int flags);
-  int sendto(int fd, void *buf, int len, int flags, struct sockaddr const *to, int tolen);
+  int send(int fd, const void *buf, int len, int flags);
+  int sendto(int fd, const void *buf, int len, int flags, struct sockaddr const *to, int tolen);
   int sendmsg(int fd, struct msghdr *m, int flags, void *pOLP = 0);
   int64_t lseek(int fd, off_t offset, int whence);
   int fstat(int fd, struct stat *);

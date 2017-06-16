@@ -107,8 +107,6 @@ Diags::Diags(const char *prefix_string, const char *bdt, const char *bat, BaseLo
     base_debug_tags(nullptr),
     base_action_tags(nullptr)
 {
-  int i;
-
   cleanup_func = nullptr;
   ink_mutex_init(&tag_table_lock);
 
@@ -132,7 +130,7 @@ Diags::Diags(const char *prefix_string, const char *bdt, const char *bat, BaseLo
   ink_release_assert(prefix_str);
   ink_release_assert(*prefix_str);
 
-  for (i = 0; i < DiagsLevel_Count; i++) {
+  for (DiagsLevel i = DL_Diag; i < DiagsLevel_Count; ++i) {
     config.outputs[i].to_stdout   = false;
     config.outputs[i].to_stderr   = false;
     config.outputs[i].to_syslog   = false;
@@ -188,8 +186,8 @@ Diags::~Diags()
     stderr_log = nullptr;
   }
 
-  ats_free((void *)base_debug_tags);
-  ats_free((void *)base_action_tags);
+  free(const_cast<char*>(base_debug_tags));
+  free(const_cast<char*>(base_action_tags));
 
   deactivate_all(DiagsTagType_Debug);
   deactivate_all(DiagsTagType_Action);
@@ -251,7 +249,7 @@ Diags::print_va(const char *debug_tag, DiagsLevel diags_level, const SourceLocat
   *end_of_format = NUL;
 
   // add the thread id
-  end_of_format += snprintf(end_of_format, sizeof(format_buf), "{0x%" PRIx64 "} ", (uint64_t)ink_thread_self());
+  end_of_format += snprintf(end_of_format, sizeof(format_buf), "{0x%" PRIx64 "} ", static_cast<uint64_t>(ink_thread_self()));
 
   //////////////////////////////////////
   // start with the diag level prefix //
@@ -306,10 +304,10 @@ Diags::print_va(const char *debug_tag, DiagsLevel diags_level, const SourceLocat
   //////////////////////////////////////////////////////////////////
 
   tp               = ink_gettimeofday();
-  time_t cur_clock = (time_t)tp.tv_sec;
+  time_t cur_clock = tp.tv_sec;
   buffer           = ink_ctime_r(&cur_clock, timestamp_buf);
 
-  snprintf(&(timestamp_buf[19]), (sizeof(timestamp_buf) - 20), ".%03d", (int)(tp.tv_usec / 1000));
+  snprintf(&(timestamp_buf[19]), (sizeof(timestamp_buf) - 20), ".%03d", static_cast<int>(tp.tv_usec / 1000));
 
   d    = format_buf_w_ts;
   *d++ = '[';
@@ -533,7 +531,6 @@ Diags::level_name(DiagsLevel dl) const
 void
 Diags::dump(FILE *fp) const
 {
-  int i;
 
   fprintf(fp, "Diags:\n");
   fprintf(fp, "  debug.enabled: %d\n", config.enabled[DiagsTagType_Debug]);
@@ -541,8 +538,8 @@ Diags::dump(FILE *fp) const
   fprintf(fp, "  action.enabled: %d\n", config.enabled[DiagsTagType_Action]);
   fprintf(fp, "  action default tags: '%s'\n", (base_action_tags ? base_action_tags : "NULL"));
   fprintf(fp, "  outputs:\n");
-  for (i = 0; i < DiagsLevel_Count; i++) {
-    fprintf(fp, "    %10s [stdout=%d, stderr=%d, syslog=%d, diagslog=%d]\n", level_name((DiagsLevel)i), config.outputs[i].to_stdout,
+  for (DiagsLevel i = DL_Diag; i < DiagsLevel_Count; ++i) {
+    fprintf(fp, "    %10s [stdout=%d, stderr=%d, syslog=%d, diagslog=%d]\n", level_name(i), config.outputs[i].to_stdout,
             config.outputs[i].to_stderr, config.outputs[i].to_syslog, config.outputs[i].to_diagslog);
   }
 }
