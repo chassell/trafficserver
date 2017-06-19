@@ -74,49 +74,36 @@ public:
 } Thread_Init_Func;
 }
 
+#if TS_USE_HWLOC
 void
 ThreadAffinityInitializer::init()
 {
-#if TS_USE_HWLOC
   int affinity = 1;
   REC_ReadConfigInteger(affinity, "proxy.config.exec_thread.affinity");
 
-  switch (affinity) {
-  case 4: // assign threads to logical processing units
-// Older versions of libhwloc (eg. Ubuntu 10.04) don't have HWLOC_OBJ_PU.
+  static const hwloc_obj_type_t thr_affinity_objs[] = 
+     { HWLOC_OBJ_MACHINE, HWLOC_OBJ_NUMANODE, HWLOC_OBJ_SOCKET, HWLOC_OBJ_CORE
 #if HAVE_HWLOC_OBJ_PU
-    obj_type = HWLOC_OBJ_PU;
-    obj_name = "Logical Processor";
-    break;
+         , HWLOC_OBJ_PU  
 #endif
-  case 3: // assign threads to real cores
-    obj_type = HWLOC_OBJ_CORE;
-    obj_name = "Core";
-    break;
-  case 1: // assign threads to NUMA nodes (often 1:1 with sockets)
-    obj_type = HWLOC_OBJ_NODE;
-    obj_name = "NUMA Node";
-    if (hwloc_get_nbobjs_by_type(ink_get_topology(), obj_type) > 0) {
-      break;
-    }
-  case 2: // assign threads to sockets
-    obj_type = HWLOC_OBJ_SOCKET;
-    obj_name = "Socket";
-    break;
-  default: // assign threads to the machine as a whole (a level below SYSTEM)
-    obj_type = HWLOC_OBJ_MACHINE;
-    obj_name = "Machine";
-  }
+     };
+
+  static const char *const thr_affinity_obj_names[] =
+     { "Machine",  "NUMA Node", "Socket", "Core" , "Logical CPU" };
+
+  affinity = MAX(0,MIN(countof(thr_affinity_objs), affinity));
+  affinity %= countof(thr_affinity_objs); // reset to zero if at max
+
+  obj_type = thr_affinity_objs[affinity];
+  obj_name = thr_affinity_obj_names[affinity];
 
   obj_count = hwloc_get_nbobjs_by_type(ink_get_topology(), obj_type);
   Debug("iocore_thread", "Affinity: %d %ss: %d PU: %d", affinity, obj_name, obj_count, ink_number_of_processors());
-#endif
 }
 
 int
 ThreadAffinityInitializer::set_affinity(int, Event *)
 {
-#if TS_USE_HWLOC
   hwloc_obj_t obj;
   EThread *t = this_ethread();
 
@@ -134,9 +121,9 @@ ThreadAffinityInitializer::set_affinity(int, Event *)
   } else {
     Warning("hwloc returned an unexpected number of objects -- CPU affinity disabled");
   }
-#endif // TS_USE_HWLOC
   return 0;
 }
+#endif
 
 EventProcessor::EventProcessor() : thread_initializer(this)
 {
@@ -227,7 +214,7 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
 
   for (i = 0; i < n_threads; i++) {
     snprintf(thr_name, MAX_THREAD_NAME_LENGTH, "[%s %d]", tg->_name.get(), i);
-    tg->_thread[i]->start(thr_name, nullptr, stacksize);
+    tg->_thread[i]->start(thr_name, stacksize);
   }
 
   n_ethreads += n_threads;

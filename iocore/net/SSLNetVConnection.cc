@@ -845,7 +845,7 @@ SSLNetVConnection::free(EThread *t)
   this->con.close();
   flags = 0;
 
-  SET_CONTINUATION_HANDLER(this, (SSLNetVConnHandler)&SSLNetVConnection::startEvent);
+  SET_HANDLER(&SSLNetVConnection::startEvent);
 
   if (nh) {
     nh->read_ready_list.remove(this);

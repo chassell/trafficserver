@@ -330,6 +330,8 @@ public:
   ServerSessionPool *server_session_pool = nullptr;
 };
 
+extern EThread *this_ethread();
+
 /**
   This is used so that we dont use up operator new(size_t, void *)
   which users might want to define for themselves.

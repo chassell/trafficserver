@@ -53,10 +53,10 @@ struct HttpProxyPort;
    So a nullptr mutex is safe for the continuation.
 */
 
-class SessionAccept : public Continuation
+class SessionAccept : public ContinuationTmpl<NetVConnection>
 {
 public:
-  SessionAccept(ProxyMutex *amutex) : Continuation(amutex) { SET_HANDLER(&SessionAccept::mainEvent); }
+  SessionAccept(ProxyMutex *amutex) : ContinuationTmpl<NetVConnection>(amutex) { SET_HANDLER(&SessionAccept::mainEvent); }
   ~SessionAccept() {}
   /**
     Accept a new connection on this session.
@@ -77,7 +77,7 @@ public:
   static const AclRecord *testIpAllowPolicy(sockaddr const *client_ip);
 
 private:
-  virtual int mainEvent(int event, void *netvc) = 0;
+  virtual int mainEvent(int event, NetVConnection *netvc) = 0;
 };
 
 #endif /* I_SessionAccept_H_ */

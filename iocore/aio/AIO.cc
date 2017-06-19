@@ -113,7 +113,7 @@ static int num_requests = 0;
 static AIOTestData *data;
 
 int
-AIOTestData::ink_aio_stats(int event, void *d)
+AIOTestData::ink_aio_stats(int, void *)
 {
   ink_hrtime now   = Thread::get_hrtime();
   double time_msec = (double)(now - start) / (double)HRTIME_MSECOND;
@@ -185,10 +185,8 @@ struct AIOThreadInfo : public Continuation {
   int sleep_wait;
 
   int
-  start(int event, Event *e)
+  start(int, Event *)
   {
-    (void)event;
-    (void)e;
 #if TS_USE_HWLOC
     hwloc_set_membind_nodeset(ink_get_topology(), hwloc_topology_get_topology_nodeset(ink_get_topology()), HWLOC_MEMBIND_INTERLEAVE,
                               HWLOC_MEMBIND_THREAD);
@@ -515,7 +513,7 @@ aio_thread_main(void *arg)
       if (op->thread == AIO_CALLBACK_THREAD_AIO) {
         SCOPED_MUTEX_LOCK(lock, op->mutex, thr_info->mutex->thread_holding);
         if (!op->action.cancelled) {
-          op->action.continuation->handleEvent(AIO_EVENT_DONE, op);
+          op->action.continuation->handleEvent(AIO_EVENT_DONE);
         }
       } else if (op->thread == AIO_CALLBACK_THREAD_ANY) {
         eventProcessor.schedule_imm_signal(op);

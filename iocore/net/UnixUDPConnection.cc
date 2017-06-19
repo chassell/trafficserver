@@ -63,10 +63,8 @@ UnixUDPConnection::~UnixUDPConnection()
 // called with continuation lock taken out
 // We call Release because AddRef was called before entering here.
 int
-UnixUDPConnection::callbackHandler(int event, void *data)
+UnixUDPConnection::callbackHandler(int, void *)
 {
-  (void)event;
-  (void)data;
   callbackAction = nullptr;
   if (continuation == nullptr) {
     return EVENT_CONT;

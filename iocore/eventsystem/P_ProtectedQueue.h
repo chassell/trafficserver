@@ -35,9 +35,8 @@
 TS_INLINE
 ProtectedQueue::ProtectedQueue()
 {
-  Event e;
   ink_mutex_init(&lock);
-  ink_atomiclist_init(&al, "ProtectedQueue", (char *)&e.link.next - (char *)&e);
+  ink_atomiclist_init(&al, "ProtectedQueue", Event::Link_link::next_offset());
   ink_cond_init(&might_have_data);
 }
 

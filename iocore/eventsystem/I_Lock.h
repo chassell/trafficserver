@@ -150,6 +150,7 @@
 class EThread;
 typedef EThread *EThreadPtr;
 typedef volatile EThreadPtr VolatileEThreadPtr;
+extern EThread *this_ethread();
 
 #if DEBUG
 inkcoreapi extern void lock_waiting(const SourceLocation &, const char *handler);
@@ -285,7 +286,7 @@ Mutex_trylock(
   ProxyMutex *m, EThread *t)
 {
   ink_assert(t != 0);
-  ink_assert(t == (EThread *)this_thread());
+  ink_assert(t == this_ethread());
   if (m->thread_holding != t) {
     if (!ink_mutex_try_acquire(&m->the_mutex)) {
 #ifdef DEBUG

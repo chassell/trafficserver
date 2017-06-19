@@ -172,8 +172,6 @@ struct DiskInit : public Continuation {
   mainEvent(int /* event ATS_UNUSED */, Event * /* e ATS_UNUSED */)
   {
     disk->open(s, blocks, askip, ahw_sector_size, fildes, clear);
-    ats_free(s);
-    mutex.clear();
     delete this;
     return EVENT_DONE;
   }
@@ -183,7 +181,15 @@ struct DiskInit : public Continuation {
   {
     SET_HANDLER(&DiskInit::mainEvent);
   }
+
+private:
+  ~DiskInit() 
+  {
+    ats_free(s);
+    mutex.clear();
+  }
 };
+
 #endif
 void cplist_init();
 static void cplist_update();
