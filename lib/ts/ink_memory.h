@@ -190,8 +190,8 @@ template <typename PtrType, unsigned N> static inline IOVec make_iovec(PtrType (
 
  */
 template <typename T>
-inline void
-ink_zero(T &t)
+//inline auto ink_zero(T &t) -> std::enable_if_t< std::is_trivially_copyable<T>::value >
+inline auto ink_zero(T &t) -> typename std::enable_if< std::has_trivial_copy_assign<T>::value >::type 
 {
   memset(&t, 0, sizeof(t));
 }

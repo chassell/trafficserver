@@ -32,7 +32,6 @@
 ---include I_IOBuffer.h
 #endif
 #include "ts/ink_apidefs.h"
-   class Continuation;
 class VConnection;
 class IOVConnection;
 class MIOBuffer;

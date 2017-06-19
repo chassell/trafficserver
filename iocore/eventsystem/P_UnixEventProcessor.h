@@ -24,8 +24,9 @@
 #ifndef _P_UnixEventProcessor_h_
 #define _P_UnixEventProcessor_h_
 
-#include "ts/ink_align.h"
 #include "I_EventProcessor.h"
+#include "ts/ink_align.h"
+#include "ts/ink_atomic.h"
 
 const int LOAD_BALANCE_INTERVAL = 1;
 
@@ -41,7 +42,7 @@ EventProcessor::allocate(int size)
     old = thread_data_used;
     if (old + loss + size > PER_THREAD_DATA)
       return -1;
-  } while (!ink_atomic_cas(&thread_data_used, old, old + size));
+  } while (!ink_atomic_cas(&thread_data_used, old+0, old + size));
 
   return (off_t)(old + start);
 }

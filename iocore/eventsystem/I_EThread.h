@@ -45,7 +45,6 @@ struct EventIO;
 
 class ServerSessionPool;
 class Event;
-class Continuation;
 
 enum ThreadType {
   REGULAR = 0,

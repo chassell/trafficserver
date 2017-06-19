@@ -79,11 +79,11 @@ ink_atomic_swap(volatile T *mem, T value)
 // ink_atomic_cas(mem, prev, next)
 // Atomically store the value @next into the pointer @mem, but only if the current value at @mem is @prev.
 // Returns true if @next was successfully stored.
-template <typename T>
+template <typename T1, typename T2, typename T3>
 static inline bool
-ink_atomic_cas(volatile T *mem, T prev, T next)
+ink_atomic_cas(volatile T1 *mem, T2 prev, T3 next)
 {
-  return __sync_bool_compare_and_swap(mem, prev, next);
+  return __sync_bool_compare_and_swap(mem, static_cast<T1>(prev), static_cast<T1>(next));
 }
 
 // ink_atomic_increment(ptr, count)
@@ -92,7 +92,7 @@ template <typename Type, typename Amount>
 static inline Type
 ink_atomic_increment(volatile Type *mem, Amount count)
 {
-  return __sync_fetch_and_add(mem, (Type)count);
+  return __sync_fetch_and_add(mem, static_cast<Type>(count));
 }
 
 // ink_atomic_decrement(ptr, count)
@@ -101,7 +101,7 @@ template <typename Type, typename Amount>
 static inline Type
 ink_atomic_decrement(volatile Type *mem, Amount count)
 {
-  return __sync_fetch_and_sub(mem, (Type)count);
+  return __sync_fetch_and_sub(mem, static_cast<Type>(count));
 }
 
 // Special hacks for ARM 32-bit

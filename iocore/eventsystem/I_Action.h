@@ -85,7 +85,8 @@
   completed or it has cancelled the Action.
 
 */
-class Action
+
+class ActionBase
 {
 public:
   /**
@@ -97,7 +98,7 @@ public:
     directly by the state machine.
 
   */
-  Continuation *continuation = nullptr;
+  ContinuationBase *&contptr_;
 
   /**
     Reference to the Continuation's lock.
@@ -134,9 +135,9 @@ public:
 
   */
   virtual void
-  cancel(Continuation *c = nullptr)
+  cancel(ContinuationBase *c = nullptr)
   {
-    ink_assert(!c || c == continuation);
+    ink_assert(!c || c == contptr_);
 #ifdef DEBUG
     ink_assert(!cancelled);
     cancelled = true;
@@ -158,9 +159,9 @@ public:
 
   */
   void
-  cancel_action(Continuation *c = nullptr)
+  cancel_action(ContinuationBase *c = nullptr)
   {
-    ink_assert(!c || c == continuation);
+    ink_assert(!c || c == contptr_);
 #ifdef DEBUG
     ink_assert(!cancelled);
     cancelled = true;
@@ -170,10 +171,10 @@ public:
 #endif
   }
 
-  Continuation *
-  operator=(Continuation *acont)
+  ContinuationBase *
+  operator=(ContinuationBase *acont)
   {
-    continuation = acont;
+    contptr_ = acont;
     if (acont)
       mutex = acont->mutex;
     else
@@ -187,9 +188,23 @@ public:
     Continuation.
 
   */
-  Action() {}
-  virtual ~Action() {}
+  template <typename T_CONTOBJ>
+  ActionBase(ContinuationTmpl<T_CONTOBJ> *&contptr) : contptr_(static_cast<ContinuationBase*&>(contptr)) {}
+  virtual ~ActionBase() {}
 };
+
+
+template <typename T_CONTOBJ>
+struct ActionTmpl : public ActionBase
+{
+  ContinuationTmpl<T_CONTOBJ> *continuation = nullptr; // mask over other
+
+  ActionTmpl() : ActionBase(continuation) { }
+};
+
+using Action = ActionTmpl<class Event>;
+
+
 
 #define ACTION_RESULT_NONE MAKE_ACTION_RESULT(0)
 #define ACTION_RESULT_DONE MAKE_ACTION_RESULT(1)
@@ -200,6 +215,6 @@ public:
 // #define ACTION_RESULT_HOST_DB_OFFLINE
 //   MAKE_ACTION_RESULT(ACTION_RESULT_HOST_DB_BASE + 0)
 
-#define MAKE_ACTION_RESULT(_x) (Action *)(((uintptr_t)((_x << 1) + 1)))
+#define MAKE_ACTION_RESULT(_x) (ActionBase *)(((uintptr_t)((_x << 1) + 1)))
 
 #endif /*_Action_h_*/
