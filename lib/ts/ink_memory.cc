@@ -153,18 +153,17 @@ ats_memalign_free(void *ptr)
 int
 ats_mallopt(int param ATS_UNUSED, int value ATS_UNUSED)
 {
-#if TS_HAS_JEMALLOC
+#if HAVE_LIBJEMALLOC
 // TODO: jemalloc code ?
-#else
-#if TS_HAS_TCMALLOC
-// TODO: tcmalloc code ?
-#else
-#if defined(linux)
-  return mallopt(param, value);
-#endif // ! defined(linux)
-#endif // ! TS_HAS_TCMALLOC
-#endif // ! TS_HAS_JEMALLOC
   return 0;
+#elif TS_HAS_TCMALLOC
+// TODO: tcmalloc code ?
+  return 0;
+#elif defined(linux)
+  return mallopt(param, value);
+#else
+  return 0;
+#endif
 }
 
 int
