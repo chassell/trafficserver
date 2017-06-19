@@ -1436,16 +1436,26 @@ TS_ARG_ENABLE_VAR([use], [linux_native_aio])
 # Check for hwloc library.
 # If we don't find it, disable checking for header.
 use_hwloc=0
-AS_IF([test "x$enable_hwloc" = "xyes"], [
-  # Use pkg-config, because some distros (*cough* Ubuntu) put hwloc in unusual places.
-  PKG_CHECK_MODULES([HWLOC], [hwloc], [
-    SAVE_LIBS="$LIBS"
-    LIBS="-lhwloc"
+# Use pkg-config, because some distros (*cough* Ubuntu) put hwloc in unusual places.
+PKG_CHECK_MODULES([HWLOC], [hwloc], [have_hwloc=yes], [have_hwloc=no])
+AS_IF([test "x$enable_hwloc" = "xyes" -a "x$have_hwloc" = "xno" ], [
+    AC_MSG_WARN([hwloc not found, try --disable-hwloc])
+])
+AS_IF([test "x$enable_hwloc" = "xyes" -a "x$have_hwloc" = "xyes" ], [
+    save_cxxflags="$CXXFLAGS"
+    save_libs="$LIBS"
     AC_LANG_PUSH([C++])
     AC_MSG_CHECKING([for hwloc C++ linking])
-    AC_LINK_IFELSE([
-      AC_LANG_PROGRAM([#include <hwloc.h>],[hwloc_topology_t t; hwloc_topology_init(&t); hwloc_get_type_depth(t, HWLOC_OBJ_SOCKET);])],[
-      use_hwloc=1
+    CXXFLAGS="$CXXFLAGS $HWLOC_CFLAGS"
+    LIBS="$LIBS $HWLOC_LIBS"
+    AC_LINK_IFELSE(
+      [ AC_LANG_PROGRAM(
+          [#include <hwloc.h>],[hwloc_topology_t t; hwloc_topology_init(&t); hwloc_get_type_depth(t, HWLOC_OBJ_SOCKET);]
+        )
+      ], [use_hwloc=1], []
+    )
+
+    AS_IF([test $use_hwloc = 1], [
       AC_SUBST([HWLOC_CFLAGS])
       AC_SUBST([HWLOC_LIBS])
       AC_MSG_RESULT([yes])
@@ -1457,19 +1467,13 @@ AS_IF([test "x$enable_hwloc" = "xyes"], [
     ], [
       AC_MSG_RESULT([no])
       AC_MSG_WARN([hwloc not linkable, try --disable-hwloc])
-      AC_SUBST([HWLOC_CFLAGS],[""])
-      AC_SUBST([HWLOC_LIBS],[""])
     ])
     AC_LANG_POP()
-    LIBS="$SAVE_LIBS"
-  ], [
-    AC_MSG_WARN([hwloc not found, try --disable-hwloc])
-    AC_SUBST([HWLOC_CFLAGS],[""])
-    AC_SUBST([HWLOC_LIBS],[""])
-  ])
+    LIBS="$save_libs"
+    CXXFLAGS="$save_cxxflags"
 ])
 
-AC_SUBST(use_hwloc)
+AC_SUBST([use_hwloc])
 
 #
 # Check for Maxmind APIs / includes. TODO: Long term, it might make sense to support
