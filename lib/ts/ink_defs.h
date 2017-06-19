@@ -71,12 +71,22 @@
 
 // Determine the element count for an array.
 #ifdef __cplusplus
-template <typename T, unsigned N>
-static inline unsigned
-countof(const T (&)[N])
+
+#include <type_traits>
+
+template<typename T_ELEM>
+constexpr std::size_t countof()
 {
-  return N;
+  using T = typename std::remove_reference<T_ELEM>::type;
+  static_assert(std::is_array<T>::value, 
+                "countof() requires an array argument");
+  static_assert(std::extent<T>::value > 0,  // [0]
+                "zero- or unknown-size array");
+  return std::extent<T>::value;
 }
+
+#define countof(a) countof<decltype(a)>()
+
 #else
 #define countof(x) ((unsigned)(sizeof(x) / sizeof((x)[0])))
 #endif
@@ -103,6 +113,9 @@ countof(const T (&)[N])
 
 #if TS_USE_HWLOC
 #include <hwloc.h>
+#elif __cplusplus
+// some signatures need this
+using hwloc_obj_type_t = int; 
 #endif
 
 #ifndef ROUNDUP
