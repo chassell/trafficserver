@@ -30,27 +30,29 @@
 
 struct Arena : public std::allocator<uint64_t>
 {
-  void *alloc(size_t size) { return allocate((size+1)/sizeof(uint64_t)); }
-  void free(void *mem, size_t size) { deallocate(static_cast<uint64_t*>(mem), size); }
+  void *alloc(size_t size) 
+     { return allocate((size+1)/sizeof(uint64_t)); }
+  void free(void *mem, size_t size) 
+     { deallocate(static_cast<uint64_t*>(mem), (size+1)/sizeof(uint64_t)); }
 
   char *str_alloc(size_t len) { return static_cast<char*>(alloc(len+1)); }
   char *str_store(const char *str, size_t len)
   {
-     char *mem = str_alloc(len);
-     memcpy(mem, str, len);
-     mem[len] = '\0';
-     return mem;
+    char *mem = str_alloc(len);
+    size_t extra ::sallocx(mem,0) - len;
+    memcpy(mem, str, len);
+    memset(mem + len, '\0', extra); // clear remainder
+    return mem;
   }
-
   void str_free(char *str) { free(str,0); }
 
-  // does it the long hard way
-  static size_t str_length(const char *str) 
+  static ptrdiff_t str_length(const char *str) 
   { 
-    size_t l = ::sallocx(str,0);
-    while ( l && ! str[--l] ) 
+    // get jemalloc's view on things
+    const char *end = str + ::sallocx(str,0);
+    while ( ! *(--end) ) 
        { }
-    return l+1; // assume nul is ending
+    return (end - str) + 1; // assume nul is ending
   }
 
   static void reset() { }

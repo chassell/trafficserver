@@ -24,10 +24,12 @@
 #include "ts/ink_platform.h"
 #include "ts/ink_memory.h"
 
+// must use NO LIBJEMALLOC state for this .cc file
 #undef HAVE_LIBJEMALLOC
 
 #include "ts/Allocator.h"
 #include "ts/Arena.h"
+
 #include <cassert>
 #include <cstring>
 

@@ -47,6 +47,7 @@
 #include "ts/hugepages.h"
 #include "ts/Diags.h"
 
+// includes must be in this state
 #undef HAVE_LIBJEMALLOC 
 
 #include "ts/Allocator.h"
