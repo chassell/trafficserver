@@ -85,6 +85,11 @@ constexpr std::size_t countof()
   return std::extent<T>::value;
 }
 
+template<typename T, typename U> constexpr size_t offset_of(U T::*member)
+{
+  return reinterpret_cast<char*>(&(static_cast<T*>(nullptr)->*member)) - static_cast<char*>(nullptr);
+}
+
 #define countof(a) countof<decltype(a)>()
 
 #else

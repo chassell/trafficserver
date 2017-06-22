@@ -23,14 +23,16 @@
 #ifndef _ink_memory_h_
 #define _ink_memory_h_
 
+#include "ts/ink_config.h"
+#include "ts/ink_defs.h"
+
+#include <vector>
+
 #include <ctype.h>
 #include <string.h>
 #include <strings.h>
 #include <inttypes.h>
 #include <string>
-
-#include "ts/string_view.h"
-#include "ts/ink_config.h"
 
 #if HAVE_UNISTD_H
 #include <unistd.h>
@@ -78,6 +80,50 @@
 #define MADV_DONTNEED 4
 #endif
 
+namespace jemallctl 
+{
+  using objpath_t = std::vector<size_t>;
+
+  struct ObjBase {
+      ObjBase(const char *name);
+    protected:
+      const objpath_t oid_;
+  };
+
+  template <typename T_VALUE, size_t N_DIFF=0>
+  struct GetObjFxn : public ObjBase 
+     { using ObjBase::ObjBase; auto operator()(void) const -> T_VALUE; };
+
+  template <typename T_VALUE, size_t N_DIFF=0>
+  struct SetObjFxn : public ObjBase 
+     { using ObjBase::ObjBase; auto operator()(const T_VALUE &) const -> int; };
+
+  using DoObjFxn = GetObjFxn<void,0>;
+
+  extern const GetObjFxn<chunk_hooks_t> thread_arena_hooks;
+  extern const SetObjFxn<chunk_hooks_t> set_thread_arena_hooks;
+
+  // request-or-sense new values in statistics 
+  extern const GetObjFxn<uint64_t>    epoch;
+
+  // request separated page sets for each NUMA node (when created)
+  extern const GetObjFxn<unsigned>    do_arenas_extend;
+
+  // assigned arena for local thread
+  extern const GetObjFxn<unsigned>    thread_arena;
+  extern const SetObjFxn<unsigned>    set_thread_arena;
+  extern const DoObjFxn               do_thread_tcache_flush;
+
+  extern const GetObjFxn<bool>        config_thp;
+  extern const GetObjFxn<bool>        thread_prof_active;
+  extern const SetObjFxn<bool>        set_thread_prof_active;
+
+//  extern const GetObjFxn<std::string> config_malloc_conf;
+//  extern const GetObjFxn<std::string> thread_prof_name;
+//  extern const SetObjFxn<std::string> set_thread_prof_name;
+
+}
+
 #ifdef __cplusplus
 extern "C" {
 #endif /* __cplusplus */
@@ -94,7 +140,6 @@ struct IOVec : public iovec {
     iov_len  = len;
   }
 };
-
 void *ats_malloc(size_t size);
 void *ats_calloc(size_t nelem, size_t elsize);
 void *ats_realloc(void *ptr, size_t size);
