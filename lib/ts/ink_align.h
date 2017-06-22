@@ -25,22 +25,19 @@
 #ifndef _ink_align_h_
 #define _ink_align_h_
 
-#include "ts/ink_time.h"
+#include <memory>
 
-union Alias32 {
-  uint8_t byte[4];
-  int32_t i32;
-  uint32_t u32;
-};
-
-union Alias64 {
-  uint8_t byte[8];
-  int32_t i32[2];
-  uint32_t u32[2];
-  int64_t i64;
-  uint64_t u64;
-  ink_time_t i_time;
-};
+template <typename T_OBJ>
+inline T_OBJ *ats_align(std::size_t alignment, std::size_t size, T_OBJ *&ptr, std::size_t &space)
+{
+  intptr_t v = reinterpret_cast<intptr_t>(ptr);
+  ptrdiff_t vv = ((v-1) | (alignment-1)) + 1 - v;
+  if ( size + vv > space ) {
+    return nullptr;
+  }
+  space -= vv;
+  return (ptr = reinterpret_cast<T_OBJ*>(v + vv));
+}
 
 /**
  * Alignment macros
@@ -48,10 +45,19 @@ union Alias64 {
 
 #define INK_MIN_ALIGN 8
 /* INK_ALIGN() is only to be used to align on a power of 2 boundary */
-#define INK_ALIGN(size, boundary) (((size) + ((boundary)-1)) & ~((boundary)-1))
+#define INK_ALIGN(size, boundary)  aligned_spacing(size,boundary)
 
 /** Default alignment */
 #define INK_ALIGN_DEFAULT(size) INK_ALIGN(size, INK_MIN_ALIGN)
+
+static inline ptrdiff_t
+aligned_spacing(size_t len, size_t block=INK_MIN_ALIGN)
+{
+    void *ptr = static_cast<char*>(nullptr) + len; // pointer from zero
+    // next size >= len to get next a new aligned block
+    return static_cast<const char*>( ats_align(block, 0, ptr, block) ) 
+                   - static_cast<const char*>(nullptr);
+}
 
 //
 // Move a pointer forward until it meets the alignment width.
@@ -59,13 +65,8 @@ union Alias64 {
 static inline void *
 align_pointer_forward(const void *pointer_, size_t alignment)
 {
-  char *pointer = (char *)pointer_;
-  //
-  // Round up alignment..
-  //
-  pointer = (char *)INK_ALIGN((ptrdiff_t)pointer, alignment);
-
-  return (void *)pointer;
+    // next ptr >= pointer_ to get next a new aligned block
+    return ats_align(alignment, 0, const_cast<void*&>(pointer_), alignment); 
 }
 
 //
@@ -75,17 +76,10 @@ align_pointer_forward(const void *pointer_, size_t alignment)
 static inline void *
 align_pointer_forward_and_zero(const void *pointer_, size_t alignment)
 {
-  char *pointer = (char *)pointer_;
-  char *aligned = (char *)INK_ALIGN((ptrdiff_t)pointer, alignment);
-  //
-  // Fill the skippings..
-  //
-  while (pointer < aligned) {
-    *pointer = 0;
-    pointer++;
-  }
-
-  return (void *)aligned;
+    size_t left = alignment;
+    void *aptr = ats_align(alignment, 0, pointer_, left); 
+    memset( pointer_, '\0', alignment - left ); // zero bytes before new block
+    return aptr;
 }
 
 //
