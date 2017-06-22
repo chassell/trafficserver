@@ -50,7 +50,7 @@ inline T_OBJ *ats_align(std::size_t alignment, std::size_t size, T_OBJ *&ptr, st
 /** Default alignment */
 #define INK_ALIGN_DEFAULT(size) INK_ALIGN(size, INK_MIN_ALIGN)
 
-static inline ptrdiff_t
+static inline size_t
 aligned_spacing(size_t len, size_t block=INK_MIN_ALIGN)
 {
     void *ptr = static_cast<char*>(nullptr) + len; // pointer from zero
@@ -63,9 +63,23 @@ aligned_spacing(size_t len, size_t block=INK_MIN_ALIGN)
 // Move a pointer forward until it meets the alignment width.
 //
 static inline void *
+align_pointer_backward(const void *pointer_, size_t alignment)
+{
+    void *bptr = reinterpret_cast<void*>( 0 - reinterpret_cast<intptr_t>(pointer_));
+    // find next aligned ptr if address was "negative" version of original
+    bptr = ats_align(alignment, 0, bptr, alignment); 
+    // re-negate and return
+    return reinterpret_cast<void*>( 0 - reinterpret_cast<intptr_t>(bptr) );
+}
+
+
+//
+// Move a pointer forward until it meets the alignment width.
+//
+static inline void *
 align_pointer_forward(const void *pointer_, size_t alignment)
 {
-    // next ptr >= pointer_ to get next a new aligned block
+    // next aligned zero length block .. equal or after 
     return ats_align(alignment, 0, const_cast<void*&>(pointer_), alignment); 
 }
 
@@ -74,7 +88,7 @@ align_pointer_forward(const void *pointer_, size_t alignment)
 // and zero out the contents of the space you're skipping over.
 //
 static inline void *
-align_pointer_forward_and_zero(const void *pointer_, size_t alignment)
+align_pointer_forward_and_zero(void *pointer_, size_t alignment)
 {
     size_t left = alignment;
     void *aptr = ats_align(alignment, 0, pointer_, left); 
