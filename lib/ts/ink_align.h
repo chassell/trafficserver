@@ -68,7 +68,7 @@ inline T_OBJ *ats_align(std::size_t alignment, std::size_t size, T_OBJ *&ptr, st
 /** Default alignment */
 #define INK_ALIGN_DEFAULT(size) INK_ALIGN(size, INK_MIN_ALIGN)
 
-static inline size_t
+static inline ptrdiff_t
 aligned_spacing(size_t len, size_t block=INK_MIN_ALIGN)
 {
     void *ptr = static_cast<char*>(nullptr) + len; // pointer from zero
