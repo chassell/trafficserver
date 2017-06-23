@@ -82,7 +82,7 @@ NetVCOptions::set_sock_param(int _recv_bufsize, int _send_bufsize, unsigned long
   packet_tos          = _packet_tos;
 }
 
-struct OOB_callback : public ContinuationTmpl<Event> {
+struct OOB_callback : public Continuation {
   char *data;
   int length;
   Event *trigger;
@@ -91,7 +91,7 @@ struct OOB_callback : public ContinuationTmpl<Event> {
   int retry_OOB_send(int, Event *);
 
   OOB_callback(Ptr<ProxyMutex> &m, NetVConnection *vc, Continuation *cont, char *buf, int len)
-    : ContinuationTmpl(m), data(buf), length(len), trigger(0)
+    : Continuation(m), data(buf), length(len), trigger(0)
   {
     server_vc   = (UnixNetVConnection *)vc;
     server_cont = cont;

@@ -98,7 +98,7 @@ public:
     directly by the state machine.
 
   */
-  ContinuationBase *&contptr_;
+  Continuation *&contptr_;
 
   /**
     Reference to the Continuation's lock.
@@ -109,7 +109,7 @@ public:
     modified directly by the state machine.
 
   */
-  Ptr<ProxyMutex> mutex;
+  Ptr<ProxyMutex> mutex_;
 
   /**
     Internal flag used to indicate whether the action has been
@@ -135,7 +135,7 @@ public:
 
   */
   virtual void
-  cancel(ContinuationBase *c = nullptr)
+  cancel(Continuation *c = nullptr)
   {
     ink_assert(!c || c == contptr_);
 #ifdef DEBUG
@@ -159,7 +159,7 @@ public:
 
   */
   void
-  cancel_action(ContinuationBase *c = nullptr)
+  cancel_action(Continuation *c = nullptr)
   {
     ink_assert(!c || c == contptr_);
 #ifdef DEBUG
@@ -171,14 +171,15 @@ public:
 #endif
   }
 
-  ContinuationBase *
-  operator=(ContinuationBase *acont)
+  Continuation *
+  operator=(Continuation *acont)
   {
     contptr_ = acont;
-    if (acont)
-      mutex = acont->mutex;
-    else
-      mutex = 0;
+    if (acont) {
+      mutex_ = acont->mutex();
+    } else {
+      mutex_.clear();
+    }
     return acont;
   }
 
@@ -188,22 +189,12 @@ public:
     Continuation.
 
   */
-  template <typename T_CONTOBJ>
-  ActionBase(ContinuationTmpl<T_CONTOBJ> *&contptr) : contptr_(static_cast<ContinuationBase*&>(contptr)) {}
+  ActionBase(Continuation *&contptr) : contptr_(contptr) {}
   virtual ~ActionBase() {}
 };
 
 
-template <typename T_CONTOBJ>
-struct ActionTmpl : public ActionBase
-{
-  ContinuationTmpl<T_CONTOBJ> *continuation = nullptr; // mask over other
-
-  ActionTmpl() : ActionBase(continuation) { }
-};
-
-using Action = ActionTmpl<class Event>;
-
+using Action = ActionBase;
 
 
 #define ACTION_RESULT_NONE MAKE_ACTION_RESULT(0)

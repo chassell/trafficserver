@@ -35,7 +35,7 @@ SSLNetProcessor ssl_NetProcessor;
 NetProcessor &sslNetProcessor = ssl_NetProcessor;
 
 #ifdef HAVE_OPENSSL_OCSP_STAPLING
-struct OCSPContinuation : public ContinuationTmpl<Event> {
+struct OCSPContinuation : public Continuation {
   int
   mainEvent(int /* event ATS_UNUSED */, Event * /* e ATS_UNUSED */)
   {
@@ -44,7 +44,7 @@ struct OCSPContinuation : public ContinuationTmpl<Event> {
     return EVENT_CONT;
   }
 
-  OCSPContinuation() : ContinuationTmpl<Event>(new_ProxyMutex()) { SET_HANDLER(&OCSPContinuation::mainEvent); }
+  OCSPContinuation() : Continuation(new_ProxyMutex()) { SET_HANDLER(&OCSPContinuation::mainEvent); }
 };
 #endif /* HAVE_OPENSSL_OCSP_STAPLING */
 

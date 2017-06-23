@@ -121,7 +121,7 @@ public:
     regions. Do not modify this member directly.
 
   */
-  Ptr<ProxyMutex> mutex;
+  Ptr<ProxyMutex> mutex_;
 
   // PRIVATE
   Thread();

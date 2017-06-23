@@ -39,6 +39,8 @@
 #include "I_Event.h"
 struct ProtectedQueue {
   void enqueue(Event *e, bool fast_signal = false);
+  void enqueue_signal(Event *e) { enqueue(e,true); }
+
   void signal();
   int try_signal();             // Use non blocking lock and if acquired, signal
   void enqueue_local(Event *e); // Safe when called from the same thread

@@ -146,7 +146,7 @@ typedef struct tsapi_vio *TSVIO;
   It is also a Continuation that is called back from processors.
 
 */
-class VConnection : public ContinuationTmpl<Event>
+class VConnection : public Continuation
 {
 public:
   virtual ~VConnection();

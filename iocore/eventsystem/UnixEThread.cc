@@ -109,7 +109,7 @@ void
 EThread::process_event(Event *e, int calling_code)
 {
   ink_assert((!e->in_the_prot_queue && !e->in_the_priority_queue));
-  MUTEX_TRY_LOCK_FOR(lock, e->mutex, this, e->continuation);
+  MUTEX_TRY_LOCK_FOR(lock, e, this);
   if (!lock.is_locked()) {
     e->timeout_at = cur_time + DELAY_FOR_RETRY;
     EventQueueExternal.enqueue_local(e);
@@ -118,10 +118,10 @@ EThread::process_event(Event *e, int calling_code)
       free_event(e);
       return;
     }
-    Continuation *c_temp = e->continuation;
-    e->continuation->handleEvent(calling_code, e);
+
+    e->applyEventRepeatable(calling_code);
+
     ink_assert(!e->in_the_priority_queue);
-    ink_assert(c_temp == e->continuation);
     MUTEX_RELEASE(lock);
     if (e->period) {
       if (!e->in_the_prot_queue && !e->in_the_priority_queue) {
@@ -159,9 +159,9 @@ EThread::execute()
   // Do the start event first.
   // coverity[lock]
   if (start_event) {
-    MUTEX_TAKE_LOCK_FOR(start_event->mutex, this, start_event->continuation);
-    start_event->continuation->handleEvent(EVENT_IMMEDIATE, start_event);
-    MUTEX_UNTAKE_LOCK(start_event->mutex, this);
+    MUTEX_TAKE_LOCK_FOR(start_event, this);
+    start_event->applyEvent(EVENT_IMMEDIATE);
+    MUTEX_UNTAKE_LOCK(start_event, this);
     free_event(start_event);
     start_event = nullptr;
   }

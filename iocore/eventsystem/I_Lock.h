@@ -28,6 +28,8 @@
 #include "ts/Diags.h"
 #include "I_Thread.h"
 
+#include <type_traits>
+
 #define MAX_LOCK_TIME HRTIME_MSECONDS(200)
 #define THREAD_MUTEX_THREAD_HOLDING (-1024 * 1024)
 
@@ -102,11 +104,11 @@
 
 */
 
-#define MUTEX_TRY_LOCK_FOR(_l, _m, _t, _c) MutexTryLock _l(MakeSourceLocation(), nullptr, _m, _t)
+#define MUTEX_TRY_LOCK_FOR(_l, _e, _t) MutexTryLock _l(MakeSourceLocation(), nullptr, _e, _t)
 #else // DEBUG
 #define MUTEX_TRY_LOCK(_l, _m, _t) MutexTryLock _l(_m, _t)
 #define MUTEX_TRY_LOCK_SPIN(_l, _m, _t, _sc) MutexTryLock _l(_m, _t, _sc)
-#define MUTEX_TRY_LOCK_FOR(_l, _m, _t, _c) MutexTryLock _l(_m, _t)
+#define MUTEX_TRY_LOCK_FOR(_l, _e, _t) MutexTryLock _l(_e, _t)
 #endif // DEBUG
 
 /**
@@ -127,23 +129,23 @@
 // DEPRECATED DEPRECATED DEPRECATED
 #ifdef DEBUG
 #define MUTEX_TAKE_TRY_LOCK(_m, _t) Mutex_trylock(MakeSourceLocation(), (char *)nullptr, _m, _t)
-#define MUTEX_TAKE_TRY_LOCK_FOR(_m, _t, _c) Mutex_trylock(MakeSourceLocation(), (char *)nullptr, _m, _t)
-#define MUTEX_TAKE_TRY_LOCK_FOR_SPIN(_m, _t, _c, _sc) Mutex_trylock_spin(MakeSourceLocation(), nullptr, _m, _t, _sc)
+#define MUTEX_TAKE_TRY_LOCK_FOR(_e, _t, _c) Mutex_trylock(MakeSourceLocation(), (char *)nullptr, _e, _t)
+#define MUTEX_TAKE_TRY_LOCK_FOR_SPIN(_e, _t, _c, _sc) Mutex_trylock_spin(MakeSourceLocation(), nullptr, _m, _t, _sc)
 #else
 #define MUTEX_TAKE_TRY_LOCK(_m, _t) Mutex_trylock(_m, _t)
-#define MUTEX_TAKE_TRY_LOCK_FOR(_m, _t, _c) Mutex_trylock(_m, _t)
-#define MUTEX_TAKE_TRY_LOCK_FOR_SPIN(_m, _t, _c, _sc) Mutex_trylock_spin(_m, _t, _sc)
+#define MUTEX_TAKE_TRY_LOCK_FOR(_e, _t, _c) Mutex_trylock(_e, _t)
+#define MUTEX_TAKE_TRY_LOCK_FOR_SPIN(_e, _t, _c, _sc) Mutex_trylock_spin(_e, _t, _sc)
 #endif
 
 #ifdef DEBUG
 #define MUTEX_TAKE_LOCK(_m, _t) Mutex_lock(MakeSourceLocation(), (char *)nullptr, _m, _t)
-#define MUTEX_TAKE_LOCK_FOR(_m, _t, _c) Mutex_lock(MakeSourceLocation(), nullptr, _m, _t)
+#define MUTEX_TAKE_LOCK_FOR(_e, _t) Mutex_lock(MakeSourceLocation(), nullptr, _e, _t)
 #else
 #define MUTEX_TAKE_LOCK(_m, _t) Mutex_lock(_m, _t)
-#define MUTEX_TAKE_LOCK_FOR(_m, _t, _c) Mutex_lock(_m, _t)
+#define MUTEX_TAKE_LOCK_FOR(_e, _t) Mutex_lock(_e, _t)
 #endif // DEBUG
 
-#define MUTEX_UNTAKE_LOCK(_m, _t) Mutex_unlock(_m, _t)
+#define MUTEX_UNTAKE_LOCK(_e, _t) Mutex_unlock(_e, _t)
 // DEPRECATED DEPRECATED DEPRECATED
 /////////////////////////////////////
 
@@ -399,6 +401,16 @@ Mutex_trylock_spin(
     m.get(), t, spincnt);
 }
 
+template <class T_OBJ, typename = typename std::enable_if< std::is_member_function_pointer<decltype(&T_OBJ::mutex)>::value >::type>
+inline int
+#ifdef DEBUG
+Mutex_lock( const SourceLocation &location, const char *ahandler, T_OBJ *const &e, EThread *t)
+   { return Mutex_lock(location,ahandler,e->mutex().get(), t); }
+#else
+Mutex_lock( T_OBJ *const &e, EThread *t)
+   { return Mutex_lock(e->mutex().get(), t); }
+#endif
+
 inline int
 Mutex_lock(
 #ifdef DEBUG
@@ -445,6 +457,11 @@ Mutex_lock(
     m.get(), t);
 }
 
+template <class T_OBJ, typename = typename std::enable_if< std::is_member_function_pointer<decltype(&T_OBJ::mutex)>::value >::type>
+inline int
+Mutex_unlock( T_OBJ *const &e, EThread *t)
+   { return Mutex_lock(e->mutex().get(), t); }
+
 inline void
 Mutex_unlock(ProxyMutex *m, EThread *t)
 {
@@ -484,33 +501,21 @@ private:
   bool locked_p;
 
 public:
-  MutexLock(
 #ifdef DEBUG
-    const SourceLocation &location, const char *ahandler,
-#endif // DEBUG
-    ProxyMutex *am, EThread *t)
-    : m(am), locked_p(true)
-  {
-    Mutex_lock(
-#ifdef DEBUG
-      location, ahandler,
-#endif // DEBUG
-      m.get(), t);
-  }
+  template <class T_OBJ, typename = typename std::enable_if< std::is_member_function_pointer<decltype(T_OBJ::mutex)>::value >::type>
+  explicit MutexLock(const SourceLocation &location, const char *ahandler, T_OBJ *am, EThread *t) : m(am->mutex())
+      { Mutex_lock(location, ahandler, m.get(), t); }
 
-  MutexLock(
-#ifdef DEBUG
-    const SourceLocation &location, const char *ahandler,
-#endif // DEBUG
-    Ptr<ProxyMutex> &am, EThread *t)
-    : m(am), locked_p(true)
-  {
-    Mutex_lock(
-#ifdef DEBUG
-      location, ahandler,
-#endif // DEBUG
-      m.get(), t);
-  }
+  MutexLock( const SourceLocation &location, const char *ahandler, Ptr<ProxyMutex> am, EThread *t) : m(am) 
+      { Mutex_lock(location, ahandler, m.get(), t); }
+#else
+  template <class T_OBJ, typename = typename std::enable_if< std::is_member_function_pointer<decltype(&T_OBJ::mutex)>::value >::type >
+  explicit MutexLock(T_OBJ *am, EThread *t) : m(am->mutex()), locked_p(true)
+      { Mutex_lock(m.get(), t); }
+
+  MutexLock(Ptr<ProxyMutex> am, EThread *t) : m(am), locked_p(true)
+      { Mutex_lock(m.get(), t); }
+#endif
 
   void
   release()
@@ -532,61 +537,23 @@ private:
   bool lock_acquired;
 
 public:
-  MutexTryLock(
 #ifdef DEBUG
-    const SourceLocation &location, const char *ahandler,
-#endif // DEBUG
-    ProxyMutex *am, EThread *t)
-    : m(am)
-  {
-    lock_acquired = Mutex_trylock(
-#ifdef DEBUG
-      location, ahandler,
-#endif // DEBUG
-      m.get(), t);
-  }
-
-  MutexTryLock(
-#ifdef DEBUG
-    const SourceLocation &location, const char *ahandler,
-#endif // DEBUG
-    Ptr<ProxyMutex> &am, EThread *t)
-    : m(am)
-  {
-    lock_acquired = Mutex_trylock(
-#ifdef DEBUG
-      location, ahandler,
-#endif // DEBUG
-      m.get(), t);
-  }
-
-  MutexTryLock(
-#ifdef DEBUG
-    const SourceLocation &location, const char *ahandler,
-#endif // DEBUG
-    ProxyMutex *am, EThread *t, int sp)
-    : m(am)
-  {
-    lock_acquired = Mutex_trylock_spin(
-#ifdef DEBUG
-      location, ahandler,
-#endif // DEBUG
-      m.get(), t, sp);
-  }
-
-  MutexTryLock(
-#ifdef DEBUG
-    const SourceLocation &location, const char *ahandler,
-#endif // DEBUG
-    Ptr<ProxyMutex> &am, EThread *t, int sp)
-    : m(am)
-  {
-    lock_acquired = Mutex_trylock_spin(
-#ifdef DEBUG
-      location, ahandler,
-#endif // DEBUG
-      m.get(), t, sp);
-  }
+  template <class T_OBJ, typename = typename std::enable_if< std::is_member_function_pointer<decltype(T_OBJ::mutex)>::value >::type>
+  explicit MutexTryLock(const SourceLocation &location, const char *ahandler, T_OBJ *am, EThread *t) : m(am->mutex())
+      { lock_acquired = Mutex_trylock(m, t); }
+  MutexTryLock( const SourceLocation &location, const char *ahandler, Ptr<ProxyMutex> am, EThread *t) : m(am) 
+      { lock_acquired = Mutex_trylock(location, ahandler, m, t); }
+  MutexTryLock( const SourceLocation &location, const char *ahandler, Ptr<ProxyMutex> am, EThread *t, int sp) : m(am)
+      { lock_acquired = Mutex_trylock_spin( location, ahandler, m, t, sp); }
+#else
+  template <class T_OBJ, typename = typename std::enable_if< std::is_member_function_pointer<decltype(&T_OBJ::mutex)>::value >::type >
+  explicit MutexTryLock(T_OBJ *am, EThread *t) : m(am->mutex())
+      { lock_acquired = Mutex_trylock(m, t); }
+  MutexTryLock(Ptr<ProxyMutex> am, EThread *t) : m(am)
+      { lock_acquired = Mutex_trylock(m, t); }
+  MutexTryLock(Ptr<ProxyMutex> am, EThread *t, int sp) : m(am)
+      { lock_acquired = Mutex_trylock_spin(m, t, sp); }
+#endif
 
   ~MutexTryLock()
   {

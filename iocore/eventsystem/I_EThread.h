@@ -84,11 +84,20 @@ extern volatile bool shutdown_event_system;
 */
 class EThread : public Thread
 {
+  friend Event;
 public:
+  static EThread *create_thread(Continuation *c, int id, EventType evtype)
+  {
+    auto e = c->create_spawn_event(); 
+    auto thr = new EThread(REGULAR,id);
+    e->set_thread(thr);
+    thr->set_event_type(evtype);
+    return thr;
+  }
+
   /*-------------------------------------------------------*\
   |  Common Interface                                       |
   \*-------------------------------------------------------*/
-
   /**
     Schedules the continuation on this EThread to receive an event
     as soon as possible.
@@ -100,14 +109,15 @@ public:
     @param c Continuation to be called back as soon as possible.
     @param callback_event Event code to be passed back to the
       continuation's handler. See the the EventProcessor class.
-    @param cookie User-defined value or pointer to be passed back
-      in the Event's object cookie field.
     @return Reference to an Event object representing the schedulling
       of this callback.
 
   */
-  Event *schedule_imm(Continuation *c, int callback_event = EVENT_IMMEDIATE, void *cookie = nullptr);
-  Event *schedule_imm_signal(Continuation *c, int callback_event = EVENT_IMMEDIATE, void *cookie = nullptr);
+  Event *schedule_imm(Continuation *c, int callback_event = EVENT_IMMEDIATE)
+    { return c->create_event(this)->schedule_imm_global(callback_event); }
+
+  Event *schedule_imm_signal(Continuation *c, int callback_event = EVENT_IMMEDIATE)
+    { return c->create_event(this)->schedule_imm_signal_global(callback_event); }
 
   /**
     Schedules the continuation on this EThread to receive an event
@@ -122,13 +132,12 @@ public:
     @param atimeout_at Time value at which to callback.
     @param callback_event Event code to be passed back to the
       continuation's handler. See the EventProcessor class.
-    @param cookie User-defined value or pointer to be passed back
-      in the Event's object cookie field.
     @return A reference to an Event object representing the schedulling
       of this callback.
 
   */
-  Event *schedule_at(Continuation *c, ink_hrtime atimeout_at, int callback_event = EVENT_INTERVAL, void *cookie = nullptr);
+  Event *schedule_at(Continuation *c, ink_hrtime atimeout_at, int callback_event = EVENT_INTERVAL)
+    { return c->create_event(this)->schedule_at_global(atimeout_at, callback_event); }
 
   /**
     Schedules the continuation on this EThread to receive an event
@@ -142,14 +151,12 @@ public:
     @param atimeout_in Amount of time after which to callback.
     @param callback_event Event code to be passed back to the
       continuation's handler. See the EventProcessor class.
-    @param cookie User-defined value or pointer to be passed back
-      in the Event's object cookie field.
     @return A reference to an Event object representing the schedulling
       of this callback.
 
   */
-  Event *schedule_in(Continuation *c, ink_hrtime atimeout_in, int callback_event = EVENT_INTERVAL, void *cookie = nullptr);
-
+  Event *schedule_in(Continuation *c, ink_hrtime atimeout_in, int callback_event = EVENT_INTERVAL)
+    { return c->create_event(this)->schedule_in_global(atimeout_in, callback_event); }
   /**
     Schedules the continuation on this EThread to receive an event
     periodically.
@@ -163,13 +170,12 @@ public:
     @param callback_event Event code to be passed back to the
       continuation's handler. See the Remarks section in the
       EventProcessor class.
-    @param cookie User-defined value or pointer to be passed back
-      in the Event's object cookie field.
     @return A reference to an Event object representing the schedulling
       of this callback.
 
   */
-  Event *schedule_every(Continuation *c, ink_hrtime aperiod, int callback_event = EVENT_INTERVAL, void *cookie = nullptr);
+  Event *schedule_every(Continuation *c, ink_hrtime aperiod, int callback_event = EVENT_INTERVAL)
+    { return c->create_event(this)->schedule_every_global(aperiod, callback_event); }
 
   /**
     Schedules the continuation on this EThread to receive an event
@@ -181,13 +187,12 @@ public:
     @param c Continuation to be called back as soon as possible.
     @param callback_event Event code to be passed back to the
       continuation's handler. See the EventProcessor class.
-    @param cookie User-defined value or pointer to be passed back
-      in the Event's object cookie field.
     @return A reference to an Event object representing the schedulling
       of this callback.
 
   */
-  Event *schedule_imm_local(Continuation *c, int callback_event = EVENT_IMMEDIATE, void *cookie = nullptr);
+  Event *schedule_imm_local(Continuation *c, int callback_event = EVENT_IMMEDIATE)
+    { return c->create_event(this)->schedule_imm(callback_event); }
 
   /**
     Schedules the continuation on this EThread to receive an event
@@ -202,13 +207,12 @@ public:
     @param atimeout_at Time value at which to callback.
     @param callback_event Event code to be passed back to the
       continuation's handler. See the EventProcessor class.
-    @param cookie User-defined value or pointer to be passed back
-      in the Event's object cookie field.
     @return A reference to an Event object representing the schedulling
       of this callback.
 
   */
-  Event *schedule_at_local(Continuation *c, ink_hrtime atimeout_at, int callback_event = EVENT_INTERVAL, void *cookie = nullptr);
+  Event *schedule_at_local(Continuation *c, ink_hrtime atimeout_at, int callback_event = EVENT_INTERVAL)
+    { return c->create_event(this)->schedule_at(callback_event, atimeout_at); }
 
   /**
     Schedules the continuation on this EThread to receive an event
@@ -223,13 +227,12 @@ public:
     @param callback_event Event code to be passed back to the
       continuation's handler. See the Remarks section in the
       EventProcessor class.
-    @param cookie User-defined value or pointer to be passed back
-      in the Event's object cookie field.
     @return A reference to an Event object representing the schedulling
       of this callback.
 
   */
-  Event *schedule_in_local(Continuation *c, ink_hrtime atimeout_in, int callback_event = EVENT_INTERVAL, void *cookie = nullptr);
+  Event *schedule_in_local(Continuation *c, ink_hrtime atimeout_in, int callback_event = EVENT_INTERVAL)
+    { return c->create_event(this)->schedule_in(callback_event, atimeout_in); }
 
   /**
     Schedules the continuation on this EThread to receive an event
@@ -243,13 +246,12 @@ public:
     @param callback_event Event code to be passed back to the
       continuation's handler. See the Remarks section in the
       EventProcessor class.
-    @param cookie User-defined value or pointer to be passed back
-      in the Event's object cookie field.
     @return A reference to an Event object representing the schedulling
       of this callback.
 
   */
-  Event *schedule_every_local(Continuation *c, ink_hrtime aperiod, int callback_event = EVENT_INTERVAL, void *cookie = nullptr);
+  Event *schedule_every_local(Continuation *c, ink_hrtime aperiod, int callback_event = EVENT_INTERVAL)
+    { return c->create_event(this)->schedule_every(callback_event, aperiod); }
 
   /** Schedule an event called once when the thread is spawned.
 
@@ -259,11 +261,19 @@ public:
       @Note This will override the event for a dedicate thread so that this is called instead of the
       event passed to the constructor.
   */
-  Event *schedule_spawn(Continuation *c, int ev = EVENT_IMMEDIATE, void *cookie = nullptr);
+
+  Event *schedule_spawn(Continuation *c)
+    { 
+      ink_assert(this != this_ethread()); // really broken to call this from the same thread.
+      if ( start_event ) {
+         free_event(start_event);
+      }
+      start_event = c->create_event(this)->pre_spawn_init();
+      return start_event;
+    }
+
 
   /* private */
-
-  Event *schedule_local(Event *e);
 
   InkRand generator = static_cast<uint64_t>(Thread::get_hrtime_updated() ^ reinterpret_cast<uintptr_t>(this));
 
@@ -271,6 +281,7 @@ public:
   |  UNIX Interface                                         |
   \*-------------------------------------------------------*/
 
+protected:
   EThread();
   EThread(ThreadType att, int anid);
   EThread(ThreadType att, Event *e);
@@ -278,8 +289,32 @@ public:
   EThread &operator=(const EThread &) = delete;
   virtual ~EThread();
 
-  Event *schedule(Event *e, bool fast_signal = false);
+public:
+  // for Event and Dedicated
+  Event *schedule(Event *e)
+    { EventQueueExternal.enqueue(e); return e; }
 
+  Event *schedule_signal(Event *e)
+    { EventQueueExternal.enqueue_signal(e); return e; } 
+
+  // must override for DEDICATED thread
+  virtual Event *schedule_local(Event *e)
+  { 
+    e->globally_allocated = false;
+    EventQueueExternal.enqueue_local(e); 
+    return e; 
+  }
+
+  // for Event to use
+  Event *schedule_local_checked(Event *e)
+  {
+    if ( ! e->in_the_prot_queue ) {
+      EventQueueExternal.enqueue_local(e); 
+    }
+    return e; 
+  }
+
+public:
   /** Block of memory to allocate thread specific data e.g. stat system arrays. */
   char thread_private[PER_THREAD_DATA];
 
@@ -315,7 +350,7 @@ public:
 #endif
   EventIO *ep = nullptr;
 
-  ThreadType tt = REGULAR;
+  const ThreadType tt = REGULAR;
   /** Initial event to call, before any scheduling.
 
       For dedicated threads this is the only event called.
@@ -327,6 +362,22 @@ public:
   Event *start_event = nullptr;
 
   ServerSessionPool *server_session_pool = nullptr;
+};
+
+class DedicatedEThread : public EThread
+{
+public:
+  DedicatedEThread();
+  DedicatedEThread(int anid);
+  DedicatedEThread(Event *e);
+  ~DedicatedEThread();
+
+  static DedicatedEThread *create_thread(Continuation *c);
+
+  using EThread::schedule;
+
+  // override for DEDICATED thread
+  virtual Event *schedule_local(Event *e) override;
 };
 
 extern EThread *this_ethread();

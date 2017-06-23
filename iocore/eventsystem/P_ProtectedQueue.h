@@ -68,6 +68,7 @@ ProtectedQueue::enqueue_local(Event *e)
 {
   ink_assert(!e->in_the_prot_queue && !e->in_the_priority_queue);
   e->in_the_prot_queue = 1;
+  e->globally_allocated = false;
   localQueue.enqueue(e);
 }
 

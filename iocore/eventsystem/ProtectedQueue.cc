@@ -47,7 +47,7 @@ void
 ProtectedQueue::enqueue(Event *e, bool fast_signal)
 {
   ink_assert(!e->in_the_prot_queue && !e->in_the_priority_queue);
-  EThread *e_ethread   = e->ethread;
+  EThread *e_ethread   = e->ethread();
   e->in_the_prot_queue = 1;
   bool was_empty       = (ink_atomiclist_push(&al, e) == nullptr);
 
@@ -169,7 +169,7 @@ ProtectedQueue::dequeue_timed(ink_hrtime cur_time, ink_hrtime timeout, bool slee
     if (!e->cancelled) {
       localQueue.enqueue(e);
     } else {
-      e->mutex = nullptr;
+      e->~Event(); // call destructor
       eventAllocator.free(e);
     }
   }

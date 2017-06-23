@@ -107,7 +107,7 @@ int socks5ServerAuthHandler(int event, unsigned char *p, void (**)(void));
 class UnixNetVConnection;
 typedef UnixNetVConnection SocksNetVC;
 
-struct SocksEntry : public ContinuationTmpl<NetVConnection> {
+struct SocksEntry : public Continuation {
   MIOBuffer *buf         = nullptr;
   IOBufferReader *reader = nullptr;
 

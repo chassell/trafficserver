@@ -90,7 +90,7 @@ VIO::set_continuation(Continuation *acont)
   if (vc_server)
     vc_server->set_continuation(this, acont);
   if (acont) {
-    mutex = acont->mutex;
+    mutex = acont->mutex();
     _cont = acont;
   } else {
     mutex = nullptr;

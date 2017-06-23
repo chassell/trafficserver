@@ -148,9 +148,38 @@ class EThread;
   ink_get_hrtime).
 
 */
-class Event : public Action
+class Event : public ActionBase
 {
+protected:
+
+  Continuation *contptr_;
+
+  EThread *ethread_ = nullptr;
+
+#ifdef ENABLE_TIME_TRACE
+  ink_hrtime start_time;
+#endif
+
+private:
+  Event *init(Continuation *c, EThread *thr);
+
+  Event *pre_schedule(int callevent, ink_hrtime atimeout_at, ink_hrtime aperiod);
+
 public:
+  Event(Continuation *ev, EThread *eth) : ActionBase(contptr_), contptr_(ev), ethread_(eth) 
+    { set_thread(eth); }
+  
+  Event(Continuation *ev) : ActionBase(contptr_), contptr_(ev)
+    { pre_schedule(EVENT_IMMEDIATE,0,0); }
+
+  virtual ~Event() {}
+
+  Ptr<ProxyMutex> mutex() const;
+  const EThread *ethread() const { return ethread_; }
+
+  EThread *ethread() { return ethread_; }
+  Event *set_thread(EThread *ethr);
+
   ///////////////////////////////////////////////////////////
   // Common Interface                                      //
   ///////////////////////////////////////////////////////////
@@ -163,7 +192,14 @@ public:
       of this event. See the Remarks section.
 
   */
-  void schedule_imm(int callback_event = EVENT_IMMEDIATE);
+  Event *schedule_imm(int callback_event = EVENT_IMMEDIATE);
+  Event *schedule_imm_signal(int callback_event = EVENT_IMMEDIATE);
+
+  Event *pre_spawn_init(int callback_event = EVENT_IMMEDIATE)
+     { return pre_schedule(callback_event, 0, 0); }
+
+  Event *schedule_imm_global(int callback_event);
+  Event *schedule_imm_signal_global(int callback_event);
 
   /**
      Reschedules this event to callback at time 'atimeout_at'.
@@ -174,7 +210,8 @@ public:
      @param callback_event Event code to return at the completion of this event. See the Remarks section.
 
   */
-  void schedule_at(ink_hrtime atimeout_at, int callback_event = EVENT_INTERVAL);
+  Event *schedule_at(ink_hrtime atimeout_at, int callback_event = EVENT_INTERVAL);
+  Event *schedule_at_global(ink_hrtime atimeout_at, int callback_event);
 
   /**
      Reschedules this event to callback at time 'atimeout_at'.
@@ -185,7 +222,8 @@ public:
      @param callback_event Event code to return at the completion of this event. See the Remarks section.
 
   */
-  void schedule_in(ink_hrtime atimeout_in, int callback_event = EVENT_INTERVAL);
+  Event *schedule_in(ink_hrtime atimeout_in, int callback_event = EVENT_INTERVAL);
+  Event *schedule_in_global(ink_hrtime atimeout_in, int callback_event);
 
   /**
      Reschedules this event to callback every 'aperiod'. Instructs
@@ -196,18 +234,30 @@ public:
      @param callback_event Event code to return at the completion of this event. See the Remarks section.
 
   */
-  void schedule_every(ink_hrtime aperiod, int callback_event = EVENT_INTERVAL);
+  Event *schedule_every(ink_hrtime aperiod, int callback_event = EVENT_INTERVAL);
+  Event *schedule_every_global(ink_hrtime aperiod, int callback_event);
 
   // inherited from Action::cancel
   // virtual void cancel(Continuation * c = nullptr);
 
   void free();
 
-  EThread *ethread = nullptr;
+  int applyEvent(int evt)
+    { return contptr_->handleEvent(evt,this); }
+
+  int applyEventRepeatable(int evt)
+  {
+    auto ocont = contptr_;
+    auto r = applyEvent(evt);
+    ink_assert(contptr_ == ocont);
+    return r;
+  }
 
   unsigned int in_the_prot_queue : 1;
   unsigned int in_the_priority_queue : 1;
+protected:
   unsigned int immediate : 1;
+public:
   unsigned int globally_allocated : 1;
   unsigned int in_heap : 4;
   int callback_event = 0;
@@ -225,45 +275,17 @@ public:
 
   // Private
 
+  // needed for allocator
   Event();
 
-  Event *init(Continuation *c, ink_hrtime atimeout_at = 0, ink_hrtime aperiod = 0);
-
-#ifdef ENABLE_TIME_TRACE
-  ink_hrtime start_time;
-#endif
-
+private:
   // noncopyable: prevent unauthorized copies (Not implemented)
   Event(const Event &) = delete;
   Event &operator=(const Event &) = delete;
 
-private:
-  void *operator new(size_t size); // use the fast allocators
-
 public:
   LINK(Event, link);
 
-/*-------------------------------------------------------*\
-| UNIX/non-NT Interface                                   |
-\*-------------------------------------------------------*/
-
-#ifdef ONLY_USED_FOR_FIB_AND_BIN_HEAP
-  void *node_pointer;
-  void
-  set_node_pointer(void *x)
-  {
-    node_pointer = x;
-  }
-  void *
-  get_node_pointer()
-  {
-    return node_pointer;
-  }
-#endif
-
-#if defined(__GNUC__)
-  virtual ~Event() {}
-#endif
 };
 
 //
@@ -273,7 +295,6 @@ extern ClassAllocator<Event> eventAllocator;
 
 #define EVENT_ALLOC(_a, _t) THREAD_ALLOC(_a, _t)
 #define EVENT_FREE(_p, _a, _t) \
-  _p->mutex = nullptr;         \
   if (_p->globally_allocated)  \
     ::_a.free(_p);             \
   else                         \

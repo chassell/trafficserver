@@ -160,19 +160,18 @@ public:
     @param ethread EThread on which to schedule the event.
     @param callback_event code to be passed back to the continuation's
       handler. See the Remarks section.
-    @param cookie user-defined value or pointer to be passed back in
-      the Event's object cookie field.
     @return reference to an Event object representing the scheduling
       of this callback.
 
   */
-  Event *schedule_imm(Continuation *c, EventType event_type = ET_CALL, int callback_event = EVENT_IMMEDIATE,
-                      void *cookie = nullptr);
+  Event *schedule_imm(Continuation *c, EventType event_type = ET_CALL, int callback_event = EVENT_IMMEDIATE)
+     { return assign_thread(event_type)->schedule_imm(c,callback_event); }
   /*
     provides the same functionality as schedule_imm and also signals the thread immediately
   */
-  Event *schedule_imm_signal(Continuation *c, EventType event_type = ET_CALL, int callback_event = EVENT_IMMEDIATE,
-                             void *cookie = nullptr);
+  Event *schedule_imm_signal(Continuation *c, EventType event_type = ET_CALL, int callback_event = EVENT_IMMEDIATE)
+     { return assign_thread(event_type)->schedule_imm_signal(c,callback_event); }
+
   /**
     Schedules the continuation on a specific thread group to receive an
     event at the given timeout. Requests the EventProcessor to schedule
@@ -187,14 +186,12 @@ public:
       group of threads on which to schedule the callback.
     @param callback_event code to be passed back to the continuation's
       handler. See the Remarks section.
-    @param cookie user-defined value or pointer to be passed back in
-      the Event's object cookie field.
     @return reference to an Event object representing the scheduling of
       this callback.
 
   */
-  Event *schedule_at(Continuation *c, ink_hrtime atimeout_at, EventType event_type = ET_CALL, int callback_event = EVENT_INTERVAL,
-                     void *cookie = nullptr);
+  Event *schedule_at(Continuation *c, ink_hrtime atimeout_at, EventType event_type = ET_CALL, int callback_event = EVENT_INTERVAL)
+     { return assign_thread(event_type)->schedule_at(c,atimeout_at,callback_event); }
 
   /**
     Schedules the continuation on a specific thread group to receive an
@@ -209,14 +206,12 @@ public:
       group of threads on which to schedule the callback.
     @param callback_event code to be passed back to the continuation's
       handler. See the Remarks section.
-    @param cookie user-defined value or pointer to be passed back in
-      the Event's object cookie field.
     @return reference to an Event object representing the scheduling of
       this callback.
 
   */
-  Event *schedule_in(Continuation *c, ink_hrtime atimeout_in, EventType event_type = ET_CALL, int callback_event = EVENT_INTERVAL,
-                     void *cookie = nullptr);
+  Event *schedule_in(Continuation *c, ink_hrtime atimeout_in, EventType event_type = ET_CALL, int callback_event = EVENT_INTERVAL)
+     { return assign_thread(event_type)->schedule_in(c,atimeout_in,callback_event); }
 
   /**
     Schedules the continuation on a specific thread group to receive
@@ -231,14 +226,12 @@ public:
       group of threads on which to schedule the callback.
     @param callback_event code to be passed back to the continuation's
       handler. See the Remarks section.
-    @param cookie user-defined value or pointer to be passed back in
-      the Event's object cookie field.
     @return reference to an Event object representing the scheduling of
       this callback.
 
   */
-  Event *schedule_every(Continuation *c, ink_hrtime aperiod, EventType event_type = ET_CALL, int callback_event = EVENT_INTERVAL,
-                        void *cookie = nullptr);
+  Event *schedule_every(Continuation *c, ink_hrtime aperiod, EventType event_type = ET_CALL, int callback_event = EVENT_INTERVAL)
+     { return assign_thread(event_type)->schedule_every(c,aperiod,callback_event); }
 
   ////////////////////////////////////////////
   // reschedule an already scheduled event. //
@@ -366,7 +359,6 @@ public:
   | Unix & non NT Interface                                |
   \*------------------------------------------------------*/
 
-  Event *schedule(Event *e, EventType etype, bool fast_signal = false);
   EThread *assign_thread(EventType etype);
 
   EThread *all_dthreads[MAX_EVENT_THREADS];

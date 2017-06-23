@@ -259,7 +259,7 @@ struct OpenDir : public Continuation {
   OpenDir();
 };
 
-struct CacheSync : public ContinuationTmpl<Event> {
+struct CacheSync : public Continuation {
   int vol_idx;
   char *buf;
   size_t buflen;
@@ -272,7 +272,7 @@ struct CacheSync : public ContinuationTmpl<Event> {
   void aio_write(int fd, char *b, int n, off_t o);
 
   CacheSync()
-    : ContinuationTmpl<Event>(new_ProxyMutex()), vol_idx(0), buf(0), buflen(0), buf_huge(false), writepos(0), trigger(0), start_time(0)
+    : Continuation(new_ProxyMutex()), vol_idx(0), buf(0), buflen(0), buf_huge(false), writepos(0), trigger(0), start_time(0)
   {
     SET_HANDLER(&CacheSync::mainEvent);
   }

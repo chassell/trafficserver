@@ -84,7 +84,7 @@ int seq_read_size             = 0;
 int seq_write_size            = 0;
 int rand_read_size            = 0;
 
-struct AIO_Device : public ContinuationTmpl<Event> {
+struct AIO_Device : public Continuation {
   char *path;
   int fd;
   int id;
