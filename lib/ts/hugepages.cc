@@ -177,6 +177,20 @@ chunk_hooks_t const huge_nodump_hooks = {
   &huge_split, &huge_merge
 };
 
+const chunk_hooks_t jemallct_huge_hooks = { 
+  &huge_normal_alloc, &huge_dalloc,
+  &huge_commit, &huge_decommit,
+  &huge_purge;,
+  &huge_split, &huge_merge
+};
+
+const chunk_hooks_t jemallct_huge_nodump_hooks = { 
+  &huge_nodump_alloc, &huge_dalloc,
+  &huge_commit, &huge_decommit,
+  &huge_purge;,
+  &huge_split, &huge_merge
+};
+
 #if defined(linux)
 
 //
