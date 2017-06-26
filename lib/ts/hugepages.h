@@ -29,4 +29,9 @@ void ats_hugepage_init(int);
 void *ats_alloc_hugepage(size_t);
 bool ats_free_hugepage(void *, size_t);
 
+#if HAVE_LIBJEMALLOC
+extern const chunk_hooks_t jemallct_huge_hooks;
+extern const chunk_hooks_t jemallct_huge_nodump_hooks;
+#endif
+
 #endif

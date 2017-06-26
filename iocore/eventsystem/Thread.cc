@@ -30,6 +30,7 @@
 **************************************************************************/
 #include "P_EventSystem.h"
 #include "ts/ink_string.h"
+#include "ts/ink_memory.h"
 
 ///////////////////////////////////////////////
 // Common Interface impl                     //
@@ -65,51 +66,35 @@ Thread::~Thread()
 // Unix & non-NT Interface impl              //
 ///////////////////////////////////////////////
 
-struct thread_data_internal {
-  ThreadFunction f;                  ///< Function to excecute in the thread.
-  Thread *me;                        ///< The class instance.
-  ink_mutex mutex;                   ///< Startup mutex.
-  char name[MAX_THREAD_NAME_LENGTH]; ///< Name for the thread.
-};
-
-static void *
-spawn_thread_internal(void *a)
-{
-  auto *p = static_cast<thread_data_internal *>(a);
-
-  { // force wait until parent thread is ready.
-    ink_scoped_mutex_lock lock(p->mutex);
-  }
-  ink_mutex_destroy(&p->mutex);
-
-  p->me->set_specific();
-  ink_set_thread_name(p->name);
-
-  if (p->f) {
-    p->f();
-  } else {
-    p->me->execute();
-  }
-
-  delete p;
-  return nullptr;
-}
-
 ink_thread
 Thread::start(const char *name, void *stack, size_t stacksize, ThreadFunction const &f)
 {
-  auto *p = new thread_data_internal{f, this, {}, {0}};
+  char buff[MAX_THREAD_NAME_LENGTH]; ///< Name for the thread.
+  ink_strlcpy(buff, name, sizeof(buff));
 
-  ink_zero(p->name);
-  ink_strlcpy(p->name, name, MAX_THREAD_NAME_LENGTH);
-  ink_mutex_init(&p->mutex);
-  if (stacksize == 0) {
-    stacksize = DEFAULT_STACKSIZE;
-  }
-  { // must force assignment to complete before thread touches "this".
-    ink_scoped_mutex_lock lock(&p->mutex);
-    tid = ink_thread_create(spawn_thread_internal, p, 0, stacksize, stack);
-  }
+  // get full copy
+  ThreadFunction fxn = f;
+
+  // capture params needed to start
+  auto getStartFxnObj = ats_copy_to_unique_ptr( [buff,this,fxn]() -> ThreadFunction
+     {
+       ink_set_thread_name(buff); // use copied array
+       this->set_specific(); // prep with data now
+       return ( fxn ? fxn : std::bind(&Thread::execute,this) ); // call thread start
+    } );
+
+  // no captured values...
+  auto pureCaller = [](void *ptr) -> void*
+    {
+      using GetStartFxnObj_ptr = decltype(getStartFxnObj.release());
+      // create temp unique_ptr, generate final functor, free temp
+      auto startFxn = ats_make_unique(static_cast<GetStartFxnObj_ptr>(ptr))->operator()();
+      startFxn();
+      return nullptr;
+    };
+
+  int tid = ink_thread_create(pureCaller, getStartFxnObj.release(), 0, 
+                    ( stacksize ? stacksize : DEFAULT_STACKSIZE ), stack);
 
   return tid;
 }
