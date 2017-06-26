@@ -154,6 +154,20 @@ bool huge_purge(void *chunk, size_t size, size_t offset, size_t length, unsigned
 bool huge_split(void *chunk, size_t size, size_t size_a, size_t size_b, bool committed, unsigned arena_ind);
 bool huge_merge(void *chunk_a, size_t size_a, void *chunk_b, size_t size_b, bool committed, unsigned arena_ind);
 
+const chunk_hooks_t jemallct_huge_hooks = { 
+  &huge_normal_alloc, &huge_dalloc,
+  &huge_commit, &huge_decommit,
+  &huge_purge;,
+  &huge_split, &huge_merge
+};
+
+const chunk_hooks_t jemallct_huge_nodump_hooks = { 
+  &huge_nodump_alloc, &huge_dalloc,
+  &huge_commit, &huge_decommit,
+  &huge_purge;,
+  &huge_split, &huge_merge
+};
+
 #if defined(linux)
 
 //
