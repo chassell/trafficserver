@@ -49,8 +49,8 @@ static bool initialized = ([]() -> bool {
 }
 
 Thread::Thread()
+   : mutex( new_ProxyMutex() )
 {
-  mutex = new_ProxyMutex();
   MUTEX_TAKE_LOCK(mutex, (EThread *)this);
   mutex->nthread_holding += THREAD_MUTEX_THREAD_HOLDING;
 }
@@ -70,17 +70,25 @@ ink_thread
 Thread::start(const char *name, void *stack, size_t stacksize, ThreadFunction const &f)
 {
   char buff[MAX_THREAD_NAME_LENGTH]; ///< Name for the thread.
-  ink_strlcpy(buff, name, sizeof(buff));
+  snprintf(buff,sizeof(buff),name,tid_); // use the tid_ as is right now..
 
   // get full copy
   ThreadFunction fxn = f;
+  // hold a mutex to delay child for a moment
+  ink_mutex mutex;
 
   // capture params needed to start
-  auto getStartFxnObj = ats_copy_to_unique_ptr( [buff,this,fxn]() -> ThreadFunction
+  auto getStartFxnObj = ats_copy_to_unique_ptr([buff,this,fxn,&mutex]() -> ThreadFunction
      {
-       ink_set_thread_name(buff); // use copied array
-       this->set_specific(); // prep with data now
-       return ( fxn ? fxn : std::bind(&Thread::execute,this) ); // call thread start
+        ink_set_thread_name(buff); // use copied array
+        this->set_specific();
+
+        {
+          ink_scoped_mutex_lock lock(&mutex); // wait until parent has written tid_
+          ink_mutex_destroy(&mutex); // done with it...
+        }
+
+        return ( fxn ? fxn : std::bind(&Thread::execute,this) ); // call thread start
     } );
 
   // no captured values...
@@ -93,8 +101,12 @@ Thread::start(const char *name, void *stack, size_t stacksize, ThreadFunction co
       return nullptr;
     };
 
-  int tid = ink_thread_create(pureCaller, getStartFxnObj.release(), 0, 
-                    ( stacksize ? stacksize : DEFAULT_STACKSIZE ), stack);
+  ink_mutex_init(&mutex);
+  ink_scoped_mutex_lock lock(&mutex);
 
-  return tid;
+  // delay child until tid_ is written and returned
+
+  tid_ = ink_thread_create(pureCaller, getStartFxnObj.release(), 0, 
+                  ( stacksize ? stacksize : DEFAULT_STACKSIZE ), stack);
+  return tid_;
 }
