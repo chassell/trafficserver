@@ -239,7 +239,7 @@ HttpVCTable::cleanup_all()
     }                                                            \
   }
 
-#define DebugSM(tag, ...) DebugSpecific(debug_on, tag, __VA_ARGS__)
+#define DebugSM(tag, ...) do { if(unlikely(is_suspiciously_old())) {Warning("(" tag ") (susp. old) " __VA_ARGS__);} else {DebugSpecific(debug_on, tag, __VA_ARGS__);} } while(false)
 
 #ifdef STATE_ENTER
 #undef STATE_ENTER
@@ -321,7 +321,8 @@ HttpSM::HttpSM()
     callout_state(HTTP_API_NO_CALLOUT),
     terminate_sm(false),
     kill_this_async_done(false),
-    parse_range_done(false)
+    parse_range_done(false),
+    age(0)
 {
   memset(&history, 0, sizeof(history));
   memset(&vc_table, 0, sizeof(vc_table));
@@ -366,6 +367,7 @@ HttpSM::init()
 
   magic = HTTP_SM_MAGIC_ALIVE;
   sm_id = 0;
+  age = 0;
 
   // Unique state machine identifier.
   //  changed next_sm_id from int64_t to int because
@@ -7076,8 +7078,25 @@ HttpSM::call_transact_and_set_next_state(TransactEntryFunc_t f)
     f(&t_state);
   }
 
-  DebugSM("http", "[%" PRId64 "] State Transition: %s -> %s", sm_id, HttpDebugNames::get_action_name(last_action),
-          HttpDebugNames::get_action_name(t_state.next_action));
+  DebugSM("http", "[%" PRId64 "] State Transition: %s -> %s {%03d}", sm_id, HttpDebugNames::get_action_name(last_action),
+          HttpDebugNames::get_action_name(t_state.next_action), age);
+
+
+  /* Keep track of the age of this SM. If the SM transitions too many
+   * states, it's probably stuck in a loop.
+   */
+  ++age;
+  DebugSM("http_smage", "[%" PRId64 "] Incrementing Age. {%03d}", sm_id, age);
+
+
+  if (is_too_old()) {
+    /* If the SM is too old, just terminate it. It's probably a runaway machine
+     * in a loop of some sort. This is far from the most elegant way to solve this
+     * problem, but no legitimate SM should traverse thousands of states.
+     */
+    terminate_sm = true;
+    DebugSM("http_smage", "[%" PRId64 "] Killing state machine. Too old.", sm_id);
+  }
 
   set_next_state();
 

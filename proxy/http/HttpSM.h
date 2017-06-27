@@ -552,6 +552,17 @@ public:
   {
     return terminate_sm;
   }
+
+protected:
+  unsigned int age; /**< Number of state transitions this SM has traversed. */
+
+  /** True iff the SM is too old and should be killed. */
+  inline bool
+  is_too_old() { return age > 100; }
+  
+  /** True iff the SM is suspiciously old. Logging will become incredibly verbose at this age. */
+  inline bool
+  is_suspiciously_old() { return age > 20; }
 };
 
 // Function to get the cache_sm object - YTS Team, yamsat
