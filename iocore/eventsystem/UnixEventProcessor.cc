@@ -149,7 +149,7 @@ ThreadAffinityInitializer::set_affinity(int, Event *)
 #else
     Debug("iocore_thread", "EThread: %d %s: %d", _name, obj->logical_index);
 #endif // HWLOC_API_VERSION
-    hwloc_set_thread_cpubind(ink_get_topology(), t->tid, obj->cpuset, HWLOC_CPUBIND_STRICT);
+    hwloc_set_thread_cpubind(ink_get_topology(), t->tid_, obj->cpuset, HWLOC_CPUBIND_STRICT);
   } else {
     Warning("hwloc returned an unexpected number of objects -- CPU affinity disabled");
   }
