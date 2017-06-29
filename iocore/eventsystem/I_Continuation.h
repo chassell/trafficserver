@@ -41,7 +41,9 @@
 #include "I_Lock.h"
 #include "ts/ContFlags.h"
 
-class Continuation;
+#include <functional>
+
+class Event;
 class ContinuationQueue;
 class Processor;
 class ProxyMutex;
@@ -57,12 +59,6 @@ class EThread;
 
 #define CONTINUATION_DONE 0
 #define CONTINUATION_CONT 1
-
-class force_VFPT_to_top
-{
-public:
-  virtual ~force_VFPT_to_top() {}
-};
 
 /**
   Base class for all state machines to receive notification of
@@ -89,50 +85,64 @@ public:
 
 */
 
-class Event;
-
-class Continuation : private force_VFPT_to_top
+class ContinuationBase
 {
 public:
-  using ContinuationHandler = int (Continuation::*)(int event, Event *data);
+  template <size_t N_EVENT, typename T_PASSED>
+  struct Event { operator int() { return N_EVENT; } };
 
-protected:
   /**
-    The current continuation handler function.
+    Contructor of the Continuation object. It should not be used
+    directly. Instead create an object of a derived type.
 
-    The current handler should not be set directly. In order to
-    change it, first aquire the Continuation's lock and then use
-    the SET_HANDLER macro which takes care of the type casting
-    issues.
+    @param amutex Lock to be set for this Continuation.
 
   */
-  ContinuationHandler handler_ = nullptr;
+  ContinuationBase(Ptr<ProxyMutex> const &amutex) 
+     : mutex{amutex}, 
+       // Pick up the control flags from the creating thread
+       control_flags(::get_cont_flags().get_flags())
+  { }
 
-public:
+  ContinuationBase(ProxyMutex *amutex) 
+     : mutex{amutex}, 
+       // Pick up the control flags from the creating thread
+       control_flags(::get_cont_flags().get_flags())
+  { }
 
-  template <typename T_HDLR>
-  void set_handler(T_HDLR hdlr) { handler_ = static_cast<ContinuationHandler>(hdlr); }
+  ContinuationBase()
+     : control_flags(::get_cont_flags().get_flags())
+  { }
 
-#ifdef DEBUG
-  const char *handlerName_ = nullptr;
+  virtual ~ContinuationBase() {}
 
-  template <typename T_HDLR>
-  void set_handler(T_HDLR hdlr, const char *name) 
-  { 
-    handler_ = static_cast<ContinuationHandler>(hdlr); 
-    handlerName_ = name;
-  }
-#endif
+  typename <class T_THIS, typename T_EVENT, typename T_PASSPTR>
+  inline static int handleEventBase(T_THIS &obj,
+
+//  const Ptr<ProxyMutex> &mutex() const { return mutex_; }
+//  const Ptr<ProxyMutex> &set_mutex(const Ptr<ProxyMutex> &m) { return (mutex_ = m); }
   /**
-    The Continuation's lock.
+    The ContinuationBase's lock.
 
-    A reference counted pointer to the Continuation's lock. This
+    A reference counted pointer to the ContinuationBase's lock. This
     lock is initialized in the constructor and should not be set
     directly.
 
   */
   Ptr<ProxyMutex> mutex;
+  /**
+    Contains values for debug_override and future flags that
+    needs to be thread local while this continuation is running
+  */
+  ContFlags control_flags;
+private:
 
+};
+
+template <typename T_ARG>
+class ContinuationArg : virtual public ContinuationBase
+{
+ public:
   /**
     Link to other continuations.
 
@@ -142,105 +152,40 @@ public:
   */
   LINK(Continuation, link);
 
-  /**
-    Contains values for debug_override and future flags that
-    needs to be thread local while this continuation is running
-  */
-  ContFlags control_flags;
+  ContinuationArg(Ptr<ProxyMutex> const &amutex) : ContinuationBase(amutex) { }
+  ContinuationArg(ProxyMutex *amutex) : ContinuationBase(amutex) { }
+  ContinuationArg() { }
 
-  /**
-    Receives the event code and data for an Event.
+  template<
+  auto set_next_call(NextCallFxnPtr fxn) 
+    { nextCall_ = std::mem_fn(fxn); }
 
-    This function receives the event code and data for an event and
-    forwards them to the current continuation handler. The processor
-    calling back the continuation is responsible for acquiring its
-    lock.
+  void set_next_call(nullptr_t) 
+    { nextCall_ = std::mem_fn(reinterpret_cast<NextCallFxnPtr>(&ContinuationTmpl::null)); }
 
-    @param event Event code to be passed at callback (Processor specific).
-    @param data General purpose data related to the event code (Processor specific).
-    @return State machine and processor specific return code.
+  int handleEvent()
+    { return handleEventBase(CONTINUATION_EVENT_NONE,nullptr); }
 
-  */
-  int
-  handleEvent(int event = CONTINUATION_EVENT_NONE, Event *data = nullptr)
-  {
-    return (this->*handler_)(event, data);
-  }
+  int handleEvent(int event)
+    { return handleEventBase(event,nullptr); }
 
-  /**
-    Contructor of the Continuation object. It should not be used
-    directly. Instead create an object of a derived type.
-
-    @param amutex Lock to be set for this Continuation.
-
-  */
-  Continuation(ProxyMutex *amutex = nullptr);
-  Continuation(Ptr<ProxyMutex> &amutex);
-};
-
-template <typename T_OBJ>
-class ContinuationTmpl : public Continuation
-{
-public:
-  using ContinuationHandler = int (ContinuationTmpl::*)(int event, T_OBJ *data);
-
-  template <typename T_HDLR>
-  void set_handler(T_HDLR hdlr) { handler_ = reinterpret_cast<Continuation::ContinuationHandler>( static_cast<ContinuationHandler>(hdlr) ); }
-
-  template <typename T_HDLR>
-  void push_handler(T_HDLR hdlr) 
-  {
-    ink_assert( ! handlerDelayed_ );
-
-    handlerDelayed_ = static_cast<ContinuationHandler>(hdlr);
-    set_handler(hdlr);
-  }
-
-  void pop_handler()
-  {
-    ink_assert( handlerDelayed_ );
-
-#ifdef DEBUG
-    set_handler(handlerDelayed_,handlerDelayedName_);
-    handlerDelayedName_ = nullptr;
-#else
-    set_handler(handlerDelayed_);
-#endif
-
-    handlerDelayed_ = nullptr;
-  }
-
-#ifdef DEBUG
-  template <typename T_HDLR>
-  void set_handler(T_HDLR hdlr, const char *name) 
-  { 
-    set_handler(hdlr);
-    handlerName_ = name;
-  }
-
-  template <typename T_HDLR>
-  void push_handler(T_HDLR hdlr, const char *name) 
-  {
-    push_handler(hdlr);
-    handlerDelayedName_ = handlerName_;
-  }
-#endif
-
-  int
-  handleEvent(int event = CONTINUATION_EVENT_NONE, T_OBJ *data = nullptr)
-  {
-    return (this->*reinterpret_cast<ContinuationHandler>(handler_))(event, data);
-  }
-
-  ContinuationTmpl(ProxyMutex *amutex = nullptr) : Continuation{amutex}, handlerDelayed_(nullptr) 
-     { }
-  ContinuationTmpl(Ptr<ProxyMutex> &amutex) : Continuation{amutex}, handlerDelayed_(nullptr) 
-     { }
+  int handleEventBase(int event, T_PASSPTR *data)
+    { return nextCall_(dynamic_cast<T_TOPOBJ*>(this),event,data); }
 
 private:
-  ContinuationHandler handlerDelayed_ = nullptr;
+  int null(int,T_PASSPTR*) { return 0; }
+  /**
+    The current continuation handler function.
+
+    The current handler should not be set directly. In order to
+    change it, first aquire the ContinuationTmpl's lock and then use
+    the SET_HANDLER macro which takes care of the type casting
+    issues.
+
+  */
+  anyEventCall_ = std::mem_fn(reinterpret_cast<NextCallFxnPtr>(&ContinuationTmpl::null));
 #ifdef DEBUG
-  const char *handlerDelayedName_ = nullptr;
+  const char *nextCallName_ = nullptr;
 #endif
 };
 
@@ -252,9 +197,10 @@ private:
 
 */
 #ifdef DEBUG
-#define SET_HANDLER(_h) set_handler(_h,#_h)
+#define SET_HANDLER(_h) this->set_next_call(_h,#_h)
 #else
-#define SET_HANDLER(_h) set_handler(_h)
+#define SET_HANDLER(_h) this->set_next_call(_h)
+#define PUSH_HANDLER(_h) this->set_next_call(_h)
 #endif
 
 /**
@@ -267,31 +213,12 @@ private:
 
 */
 #ifdef DEBUG
-#define SET_CONTINUATION_HANDLER(_c, _h) (_c->set_handler(_h,#_h))
+#define SET_CONTINUATION_HANDLER(_c, _h) _c->set_next_call(_h,#_h)
 #else
-#define SET_CONTINUATION_HANDLER(_c, _h) (_c->set_handler(_h))
+#define SET_CONTINUATION_HANDLER(_c, _h) _c->set_next_call(_h)
 #endif
 
-#ifdef DEBUG
-#define PUSH_HANDLER(_h) (this->push_handler(_h,#_h))
-#else
-#define PUSH_HANDLER(_h) (this->push_handler(_h))
-#endif
 
-#define POP_HANDLER(_h) (pop_handler())
-
-inline Continuation::Continuation(Ptr<ProxyMutex> &amutex)
-  : mutex(amutex)
-{
-  // Pick up the control flags from the creating thread
-  this->control_flags.set_flags(get_cont_flags().get_flags());
-}
-
-inline Continuation::Continuation(ProxyMutex *amutex)
-  : mutex(amutex)
-{
-  // Pick up the control flags from the creating thread
-  this->control_flags.set_flags(get_cont_flags().get_flags());
-}
+#define handleEvent(evt,ptr)      handleEventCall(Continuation::Event<evt>(),ptr)
 
 #endif /*_Continuation_h_*/
