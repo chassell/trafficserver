@@ -55,15 +55,15 @@ get_vc_event_name(int event)
 }
 
 TS_INLINE
-VConnection::VConnection(ProxyMutex *aMutex) : Continuation(aMutex), lerrno(0)
+VConnection::VConnection(ProxyMutex *aMutex) : ContinuationTmpl<Event>(aMutex), lerrno(0)
 {
-  SET_HANDLER(0);
+  SET_HANDLER(nullptr);
 }
 
 TS_INLINE
-VConnection::VConnection(Ptr<ProxyMutex> &aMutex) : Continuation(aMutex), lerrno(0)
+VConnection::VConnection(Ptr<ProxyMutex> &aMutex) : ContinuationTmpl<Event>(aMutex), lerrno(0)
 {
-  SET_HANDLER(0);
+  SET_HANDLER(nullptr);
 }
 
 TS_INLINE

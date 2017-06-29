@@ -84,7 +84,7 @@ int seq_read_size             = 0;
 int seq_write_size            = 0;
 int rand_read_size            = 0;
 
-struct AIO_Device : public Continuation {
+struct AIO_Device : public ContinuationTmpl<Event> {
   char *path;
   int fd;
   int id;
@@ -148,8 +148,8 @@ struct AIO_Device : public Continuation {
     }
     return 0;
   }
-  int do_hotset(int event, Event *e);
-  int do_fd(int event, Event *e);
+  int do_hotset(int, Event *);
+  int do_fd(int, Event *);
 };
 
 void

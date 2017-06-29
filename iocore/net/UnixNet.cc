@@ -37,10 +37,10 @@ extern "C" void fd_reify(struct ev_loop *);
 // INKqa10496
 // One Inactivity cop runs on each thread once every second and
 // loops through the list of NetVCs and calls the timeouts
-class InactivityCop : public Continuation
+class InactivityCop : public ContinuationTmpl<Event>
 {
 public:
-  explicit InactivityCop(Ptr<ProxyMutex> &m) : Continuation(m.get()) { SET_HANDLER(&InactivityCop::check_inactivity); }
+  explicit InactivityCop(Ptr<ProxyMutex> &m) : ContinuationTmpl<Event>(m.get()) { SET_HANDLER(&InactivityCop::check_inactivity); }
   int
   check_inactivity(int event, Event *e)
   {

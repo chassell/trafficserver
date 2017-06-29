@@ -34,6 +34,7 @@
 #include "ts/hugepages.h"
 #include "ts/ink_memory.h"
 
+#include <memory>
 ///////////////////////////////////////////////
 // Common Interface impl                     //
 ///////////////////////////////////////////////

@@ -60,17 +60,14 @@ struct AIOCallbackInternal : public AIOCallback {
 };
 
 TS_INLINE int
-AIOCallbackInternal::io_complete(int event, void *data)
+AIOCallbackInternal::io_complete(int, void *)
 {
-  (void)event;
-  (void)data;
-
   if (!ok() && aio_err_callbck)
     eventProcessor.schedule_imm(aio_err_callbck, ET_CALL, AIO_EVENT_DONE);
   mutex = action.mutex;
   SCOPED_MUTEX_LOCK(lock, mutex, this_ethread());
   if (!action.cancelled)
-    action.continuation->handleEvent(AIO_EVENT_DONE, this);
+    action.continuation->handleEvent(AIO_EVENT_DONE);
   return EVENT_DONE;
 }
 
@@ -83,7 +80,7 @@ AIOVec::mainEvent(int /* event */, Event *)
   else if (completed == size) {
     SCOPED_MUTEX_LOCK(lock, action.mutex, this_ethread());
     if (!action.cancelled)
-      action.continuation->handleEvent(AIO_EVENT_DONE, first);
+      action.continuation->handleEvent(AIO_EVENT_DONE);
     delete this;
     return EVENT_DONE;
   }
@@ -99,18 +96,16 @@ struct AIOCallbackInternal : public AIOCallback {
   AIOCallback *first    = nullptr;
   AIO_Reqs *aio_req     = nullptr;
   ink_hrtime sleep_time = 0;
-  int io_complete(int event, void *data);
+  int io_complete(int event, Event *data);
 
   AIOCallbackInternal() { SET_HANDLER(&AIOCallbackInternal::io_complete); }
 };
 
 TS_INLINE int
-AIOCallbackInternal::io_complete(int event, void *data)
+AIOCallbackInternal::io_complete(int, Event *)
 {
-  (void)event;
-  (void)data;
   if (!action.cancelled)
-    action.continuation->handleEvent(AIO_EVENT_DONE, this);
+    action.continuation->handleEvent(AIO_EVENT_DONE);
   return EVENT_DONE;
 }
 

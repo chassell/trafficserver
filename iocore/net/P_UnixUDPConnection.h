@@ -40,7 +40,7 @@ public:
   void init(int the_fd);
   void setEthread(EThread *e);
   void errorAndDie(int e);
-  int callbackHandler(int event, void *data);
+  int callbackHandler(int, Event *);
 
   LINK(UnixUDPConnection, polling_link);
   LINK(UnixUDPConnection, callback_link);

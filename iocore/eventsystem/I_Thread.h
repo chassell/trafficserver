@@ -157,9 +157,9 @@ public:
 public:
   /** Start the underlying thread.
 
-      The thread name is set to @a name. The stack for the thread is either @a stack or, if that is
-      @c nullptr a stack of size @a stacksize is allocated and used. If @a f is present and valid it
-      is called in the thread context. Otherwise the method @c execute is invoked.
+      The thread name is set to @a name. A stack of size @a stacksize is allocated and used. 
+      The name is snprintf() formatted with @a i as a passed argument.  The HWLOC objects of type
+      @a affobj are matched round-robin to each thread.
   */
   static ink_thread start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction &hookFxn);
 

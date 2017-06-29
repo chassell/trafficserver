@@ -164,7 +164,7 @@ SocksEntry::free()
     if (lerrno || !netVConnection) {
       Debug("Socks", "retryevent: Sent errno %d to HTTP", lerrno);
       NET_INCREMENT_DYN_STAT(socks_connections_unsuccessful_stat);
-      action_.continuation->handleEvent(NET_EVENT_OPEN_FAILED, (void *)(intptr_t)(-lerrno));
+      action_.continuation->handleEvent(NET_EVENT_OPEN_FAILED, (NetVConnection *)(intptr_t)(-lerrno));
     } else {
       netVConnection->do_io_read(this, 0, nullptr);
       netVConnection->do_io_write(this, 0, nullptr);

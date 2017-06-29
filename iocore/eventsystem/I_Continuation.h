@@ -58,8 +58,6 @@ class EThread;
 #define CONTINUATION_DONE 0
 #define CONTINUATION_CONT 1
 
-typedef int (Continuation::*ContinuationHandler)(int event, void *data);
-
 class force_VFPT_to_top
 {
 public:
@@ -91,9 +89,14 @@ public:
 
 */
 
+class Event;
+
 class Continuation : private force_VFPT_to_top
 {
 public:
+  using ContinuationHandler = int (Continuation::*)(int event, Event *data);
+
+protected:
   /**
     The current continuation handler function.
 
@@ -103,12 +106,23 @@ public:
     issues.
 
   */
-  ContinuationHandler handler;
+  ContinuationHandler handler_ = nullptr;
+
+public:
+
+  template <typename T_HDLR>
+  void set_handler(T_HDLR hdlr) { handler_ = static_cast<ContinuationHandler>(hdlr); }
 
 #ifdef DEBUG
-  const char *handler_name;
-#endif
+  const char *handlerName_ = nullptr;
 
+  template <typename T_HDLR>
+  void set_handler(T_HDLR hdlr, const char *name) 
+  { 
+    handler_ = static_cast<ContinuationHandler>(hdlr); 
+    handlerName_ = name;
+  }
+#endif
   /**
     The Continuation's lock.
 
@@ -148,9 +162,9 @@ public:
 
   */
   int
-  handleEvent(int event = CONTINUATION_EVENT_NONE, void *data = 0)
+  handleEvent(int event = CONTINUATION_EVENT_NONE, Event *data = nullptr)
   {
-    return (this->*handler)(event, data);
+    return (this->*handler_)(event, data);
   }
 
   /**
@@ -164,6 +178,72 @@ public:
   Continuation(Ptr<ProxyMutex> &amutex);
 };
 
+template <typename T_OBJ>
+class ContinuationTmpl : public Continuation
+{
+public:
+  using ContinuationHandler = int (ContinuationTmpl::*)(int event, T_OBJ *data);
+
+  template <typename T_HDLR>
+  void set_handler(T_HDLR hdlr) { handler_ = reinterpret_cast<Continuation::ContinuationHandler>( static_cast<ContinuationHandler>(hdlr) ); }
+
+  template <typename T_HDLR>
+  void push_handler(T_HDLR hdlr) 
+  {
+    ink_assert( ! handlerDelayed_ );
+
+    handlerDelayed_ = static_cast<ContinuationHandler>(hdlr);
+    set_handler(hdlr);
+  }
+
+  void pop_handler()
+  {
+    ink_assert( handlerDelayed_ );
+
+#ifdef DEBUG
+    set_handler(handlerDelayed_,handlerDelayedName_);
+    handlerDelayedName_ = nullptr;
+#else
+    set_handler(handlerDelayed_);
+#endif
+
+    handlerDelayed_ = nullptr;
+  }
+
+#ifdef DEBUG
+  template <typename T_HDLR>
+  void set_handler(T_HDLR hdlr, const char *name) 
+  { 
+    set_handler(hdlr);
+    handlerName_ = name;
+  }
+
+  template <typename T_HDLR>
+  void push_handler(T_HDLR hdlr, const char *name) 
+  {
+    push_handler(hdlr);
+    handlerDelayedName_ = handlerName_;
+  }
+#endif
+
+  int
+  handleEvent(int event = CONTINUATION_EVENT_NONE, T_OBJ *data = nullptr)
+  {
+    return (this->*reinterpret_cast<ContinuationHandler>(handler_))(event, data);
+  }
+
+  ContinuationTmpl(ProxyMutex *amutex = nullptr) : Continuation{amutex}, handlerDelayed_(nullptr) 
+     { }
+  ContinuationTmpl(Ptr<ProxyMutex> &amutex) : Continuation{amutex}, handlerDelayed_(nullptr) 
+     { }
+
+private:
+  ContinuationHandler handlerDelayed_ = nullptr;
+#ifdef DEBUG
+  const char *handlerDelayedName_ = nullptr;
+#endif
+};
+
 /**
   Sets the Continuation's handler. The preferred mechanism for
   setting the Continuation's handler.
@@ -172,9 +252,9 @@ public:
 
 */
 #ifdef DEBUG
-#define SET_HANDLER(_h) (handler = ((ContinuationHandler)_h), handler_name = #_h)
+#define SET_HANDLER(_h) set_handler(_h,#_h)
 #else
-#define SET_HANDLER(_h) (handler = ((ContinuationHandler)_h))
+#define SET_HANDLER(_h) set_handler(_h)
 #endif
 
 /**
@@ -187,28 +267,28 @@ public:
 
 */
 #ifdef DEBUG
-#define SET_CONTINUATION_HANDLER(_c, _h) (_c->handler = ((ContinuationHandler)_h), _c->handler_name = #_h)
+#define SET_CONTINUATION_HANDLER(_c, _h) (_c->set_handler(_h,#_h))
 #else
-#define SET_CONTINUATION_HANDLER(_c, _h) (_c->handler = ((ContinuationHandler)_h))
+#define SET_CONTINUATION_HANDLER(_c, _h) (_c->set_handler(_h))
 #endif
 
-inline Continuation::Continuation(Ptr<ProxyMutex> &amutex)
-  : handler(nullptr),
 #ifdef DEBUG
-    handler_name(nullptr),
+#define PUSH_HANDLER(_h) (this->push_handler(_h,#_h))
+#else
+#define PUSH_HANDLER(_h) (this->push_handler(_h))
 #endif
-    mutex(amutex)
+
+#define POP_HANDLER(_h) (pop_handler())
+
+inline Continuation::Continuation(Ptr<ProxyMutex> &amutex)
+  : mutex(amutex)
 {
   // Pick up the control flags from the creating thread
   this->control_flags.set_flags(get_cont_flags().get_flags());
 }
 
 inline Continuation::Continuation(ProxyMutex *amutex)
-  : handler(nullptr),
-#ifdef DEBUG
-    handler_name(nullptr),
-#endif
-    mutex(amutex)
+  : mutex(amutex)
 {
   // Pick up the control flags from the creating thread
   this->control_flags.set_flags(get_cont_flags().get_flags());
