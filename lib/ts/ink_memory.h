@@ -159,7 +159,7 @@ namespace jemallctl
 
   template <typename T_VALUE, size_t N_DIFF=0>
   struct SetObjFxn : public ObjBase 
-     { using ObjBase::ObjBase; auto operator()(const T_VALUE &) const -> int; };
+     { using ObjBase::ObjBase; auto operator()(T_VALUE &) const -> int; };
 
   using DoObjFxn = GetObjFxn<void,0>;
 

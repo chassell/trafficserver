@@ -299,7 +299,7 @@ template <typename T_VALUE>
 auto mallctl_get(const objpath_t &oid) -> T_VALUE;
 
 template <typename T_VALUE>
-auto mallctl_set(const objpath_t &oid, T_VALUE const &v) -> int;
+auto mallctl_set(const objpath_t &oid, T_VALUE &v) -> int;
 
 // define object functors (to allow instances below)
 
@@ -308,7 +308,7 @@ template <typename T_VALUE, size_t N_DIFF> auto
    { return std::move( jemallctl::mallctl_get<T_VALUE>(ObjBase::oid_)); } 
 
 template <typename T_VALUE, size_t N_DIFF> auto 
- SetObjFxn<T_VALUE,N_DIFF>::operator()(const T_VALUE &v) const -> int 
+ SetObjFxn<T_VALUE,N_DIFF>::operator()(T_VALUE &v) const -> int 
    { return mallctl_set(ObjBase::oid_,v); } 
 
 template <>
@@ -365,13 +365,13 @@ auto jemallctl::
 
 /// template implementations for ObjBase
 //
-template <typename T_VALUE, size_t N_DIFF> auto jemallctl::
-   mallctl_set(const objpath_t &oid, const T_VALUE &v) -> int
+template <typename T_VALUE> auto jemallctl::
+   mallctl_set(const objpath_t &oid, T_VALUE &v) -> int
 {
   return mallctlbymib(oid.data(),oid.size(),nullptr,nullptr,&v,sizeof(v));
 }
 
-template <typename T_VALUE, size_t N_DIFF> auto jemallctl::
+template <typename T_VALUE> auto jemallctl::
    mallctl_get(const objpath_t &oid) -> T_VALUE
 {
   T_VALUE v{}; // init to zero if a pod type
@@ -391,7 +391,7 @@ template <> auto mallctl_get<std::string>(const objpath_t &oid) -> std::string
   return std::move(v);
 }
 
-template <> auto mallctl_set<std::string>(const objpath_t &oid, const std::string &v) -> int
+template <> auto mallctl_set<std::string>(const objpath_t &oid, std::string &v) -> int
 {
   return mallctlbymib(oid.data(),oid.size(),nullptr,nullptr,const_cast<char*>(v.c_str()),v.size());
 }
@@ -403,7 +403,7 @@ template <> auto mallctl_get<chunk_hooks_t>(const objpath_t &baseOid) -> chunk_h
    return mallctl_get<chunk_hooks_t>(oid);
 }
 
-template <> auto mallctl_set<chunk_hooks_t>(const objpath_t &baseOid, const chunk_hooks_t &hooks) -> int
+template <> auto mallctl_set<chunk_hooks_t>(const objpath_t &baseOid, chunk_hooks_t &hooks) -> int
 {
    objpath_t oid = baseOid;
    oid[1] = ::jemallctl::thread_arena();
@@ -424,6 +424,11 @@ template struct GetObjFxn<uint64_t>;
 template struct GetObjFxn<unsigned>;
 template struct GetObjFxn<bool>;
 template struct GetObjFxn<chunk_hooks_t>;
+
+template struct SetObjFxn<uint64_t>;
+template struct SetObjFxn<unsigned>;
+template struct SetObjFxn<bool>;
+template struct SetObjFxn<chunk_hooks_t>;
 
 } // namespace jemallctl
 
