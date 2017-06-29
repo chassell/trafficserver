@@ -162,7 +162,6 @@ namespace numa
   int use_thread_socket_cpuset(); // limit to near-memory socket cpu subset 
   int use_thread_core_cpuset();   // limit to near-memory core cpu subset 
   int use_thread_pu_cpuset();     // limit to near-memory logical cpu subset 
->>>>>>> origin/home-0630
 }
 #endif
 
