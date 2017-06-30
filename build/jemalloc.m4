@@ -43,16 +43,19 @@ AS_IF([test -n "$with_jemalloc" -a "x$with_jemalloc" != "xno" ],[
   test -z "$jemalloc_libdir" -o -d "$jemalloc_libdir" || jemalloc_libdir=
   test -z "$jemalloc_incdir" -o -d "$jemalloc_incdir" || jemalloc_incdir=
 
-  : ${JEMALLOC_CFLAGS:="${jemalloc_incdir:+ -I$jemalloc_incdir}"}
-  : ${JEMALLOC_LIBS:="${jemalloc_libdir:+ -L$jemalloc_libdir} -ljemalloc "}
+  jemalloc_incdir="${jemalloc_incdir:+$(cd $jemalloc_incdir; pwd -P)}"
+  jemalloc_libdir="${jemalloc_libdir:+$(cd $jemalloc_libdir; pwd -P)}"
 
-  save_libs="$LIBS"
+  : ${JEMALLOC_CFLAGS:="${jemalloc_incdir:+ -I$jemalloc_incdir}"}
+  : ${JEMALLOC_LDFLAGS:="${jemalloc_libdir:+ -L$jemalloc_libdir}"}
+
   save_cppflags="$CPPFLAGS"
-  LIBS="$LIBS $JEMALLOC_LIBS"
+  save_ldflags="$LDFLAGS"
+  LDFLAGS="$LDFLAGS $JEMALLOC_LDFLAGS"
   CPPFLAGS="$CPPFLAGS $JEMALLOC_CFLAGS"
 
 dnl
-dnl define HAVE_LIBJEMALLOC is to be set?
+dnl define HAVE_LIBJEMALLOC is to be set and -ljemalloc added into LIBS?
 dnl 
   AC_CHECK_LIB([jemalloc],[je_malloc_stats_print],[], 
     [AC_CHECK_LIB([jemalloc],[malloc_stats_print],[],
@@ -65,21 +68,20 @@ dnl
   AC_CHECK_HEADERS(jemalloc/jemalloc.h, [], 
     [AC_CHECK_HEADERS(jemalloc.h, [], [have_jemalloc=no])])
 
-  LIBS="$save_libs"
+  LDFLAGS="$save_ldflags"
   CPPFLAGS="$save_cppflags"
 
   AS_IF([test "x$have_jemalloc" == "xno" ], 
      [AC_MSG_ERROR([Failed to compile with jemalloc.h and -ljemalloc]) ])
 
   has_jemalloc=1
-
-  AC_SUBST([JEMALLOC_LIBS])
 #
 # flags must be global setting for all libs
 # 
   TS_ADDTO(CPPFLAGS,$JEMALLOC_CFLAGS)
   if test -n "$jemalloc_libdir"; then
       TS_ADDTO_RPATH($jemalloc_libdir)
+      TS_ADDTO(LDFLAGS,$JEMALLOC_LDFLAGS)
   fi
 ])
 AC_SUBST([has_jemalloc])
