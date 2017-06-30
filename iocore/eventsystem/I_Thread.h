@@ -111,7 +111,7 @@ public:
     processors and you should not modify it directly.
 
   */
-  ink_thread tid_ = 0;
+  ink_thread tid() { return tid_; }
 
   /**
     Thread lock to ensure atomic operations. The thread lock available
@@ -179,6 +179,9 @@ public:
       @note This also updates the cached time.
   */
   static ink_hrtime get_hrtime_updated();
+
+private:
+  ink_thread tid_ = 0;
 };
 
 extern Thread *this_thread();
