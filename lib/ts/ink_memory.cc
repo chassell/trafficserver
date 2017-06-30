@@ -284,14 +284,34 @@ _xstrdup(const char *str, int length, const char * /* path ATS_UNUSED */)
   return nullptr;
 }
 
+#if TS_USE_HWLOC
+auto get_cpu_sets(int afftype) -> std::vector<hwloc_const_cpuset_t>;
+auto create_numa_arenas(unsigned) -> std::vector<unsigned>;
+
+static const auto kNumaCPUSets = get_cpu_sets(HWLOC_OBJ_NUMANODE);
+
+static const auto kNumaArenas = create_numa_arenas(kNumaCPUSets.size());
+#endif
+
 #if HAVE_LIBJEMALLOC
 namespace jemallctl {
+#if HAVE_LIBJEMALLOC
+static const auto kNumaArenas = create_numa_arenas(kNumaCPUSets.size());
+#endif
 
-objpath_t objpath(const std::string &path);
+// int hwloc_bitmap_intersects(a,b)
+// int hwloc_bitmap_isincluded(le,ge)
 
-ObjBase::ObjBase(const char *name) : oid_{objpath(name)} { }
+static const auto kCpus_ = hwloc_topology_get_topology_cpuset( ink_get_topology() );
+static const auto kCpusCnt_ = hwloc_bitmap_weight( kCpus_ );
+static const auto kCpusAllowed_ = hwloc_topology_get_allowed_cpuset( ink_get_topology() );
+
+static const auto kNumas_ = hwloc_topology_get_topology_nodeset( ink_get_topology() );
+static const auto kNumasCnt_ = hwloc_bitmap_weight( kNumas_ );
 
 // internal read/write functions
+
+using objpath_t = std::vector<size_t>;
 
 int mallctl_void(const objpath_t &oid);
 
@@ -299,16 +319,35 @@ template <typename T_VALUE>
 auto mallctl_get(const objpath_t &oid) -> T_VALUE;
 
 template <typename T_VALUE>
-auto mallctl_set(const objpath_t &oid, T_VALUE const &v) -> int;
+auto mallctl_set(const objpath_t &oid, T_VALUE &v) -> int;
 
 // define object functors (to allow instances below)
+
+objpath_t objpath(const std::string &path);
+
+struct ObjBase {
+   ObjBase(const char *name) : oid_{objpath(name)} 
+      { }
+ protected:
+   const objpath_t oid_;
+};
+
+template <typename T_VALUE, size_t N_DIFF=0>
+struct GetObjFxn : public ObjBase 
+  { using ObjBase::ObjBase; auto operator()(void) const -> T_VALUE; };
+
+template <typename T_VALUE, size_t N_DIFF=0>
+struct SetObjFxn : public ObjBase 
+  { using ObjBase::ObjBase; auto operator()(T_VALUE &) const -> int; };
+
+using DoObjFxn = GetObjFxn<void,0>;
 
 template <typename T_VALUE, size_t N_DIFF> auto 
  GetObjFxn<T_VALUE,N_DIFF>::operator()(void) const -> T_VALUE
    { return std::move( jemallctl::mallctl_get<T_VALUE>(ObjBase::oid_)); } 
 
 template <typename T_VALUE, size_t N_DIFF> auto 
- SetObjFxn<T_VALUE,N_DIFF>::operator()(const T_VALUE &v) const -> int 
+ SetObjFxn<T_VALUE,N_DIFF>::operator()(T_VALUE &v) const -> int 
    { return mallctl_set(ObjBase::oid_,v); } 
 
 template <>
@@ -365,13 +404,13 @@ auto jemallctl::
 
 /// template implementations for ObjBase
 //
-template <typename T_VALUE, size_t N_DIFF> auto jemallctl::
-   mallctl_set(const objpath_t &oid, const T_VALUE &v) -> int
+template <typename T_VALUE> auto jemallctl::
+   mallctl_set(const objpath_t &oid, T_VALUE &v) -> int
 {
   return mallctlbymib(oid.data(),oid.size(),nullptr,nullptr,&v,sizeof(v));
 }
 
-template <typename T_VALUE, size_t N_DIFF> auto jemallctl::
+template <typename T_VALUE> auto jemallctl::
    mallctl_get(const objpath_t &oid) -> T_VALUE
 {
   T_VALUE v{}; // init to zero if a pod type
@@ -380,6 +419,7 @@ template <typename T_VALUE, size_t N_DIFF> auto jemallctl::
   return std::move(v);
 }
 
+////////////////////////////////// namespace jemallctl
 namespace jemallctl {
 
 template <> auto mallctl_get<std::string>(const objpath_t &oid) -> std::string
@@ -391,7 +431,7 @@ template <> auto mallctl_get<std::string>(const objpath_t &oid) -> std::string
   return std::move(v);
 }
 
-template <> auto mallctl_set<std::string>(const objpath_t &oid, const std::string &v) -> int
+template <> auto mallctl_set<std::string>(const objpath_t &oid, std::string &v) -> int
 {
   return mallctlbymib(oid.data(),oid.size(),nullptr,nullptr,const_cast<char*>(v.c_str()),v.size());
 }
@@ -403,7 +443,7 @@ template <> auto mallctl_get<chunk_hooks_t>(const objpath_t &baseOid) -> chunk_h
    return mallctl_get<chunk_hooks_t>(oid);
 }
 
-template <> auto mallctl_set<chunk_hooks_t>(const objpath_t &baseOid, const chunk_hooks_t &hooks) -> int
+template <> auto mallctl_set<chunk_hooks_t>(const objpath_t &baseOid, chunk_hooks_t &hooks) -> int
 {
    objpath_t oid = baseOid;
    oid[1] = ::jemallctl::thread_arena();
@@ -425,7 +465,66 @@ template struct GetObjFxn<unsigned>;
 template struct GetObjFxn<bool>;
 template struct GetObjFxn<chunk_hooks_t>;
 
+template struct SetObjFxn<uint64_t>;
+template struct SetObjFxn<unsigned>;
+template struct SetObjFxn<bool>;
+template struct SetObjFxn<chunk_hooks_t>;
+
 } // namespace jemallctl
 
+////////////////////////////////// namespace numa
+namespace numa {
 
+auto get_cpu_sets(hwloc_obj_type_t objtype) -> std::vector<hwloc_const_cpuset_t> 
+{
+  std::vector<hwloc_const_cpuset_t> sets;
+
+  auto n = hwloc_get_nbobjs_by_type(ink_get_topology(), objtype);
+  while ( n-- ) 
+  {
+    hwloc_obj_t obj = hwloc_get_obj_by_type(ink_get_topology(), objtype, n);
+    sets.emplace_back( obj ? obj->cpuset : kCpusAllowed_ );
+  }
+  return std::move(sets);
+}
+
+auto create_numa_arenas(unsigned) -> std::vector<unsigned>;
+
+int use_other_thread_memory_arena(const char *thrname) // use non-assigned memory-page arena
+{
+   return 0;
+}
+
+int use_thread_memory_arena()  // use assigned memory-page arena only
+{
+   hwloc_set_membind_nodeset(ink_get_topology(), thrNUMAs, HWLOC_MEMBIND_INTERLEAVE, HWLOC_MEMBIND_THREAD);
+
+   return 0;
+}
+
+int use_thread_arena_cpuset()  // limit to near-memory cpus only
+{
+   hwloc_set_thread_cpubind(ink_get_topology(), t->tid_, obj->cpuset, HWLOC_CPUBIND_STRICT);
+   return 0;
+}
+
+int use_thread_socket_cpuset() // limit to near-memory socket cpu subset 
+{
+   hwloc_set_thread_cpubind(ink_get_topology(), t->tid_, obj->cpuset, HWLOC_CPUBIND_STRICT);
+   return 0;
+}
+
+int use_thread_core_cpuset()   // limit to near-memory core cpu subset 
+{
+   hwloc_set_thread_cpubind(ink_get_topology(), t->tid_, obj->cpuset, HWLOC_CPUBIND_STRICT);
+   return 0;
+}
+
+int use_thread_pu_cpuset()     // limit to near-memory logical cpu subset 
+{
+   hwloc_set_thread_cpubind(ink_get_topology(), t->tid_, obj->cpuset, HWLOC_CPUBIND_STRICT);
+   return 0;
+}
+
+} // namespace numa
 #endif
