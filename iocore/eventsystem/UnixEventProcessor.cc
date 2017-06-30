@@ -42,7 +42,6 @@ static const hwloc_obj_type_t kAffinity_objs[] =
          , HWLOC_OBJ_PU  
 #endif
   };
-#endif
 
 static const char *const kAffinity_obj_names[] =
    { "[Unrestricted]",         "NUMA Node",        "Socket",         "Core"
