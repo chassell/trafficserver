@@ -153,49 +153,16 @@ ats_stringdup(std::string const &p)
 #ifdef __cplusplus
 
 #if HAVE_LIBJEMALLOC 
-
-namespace jemallctl 
+namespace numa
 {
-  using objpath_t = std::vector<size_t>;
+  int use_external_memory_arena(const char *thrname); // use non-assigned memory-page arena
+  int use_thread_memory_arena(); // use assigned memory-page arena only
 
-  struct ObjBase {
-      ObjBase(const char *name);
-    protected:
-      const objpath_t oid_;
-  };
-
-  template <typename T_VALUE, size_t N_DIFF=0>
-  struct GetObjFxn : public ObjBase 
-     { using ObjBase::ObjBase; auto operator()(void) const -> T_VALUE; };
-
-  template <typename T_VALUE, size_t N_DIFF=0>
-  struct SetObjFxn : public ObjBase 
-     { using ObjBase::ObjBase; auto operator()(const T_VALUE &) const -> int; };
-
-  using DoObjFxn = GetObjFxn<void,0>;
-
-  extern const GetObjFxn<chunk_hooks_t> thread_arena_hooks;
-  extern const SetObjFxn<chunk_hooks_t> set_thread_arena_hooks;
-
-  // request-or-sense new values in statistics 
-  extern const GetObjFxn<uint64_t>    epoch;
-
-  // request separated page sets for each NUMA node (when created)
-  extern const GetObjFxn<unsigned>    do_arenas_extend;
-
-  // assigned arena for local thread
-  extern const GetObjFxn<unsigned>    thread_arena;
-  extern const SetObjFxn<unsigned>    set_thread_arena;
-  extern const DoObjFxn               do_thread_tcache_flush;
-
-  extern const GetObjFxn<bool>        config_thp;
-  extern const GetObjFxn<bool>        thread_prof_active;
-  extern const SetObjFxn<bool>        set_thread_prof_active;
-
-//  extern const GetObjFxn<std::string> config_malloc_conf;
-//  extern const GetObjFxn<std::string> thread_prof_name;
-//  extern const SetObjFxn<std::string> set_thread_prof_name;
-
+  int use_thread_arena_cpuset();  // limit to near-memory cpus only
+  int use_thread_socket_cpuset(); // limit to near-memory socket cpu subset 
+  int use_thread_core_cpuset();   // limit to near-memory core cpu subset 
+  int use_thread_pu_cpuset();     // limit to near-memory logical cpu subset 
+>>>>>>> origin/home-0630
 }
 #endif
 
