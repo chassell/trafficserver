@@ -73,8 +73,6 @@ libtsutil_la_SOURCES = \
   HashSip.h \
   HostLookup.cc \
   HostLookup.h \
-  hugepages.cc \
-  hugepages.h \
   I_Layout.h \
   ink_aiocb.h \
   ink_align.h \
@@ -152,6 +150,8 @@ libtsutil_la_SOURCES = \
   IpMapConf.h \
   IpMap.h \
   I_Version.h \
+  jemallctl.cc \
+  jemallctl.h \
   Layout.cc \
   List.h \
   llqueue.cc \
@@ -191,7 +191,11 @@ libtsutil_la_SOURCES = \
   Vec.h \
   Version.cc \
   X509HostnameValidator.cc \
-  X509HostnameValidator.h
+  X509HostnameValidator.h \
+  hugepages.cc \
+  hugepages.h
+
+# need hugepages.cc on link line *after* jemallctl
 
 #test_UNUSED_SOURCES = \
 #  load_http_hdr.cc \

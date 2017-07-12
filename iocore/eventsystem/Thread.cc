@@ -48,8 +48,10 @@ static bool initialized = ([]() -> bool {
 })();
 }
 
+std::atomic_uint Thread::g_serid{0};
+
 Thread::Thread()
-   : mutex( new_ProxyMutex() )
+   : mutex( new_ProxyMutex() ), tid_(), serid_(++g_serid)
 {
   MUTEX_TAKE_LOCK(mutex, (EThread *)this);
   mutex->nthread_holding += THREAD_MUTEX_THREAD_HOLDING;
@@ -62,51 +64,92 @@ Thread::~Thread()
   MUTEX_UNTAKE_LOCK(mutex, (EThread *)this);
 }
 
+void Thread::spawn_init()
+{
+  set_specific();
+}
+
 ///////////////////////////////////////////////
 // Unix & non-NT Interface impl              //
 ///////////////////////////////////////////////
 
 ink_thread
-Thread::start(const char *name, void *stack, size_t stacksize, ThreadFunction const &f)
+Thread::start(const char *name, void *stack, size_t stacksize, ThreadFunction const &thr)
 {
-  char buff[MAX_THREAD_NAME_LENGTH]; ///< Name for the thread.
-  snprintf(buff,sizeof(buff),name,tid_); // use the tid_ as is right now..
+  // wait until spawn_init completes
+  ink_cond initDone;
+  ink_mutex initMutex;
 
-  // get full copy
-  ThreadFunction fxn = f;
-  // hold a mutex to delay child for a moment
-  ink_mutex mutex;
+  ink_cond_init(&initDone);
+  ink_mutex_init(&initMutex);
 
-  // capture params needed to start
-  auto getStartFxnObj = ats_copy_to_unique_ptr([buff,this,fxn,&mutex]() -> ThreadFunction
-     {
-        ink_set_thread_name(buff); // use copied array
-        this->set_specific();
+  ink_scoped_mutex_lock lock(&initMutex); // parent holds the mutex ...
 
-        {
-          ink_scoped_mutex_lock lock(&mutex); // wait until parent has written tid_
-          ink_mutex_destroy(&mutex); // done with it...
+  stacksize = ( stacksize ? stacksize : DEFAULT_STACKSIZE );
+
+  // set unchanged value of condition variable
+  tid_ = ink_thread_self(); 
+
+  // stack-lambda captures 
+  //    (3) Thread-obj, (1) start-caller name ptr, (2) start fxn, 
+  auto doSpawnInit = [this,name,&thr,&initDone,&initMutex]() -> ThreadFunction
+    {
+        { 
+          char buff[MAX_THREAD_NAME_LENGTH]; ///< Name for the thread.
+          snprintf(buff,sizeof(buff),name,tid_); // include the tid_ as passed...
+          ink_set_thread_name(buff); // use captured buff-array
         }
 
-        return ( fxn ? fxn : std::bind(&Thread::execute,this) ); // call thread start
-    } );
+        // do thread-pre-init ops
+        this->spawn_init(); // handle spawn-time setup
+        
+        ThreadFunction fxn{ thr ? thr : std::bind(&Thread::execute,this) };
+
+        { // cond_wait will release mutex
+          ink_scoped_mutex_lock lock(&initMutex);
+
+          // alter cond variable with lock
+          this->tid_ = pthread_self();
+
+          // notify (single) cond-blocked parent
+          ink_cond_broadcast(&initDone);
+        } // mutex-release allows parent to continue
+
+        // NOTE: all (other than this) ptr-captures are invalid now...
+
+        return std::move(fxn);
+    };
 
   // no captured values...
-  auto pureCaller = [](void *ptr) -> void*
+  auto threadLifeFxn = [](void *ptr) -> void*
     {
-      using GetStartFxnObj_ptr = decltype(getStartFxnObj.release());
-      // create temp unique_ptr, generate final functor, free temp
-      auto startFxn = ats_make_unique(static_cast<GetStartFxnObj_ptr>(ptr))->operator()();
-      startFxn();
+      // WARNING: ptr is from waiting parent's stack..
+      ThreadFunction threadFxn;
+
+      {
+         using SpawnInitFunctor_t = decltype(doSpawnInit);
+         SpawnInitFunctor_t &init = *static_cast<SpawnInitFunctor_t*>(ptr);
+
+         // perform spawn_init() then release parent with cond_signal
+         threadFxn = init();
+      }
+
+      // call execution functor 
+      threadFxn();
       return nullptr;
     };
 
-  ink_mutex_init(&mutex);
-  ink_scoped_mutex_lock lock(&mutex);
+  ink_thread_create(threadLifeFxn, &doSpawnInit, false, stacksize, stack);
 
-  // delay child until tid_ is written and returned
+  // wait until mutex returned with changed tid_ (ignore spurious wakeups)
+  do 
+    { ink_cond_wait(&initDone,&initMutex); } 
+  while ( tid_ == ink_thread_self() );
 
-  tid_ = ink_thread_create(pureCaller, getStartFxnObj.release(), 0, 
-                  ( stacksize ? stacksize : DEFAULT_STACKSIZE ), stack);
+  // parent holds mutex and child has completed spawn_init()
+
+  ink_mutex_destroy(&initMutex);
+  ink_cond_destroy(&initDone);
+
   return tid_;
 }

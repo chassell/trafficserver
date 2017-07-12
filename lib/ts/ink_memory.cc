@@ -20,6 +20,9 @@
   See the License for the specific language governing permissions and
   limitations under the License.
  */
+#include "ts/jemallctl.h"
+#include "hugepages.h"
+
 #include "ts/ink_platform.h"
 #include "ts/ink_memory.h"
 #include "ts/ink_defs.h"
@@ -30,6 +33,8 @@
 #if defined(freebsd)
 #include <malloc_np.h> // for malloc_usable_size
 #endif
+
+#include <atomic>
 
 #include <cassert>
 #if defined(linux) && ! defined(_XOPEN_SOURCE)
@@ -284,247 +289,285 @@ _xstrdup(const char *str, int length, const char * /* path ATS_UNUSED */)
   return nullptr;
 }
 
-#if TS_USE_HWLOC
-auto get_cpu_sets(int afftype) -> std::vector<hwloc_const_cpuset_t>;
-auto create_numa_arenas(unsigned) -> std::vector<unsigned>;
-
-static const auto kNumaCPUSets = get_cpu_sets(HWLOC_OBJ_NUMANODE);
-
-static const auto kNumaArenas = create_numa_arenas(kNumaCPUSets.size());
-#endif
-
-#if HAVE_LIBJEMALLOC
-namespace jemallctl {
-#if HAVE_LIBJEMALLOC
-static const auto kNumaArenas = create_numa_arenas(kNumaCPUSets.size());
-#endif
-
-// int hwloc_bitmap_intersects(a,b)
-// int hwloc_bitmap_isincluded(le,ge)
-
-static const auto kCpus_ = hwloc_topology_get_topology_cpuset( ink_get_topology() );
-static const auto kCpusCnt_ = hwloc_bitmap_weight( kCpus_ );
-static const auto kCpusAllowed_ = hwloc_topology_get_allowed_cpuset( ink_get_topology() );
-
-static const auto kNumas_ = hwloc_topology_get_topology_nodeset( ink_get_topology() );
-static const auto kNumasCnt_ = hwloc_bitmap_weight( kNumas_ );
-
-// internal read/write functions
-
-using objpath_t = std::vector<size_t>;
-
-int mallctl_void(const objpath_t &oid);
-
-template <typename T_VALUE>
-auto mallctl_get(const objpath_t &oid) -> T_VALUE;
-
-template <typename T_VALUE>
-auto mallctl_set(const objpath_t &oid, T_VALUE &v) -> int;
-
-// define object functors (to allow instances below)
-
-objpath_t objpath(const std::string &path);
-
-struct ObjBase {
-   ObjBase(const char *name) : oid_{objpath(name)} 
-      { }
- protected:
-   const objpath_t oid_;
-};
-
-template <typename T_VALUE, size_t N_DIFF=0>
-struct GetObjFxn : public ObjBase 
-  { using ObjBase::ObjBase; auto operator()(void) const -> T_VALUE; };
-
-template <typename T_VALUE, size_t N_DIFF=0>
-struct SetObjFxn : public ObjBase 
-  { using ObjBase::ObjBase; auto operator()(T_VALUE &) const -> int; };
-
-using DoObjFxn = GetObjFxn<void,0>;
-
-template <typename T_VALUE, size_t N_DIFF> auto 
- GetObjFxn<T_VALUE,N_DIFF>::operator()(void) const -> T_VALUE
-   { return std::move( jemallctl::mallctl_get<T_VALUE>(ObjBase::oid_)); } 
-
-template <typename T_VALUE, size_t N_DIFF> auto 
- SetObjFxn<T_VALUE,N_DIFF>::operator()(T_VALUE &v) const -> int 
-   { return mallctl_set(ObjBase::oid_,v); } 
-
-template <>
-struct GetObjFxn<void,0> : public ObjBase
-  {
-    using ObjBase::ObjBase;
-    int operator()(void) const 
-       { return jemallctl::mallctl_void(ObjBase::oid_); } 
-  };
-
-const GetObjFxn<chunk_hooks_t> thread_arena_hooks{"arena.0.chunk_hooks"};
-const SetObjFxn<chunk_hooks_t> set_thread_arena_hooks{"arena.0.chunk_hooks"};
-
-// request-or-sense new values in statistics 
-const GetObjFxn<uint64_t>         epoch{"epoch"};
-
-// request separated page sets for each NUMA node (when created)
-const GetObjFxn<unsigned>         do_arenas_extend{"arenas.extend"}; // unsigned r-
-
-// assigned arena for local thread
-const GetObjFxn<unsigned>         thread_arena{"thread.arena"}; // unsigned rw
-const SetObjFxn<unsigned>         set_thread_arena{"thread.arena"}; // unsigned rw
-const DoObjFxn                    do_thread_tcache_flush{"thread.tcache.flush"};
-
-const GetObjFxn<bool>             config_thp{"config.thp"};
-const GetObjFxn<std::string>      config_malloc_conf{"config.malloc_conf"};
-
-const GetObjFxn<std::string>      thread_prof_name{"thread.prof.name"};
-const SetObjFxn<std::string>      set_thread_prof_name{"thread.prof.name"};
-
-const GetObjFxn<bool>             thread_prof_active{"thread.prof.active"};
-const SetObjFxn<bool>             set_thread_prof_active{"thread.prof.active"};
-
-} // namespace jemallctl
-
-/// implementation of simple oid-translating call
-
-jemallctl::objpath_t jemallctl::objpath(const std::string &path)
-{
-  objpath_t oid{10}; // longer than any oid target
-  size_t len = oid.size();
-  mallctlnametomib(path.c_str(), oid.data(), &len);
-  oid.resize(len);
-  return std::move(oid);
-}
-
-/// implementations for ObjBase
-
-auto jemallctl::
-   mallctl_void(const objpath_t &oid) -> int
-{
-  return mallctlbymib(oid.data(),oid.size(),nullptr,nullptr,nullptr,0);
-}
-
-/// template implementations for ObjBase
-//
-template <typename T_VALUE> auto jemallctl::
-   mallctl_set(const objpath_t &oid, T_VALUE &v) -> int
-{
-  return mallctlbymib(oid.data(),oid.size(),nullptr,nullptr,&v,sizeof(v));
-}
-
-template <typename T_VALUE> auto jemallctl::
-   mallctl_get(const objpath_t &oid) -> T_VALUE
-{
-  T_VALUE v{}; // init to zero if a pod type
-  size_t len = sizeof(v);
-  mallctlbymib(oid.data(),oid.size(),&v,&len,nullptr,0);
-  return std::move(v);
-}
-
-////////////////////////////////// namespace jemallctl
-namespace jemallctl {
-
-template <> auto mallctl_get<std::string>(const objpath_t &oid) -> std::string
-{
-  char buff[256]; // adequate for paths and most things
-  size_t len = sizeof(buff);
-  mallctlbymib(oid.data(),oid.size(),&buff,&len,nullptr,0);
-  std::string v(&buff[0],len); // copy out
-  return std::move(v);
-}
-
-template <> auto mallctl_set<std::string>(const objpath_t &oid, std::string &v) -> int
-{
-  return mallctlbymib(oid.data(),oid.size(),nullptr,nullptr,const_cast<char*>(v.c_str()),v.size());
-}
-
-template <> auto mallctl_get<chunk_hooks_t>(const objpath_t &baseOid) -> chunk_hooks_t
-{
-   objpath_t oid = baseOid;
-   oid[1] = ::jemallctl::thread_arena();
-   return mallctl_get<chunk_hooks_t>(oid);
-}
-
-template <> auto mallctl_set<chunk_hooks_t>(const objpath_t &baseOid, chunk_hooks_t &hooks) -> int
-{
-   objpath_t oid = baseOid;
-   oid[1] = ::jemallctl::thread_arena();
-   auto ohooks = mallctl_get<chunk_hooks_t>(oid);
-   auto nhooks = chunk_hooks_t {
-                    ( hooks.alloc ? : ohooks.alloc ),
-                    ( hooks.dalloc ? : ohooks.dalloc ),
-                    ( hooks.commit ? : ohooks.commit ),
-                    ( hooks.decommit ? : ohooks.decommit ),
-                    ( hooks.purge ? : ohooks.purge ),
-                    ( hooks.split ? : ohooks.split ),
-                    ( hooks.merge ? : ohooks.merge )
-                 };
-   return mallctl_set<chunk_hooks_t>(oid,nhooks);
-}
-
-template struct GetObjFxn<uint64_t>;
-template struct GetObjFxn<unsigned>;
-template struct GetObjFxn<bool>;
-template struct GetObjFxn<chunk_hooks_t>;
-
-template struct SetObjFxn<uint64_t>;
-template struct SetObjFxn<unsigned>;
-template struct SetObjFxn<bool>;
-template struct SetObjFxn<chunk_hooks_t>;
-
-} // namespace jemallctl
+#if ! TS_USE_HWLOC
+using CpuSetVector_t = std::vector<void*>;
+#else
+using CpuSetVector_t = std::vector<hwloc_const_cpuset_t>;
+using NodeSetVector_t = std::vector<hwloc_const_nodeset_t>;
+using ArenaIDVector_t = std::vector<unsigned>;
 
 ////////////////////////////////// namespace numa
 namespace numa {
 
-auto get_cpu_sets(hwloc_obj_type_t objtype) -> std::vector<hwloc_const_cpuset_t> 
-{
-  std::vector<hwloc_const_cpuset_t> sets;
+extern hwloc_const_cpuset_t const kCpusAllowed;
+extern hwloc_const_nodeset_t const kNodesAllowed;
 
-  auto n = hwloc_get_nbobjs_by_type(ink_get_topology(), objtype);
+// early-assigned map of cpus per arenas [zero is default arena]
+extern NodeSetVector_t g_nodesByArena;
+
+static CpuSetVector_t::value_type get_cpuset_by_affinity(int objtype, unsigned affid);
+static ArenaIDVector_t::value_type get_arena_by_affinity(int objtype, unsigned affid);
+
+unsigned new_affinity_id() 
+{
+  static std::atomic_uint g_affinityId{1}; // zero is 'unset'
+  return ++g_affinityId;
+}
+
+bool is_same_thread_memory_affinity(int objtype, unsigned affid)
+  { return get_arena_by_affinity(objtype,affid) == jemallctl::thread_arena(); }
+
+int assign_thread_memory_by_affinity(int objtype, unsigned affid) // limit new pages to specific nodes
+{
+  // keep using old arena for a moment...
+
+  auto arena = get_arena_by_affinity(objtype,affid);
+
+  if ( arena > g_nodesByArena.size() ) {
+    return -1;
+  }
+
+  auto nodes = g_nodesByArena[arena];
+
+  if ( ! nodes || hwloc_bitmap_iszero(nodes) ) {
+    return -1;
+  }
+
+  // only get new pages from this nodeset ... (all if arena == 0)
+  auto r = hwloc_set_membind_nodeset(curr(), nodes, HWLOC_MEMBIND_INTERLEAVE, HWLOC_MEMBIND_THREAD);
+  if ( r ) {
+    return -1;
+  }
+
+  // thread-wide change in place
+  jemallctl::set_thread_arena(arena); // make it active now
+  return 0;
+}
+
+int assign_thread_cpuset_by_affinity(int objtype, unsigned affid) // limit usable cpus to specific cpuset
+  { return hwloc_set_cpubind(curr(), get_cpuset_by_affinity(objtype,affid), HWLOC_CPUBIND_STRICT); }
+
+static auto const kHwlocBitmapDeleter = [](hwloc_bitmap_t map){ map ? hwloc_bitmap_free(map) : (void) 0; };
+
+struct hwloc_bitmap : public std::unique_ptr<hwloc_bitmap_s,decltype(kHwlocBitmapDeleter)>
+{
+  using super = std::unique_ptr<hwloc_bitmap_s,decltype(kHwlocBitmapDeleter)>;
+  hwloc_bitmap() : super{ hwloc_bitmap_alloc(), kHwlocBitmapDeleter } 
+     { }
+  hwloc_bitmap(hwloc_const_bitmap_t map) : super{ hwloc_bitmap_dup(map), kHwlocBitmapDeleter } 
+     { }
+  operator hwloc_const_bitmap_t() const
+     { return get(); }
+  operator hwloc_bitmap_t()
+     { return get(); }
+};
+
+static void reorder_interleaved(CpuSetVector_t const &supers, CpuSetVector_t &subs);
+
+//
+// produce a list of cpusets associated with the object passed
+//
+auto get_obj_cpusets(hwloc_obj_type_t objtype, CpuSetVector_t const &supers=CpuSetVector_t{}) -> CpuSetVector_t
+{
+  auto n = hwloc_get_nbobjs_by_type(curr(), objtype);
+
+  // is there no partition at all?
+  if ( n < 2 ) {
+    return std::move(CpuSetVector_t( { kCpusAllowed } )); // one set.. of all cpus
+  }
+
+  CpuSetVector_t sets;
+
   while ( n-- ) 
   {
-    hwloc_obj_t obj = hwloc_get_obj_by_type(ink_get_topology(), objtype, n);
-    sets.emplace_back( obj ? obj->cpuset : kCpusAllowed_ );
+    hwloc_obj_t obj = hwloc_get_obj_by_type(curr(), objtype, n);
+    sets.emplace_back( obj ? obj->cpuset : kCpusAllowed );
   }
+
+  // reorder any neighbors to interleave between superset-matching cpusets
+
+  if ( sets.size() >= 2 && supers.size() >= 2 ) {
+    reorder_interleaved(supers,sets);
+  }
+
   return std::move(sets);
 }
 
-auto create_numa_arenas(unsigned) -> std::vector<unsigned>;
-
-int use_other_thread_memory_arena(const char *thrname) // use non-assigned memory-page arena
+//
+// use newVect cpusets and NUMA nodesets (may require new arenas)
+//
+auto cpusets_to_memory_arenas(CpuSetVector_t const &newVect) -> ArenaIDVector_t 
 {
-   return 0;
+  // no differences for all threads?
+  if ( newVect.size() <= 1 ) {
+    return std::move(ArenaIDVector_t(1));                           ///// RETURN (default single)
+  }
+
+  // same NUMA node for all affinities?
+  if ( hwloc_get_nbobjs_by_type(curr(), HWLOC_OBJ_NUMANODE) < 2 ) {
+    return std::move(ArenaIDVector_t(newVect.size()));              ///// RETURN (defaulted)
+  }
+
+  // may create arenas if nodesets are different
+
+  hwloc_bitmap nodeset;
+
+  ArenaIDVector_t arenaMap;
+
+  for( auto &&cpuset : newVect )
+  {
+    auto equalNodesChk = [cpuset,&nodeset](hwloc_const_bitmap_t arenaset) { 
+                              hwloc_cpuset_to_nodeset(curr(), cpuset, nodeset);
+                              return hwloc_bitmap_isequal(nodeset,arenaset); 
+                        };
+
+    unsigned i = std::find_if(g_nodesByArena.rbegin(), g_nodesByArena.rend(), equalNodesChk) - g_nodesByArena.rend();
+
+    // found a equal-nodes match?  chg i to arena-index.
+    if ( i-- ) {
+       arenaMap.push_back(i); // affid-cpuset now matches this arena
+       continue; // found an old arena                                       //// CONTINUE
+    }
+
+    // need a new arena for this set of nodes
+
+    unsigned newArena = jemallctl::do_arenas_extend();
+
+    Debug("memory", "extending arena to %u", newArena);
+
+    int callerArena = jemallctl::thread_arena(); // push current arena (for a moment)
+
+    jemallctl::set_thread_arena(newArena);
+    jemallctl::set_thread_arena_hooks(get_jemallctl_huge_hooks()); // init hooks for hugepage
+
+    // re-use caller's arena for allocations
+    jemallctl::set_thread_arena(callerArena);
+
+    // store the node-set that this arena is going to partition off
+    if ( g_nodesByArena.size() < newArena+1 ) {
+      g_nodesByArena.resize(newArena+1); // filled with nullptr if needed
+    }
+
+    g_nodesByArena[newArena] = hwloc_bitmap{ nodeset.get() }.release();
+    arenaMap.push_back(newArena); // affid/cpuset now leads to this arena
+  }
+
+  return std::move(arenaMap);
 }
 
-int use_thread_memory_arena()  // use assigned memory-page arena only
-{
-   hwloc_set_membind_nodeset(ink_get_topology(), thrNUMAs, HWLOC_MEMBIND_INTERLEAVE, HWLOC_MEMBIND_THREAD);
+static inline 
+auto find_superset_bitmap(CpuSetVector_t const &supers, 
+                          CpuSetVector_t::const_iterator const &hint, 
+                          hwloc_const_bitmap_t sub) -> CpuSetVector_t::const_iterator
+{ 
+  auto IfSuperset = [&](hwloc_const_bitmap_t super) { return hwloc_bitmap_isincluded(sub,super); };
 
-   return 0;
+  CpuSetVector_t::const_iterator sup = std::find_if(hint, supers.end(), IfSuperset);
+
+  if ( sup == supers.end() ) { 
+    sup = std::find_if(supers.begin(), hint, IfSuperset);
+  }
+
+  return sup; // may be equal to hint
 }
 
-int use_thread_arena_cpuset()  // limit to near-memory cpus only
+static inline 
+auto find_first_non_overlap_bitmap(CpuSetVector_t::iterator begin, 
+                                  CpuSetVector_t::iterator end, 
+                                  hwloc_const_bitmap_t super) -> CpuSetVector_t::iterator
+  { return std::find_if(begin, end, [&](hwloc_const_bitmap_t sub) { return ! hwloc_bitmap_isincluded(sub,super); }); }
+
+static inline 
+auto find_first_non_subset_bitmap(CpuSetVector_t::iterator begin, 
+                                  CpuSetVector_t::iterator end, 
+                                  hwloc_const_bitmap_t super) -> CpuSetVector_t::iterator
+  { return std::find_if(begin, end, [&](hwloc_const_bitmap_t sub) { return ! hwloc_bitmap_isincluded(sub,super); }); }
+
+static void reorder_interleaved(CpuSetVector_t const &supers, CpuSetVector_t &subs)
 {
-   hwloc_set_thread_cpubind(ink_get_topology(), t->tid_, obj->cpuset, HWLOC_CPUBIND_STRICT);
-   return 0;
+  // use rotating search-window
+  auto adjSuper = supers.begin();
+
+  // remove superset-matching neighbors 
+
+  // get original
+  auto adjSet = subs.begin();
+
+  // needs to work with begin+1 to last-1 [can swap with begin+2 to last]
+  for( auto set = adjSet+1 ; set+1 != subs.end() ; (adjSet=set),++set )
+  {
+    adjSuper = find_superset_bitmap(supers,adjSuper,*adjSet);
+
+    auto swapFrom = set;
+    // first swap in the an *entirely* adjSuper-external cpuset, 
+    //    or (failing that) the a partly adjSuper-external cpuset
+    if ( (swapFrom=find_first_non_overlap_bitmap(set,subs.end(),*adjSuper)) == subs.end() 
+          && (swapFrom=find_first_non_subset_bitmap(set,subs.end(),*adjSuper)) == subs.end() ) 
+    {
+      continue; // give up if no cpus used outside this super-obj cpuset
+    }
+
+    // some neighbor has a different super-obj cpuset
+
+    if ( swapFrom != set ) {
+      std::swap(*set,*swapFrom);
+    }
+  }
 }
 
-int use_thread_socket_cpuset() // limit to near-memory socket cpu subset 
+hwloc_const_cpuset_t const kCpusAllowed = hwloc_topology_get_allowed_cpuset( curr() );
+hwloc_const_nodeset_t const kNodesAllowed = hwloc_topology_get_allowed_nodeset( curr() );
+
+CpuSetVector_t const kCPUSets = CpuSetVector_t{ kCpusAllowed };    // valid base cpuset
+
+CpuSetVector_t const kNumaCPUSets = get_obj_cpusets(HWLOC_OBJ_NUMANODE);               // cpusets for each memory node
+CpuSetVector_t const kSocketCPUSets = get_obj_cpusets(HWLOC_OBJ_SOCKET, kNumaCPUSets); // cpusets for each socket, in alternated order of memory nodes
+CpuSetVector_t const kCoreCPUSets = get_obj_cpusets(HWLOC_OBJ_CORE, kNumaCPUSets);     // cpusets for each core, in alternated order of memory nodes
+CpuSetVector_t const kProcCPUSets = get_obj_cpusets(HWLOC_OBJ_PU, kNumaCPUSets);       // cpusets for each processor-unit, in alternated order of memory nodes
+
+ArenaIDVector_t const kNumaAffArenas = cpusets_to_memory_arenas(kNumaCPUSets);
+ArenaIDVector_t const kSocketAffArenas = cpusets_to_memory_arenas(kSocketCPUSets);
+ArenaIDVector_t const kCoreAffArenas = cpusets_to_memory_arenas(kCoreCPUSets);
+ArenaIDVector_t const kProcAffArenas = cpusets_to_memory_arenas(kProcCPUSets);
+
+NodeSetVector_t g_nodesByArena = { kNodesAllowed };
+
+static CpuSetVector_t::value_type get_cpuset_by_affinity(int objtype, unsigned affid)
 {
-   hwloc_set_thread_cpubind(ink_get_topology(), t->tid_, obj->cpuset, HWLOC_CPUBIND_STRICT);
-   return 0;
+  switch(objtype) {
+    case HWLOC_OBJ_NUMANODE:
+       return kNumaCPUSets[ affid % kNumaCPUSets.size() ];
+    case HWLOC_OBJ_SOCKET:
+       return kSocketCPUSets[ affid % kSocketCPUSets.size() ];
+    case HWLOC_OBJ_CORE:
+       return kCoreCPUSets[ affid % kCoreCPUSets.size() ];
+    case HWLOC_OBJ_PU:
+       return kProcCPUSets[ affid % kProcCPUSets.size() ];
+    default: 
+       break;
+  }
+
+  return kCPUSets.front();
 }
 
-int use_thread_core_cpuset()   // limit to near-memory core cpu subset 
+static ArenaIDVector_t::value_type get_arena_by_affinity(int objtype, unsigned affid)
 {
-   hwloc_set_thread_cpubind(ink_get_topology(), t->tid_, obj->cpuset, HWLOC_CPUBIND_STRICT);
-   return 0;
-}
+  switch(objtype) {
+    case HWLOC_OBJ_NUMANODE:
+       return kNumaAffArenas[ affid % kNumaAffArenas.size() ];
+    case HWLOC_OBJ_SOCKET:
+       return kSocketAffArenas[ affid % kSocketAffArenas.size() ];
+    case HWLOC_OBJ_CORE:
+       return kCoreAffArenas[ affid % kCoreAffArenas.size() ];
+    case HWLOC_OBJ_PU:
+       return kProcAffArenas[ affid % kProcAffArenas.size() ];
+    default: 
+       break;
+  }
 
-int use_thread_pu_cpuset()     // limit to near-memory logical cpu subset 
-{
-   hwloc_set_thread_cpubind(ink_get_topology(), t->tid_, obj->cpuset, HWLOC_CPUBIND_STRICT);
-   return 0;
+  return 0;
 }
 
 } // namespace numa
+
 #endif
