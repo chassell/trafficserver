@@ -51,13 +51,14 @@ static const char *const kAffinity_obj_names[] =
 // Pretty print our CPU set
 void pretty_print_cpuset(const char *thrname, hwloc_obj_type_t objtype, int lind, hwloc_const_cpuset_t cpuset)
 {
-  auto n = std::find( std::begin(affinity_objs), std::end(affinity_objs), objtype ) - std::begin(affinity_objs);
-  n %= countof(affinity_objs); // remap end to index zero
-  const char *objname = affinity_obj_names[n];
+  auto n = std::find( std::begin(kAffinity_objs), std::end(kAffinity_objs), objtype ) - std::begin(kAffinity_objs);
+  n %= countof(kAffinity_objs); // remap end to index zero
+  const char *objname = kAffinity_obj_names[n];
 
 #if HWLOC_API_VERSION >= 0x00010100
-  char cpu_mask[_kCpusCnt_+1];
-  hwloc_bitmap_snprintf(cpu_mask, sizeof(cpu_mask), kCpuset);
+  int cpu_mask_len = hwloc_bitmap_snprintf(NULL, 0, cpuset);
+  char cpu_mask[cpu_mask_len+1];
+  hwloc_bitmap_snprintf(cpu_mask, sizeof(cpu_mask), cpuset);
   Debug("iocore_thread", "EThread: %s -> %s# %d CPU Mask: %s", thrname, objname, lind, cpu_mask);
 #else
   Debug("iocore_thread", "EThread: %s -> %s# %d", thrname, objname, lind);
@@ -66,7 +67,7 @@ void pretty_print_cpuset(const char *thrname, hwloc_obj_type_t objtype, int lind
 
 #endif
 
-EventProcessor::EventProcessor() : thread_initializer(this)
+EventProcessor::EventProcessor() // : thread_initializer(this)
 {
   ink_zero(all_ethreads);
   ink_zero(all_dthreads);
@@ -81,42 +82,15 @@ EventProcessor::~EventProcessor()
   ink_mutex_destroy(&dedicated_thread_spawn_mutex);
 }
 
-namespace
-{
-Event *
-make_event_for_scheduling(Continuation *c, int event_code, void *cookie)
-{
-  Event *e = eventAllocator.alloc();
-
-  e->init(c);
-  e->mutex          = c->mutex;
-  e->callback_event = event_code;
-  e->cookie         = cookie;
-
-  return e;
-}
-}
-
-Event *
-EventProcessor::schedule_spawn(Continuation *c, EventType ev_type, int event_code, void *cookie)
-{
-  Event *e = make_event_for_scheduling(c, event_code, cookie);
-  ink_assert(ev_type < MAX_EVENT_TYPES);
-  thread_group[ev_type]._spawnQueue.enqueue(e);
-  return e;
-}
-
-// eventProcessor.schedule_spawn(&initialize_thread_for_net, ET_NET);
+// eventProcessor.schedule_spawn(&initialize_thread_for_net, ET_NET);'
 // eventProcessor.schedule_spawn(&initialize_thread_for_net, ET_DNS);'
 // eventProcessor.schedule_spawn(&initialize_thread_for_udp_net, ET_UDP);'
 // eventProcessor.schedule_spawn([](EThread *thread){ thread->server_session_pool = new ServerSessionPool; }, ET_NET);'
-Event *
+void
 EventProcessor::schedule_spawn(void (*f)(EThread *), EventType ev_type)
 {
-  Event *e = make_event_for_scheduling(&Thread_Init_Func, EVENT_IMMEDIATE, reinterpret_cast<void *>(f));
   ink_assert(ev_type < MAX_EVENT_TYPES);
-  thread_group[ev_type]._spawnQueue.enqueue(e);
-  return e;
+  thread_group[ev_type]._spawnQueue.push_back(f);
 }
 
 EventType
@@ -129,82 +103,96 @@ EventProcessor::register_event_type(char const *name)
   return n_thread_groups - 1;
 }
 
+static inline size_t get_dflt_stacksize(size_t stacksize) 
+{
+  // Make sure it is a multiple of our page size
+  auto page = (ats_hugepage_enabled() ? ats_hugepage_size() : ats_pagesize() );
+  return aligned_spacing( stacksize, page );
+}
+
+EventType
+EventProcessor::spawn_event_threads(char const *name, int n_threads, size_t stacksize)
+{
+  int ev_type = this->register_event_type(name);
+  this->spawn_event_threads(ev_type, n_threads, stacksize);
+  return ev_type;
+}
+
+// eventProcessor.spawn_event_threads(ET_NET, n_threads, stacksize);
+// eventProcessor.spawn_event_threads(ET_DNS, 1, stacksize);
+// eventProcessor.spawn_event_threads("ET_TASK", std::max(1, task_threads), stacksize);
+// eventProcessor.spawn_event_threads("ET_OCSP", 1, stacksize);
+// eventProcessor.spawn_event_threads(ET_UDP, n_upd_threads, stacksize);
+// eventProcessor.spawn_event_threads("ET_REMAP", num_threads, stacksize);
 EventType
 EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t stacksize)
 {
-  char thr_name[MAX_THREAD_NAME_LENGTH];
-  int i;
-  ThreadGroupDescriptor *tg = &(thread_group[ev_type]);
+  ink_release_assert(this->n_thread_groups < MAX_EVENT_TYPES);
+  
+  ev_type = n_thread_groups++;
+  ThreadGroupDescriptor *const tg = &(thread_group[ev_type]);
 
   ink_release_assert(n_threads > 0);
   ink_release_assert((n_ethreads + n_threads) <= MAX_EVENT_THREADS);
   ink_release_assert(ev_type < MAX_EVENT_TYPES);
 
-  stacksize = std::max(stacksize, static_cast<decltype(stacksize)>(INK_THREAD_STACK_MIN));
-  // Make sure it is a multiple of our page size
-  if (ats_hugepage_enabled()) {
-    stacksize = INK_ALIGN(stacksize, ats_hugepage_size());
-  } else {
-    stacksize = INK_ALIGN(stacksize, ats_pagesize());
-  }
+  Debug("iocore_thread", "Thread stack size set to %zu", get_dflt_stacksize( std::max(stacksize,size_t()+INK_THREAD_STACK_MIN)) );
 
-  Debug("iocore_thread", "Thread stack size set to %zu", stacksize);
-
-  for (i = 0; i < n_threads; ++i) {
-    EThread *t                   = new EThread(REGULAR, n_ethreads + i);
-// EThread::EThread(ThreadType att, int anid) : id(anid), tt(att)
-    this->all_ethreads[n_ethreads + i] = t;
+  for (int i = 0; i < n_threads; ++i) 
+  {
+    EThread *t                   = new EThread;
+    // EThread::EThread(ThreadType att, int anid) : id(anid), tt(att)
+    t->id                        = i; // unfortunately needed to support affinity and NUMA logic.
+    t->set_event_type(ev_type); // see-below
     tg->_thread[i]               = t;
+
+    all_ethreads[n_ethreads + i] = t;
   }
-  tg->_count = n_threads;
+
+  tg->_count = n_threads; // jump up
   n_ethreads += n_threads;
 
   // Separate loop to avoid race conditions between spawn events and updating the thread table for
   // the group. Some thread set up depends on knowing the total number of threads but that can't be
   // safely updated until all the EThread instances are created and stored in the table.
-  for (i = 0; i < n_threads; ++i) {
+  for (int i = 0; i < n_threads; ++i) 
+  {
+    char thr_name[MAX_THREAD_NAME_LENGTH];
     snprintf(thr_name, MAX_THREAD_NAME_LENGTH, "[%s %d]", tg->_name.get(), i);
-    void *stack = Thread_Affinity_Initializer.alloc_stack(tg->_thread[i], stacksize);
-    tg->_thread[i]->start(thr_name, stack, stacksize);
-  }
+    tg->_thread[i]->start(thr_name, ats_memalign(ats_pagesize(), stacksize), stacksize);
+    /*
+    // t->Thread::start(...)
+// CLONE:
+    // t->EThread::execute()
+    // t->start_event->continuation->handleEvent(EVENT_IMMEDIATE, t->start_event);
+          // this->thread_initializer.init()
+    // this->EventProcessor::initThreadState(t)
 
-  Debug("iocore_thread", "Created thread group '%s' id %d with %d threads", tg->_name.get(), ev_type, n_threads);
+       // Run all thread type initialization continuations that match the event types for this thread.
+       // t->is_event_type(ev_type) == true // see-below
+       // ev = tg->_spawnQueue.head
+
+		 // queued by HttpSessionManager::init() .... ev_type == ET_NET
+		   t->server_session_pool = new ServerSessionPool
+	     // ev_type == ET_NET
+
+	     // queued by UnixNetProcessor::init() ... ev_type == ET_DNS 
+		 // queued by DNSProcessor::start() ... ev_type == ET_DNS 
+	 	   ...
+		   t->schedule_imm(get_NetHandler(thread));
+		   t->schedule_every(inactivityCop, HRTIME_SECONDS(cop_freq));
+		   t->ep->start(pd, thread->evfd, nullptr, EVENTIO_READ);
+	     // ev_type == ET_DNS
+
+		 // UDPNetProcessorInternal::start .... ev_type == ET_UDP
+           ...
+		   t->schedule_every(get_UDPPollCont(thread), -9);
+		   t->schedule_imm(get_UDPNetHandler(thread));
+		 // ev_type == ET_UDP
+     */
+  }
 
   return ev_type; // useless but not sure what would be better.
-}
-
-// This is called from inside a thread as the @a start_event for that thread.  It chains to the
-// startup events for the appropriate thread group start events.
-void
-EventProcessor::initThreadState(EThread *t)
-{
-  // Run all thread type initialization continuations that match the event types for this thread.
-  for (int i = 0; i < MAX_EVENT_TYPES; ++i) 
-  {
-    if (! t->is_event_type(i)) {
-       continue; that event type done here, roll thread start events of that type.
-    }
-
-    // To avoid race conditions on the event in the spawn queue, create a local one to actually send.
-    // Use the spawn queue event as a read only model.
-    for (Event *ev = thread_group[i]._spawnQueue.head; NULL != ev; ev = ev->link.next) 
-    {
-      Event nev;
-      nev.init(ev->continuation, 0, 0);
-      nev.set_thread(t);
-      nev.callback_event = ev->callback_event;
-      nev.cookie         = ev->cookie;
-      ev->continuation->handleEvent(ev->callback_event, &nev);
-    }
-  }
-
-}
-
-static inline get_dflt_stacksize(size_t stacksize) 
-{
-  // Make sure it is a multiple of our page size
-  auto page = (ats_hugepage_enabled() ? ats_hugepage_size() : ats_pagesize() );
-  return aligned_spacing( stacksize, page );
 }
 
 int
@@ -224,124 +212,6 @@ EventProcessor::start(int n_threads, size_t stacksize)
   //
   // thread_group[ET_NET]._spawnQueue.push(make_event_for_scheduling(&Thread_Affinity_Initializer, EVENT_IMMEDIATE, nullptr));
 
-// this->spawn_event_threads(ET_NET, n_threads, stacksize);
-// eventProcessor.spawn_event_threads(ET_DNS, 1, stacksize);
-// eventProcessor.spawn_event_threads("ET_TASK", std::max(1, task_threads), stacksize);
-// eventProcessor.spawn_event_threads("ET_OCSP", 1, stacksize);
-// eventProcessor.spawn_event_threads(ET_UDP, n_upd_threads, stacksize);
-// eventProcessor.spawn_event_threads("ET_REMAP", num_threads, stacksize);
-
-  ink_release_assert(this->n_thread_groups < MAX_EVENT_TYPES);
-  
-  ev_type = n_thread_groups++;
-
-  ThreadGroupDescriptor *const tg = &(thread_group[ev_type]);
-
-  tg->_name = ats_strdup(name);
-
-  Debug("iocore_thread", "Thread stack size set to %zu", get_dflt_stacksize( std::max(stacksize+0,INK_THREAD_STACK_MIN )) );
-
-  // store pointers in advance
-  Ethread *threads[n_threads] = { 0 };
-
-  // detect this thread's set of NUMA nodes
-  hwloc_nodeset_t thrNUMAs = hwloc_bitmap_alloc();
-  hwloc_nodeset_t origNUMAs = hwloc_bitmap_alloc();
-  hwloc_membind_policy_t origPolicy = HWLOC_MEMBIND_DEFAULT;
-
-  // preserve the spawning thread's settings
-  hwloc_get_membind_nodeset(ink_get_topology(), origNUMAs, &origPolicy, HWLOC_MEMBIND_THREAD);
-
-  int affinity = 1;
-  REC_ReadConfigInteger(affinity, "proxy.config.exec_thread.affinity");
-
-  // create all affinity-groups to round-robin over..
-  auto cpusets = get_cpu_sets(affinity);
-
-  for( int n = n_threads ; 
-  {
-    hwloc_const_cpuset_t 
-    hwloc_cpuset_to_nodeset(ink_get_topology(), thrCPUs, thrNUMAs);
-
-    // temporarily match NUMA nodes for cpuset
-    hwloc_set_membind_nodeset(ink_get_topology(), thrNUMAs, HWLOC_MEMBIND_INTERLEAVE, HWLOC_MEMBIND_THREAD);
-
-    stack = alloc_stack(stacksize);
-
-    // reset back
-    hwloc_set_membind_nodeset(ink_get_topology(), origNUMAs, origPolicy, HWLOC_MEMBIND_THREAD);
-    hwloc_bitmap_free(origNUMAs);                                                                                                                      
-  }
-
-// ::Thread_Affinity_Initializer.SET_HANDLER(&ThreadAffinityInitializer::set_affinity);
-
-  for (int i = 0; i < n_threads; ++i) 
-  {
-    //  this->thread_initializer.SET_HANDLER(&ThreadInit::init);
-    EThread *t                   = new EThread(REGULAR, n_ethreads + i);
-    // EThread::EThread(ThreadType att, int anid) : id(anid), tt(att)
-    t->set_event_type(ev_type); // see-below
-    t->id                        = i; // unfortunately needed to support affinity and NUMA logic.
-    t->tid_                      = i; // unfortunately needed to support affinity and NUMA logic.
-///////////////////////////////////
-    // t->EThread::schedule_spawn(&this->thread_initializer, EVENT_IMMEDIATE, nullptr)
-    t->start_event          = EVENT_ALLOC(eventAllocator, t);
-    t->start_event->ethread = t;
-    t->start_event->mutex   = t->mutex;
-    //  this->start_event->init(&this->thread_initializer);
-      t->start_event->continuation = &this->thread_initializer;
-    // t->EThread::schedule_spawn(&this->thread_initializer, EVENT_IMMEDIATE, nullptr)
-    t->start_event->callback_event = EVENT_IMMEDIATE;
-    t->start_event->cookie         = nullptr;
-  }
-
-  for (int i = 0; i < n_threads; ++i) 
-  {
-    all_ethreads[n_ethreads + i] = t;
-    tg->_thread[i]               = t;
-
-    char thr_name[MAX_THREAD_NAME_LENGTH];
-    snprintf(thr_name, MAX_THREAD_NAME_LENGTH, "[%s %d]", tg->_name.get(), i);
-  }
-
-
-  tg->_count = n_threads;
-  n_ethreads += n_threads;
-
-  // Separate loop to avoid race conditions between spawn events and updating the thread table for
-  // the group. Some thread set up depends on knowing the total number of threads but that can't be
-  // safely updated until all the EThread instances are created and stored in the table.
-  for (i = 0; i < n_threads; ++i) {
-    // void *stack = Thread_Affinity_Initializer.alloc_stack(t,stacksize)
-    hwloc_set_membind_nodeset(ink_get_topology(), nodeset, mem_policy, HWLOC_MEMBIND_THREAD);
-    // tg->_thread[i]->start(ET_NET, stack, stacksize);
-    // t->EThread::start()
-    // pthread_spawn()...
-// CLONE:
-    // t->EThread::execute()
-    // t->start_event->continuation->handleEvent(EVENT_IMMEDIATE, t->start_event);
-          // this->thread_initializer.init
-    // this->EventProcessor::initThreadState(t)
-
-    // Run all thread type initialization continuations that match the event types for this thread.
-    // t->is_event_type(ev_type) == true // see-below
-
-    // ev = tg->_spawnQueue.head
-
-// ev_type == ET_NET
-    // nev.init(&::Thread_Affinity_Initializer, 0, 0);
-    nev.continuation = &::Thread_Affinity_Initializer;
-    nev.ethread = t;
-    nev.mutex   = t->mutex;
-    nev.callback_event = EVENT_IMMEDIATE
-  // nev.continuation->handleEvent(ev->callback_event, &nev);
-  // ::Thread_Affinity_Initializer.set_affinity(...)
-    hwloc_set_thread_cpubind(ink_get_topology(), t->tid, obj->cpuset, HWLOC_CPUBIND_STRICT);
-// ev_type == ET_NET
-
-  }
-
-  Debug("iocore_thread", "Created event thread group id %d with %d threads", ET_NET, n_event_threads);
   return 0;
 }
 
@@ -367,7 +237,7 @@ EventProcessor::spawn_thread(Continuation *cont, const char *thr_name, size_t st
      element. It's not a problem if, for one cycle, a new thread is skipped.
   */
 
-  auto thr = DedicatedEThread::create_thread();
+  auto thr = new EThread(); // DedicatedEThread::create_thread();
   auto e = thr->start_event;
   {
     ink_scoped_mutex_lock lock(dedicated_thread_spawn_mutex);

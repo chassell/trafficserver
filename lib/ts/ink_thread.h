@@ -306,7 +306,7 @@ ink_set_thread_name(const char *name ATS_UNUSED)
 #endif
 }
 
-void
+static inline void
 ink_get_thread_name(char *name, size_t len)
 {
   memset(name,'\0',len);

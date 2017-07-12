@@ -75,6 +75,7 @@
 #include "ts/ink_thread.h"
 
 #include <functional>
+#include <atomic>
 
 class ProxyMutex;
 
@@ -112,6 +113,7 @@ public:
 
   */
   ink_thread tid() { return tid_; }
+  unsigned serial_id() { return serid_; }
 
   /**
     Thread lock to ensure atomic operations. The thread lock available
@@ -160,6 +162,7 @@ public:
   */
   ink_thread start(const char *name, void *stack, size_t stacksize, ThreadFunction const &f = ThreadFunction());
 
+  virtual void spawn_init();
   virtual void execute() = 0;
 
   /** Get the current ATS high resolution time.
@@ -181,10 +184,15 @@ public:
   static ink_hrtime get_hrtime_updated();
 
 private:
-  ink_thread tid_ = 0;
+  ink_thread tid_ = ink_thread{};
+  unsigned serid_ = 0U;
+
+  static std::atomic_uint g_serid;
 };
 
 extern Thread *this_thread();
+
+inline unsigned this_thread_serial_id() { return this_thread()->serial_id(); }
 
 TS_INLINE ink_hrtime
 Thread::get_hrtime()
