@@ -62,24 +62,11 @@
 #endif // ! HAVE_MALLOC_H
 #endif // ! HAVE_JEMALLOC_H && ! HAVE_JEMALLOC_JEMALLOC_H
 
-#ifndef MADV_NORMAL
-#define MADV_NORMAL 0
-#endif
 
-#ifndef MADV_RANDOM
-#define MADV_RANDOM 1
-#endif
-
-#ifndef MADV_SEQUENTIAL
-#define MADV_SEQUENTIAL 2
-#endif
-
-#ifndef MADV_WILLNEED
-#define MADV_WILLNEED 3
-#endif
-
-#ifndef MADV_DONTNEED
-#define MADV_DONTNEED 4
+#if HAVE_SYS_USER_H
+#include <sys/user.h>
+#elif ! PAGE_SIZE
+#define PAGE_SIZE 4096
 #endif
 
 #ifdef __cplusplus
@@ -98,6 +85,7 @@ struct IOVec : public iovec {
     iov_len  = len;
   }
 };
+
 void *ats_malloc(size_t size);
 void *ats_calloc(size_t nelem, size_t elsize);
 void *ats_realloc(void *ptr, size_t size);
@@ -130,6 +118,9 @@ static inline size_t __attribute__((const)) ats_pagesize(void)
   return page_size;
 }
 
+using MemoryPage = std::aligned_storage<PAGE_SIZE,PAGE_SIZE>;
+using MemoryPageHuge = std::aligned_storage<(PAGE_SIZE<<9),(PAGE_SIZE<<9)>;
+
 /* Some convenience wrappers around strdup() functionality */
 char *_xstrdup(const char *str, int length, const char *path);
 
@@ -155,13 +146,14 @@ ats_stringdup(std::string const &p)
 #if HAVE_LIBJEMALLOC 
 namespace numa
 {
-  int use_external_memory_arena(const char *thrname); // use non-assigned memory-page arena
-  int use_thread_memory_arena(); // use assigned memory-page arena only
+  static inline hwloc_topology_t curr() { return ink_get_topology(); }
 
-  int use_thread_arena_cpuset();  // limit to near-memory cpus only
-  int use_thread_socket_cpuset(); // limit to near-memory socket cpu subset 
-  int use_thread_core_cpuset();   // limit to near-memory core cpu subset 
-  int use_thread_pu_cpuset();     // limit to near-memory logical cpu subset 
+  unsigned new_affinity_id();
+
+  bool is_same_thread_memory_affinity(int objtype, unsigned affid);
+
+  int assign_thread_memory_affinity(int objtype, unsigned affid); // limit new pages to specific nodes
+  int assign_thread_cpuset_affinity(int objtype, unsigned affid); // limit usable cpus to specific cpuset
 }
 #endif
 
@@ -417,11 +409,11 @@ public:
 };
 
 template <class T_OBJ>
-auto ats_copy_to_unique_ptr( const T_OBJ &obj ) -> std::unique_ptr<T_OBJ>
+auto ats_return_unique_copy( const T_OBJ &obj ) -> std::unique_ptr<T_OBJ>
   { return std::unique_ptr<T_OBJ>( new T_OBJ(obj) ); }
 
 template <class T_OBJ>
-auto ats_make_unique( T_OBJ *ptr ) -> std::unique_ptr<T_OBJ>
+auto ats_return_unique( T_OBJ *ptr ) -> std::unique_ptr<T_OBJ>
   { return std::unique_ptr<T_OBJ>(ptr); }
 
 namespace detail

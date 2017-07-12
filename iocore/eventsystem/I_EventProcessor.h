@@ -236,18 +236,8 @@ public:
   Event *reschedule_in(Event *e, ink_hrtime atimeout_in, int callback_event = EVENT_INTERVAL);
   Event *reschedule_every(Event *e, ink_hrtime aperiod, int callback_event = EVENT_INTERVAL);
 
-  /// Schedule an @a event on continuation @a c when a thread of type @a ev_type is spawned.
-  /// The @a cookie is attached to the event instance passed to the continuation.
-  /// @return The scheduled event.
-  Event *schedule_spawn(Continuation *c, EventType ev_type, int event = EVENT_IMMEDIATE, void *cookie = NULL);
-
   /// Schedule the function @a f to be called in a thread of type @a ev_type when it is spawned.
-  Event *schedule_spawn(void (*f)(EThread *), EventType ev_type);
-
-  /// Schedule an @a event on continuation @a c to be called when a thread is spawned by this processor.
-  /// The @a cookie is attached to the event instance passed to the continuation.
-  /// @return The scheduled event.
-  //  Event *schedule_spawn(Continuation *c, int event, void *cookie = NULL);
+  void schedule_spawn(void (*f)(EThread *), EventType ev_type);
 
   EventProcessor();
   ~EventProcessor();
@@ -305,7 +295,7 @@ public:
     ats_scoped_str _name;         ///< Name for the thread group.
     int _count;                   ///< # of threads of this type.
     int _next_round_robin;        ///< Index of thread to use for events assigned to this group.
-    Que(Event, link) _spawnQueue; ///< Events to dispatch when thread is spawned.
+    std::vector<void (*)(EThread *)> _spawnQueue; ///< calls to init EThread upon spawning
     /// The actual threads in this group.
     EThread *_thread[MAX_THREADS_IN_EACH_TYPE];
   };
@@ -373,6 +363,7 @@ public:
     return {all_dthreads, n_dthreads};
   }
 
+#if 0
 private:
   void initThreadState(EThread *);
 
@@ -394,6 +385,7 @@ private:
   };
   friend class ThreadInit;
   ThreadInit thread_initializer;
+#endif
 
   // Lock write access to the dedicated thread vector.
   // @internal Not a @c ProxyMutex - that's a whole can of problems due to initialization ordering.

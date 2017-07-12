@@ -36,12 +36,6 @@
 #include "HttpSM.h"
 #include "HttpDebugNames.h"
 
-// Initialize a thread to handle HTTP session management
-void
-initialize_thread_for_http_sessions
-{
-  
-}
 
 HttpSessionManager httpSessionManager;
 
