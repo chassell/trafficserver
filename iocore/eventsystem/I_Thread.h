@@ -113,7 +113,7 @@ public:
 
   */
   ink_thread tid() { return tid_; }
-  unsigned serial_id() { return serid_; }
+  unsigned affinity_id() { return affid_; }
 
   /**
     Thread lock to ensure atomic operations. The thread lock available
@@ -185,9 +185,7 @@ public:
 
 private:
   ink_thread tid_ = ink_thread{};
-  unsigned serid_ = 0U;
-
-  static std::atomic_uint g_serid;
+  unsigned affid_ = 0U;
 };
 
 extern Thread *this_thread();

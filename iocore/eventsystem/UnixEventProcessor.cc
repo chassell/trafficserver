@@ -82,40 +82,11 @@ EventProcessor::~EventProcessor()
   ink_mutex_destroy(&dedicated_thread_spawn_mutex);
 }
 
-// eventProcessor.schedule_spawn(&initialize_thread_for_net, ET_NET);'
-// eventProcessor.schedule_spawn(&initialize_thread_for_net, ET_DNS);'
-// eventProcessor.schedule_spawn(&initialize_thread_for_udp_net, ET_UDP);'
-// eventProcessor.schedule_spawn([](EThread *thread){ thread->server_session_pool = new ServerSessionPool; }, ET_NET);'
-void
-EventProcessor::schedule_spawn(void (*f)(EThread *), EventType ev_type)
-{
-  ink_assert(ev_type < MAX_EVENT_TYPES);
-  thread_group[ev_type]._spawnQueue.push_back(f);
-}
-
-EventType
-EventProcessor::register_event_type(char const *name)
-{
-  ThreadGroupDescriptor *tg = &(thread_group[n_thread_groups++]);
-  ink_release_assert(n_thread_groups <= MAX_EVENT_TYPES); // check for overflow
-
-  tg->_name = ats_strdup(name);
-  return n_thread_groups - 1;
-}
-
 static inline size_t get_dflt_stacksize(size_t stacksize) 
 {
   // Make sure it is a multiple of our page size
   auto page = (ats_hugepage_enabled() ? ats_hugepage_size() : ats_pagesize() );
   return aligned_spacing( stacksize, page );
-}
-
-EventType
-EventProcessor::spawn_event_threads(char const *name, int n_threads, size_t stacksize)
-{
-  int ev_type = this->register_event_type(name);
-  this->spawn_event_threads(ev_type, n_threads, stacksize);
-  return ev_type;
 }
 
 // eventProcessor.spawn_event_threads(ET_NET, n_threads, stacksize);
@@ -140,7 +111,7 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
 
   for (int i = 0; i < n_threads; ++i) 
   {
-    EThread *t                   = new EThread;
+    EThread *t                   = EThread;
     // EThread::EThread(ThreadType att, int anid) : id(anid), tt(att)
     t->id                        = i; // unfortunately needed to support affinity and NUMA logic.
     t->set_event_type(ev_type); // see-below
@@ -159,7 +130,8 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
   {
     char thr_name[MAX_THREAD_NAME_LENGTH];
     snprintf(thr_name, MAX_THREAD_NAME_LENGTH, "[%s %d]", tg->_name.get(), i);
-    tg->_thread[i]->start(thr_name, ats_memalign(ats_pagesize(), stacksize), stacksize);
+    tg->_thread[i]->start(thr_name, ats_memalign(ats_pagesize(), stacksize), stacksize, );
+
     /*
     // t->Thread::start(...)
 // CLONE:

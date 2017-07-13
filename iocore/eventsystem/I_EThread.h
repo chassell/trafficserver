@@ -86,6 +86,8 @@ extern volatile bool shutdown_event_system;
 class EThread : public Thread
 {
 public:
+  using InitFxn = std::function<void(EThread *)>;
+
   /*-------------------------------------------------------*\
   |  Common Interface                                       |
   \*-------------------------------------------------------*/
@@ -274,7 +276,6 @@ public:
 
   EThread();
   EThread(ThreadType att, int anid);
-//  EThread(ThreadType att, Event *e);
   EThread(const EThread &) = delete;
   EThread &operator=(const EThread &) = delete;
   virtual ~EThread();

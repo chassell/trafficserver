@@ -45,7 +45,7 @@ EThread::EThread()
   memset(thread_private, 0, PER_THREAD_DATA);
 }
 
-EThread::EThread(ThreadType att, int anid) : id(anid), tt(att)
+EThread::EThread(int anid) : id(anid), tt(att)
 {
   ethreads_to_be_signalled = (EThread **)ats_malloc(MAX_EVENT_THREADS * sizeof(EThread *));
   memset(ethreads_to_be_signalled, 0, MAX_EVENT_THREADS * sizeof(EThread *));
@@ -74,14 +74,6 @@ EThread::EThread(ThreadType att, int anid) : id(anid), tt(att)
   fcntl(evpipe[1], F_SETFL, O_NONBLOCK);
 #endif
 }
-
-/*
-EThread::EThread(ThreadType att, Event *e) : tt(att), start_event(e)
-{
-  ink_assert(att == DEDICATED);
-  memset(thread_private, 0, PER_THREAD_DATA);
-}
-*/
 
 // Provide a destructor so that SDK functions which create and destroy
 // threads won't have to deal with EThread memory deallocation.
@@ -154,6 +146,126 @@ EThread::process_event(Event *e, int calling_code)
 // lock. If successful, call the continuation, otherwise put the event back
 // into the queue.
 //
+//
+EThread::reg_execute()
+{
+  Event *e;
+  Que(Event, link) NegativeQueue;
+  ink_hrtime next_time = 0;
+
+  // give priority to immediate events
+  for (;;) {
+    if (unlikely(shutdown_event_system == true)) {
+      return;
+    }
+    // execute all the available external events that have
+    // already been dequeued
+    cur_time = Thread::get_hrtime_updated();
+    while ((e = EventQueueExternal.dequeue_local())) {
+      if (e->cancelled) {
+        free_event(e);
+      } else if (!e->timeout_at) { // IMMEDIATE
+        ink_assert(e->period == 0);
+        process_event(e, e->callback_event);
+      } else if (e->timeout_at > 0) { // INTERVAL
+        EventQueue.enqueue(e, cur_time);
+      } else { // NEGATIVE
+        Event *p = nullptr;
+        Event *a = NegativeQueue.head;
+        while (a && a->timeout_at > e->timeout_at) {
+          p = a;
+          a = a->link.next;
+        }
+        if (!a) {
+          NegativeQueue.enqueue(e);
+        } else {
+          NegativeQueue.insert(e, p);
+        }
+      }
+    }
+    bool done_one;
+    do {
+      done_one = false;
+      // execute all the eligible internal events
+      EventQueue.check_ready(cur_time, this);
+      while ((e = EventQueue.dequeue_ready(cur_time))) {
+        ink_assert(e);
+        ink_assert(e->timeout_at > 0);
+        if (e->cancelled) {
+          free_event(e);
+        } else {
+          done_one = true;
+          process_event(e, e->callback_event);
+        }
+      }
+    } while (done_one);
+    // execute any negative (poll) events
+    if (NegativeQueue.head) {
+      if (n_ethreads_to_be_signalled) {
+        flush_signals(this);
+      }
+      // dequeue all the external events and put them in a local
+      // queue. If there are no external events available, don't
+      // do a cond_timedwait.
+      if (!INK_ATOMICLIST_EMPTY(EventQueueExternal.al)) {
+        EventQueueExternal.dequeue_timed(cur_time, next_time, false);
+      }
+      while ((e = EventQueueExternal.dequeue_local())) {
+        if (!e->timeout_at) {
+          process_event(e, e->callback_event);
+        } else {
+          if (e->cancelled) {
+            free_event(e);
+          } else {
+            // If its a negative event, it must be a result of
+            // a negative event, which has been turned into a
+            // timed-event (because of a missed lock), executed
+            // before the poll. So, it must
+            // be executed in this round (because you can't have
+            // more than one poll between two executions of a
+            // negative event)
+            if (e->timeout_at < 0) {
+              Event *p = nullptr;
+              Event *a = NegativeQueue.head;
+              while (a && a->timeout_at > e->timeout_at) {
+                p = a;
+                a = a->link.next;
+              }
+              if (!a) {
+                NegativeQueue.enqueue(e);
+              } else {
+                NegativeQueue.insert(e, p);
+              }
+            } else {
+              EventQueue.enqueue(e, cur_time);
+            }
+          }
+        }
+      }
+      // execute poll events
+      while ((e = NegativeQueue.dequeue())) {
+        process_event(e, EVENT_POLL);
+      }
+      if (!INK_ATOMICLIST_EMPTY(EventQueueExternal.al)) {
+        EventQueueExternal.dequeue_timed(cur_time, next_time, false);
+      }
+    } else { // Means there are no negative events
+      next_time             = EventQueue.earliest_timeout();
+      ink_hrtime sleep_time = next_time - cur_time;
+
+      if (sleep_time > THREAD_MAX_HEARTBEAT_MSECONDS * HRTIME_MSECOND) {
+        next_time = cur_time + THREAD_MAX_HEARTBEAT_MSECONDS * HRTIME_MSECOND;
+      }
+      // dequeue all the external events and put them in a local
+      // queue. If there are no external events available, do a
+      // cond_timedwait.
+      if (n_ethreads_to_be_signalled) {
+        flush_signals(this);
+      }
+      EventQueueExternal.dequeue_timed(cur_time, next_time, true);
+    }
+  }
+}
 
 void
 EThread::execute()
@@ -169,124 +281,6 @@ EThread::execute()
   }
 
   switch (tt) {
-  case REGULAR: {
-    Event *e;
-    Que(Event, link) NegativeQueue;
-    ink_hrtime next_time = 0;
-
-    // give priority to immediate events
-    for (;;) {
-      if (unlikely(shutdown_event_system == true)) {
-        return;
-      }
-      // execute all the available external events that have
-      // already been dequeued
-      cur_time = Thread::get_hrtime_updated();
-      while ((e = EventQueueExternal.dequeue_local())) {
-        if (e->cancelled) {
-          free_event(e);
-        } else if (!e->timeout_at) { // IMMEDIATE
-          ink_assert(e->period == 0);
-          process_event(e, e->callback_event);
-        } else if (e->timeout_at > 0) { // INTERVAL
-          EventQueue.enqueue(e, cur_time);
-        } else { // NEGATIVE
-          Event *p = nullptr;
-          Event *a = NegativeQueue.head;
-          while (a && a->timeout_at > e->timeout_at) {
-            p = a;
-            a = a->link.next;
-          }
-          if (!a) {
-            NegativeQueue.enqueue(e);
-          } else {
-            NegativeQueue.insert(e, p);
-          }
-        }
-      }
-      bool done_one;
-      do {
-        done_one = false;
-        // execute all the eligible internal events
-        EventQueue.check_ready(cur_time, this);
-        while ((e = EventQueue.dequeue_ready(cur_time))) {
-          ink_assert(e);
-          ink_assert(e->timeout_at > 0);
-          if (e->cancelled) {
-            free_event(e);
-          } else {
-            done_one = true;
-            process_event(e, e->callback_event);
-          }
-        }
-      } while (done_one);
-      // execute any negative (poll) events
-      if (NegativeQueue.head) {
-        if (n_ethreads_to_be_signalled) {
-          flush_signals(this);
-        }
-        // dequeue all the external events and put them in a local
-        // queue. If there are no external events available, don't
-        // do a cond_timedwait.
-        if (!INK_ATOMICLIST_EMPTY(EventQueueExternal.al)) {
-          EventQueueExternal.dequeue_timed(cur_time, next_time, false);
-        }
-        while ((e = EventQueueExternal.dequeue_local())) {
-          if (!e->timeout_at) {
-            process_event(e, e->callback_event);
-          } else {
-            if (e->cancelled) {
-              free_event(e);
-            } else {
-              // If its a negative event, it must be a result of
-              // a negative event, which has been turned into a
-              // timed-event (because of a missed lock), executed
-              // before the poll. So, it must
-              // be executed in this round (because you can't have
-              // more than one poll between two executions of a
-              // negative event)
-              if (e->timeout_at < 0) {
-                Event *p = nullptr;
-                Event *a = NegativeQueue.head;
-                while (a && a->timeout_at > e->timeout_at) {
-                  p = a;
-                  a = a->link.next;
-                }
-                if (!a) {
-                  NegativeQueue.enqueue(e);
-                } else {
-                  NegativeQueue.insert(e, p);
-                }
-              } else {
-                EventQueue.enqueue(e, cur_time);
-              }
-            }
-          }
-        }
-        // execute poll events
-        while ((e = NegativeQueue.dequeue())) {
-          process_event(e, EVENT_POLL);
-        }
-        if (!INK_ATOMICLIST_EMPTY(EventQueueExternal.al)) {
-          EventQueueExternal.dequeue_timed(cur_time, next_time, false);
-        }
-      } else { // Means there are no negative events
-        next_time             = EventQueue.earliest_timeout();
-        ink_hrtime sleep_time = next_time - cur_time;
-
-        if (sleep_time > THREAD_MAX_HEARTBEAT_MSECONDS * HRTIME_MSECOND) {
-          next_time = cur_time + THREAD_MAX_HEARTBEAT_MSECONDS * HRTIME_MSECOND;
-        }
-        // dequeue all the external events and put them in a local
-        // queue. If there are no external events available, do a
-        // cond_timedwait.
-        if (n_ethreads_to_be_signalled) {
-          flush_signals(this);
-        }
-        EventQueueExternal.dequeue_timed(cur_time, next_time, true);
-      }
-    }
-  }
 
   case DEDICATED: {
     break;
