@@ -42,6 +42,7 @@ static const hwloc_obj_type_t kAffinity_objs[] =
          , HWLOC_OBJ_PU  
 #endif
   };
+#endif
 
 static const char *const kAffinity_obj_names[] =
    { "[Unrestricted]",         "NUMA Node",        "Socket",         "Core"
@@ -65,49 +66,15 @@ void pretty_print_cpuset(const char *thrname, hwloc_obj_type_t objtype, int affi
 #endif // HWLOC_API_VERSION
 }
 
-
-EventProcessor::EventProcessor()
-{
-  ink_zero(all_ethreads);
-  ink_zero(all_dthreads);
-  ink_mutex_init(&dedicated_thread_spawn_mutex);
-  // Because ET_NET is compile time set to 0 it *must* be the first type registered.
-  this->register_event_type("ET_NET");
-}
-
-EventProcessor::~EventProcessor()
-{
-  ink_mutex_destroy(&dedicated_thread_spawn_mutex);
-}
-
-Event *
-EventProcessor::schedule_spawn(void (*f)(EThread *), EventType ev_type)
-{
-  ink_assert(ev_type < MAX_EVENT_TYPES);
-  thread_group[ev_type]._spawnQueue.push_back(f);
-  return nullptr;
-}
+EventProcessor::ThreadFxn_t EventProcessor::
+ThreadGroupDescriptor::s_dfltRunFxn = ThreadFxn_t( [](const InitFxn_t &readyFxn) { 
+                                             EThread _base{REGULAR,0}; // store an EThread obj
+                                             readyFxn(&_base);
+                                             _base.execute();
+                                          } );
 
 EventType
-EventProcessor::register_event_type(char const *name)
-{
-  ThreadGroupDescriptor *tg = &(thread_group[n_thread_groups++]);
-  ink_release_assert(n_thread_groups <= MAX_EVENT_TYPES); // check for overflow
-
-  tg->_name = ats_strdup(name);
-  return n_thread_groups - 1;
-}
-
-EventType
-EventProcessor::spawn_event_threads(char const *name, int n_threads, size_t stacksize)
-{
-  int ev_type = this->register_event_type(name);
-  this->spawn_event_threads(ev_type, n_threads, stacksize);
-  return ev_type;
-}
-
-EventType
-EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t stacksize, EThread::ThreadFxn &runFxn)
+EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t stacksize)
 {
   ThreadGroupDescriptor *tg = &(thread_group[ev_type]);
 
@@ -128,10 +95,10 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
   pthread_barrier_t grpBarrier;
   pthread_barrier_init(&grpBarrier,nullptr,n_threads+1);
 
-  for (int i = 0; i < n_threads; ++i) 
+  for (int i = 0; i < n_threads; ++i)
   {
-    EThread *&epEthread = all_ethreads[n_ethreads + i];
-    tg->start(grpBarrier, stacksize, epEthread, runFxn);
+    EThread *&epEthread = all_ethreads[n_ethreads_nxt++];
+    tg->start(grpBarrier, epEthread, stacksize);
   }
 
   // gather up all threads to one point before completion ...
@@ -154,8 +121,7 @@ EventProcessor::start(int n_event_threads, size_t stacksize)
   int affinity = 1;
   REC_ReadConfigInteger(affinity, "proxy.config.exec_thread.affinity");
 
-  thread_group[ET_NET]._affcfg = affinity;
-
+  thread_group[ET_CALL]._affcfg = kAffinity_objs[affinity];
 
   this->spawn_event_threads(ET_CALL, n_event_threads, stacksize);
 
@@ -168,81 +134,39 @@ EventProcessor::shutdown()
 {
 }
 
-Event *
-EventProcessor::spawn_thread(Continuation *cont, const char *thr_name, size_t stacksize)
+ink_thread
+EventProcessor::ThreadGroupDescriptor::start(pthread_barrier_t &grpBarrier, EThread *&epEthread, int stacksize, const ThreadFxn_t &runFxn)
 {
-  tg->start(grpBarrier, stacksize, epEthread, runFxn);
-
-  /* Spawning threads in a live system - There are two potential race conditions in this logic. The
-     first is multiple calls to this method.  In that case @a all_dthreads can end up in a bad state
-     as the same entry is overwritten while another is left uninitialized.
-
-     The other is read/write contention where another thread (e.g. the stats collection thread) is
-     iterating over the threads while the active count (@a n_dthreads) is being updated causing use
-     of a not yet initialized array element.
-
-     This logic covers both situations. For write/write the actual array update is locked. The
-     potentially expensive set up is done outside the lock making the time spent locked small. For
-     read/write it suffices to do the active count increment after initializing the array
-     element. It's not a problem if, for one cycle, a new thread is skipped.
-  */
-
-  pthread_barrier_t grpBarrier;
-  pthread_barrier_init(&grpBarrier,nullptr,n_threads+1);
-
-  EThread *&epEthread = all_ethreads[n_ethreads + i];
-  XXXX
-  tg->start(grpBarrier, stacksize, epEthread, runFxn);
-
-  // gather up all threads to one point before completion ...
-  pthread_barrier_wait(&grpBarrier);
-  {
-    ink_scoped_mutex_lock lock(dedicated_thread_spawn_mutex);
-    ink_release_assert(n_dthreads < MAX_EVENT_THREADS);
-    all_dthreads[n_dthreads] = e->ethread;
-    ++n_dthreads; // Be very sure this is after the array element update.
-  }
-
-  e->ethread->start(thr_name, nullptr, stacksize);
-
-  return e;
-}
-
-ink_thread_t
-EventProcessor::ThreadGroup::start(pthread_barrier_t &grpBarrier, EThread *&epEthread, int stacksize, const EThread::ThreadFxn &runFxn)
-{
-  EThread *&tgEthread = _threads[_count++]; // keep unique location
-  int const affid = numa::next_affinity_id();
+  int const affid = numa::new_affinity_id();
   ink_semaphore stackWait;
 
-  auto launchFxnPassed = [this,tgEthread,epEthread,affid,&stackWait,&grpBarrier](EThread *t) -> int
+  auto launchFxnPassed = [this,&epEthread,affid,&stackWait,&grpBarrier](EThread *t) -> int
   {
-    ptrdiff_t id = ( &tgEthread - &_threads );
+    EThread *&tgEthread = _thread[_count++]; // keep unique location
+    ptrdiff_t id = ( &tgEthread - &_thread[0] );
 
-    {
-      char thr_name[MAX_THREAD_NAME_LENGTH];
-      snprintf(thr_name, MAX_THREAD_NAME_LENGTH, "[%s %d]", _name.get(), id);
-      ink_set_thread_name(buff);
-    }
+    char thr_name[MAX_THREAD_NAME_LENGTH+1];
+    snprintf(thr_name, sizeof(thr_name), "[%s %ld]", _name.get(), id);
+    ink_set_thread_name(thr_name);
     
     tgEthread = t;
     epEthread = t;
 
     t->id = id; // index
-    t->tid_ = pthread_self();
-    t->affid_ = affid;
+    t->set_affinity_id(affid);
     t->set_specific();
 
     // parallel with parent now 
     ink_sem_post(&stackWait); 
     
-    // [ parent destroys semaphore ]
-
     // gather up all threads before running
     pthread_barrier_wait(&grpBarrier);
 
     // change to new cpuset [real delay]
-    numa::assign_thread_cpuset_affinity(afftype, affid); 
+    numa::assign_thread_cpuset_by_affinity(_affcfg, affid); 
+
+    auto cpuset = numa::get_cpuset_by_affinity(_affcfg, affid); 
+    pretty_print_cpuset(thr_name, static_cast<hwloc_obj_type_t>(_affcfg), affid, cpuset);
 
     // perform all inits for EThread 
     for( auto &&cb : _spawnQueue ) {
@@ -252,43 +176,51 @@ EventProcessor::ThreadGroup::start(pthread_barrier_t &grpBarrier, EThread *&epEt
     return id;
   };
 
-  auto startFxn = [&runFxn,&launchFxnPassed]() -> int {
+  auto startFxn = [&runFxn,&launchFxnPassed]() {
     // local copy [parent is blocked]
-    EThread::InitFxn launchFxn = launchFxnPassed;
-    return runFxn(launchFxn); 
+    InitFxn_t launchFxn = launchFxnPassed;
+    runFxn(launchFxn); 
   };
 
-  auto threadHook = [](void *ptr) -> void*
-    { return static_cast<decltype(startFxn)*>(ptr)->operator()(); };
-
-  // Make sure it is a multiple of our page size
-  auto page = (ats_hugepage_enabled() ? ats_hugepage_size() : ats_pagesize() );
-  stacksize = aligned_spacing( stacksize, page );
-
   // change to new memory
-  numa::assign_thread_memory_affinity(kAffinity_objs[_affcfg], affid); 
+  numa::assign_thread_memory_by_affinity(_affcfg, affid); 
 
-  alloc_stack(stacksize);
-
-  ink_sem_init(&stackWait,0);
-
-  auto tid = ink_thread_create(threadHook, &startFxn, false, stacksize, stack);
-
-  // wait on child init 
-  ink_sem_wait(&stackWait);
-  ink_sem_destroy(&stackWait);
-
-  return tid;
+  return Thread::start(stackWait, stacksize, startFxn);
 }
 
-// eventProcessor.schedule_spawn(&initialize_thread_for_net, ET_NET);'
-// eventProcessor.schedule_spawn(&initialize_thread_for_net, ET_DNS);'
-// eventProcessor.schedule_spawn(&initialize_thread_for_udp_net, ET_UDP);'
-// eventProcessor.schedule_spawn([](EThread *thread){ thread->server_session_pool = new ServerSessionPool; }, ET_NET);'
 
-// eventProcessor.spawn_event_threads(ET_NET, n_threads, stacksize);
-// eventProcessor.spawn_event_threads(ET_DNS, 1, stacksize);
-// eventProcessor.spawn_event_threads("ET_TASK", std::max(1, task_threads), stacksize);
-// eventProcessor.spawn_event_threads("ET_OCSP", 1, stacksize);
-// eventProcessor.spawn_event_threads(ET_UDP, n_upd_threads, stacksize);
-// eventProcessor.spawn_event_threads("ET_REMAP", num_threads, stacksize);
+Event *EventProcessor::spawn_thread(Continuation *cont, const char *thr_name, size_t stacksize)
+{
+  EThread *&epEthread = all_dthreads[n_dthreads_nxt++];
+  ink_semaphore stackWait;
+
+  auto launchFxnPassed = [this,&epEthread,&stackWait,thr_name,cont](EThread *t) -> int
+  {
+    ink_set_thread_name(thr_name);
+
+    epEthread = t;
+
+    t->set_specific();
+
+    // parallel with parent now 
+    ink_sem_post(&stackWait);
+
+    return 0;
+  };
+
+  auto startFxn = [&launchFxnPassed,cont]()
+  {
+    EThread _base;
+
+    Continuation *contPtr  = cont;
+
+    launchFxnPassed(&_base);
+
+    // parent can continue 
+
+    contPtr->handleEvent(EVENT_IMMEDIATE, nullptr);
+  };
+
+  Thread::start(stackWait, stacksize, startFxn);
+  return nullptr;
+}

@@ -75,11 +75,12 @@
 #include "ts/ink_thread.h"
 
 #include <functional>
-#include <atomic>
 
 class ProxyMutex;
 
 constexpr int MAX_THREAD_NAME_LENGTH = 16;
+
+static inline unsigned this_thread_affinity_id();
 
 /// The signature of a function to be called by a thread.
 using ThreadFunction = std::function<void()>;
@@ -112,8 +113,7 @@ public:
     processors and you should not modify it directly.
 
   */
-  ink_thread tid() { return tid_; }
-  unsigned serial_id() { return serid_; }
+  ink_thread tid() { return _tid; }
 
   /**
     Thread lock to ensure atomic operations. The thread lock available
@@ -130,6 +130,7 @@ public:
   virtual ~Thread();
 
   void set_specific();
+  void set_affinity_id(unsigned affid) { _affid = affid; }
 
   static ink_hrtime cur_time;
   inkcoreapi static ink_thread_key thread_data_key;
@@ -160,9 +161,8 @@ public:
       @c nullptr a stack of size @a stacksize is allocated and used. If @a f is present and valid it
       is called in the thread context. Otherwise the method @c execute is invoked.
   */
-  ink_thread start(const char *name, void *stack, size_t stacksize, ThreadFunction const &f = ThreadFunction());
+  static ink_thread start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction &hookFxn);
 
-  virtual void spawn_init();
   virtual void execute() = 0;
 
   /** Get the current ATS high resolution time.
@@ -184,15 +184,13 @@ public:
   static ink_hrtime get_hrtime_updated();
 
 private:
-  ink_thread tid_ = ink_thread{};
-  unsigned serid_ = 0U;
-
-  static std::atomic_uint g_serid;
+  friend inline unsigned ::this_thread_affinity_id();
+  ink_thread _tid = ink_thread{};
+  unsigned _affid = 0U;
 };
 
-extern Thread *this_thread();
-
-inline unsigned this_thread_serial_id() { return this_thread()->serial_id(); }
+Thread *this_thread();
+static inline unsigned this_thread_affinity_id() { return this_thread()->_affid; }
 
 TS_INLINE ink_hrtime
 Thread::get_hrtime()
