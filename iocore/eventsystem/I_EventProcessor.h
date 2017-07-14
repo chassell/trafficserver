@@ -237,7 +237,7 @@ public:
   Event *reschedule_every(Event *e, ink_hrtime aperiod, int callback_event = EVENT_INTERVAL);
 
   /// Schedule the function @a f to be called in a thread of type @a ev_type when it is spawned.
-  void schedule_spawn(void (*f)(EThread *), EventType ev_type);
+  void schedule_spawn(const EThread::InitFxn &fxn, EventType ev_type);
 
   EventProcessor();
   ~EventProcessor();
@@ -293,8 +293,8 @@ public:
   /// The thread group ID is the index into an array of these and so is not stored explicitly.
   struct ThreadGroupDescriptor {
     ats_scoped_str _name;         ///< Name for the thread group.
-    int _count;                   ///< # of threads of this type.
-    int _next_round_robin;        ///< Index of thread to use for events assigned to this group.
+    std::atomic_uint _count;                   ///< # of threads of this type.
+    std::atomic_uint _next_round_robin;        ///< Index of thread to use for events assigned to this group.
     std::vector<void (*)(EThread *)> _spawnQueue; ///< calls to init EThread upon spawning
     /// The actual threads in this group.
     EThread *_thread[MAX_THREADS_IN_EACH_TYPE];
@@ -312,7 +312,7 @@ public:
     those created by spawn_thread
 
   */
-  int n_ethreads = 0;
+  std::atomic_uint n_ethreads = 0;
 
   /*------------------------------------------------------*\
   | Unix & non NT Interface                                |
@@ -363,29 +363,6 @@ public:
     return {all_dthreads, n_dthreads};
   }
 
-#if 0
-private:
-  void initThreadState(EThread *);
-
-  /// Used to generate a callback at the start of thread execution.
-  class ThreadInit : public Continuation
-  {
-    typedef ThreadInit self;
-    EventProcessor *_evp;
-
-  public:
-    ThreadInit(EventProcessor *evp) : _evp(evp) { SET_HANDLER(&self::init); }
-
-    int
-    init(int /* event ATS_UNUSED */, Event *ev)
-    {
-      _evp->initThreadState(ev->ethread);
-      return 0;
-    }
-  };
-  friend class ThreadInit;
-  ThreadInit thread_initializer;
-#endif
 
   // Lock write access to the dedicated thread vector.
   // @internal Not a @c ProxyMutex - that's a whole can of problems due to initialization ordering.
