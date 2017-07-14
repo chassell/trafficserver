@@ -291,17 +291,18 @@ public:
 
   /// Data kept for each thread group.
   /// The thread group ID is the index into an array of these and so is not stored explicitly.
-  struct ThreadGroupDescriptor {
-    ats_scoped_str _name;         ///< Name for the thread group.
-    std::atomic_uint _count;                   ///< # of threads of this type.
-    std::atomic_uint _next_round_robin;        ///< Index of thread to use for events assigned to this group.
+  struct ThreadGroup {
+    int _affobj = 0;                              ///< config thread-affinity [default: entire machine]
+    ats_scoped_str _name;                         ///< Name for the thread group.
+    std::atomic_uint _count = 0;                  ///< # of threads of this type.
+    std::atomic_uint _next_round_robin = 0;       ///< Index of thread to use for events assigned to this group.
     std::vector<void (*)(EThread *)> _spawnQueue; ///< calls to init EThread upon spawning
     /// The actual threads in this group.
-    EThread *_thread[MAX_THREADS_IN_EACH_TYPE];
+    EThread *_thread[MAX_THREADS_IN_EACH_TYPE] = { nullptr };
   };
 
   /// Storage for per group data.
-  ThreadGroupDescriptor thread_group[MAX_EVENT_TYPES];
+  ThreadGroup thread_group[MAX_EVENT_TYPES];
 
   /// Number of defined thread groups.
   int n_thread_groups = 0;
@@ -322,8 +323,8 @@ public:
   EThread *assign_thread(EventType etype);
 
   EThread *all_dthreads[MAX_EVENT_THREADS];
-  volatile int n_dthreads       = 0; // No. of dedicated threads
-  volatile int thread_data_used = 0;
+  std::atomic_uint n_dthreads       = 0; // No. of dedicated threads
+  std::atomic_uint thread_data_used = 0;
 
   /// Provide container style access to just the active threads, not the entire array.
   class active_threads_type
