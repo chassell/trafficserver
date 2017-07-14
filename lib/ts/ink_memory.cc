@@ -305,8 +305,8 @@ extern hwloc_const_nodeset_t const kNodesAllowed;
 // early-assigned map of cpus per arenas [zero is default arena]
 extern NodeSetVector_t g_nodesByArena;
 
-static CpuSetVector_t::value_type get_cpuset_by_affinity(int objtype, unsigned affid);
-static ArenaIDVector_t::value_type get_arena_by_affinity(int objtype, unsigned affid);
+hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+ArenaIDVector_t::value_type get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
 
 unsigned new_affinity_id() 
 {
@@ -314,10 +314,10 @@ unsigned new_affinity_id()
   return ++g_affinityId;
 }
 
-bool is_same_thread_memory_affinity(int objtype, unsigned affid)
+bool is_same_thread_memory_affinity(hwloc_obj_type_t objtype, unsigned affid)
   { return get_arena_by_affinity(objtype,affid) == jemallctl::thread_arena(); }
 
-int assign_thread_memory_by_affinity(int objtype, unsigned affid) // limit new pages to specific nodes
+int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid) // limit new pages to specific nodes
 {
   // keep using old arena for a moment...
 
@@ -344,7 +344,7 @@ int assign_thread_memory_by_affinity(int objtype, unsigned affid) // limit new p
   return 0;
 }
 
-int assign_thread_cpuset_by_affinity(int objtype, unsigned affid) // limit usable cpus to specific cpuset
+int assign_thread_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid) // limit usable cpus to specific cpuset
   { return hwloc_set_cpubind(curr(), get_cpuset_by_affinity(objtype,affid), HWLOC_CPUBIND_STRICT); }
 
 static auto const kHwlocBitmapDeleter = [](hwloc_bitmap_t map){ map ? hwloc_bitmap_free(map) : (void) 0; };
@@ -532,7 +532,7 @@ ArenaIDVector_t const kProcAffArenas = cpusets_to_memory_arenas(kProcCPUSets);
 
 NodeSetVector_t g_nodesByArena = { kNodesAllowed };
 
-static CpuSetVector_t::value_type get_cpuset_by_affinity(int objtype, unsigned affid)
+hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
 {
   switch(objtype) {
     case HWLOC_OBJ_NUMANODE:
@@ -550,7 +550,7 @@ static CpuSetVector_t::value_type get_cpuset_by_affinity(int objtype, unsigned a
   return kCPUSets.front();
 }
 
-static ArenaIDVector_t::value_type get_arena_by_affinity(int objtype, unsigned affid)
+unsigned get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
 {
   switch(objtype) {
     case HWLOC_OBJ_NUMANODE:

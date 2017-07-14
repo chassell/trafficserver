@@ -30,7 +30,8 @@
 **************************************************************************/
 #include "P_EventSystem.h"
 #include "ts/ink_string.h"
-#include "ts/ink_memory.h"
+
+#include "ts/hugepages.h"
 
 ///////////////////////////////////////////////
 // Common Interface impl                     //
@@ -48,11 +49,9 @@ static bool initialized = ([]() -> bool {
 })();
 }
 
-std::atomic_uint Thread::g_serid{0};
-
 Thread::Thread()
-   : mutex( new_ProxyMutex() ), tid_(), serid_(++g_serid)
 {
+  mutex = new_ProxyMutex();
   MUTEX_TAKE_LOCK(mutex, (EThread *)this);
   mutex->nthread_holding += THREAD_MUTEX_THREAD_HOLDING;
 }
@@ -64,92 +63,30 @@ Thread::~Thread()
   MUTEX_UNTAKE_LOCK(mutex, (EThread *)this);
 }
 
-void Thread::spawn_init()
-{
-  set_specific();
-}
-
 ///////////////////////////////////////////////
 // Unix & non-NT Interface impl              //
 ///////////////////////////////////////////////
 
+
 ink_thread
-Thread::start(const char *name, void *stack, size_t stacksize, ThreadFunction const &thr)
+Thread::start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction &hookFxn)
 {
-  // wait until spawn_init completes
-  ink_cond initDone;
-  ink_mutex initMutex;
+  auto threadHook = [](void *ptr) -> void*
+    { static_cast<ThreadFunction*>(ptr)->operator()(); return nullptr; };
 
-  ink_cond_init(&initDone);
-  ink_mutex_init(&initMutex);
+  // Make sure it is a multiple of our page size
+  auto page = (ats_hugepage_enabled() ? ats_hugepage_size() : ats_pagesize() );
+  stacksize = aligned_spacing( stacksize, page );
 
-  ink_scoped_mutex_lock lock(&initMutex); // parent holds the mutex ...
+  auto stack = ( ats_hugepage_enabled() ? ats_alloc_hugepage(stacksize) : ats_memalign(ats_pagesize(), stacksize) );
 
-  stacksize = ( stacksize ? stacksize : DEFAULT_STACKSIZE );
+  ink_sem_init(&stackWait,0);
 
-  // set unchanged value of condition variable
-  tid_ = ink_thread_self(); 
+  auto tid = ink_thread_create(threadHook, const_cast<ThreadFunction*>(&hookFxn), false, stacksize, stack);
 
-  // stack-lambda captures 
-  //    (3) Thread-obj, (1) start-caller name ptr, (2) start fxn, 
-  auto doSpawnInit = [this,name,&thr,&initDone,&initMutex]() -> ThreadFunction
-    {
-        { 
-          char buff[MAX_THREAD_NAME_LENGTH]; ///< Name for the thread.
-          snprintf(buff,sizeof(buff),name,tid_); // include the tid_ as passed...
-          ink_set_thread_name(buff); // use captured buff-array
-        }
+  // wait on child init 
+  ink_sem_wait(&stackWait);
+  ink_sem_destroy(&stackWait);
 
-        // do thread-pre-init ops
-        this->spawn_init(); // handle spawn-time setup
-        
-        ThreadFunction fxn{ thr ? thr : std::bind(&Thread::execute,this) };
-
-        { // cond_wait will release mutex
-          ink_scoped_mutex_lock lock(&initMutex);
-
-          // alter cond variable with lock
-          this->tid_ = pthread_self();
-
-          // notify (single) cond-blocked parent
-          ink_cond_broadcast(&initDone);
-        } // mutex-release allows parent to continue
-
-        // NOTE: all (other than this) ptr-captures are invalid now...
-
-        return std::move(fxn);
-    };
-
-  // no captured values...
-  auto threadLifeFxn = [](void *ptr) -> void*
-    {
-      // WARNING: ptr is from waiting parent's stack..
-      ThreadFunction threadFxn;
-
-      {
-         using SpawnInitFunctor_t = decltype(doSpawnInit);
-         SpawnInitFunctor_t &init = *static_cast<SpawnInitFunctor_t*>(ptr);
-
-         // perform spawn_init() then release parent with cond_signal
-         threadFxn = init();
-      }
-
-      // call execution functor 
-      threadFxn();
-      return nullptr;
-    };
-
-  ink_thread_create(threadLifeFxn, &doSpawnInit, false, stacksize, stack);
-
-  // wait until mutex returned with changed tid_ (ignore spurious wakeups)
-  do 
-    { ink_cond_wait(&initDone,&initMutex); } 
-  while ( tid_ == ink_thread_self() );
-
-  // parent holds mutex and child has completed spawn_init()
-
-  ink_mutex_destroy(&initMutex);
-  ink_cond_destroy(&initDone);
-
-  return tid_;
+  return tid;
 }

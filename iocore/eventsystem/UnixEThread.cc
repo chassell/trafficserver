@@ -75,14 +75,6 @@ EThread::EThread(ThreadType att, int anid) : id(anid), tt(att)
 #endif
 }
 
-/*
-EThread::EThread(ThreadType att, Event *e) : tt(att), start_event(e)
-{
-  ink_assert(att == DEDICATED);
-  memset(thread_private, 0, PER_THREAD_DATA);
-}
-*/
-
 // Provide a destructor so that SDK functions which create and destroy
 // threads won't have to deal with EThread memory deallocation.
 EThread::~EThread()
