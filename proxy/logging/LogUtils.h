@@ -23,12 +23,10 @@
 #ifndef LOG_UTILS_H
 #define LOG_UTILS_H
 
+#include "time.h"
+
 #include "ts/ink_platform.h"
 #include "ts/Arena.h"
-
-#include "ts/ink_apidefs.h"
-
-#include <time.h>
 
 namespace LogUtils
 {
