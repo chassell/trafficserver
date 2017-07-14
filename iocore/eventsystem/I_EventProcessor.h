@@ -104,7 +104,15 @@ public:
       This must be called to get an event type to pass to @c spawn_event_threads
       @see spawn_event_threads
    */
-  EventType register_event_type(char const *name);
+  EventType register_event_type(char const *name)
+  {
+    thread_group.emplace_back(ats_strdup(name));
+
+    ink_release_assert(thread_group.size() <= MAX_EVENT_TYPES); // check for overflow
+
+    n_thread_groups = thread_group.size();
+    return thread_group.size()-1;
+  }
 
   /**
     Spawn an additional thread for calling back the continuation. Spawns
@@ -129,7 +137,12 @@ public:
 
   /// Convenience overload.
   /// This registers @a name as an event type using @c registerEventType and then calls the real @c spawn_event_threads
-  EventType spawn_event_threads(const char *name, int n_thread, size_t stacksize = DEFAULT_STACKSIZE);
+  EventType spawn_event_threads(const char *name, int n_thread, size_t stacksize = DEFAULT_STACKSIZE)
+  {
+    int ev_type = this->register_event_type(name);
+    this->spawn_event_threads(ev_type, n_threads, stacksize);
+    return ev_type;
+  }
 
   /**
     Schedules the continuation on a specific EThread to receive an event
@@ -237,7 +250,11 @@ public:
   Event *reschedule_every(Event *e, ink_hrtime aperiod, int callback_event = EVENT_INTERVAL);
 
   /// Schedule the function @a f to be called in a thread of type @a ev_type when it is spawned.
-  void schedule_spawn(void (*f)(EThread *), EventType ev_type);
+  void schedule_spawn(EThread::InitFxn f, EventType ev_type)
+  {
+    ink_assert(ev_type < MAX_EVENT_TYPES);
+    thread_group[ev_type]._spawnQueue.push_back(f);
+  }
 
   EventProcessor();
   ~EventProcessor();
@@ -277,7 +294,7 @@ public:
     throughout the existence of the EventProcessor instance.
 
   */
-  EThread *all_ethreads[MAX_EVENT_THREADS];
+  std::vector<EThread> all_ethreads;
 
   /**
     An array of pointers, organized by thread group, to all of the
@@ -289,19 +306,8 @@ public:
   */
   //  EThread *eventthread[MAX_EVENT_TYPES][MAX_THREADS_IN_EACH_TYPE];
 
-  /// Data kept for each thread group.
-  /// The thread group ID is the index into an array of these and so is not stored explicitly.
-  struct ThreadGroupDescriptor {
-    ats_scoped_str _name;         ///< Name for the thread group.
-    int _count;                   ///< # of threads of this type.
-    int _next_round_robin;        ///< Index of thread to use for events assigned to this group.
-    std::vector<void (*)(EThread *)> _spawnQueue; ///< calls to init EThread upon spawning
-    /// The actual threads in this group.
-    EThread *_thread[MAX_THREADS_IN_EACH_TYPE];
-  };
-
   /// Storage for per group data.
-  ThreadGroupDescriptor thread_group[MAX_EVENT_TYPES];
+  std::vector<ThreadGroup> thread_group;
 
   /// Number of defined thread groups.
   int n_thread_groups = 0;
@@ -362,30 +368,6 @@ public:
   {
     return {all_dthreads, n_dthreads};
   }
-
-#if 0
-private:
-  void initThreadState(EThread *);
-
-  /// Used to generate a callback at the start of thread execution.
-  class ThreadInit : public Continuation
-  {
-    typedef ThreadInit self;
-    EventProcessor *_evp;
-
-  public:
-    ThreadInit(EventProcessor *evp) : _evp(evp) { SET_HANDLER(&self::init); }
-
-    int
-    init(int /* event ATS_UNUSED */, Event *ev)
-    {
-      _evp->initThreadState(ev->ethread);
-      return 0;
-    }
-  };
-  friend class ThreadInit;
-  ThreadInit thread_initializer;
-#endif
 
   // Lock write access to the dedicated thread vector.
   // @internal Not a @c ProxyMutex - that's a whole can of problems due to initialization ordering.

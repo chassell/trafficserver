@@ -31,9 +31,9 @@
 #ifndef _I_ProxyAllocator_h_
 #define _I_ProxyAllocator_h_
 
-#include "ts/ink_assert.h"
-
 #include "ts/Allocator.h"
+
+#include "ts/ink_assert.h"
 
 #ifdef ProxyAllocator
 #error "cannot compile together with new JEMalloc includes"

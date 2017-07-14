@@ -178,4 +178,16 @@ EThread::free_event(Event *e)
   EVENT_FREE(e, eventAllocator, this);
 }
 
+TS_INLINE void
+EThreadGroup::set_specific()
+{
+  ink_thread_setspecific(EThreadGroup::thread_data_key, this);
+}
+
+TS_INLINE Thread *
+this_ethread_group()
+{
+  return (Thread *)ink_thread_getspecific(Thread::thread_data_key);
+}
+
 #endif /*_EThread_h_*/

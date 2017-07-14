@@ -48,8 +48,6 @@ static bool initialized = ([]() -> bool {
 })();
 }
 
-std::atomic_uint Thread::g_serid{0};
-
 Thread::Thread()
    : mutex( new_ProxyMutex() ), tid_(), serid_(++g_serid)
 {
@@ -87,6 +85,8 @@ Thread::start(const char *name, void *stack, size_t stacksize, ThreadFunction co
 
   stacksize = ( stacksize ? stacksize : DEFAULT_STACKSIZE );
 
+  bool ready = false;
+
   // set unchanged value of condition variable
   tid_ = ink_thread_self(); 
 
@@ -101,7 +101,7 @@ Thread::start(const char *name, void *stack, size_t stacksize, ThreadFunction co
         }
 
         // do thread-pre-init ops
-        this->spawn_init(); // handle spawn-time setup
+        this->spawn_init(); // handle spawn-time setup (set_specific)
         
         ThreadFunction fxn{ thr ? thr : std::bind(&Thread::execute,this) };
 

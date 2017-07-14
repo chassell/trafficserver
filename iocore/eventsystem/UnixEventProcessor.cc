@@ -23,55 +23,14 @@
 
 #include "P_EventSystem.h" /* MAGIC_EDITING_TAG */
 #include <sched.h>
-#if TS_USE_HWLOC
-#if HAVE_ALLOCA_H
-#include <alloca.h>
-#endif
-#include <hwloc.h>
-#endif
-#include "ts/ink_defs.h"
-#include "ts/hugepages.h"
 
 /// Global singleton.
 class EventProcessor eventProcessor;
-
-#if TS_USE_HWLOC
-static const hwloc_obj_type_t kAffinity_objs[] = 
-   { HWLOC_OBJ_MACHINE, HWLOC_OBJ_NUMANODE, HWLOC_OBJ_SOCKET, HWLOC_OBJ_CORE
-#if HAVE_HWLOC_OBJ_PU
-         , HWLOC_OBJ_PU  
-#endif
-  };
-
-static const char *const kAffinity_obj_names[] =
-   { "[Unrestricted]",         "NUMA Node",        "Socket",         "Core"
-         , "Logical CPU" 
-   };
-
-// Pretty print our CPU set
-void pretty_print_cpuset(const char *thrname, hwloc_obj_type_t objtype, int lind, hwloc_const_cpuset_t cpuset)
-{
-  auto n = std::find( std::begin(kAffinity_objs), std::end(kAffinity_objs), objtype ) - std::begin(kAffinity_objs);
-  n %= countof(kAffinity_objs); // remap end to index zero
-  const char *objname = kAffinity_obj_names[n];
-
-#if HWLOC_API_VERSION >= 0x00010100
-  int cpu_mask_len = hwloc_bitmap_snprintf(NULL, 0, cpuset);
-  char cpu_mask[cpu_mask_len+1];
-  hwloc_bitmap_snprintf(cpu_mask, sizeof(cpu_mask), cpuset);
-  Debug("iocore_thread", "EThread: %s -> %s# %d CPU Mask: %s", thrname, objname, lind, cpu_mask);
-#else
-  Debug("iocore_thread", "EThread: %s -> %s# %d", thrname, objname, lind);
-#endif // HWLOC_API_VERSION
-}
-
-#endif
 
 EventProcessor::EventProcessor() // : thread_initializer(this)
 {
   ink_zero(all_ethreads);
   ink_zero(all_dthreads);
-//  ink_zero(thread_group);
   ink_mutex_init(&dedicated_thread_spawn_mutex);
   // Because ET_NET is compile time set to 0 it *must* be the first type registered.
   this->register_event_type("ET_NET");
@@ -82,27 +41,6 @@ EventProcessor::~EventProcessor()
   ink_mutex_destroy(&dedicated_thread_spawn_mutex);
 }
 
-// eventProcessor.schedule_spawn(&initialize_thread_for_net, ET_NET);'
-// eventProcessor.schedule_spawn(&initialize_thread_for_net, ET_DNS);'
-// eventProcessor.schedule_spawn(&initialize_thread_for_udp_net, ET_UDP);'
-// eventProcessor.schedule_spawn([](EThread *thread){ thread->server_session_pool = new ServerSessionPool; }, ET_NET);'
-void
-EventProcessor::schedule_spawn(void (*f)(EThread *), EventType ev_type)
-{
-  ink_assert(ev_type < MAX_EVENT_TYPES);
-  thread_group[ev_type]._spawnQueue.push_back(f);
-}
-
-EventType
-EventProcessor::register_event_type(char const *name)
-{
-  ThreadGroupDescriptor *tg = &(thread_group[n_thread_groups++]);
-  ink_release_assert(n_thread_groups <= MAX_EVENT_TYPES); // check for overflow
-
-  tg->_name = ats_strdup(name);
-  return n_thread_groups - 1;
-}
-
 static inline size_t get_dflt_stacksize(size_t stacksize) 
 {
   // Make sure it is a multiple of our page size
@@ -110,19 +48,20 @@ static inline size_t get_dflt_stacksize(size_t stacksize)
   return aligned_spacing( stacksize, page );
 }
 
-EventType
-EventProcessor::spawn_event_threads(char const *name, int n_threads, size_t stacksize)
-{
-  int ev_type = this->register_event_type(name);
-  this->spawn_event_threads(ev_type, n_threads, stacksize);
-  return ev_type;
-}
-
 // eventProcessor.spawn_event_threads(ET_NET, n_threads, stacksize);
+// eventProcessor.schedule_spawn(&initialize_thread_for_net, ET_NET);'
+// eventProcessor.schedule_spawn([](EThread *thread){ thread->server_session_pool = new ServerSessionPool; }, ET_NET);'
+
 // eventProcessor.spawn_event_threads(ET_DNS, 1, stacksize);
-// eventProcessor.spawn_event_threads("ET_TASK", std::max(1, task_threads), stacksize);
-// eventProcessor.spawn_event_threads("ET_OCSP", 1, stacksize);
+// eventProcessor.schedule_spawn(&initialize_thread_for_net, ET_DNS);'
+
 // eventProcessor.spawn_event_threads(ET_UDP, n_upd_threads, stacksize);
+// eventProcessor.schedule_spawn(&initialize_thread_for_udp_net, ET_UDP);'
+
+// eventProcessor.spawn_event_threads("ET_TASK", std::max(1, task_threads), stacksize);
+
+// eventProcessor.spawn_event_threads("ET_OCSP", 1, stacksize);
+
 // eventProcessor.spawn_event_threads("ET_REMAP", num_threads, stacksize);
 EventType
 EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t stacksize)
@@ -140,13 +79,22 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
 
   for (int i = 0; i < n_threads; ++i) 
   {
-    EThread *t                   = new EThread;
+    ThreadFunction startFxn = [this,tg]() 
+    {
+      char thr_name[MAX_THREAD_NAME_LENGTH];
+      snprintf(thr_name, MAX_THREAD_NAME_LENGTH, "[%s %d]", tg->_name.get(), i);
+
+
+
+    EThread *t                   = EThread;
     // EThread::EThread(ThreadType att, int anid) : id(anid), tt(att)
     t->id                        = i; // unfortunately needed to support affinity and NUMA logic.
     t->set_event_type(ev_type); // see-below
     tg->_thread[i]               = t;
 
     all_ethreads[n_ethreads + i] = t;
+    }
+    tg->_thread[i]->start(ats_memalign(ats_pagesize(), stacksize), stacksize, );
   }
 
   tg->_count = n_threads; // jump up
@@ -157,9 +105,6 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
   // safely updated until all the EThread instances are created and stored in the table.
   for (int i = 0; i < n_threads; ++i) 
   {
-    char thr_name[MAX_THREAD_NAME_LENGTH];
-    snprintf(thr_name, MAX_THREAD_NAME_LENGTH, "[%s %d]", tg->_name.get(), i);
-    tg->_thread[i]->start(thr_name, ats_memalign(ats_pagesize(), stacksize), stacksize);
     /*
     // t->Thread::start(...)
 // CLONE:
@@ -194,7 +139,6 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
 
   return ev_type; // useless but not sure what would be better.
 }
-
 int
 EventProcessor::start(int n_threads, size_t stacksize)
 {
@@ -250,3 +194,45 @@ EventProcessor::spawn_thread(Continuation *cont, const char *thr_name, size_t st
 
   return e;
 }
+
+#if TS_USE_HWLOC
+
+#if HAVE_ALLOCA_H
+#include <alloca.h>
+#endif
+#include <hwloc.h>
+#endif
+#include "ts/ink_defs.h"
+#include "ts/hugepages.h"
+
+// Pretty print our CPU set
+void pretty_print_cpuset(const char *thrname, hwloc_obj_type_t objtype, int lind, hwloc_const_cpuset_t cpuset)
+{
+#if TS_USE_HWLOC
+  static const hwloc_obj_type_t kAffinity_objs[] = 
+     { HWLOC_OBJ_MACHINE, HWLOC_OBJ_NUMANODE, HWLOC_OBJ_SOCKET, HWLOC_OBJ_CORE
+#if HAVE_HWLOC_OBJ_PU
+           , HWLOC_OBJ_PU  
+#endif
+    };
+
+  static const char *const kAffinity_obj_names[] =
+   { "[Unrestricted]",         "NUMA Node",        "Socket",         "Core"
+         , "Logical CPU" 
+   };
+
+  auto n = std::find( std::begin(kAffinity_objs), std::end(kAffinity_objs), objtype ) - std::begin(kAffinity_objs);
+  n %= countof(kAffinity_objs); // remap end to index zero
+  const char *objname = kAffinity_obj_names[n];
+
+#if HWLOC_API_VERSION >= 0x00010100
+  int cpu_mask_len = hwloc_bitmap_snprintf(NULL, 0, cpuset);
+  char cpu_mask[cpu_mask_len+1];
+  hwloc_bitmap_snprintf(cpu_mask, sizeof(cpu_mask), cpuset);
+  Debug("iocore_thread", "EThread: %s -> %s# %d CPU Mask: %s", thrname, objname, lind, cpu_mask);
+#else
+  Debug("iocore_thread", "EThread: %s -> %s# %d", thrname, objname, lind);
+#endif // HWLOC_API_VERSION
+}
+
+#endif

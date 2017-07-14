@@ -86,6 +86,8 @@ extern volatile bool shutdown_event_system;
 class EThread : public Thread
 {
 public:
+  using InitFxn = std::function<void(EThread *)>;
+
   /*-------------------------------------------------------*\
   |  Common Interface                                       |
   \*-------------------------------------------------------*/
@@ -274,7 +276,6 @@ public:
 
   EThread();
   EThread(ThreadType att, int anid);
-//  EThread(ThreadType att, Event *e);
   EThread(const EThread &) = delete;
   EThread &operator=(const EThread &) = delete;
   virtual ~EThread();
@@ -304,7 +305,11 @@ public:
 
   // Private Interface
 
-  void execute() override;
+  virtual void spawn_init() final;
+
+  void regular_execute();
+  void dedicated_execute();
+
   void process_event(Event *e, int calling_code);
   void free_event(Event *e);
   void (*signal_hook)(EThread *) = nullptr;
@@ -330,6 +335,33 @@ public:
   ServerSessionPool *server_session_pool = nullptr;
 };
 
+/// Data kept for each thread group.
+/// The thread group ID is the index into an array of these and so is not stored explicitly.
+struct EThreadGroup
+{
+  static ink_thread_key thread_data_key;
+
+  EThreadGroup(const char *name) : _name{ats_strdup(name)}
+     { }
+
+  void start_thread(unsigned stacksize, ThreadFunction callback);
+
+  static void thread_init_barrier(EThread *t)
+    { this_thread_group()->thread_init_barrier_cb(t); }
+
+  ats_scoped_str                  const _name;         ///< Name for the thread group.
+  std::atomic_int                       _count = 0;
+  std::atomic_int                       _next_round_robin = 0; ///< Index of thread to use for events assigned to this group.
+
+  std::vector<EThread::InitFxn>         _spawnQueue; ///< dynamic calls to init 
+
+  /// The actual threads in this group.
+  EThread *_thread[MAX_THREADS_IN_EACH_TYPE];
+
+private:
+  void thread_init_barrier_cb(EThread *);
+};
+
 /**
   This is used so that we dont use up operator new(size_t, void *)
   which users might want to define for themselves.
@@ -347,4 +379,6 @@ operator new(size_t, ink_dummy_for_new *p)
 #define ETHREAD_GET_PTR(thread, offset) ((void *)((char *)(thread) + (offset)))
 
 extern EThread *this_ethread();
+extern EThreadGroup *this_ethread_group();
+
 #endif /*_EThread_h_*/

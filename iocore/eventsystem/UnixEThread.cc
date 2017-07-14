@@ -40,6 +40,17 @@ struct AIOCallback;
 
 volatile bool shutdown_event_system = false;
 
+ink_thread_key EThreadGroup::thread_data_key;
+
+namespace
+{
+static bool initialized = ([]() -> bool {
+  // File scope initialization goes here.
+  ink_thread_key_create(&EThreadGroup::thread_data_key, nullptr);
+  return true;
+})();
+}
+
 EThread::EThread()
 {
   memset(thread_private, 0, PER_THREAD_DATA);
@@ -74,14 +85,6 @@ EThread::EThread(ThreadType att, int anid) : id(anid), tt(att)
   fcntl(evpipe[1], F_SETFL, O_NONBLOCK);
 #endif
 }
-
-/*
-EThread::EThread(ThreadType att, Event *e) : tt(att), start_event(e)
-{
-  ink_assert(att == DEDICATED);
-  memset(thread_private, 0, PER_THREAD_DATA);
-}
-*/
 
 // Provide a destructor so that SDK functions which create and destroy
 // threads won't have to deal with EThread memory deallocation.
@@ -154,22 +157,27 @@ EThread::process_event(Event *e, int calling_code)
 // lock. If successful, call the continuation, otherwise put the event back
 // into the queue.
 //
+EThread::event_execute(Event *start)
+{
+  // Do the start event first.
+  // coverity[lock]
+  if (start) {
+    MUTEX_TAKE_LOCK_FOR(start->mutex, this, start->continuation);
+    start->continuation->handleEvent(EVENT_IMMEDIATE, start);
+    MUTEX_UNTAKE_LOCK(start->mutex, this);
+  }
+}
+
 
 void
 EThread::execute()
 {
-  // Do the start event first.
-  // coverity[lock]
-  if (start_event) {
-    MUTEX_TAKE_LOCK_FOR(start_event->mutex, this, start_event->continuation);
-    start_event->continuation->handleEvent(EVENT_IMMEDIATE, start_event);
-    MUTEX_UNTAKE_LOCK(start_event->mutex, this);
-    free_event(start_event);
-    start_event = nullptr;
-  }
+    event_execute(start_event);
 
-  switch (tt) {
-  case REGULAR: {
+  if ( start_event ) {
+    free_event(start);
+    start = nullptr;
+  }
     Event *e;
     Que(Event, link) NegativeQueue;
     ink_hrtime next_time = 0;
@@ -286,15 +294,22 @@ EThread::execute()
         EventQueueExternal.dequeue_timed(cur_time, next_time, true);
       }
     }
-  }
-
-  case DEDICATED: {
-    break;
-  }
-
-  default:
-    ink_assert(!"bad case value (execute)");
-    break;
-  } /* End switch */
-  // coverity[missing_unlock]
 }
+
+// This is called from inside a thread 
+void
+EThreadGroup::add(EThread *t)
+{
+  Event *nev = eventAllocator.alloc();
+  for (Event *ev = thread_group[i]._spawnQueue.head; NULL != ev; ev = ev->link.next) {
+    nev->init(ev->continuation, 0, 0);
+    nev->ethread        = t;
+    nev->callback_event = ev->callback_event;
+    nev->mutex          = ev->continuation->mutex;
+    nev->cookie         = ev->cookie;
+    ev->continuation->handleEvent(ev->callback_event, nev);
+  }
+  nev->free();
+}
+
+
