@@ -50,7 +50,7 @@
 
 #define ink_freelist_init_ops(a)
 
-#else
+#else // not HAVE_LIBJEMALLOC ////////////////
 
 #include "ts/ink_defs.h"
 #include "ts/ink_queue.h"
@@ -300,6 +300,6 @@ private:
   ink_mutex trackerLock;
 };
 
-#endif // HAVE_LIBJEMALLOC
+#endif // not HAVE_LIBJEMALLOC ////////// 
 
 #endif // _Allocator_h_
