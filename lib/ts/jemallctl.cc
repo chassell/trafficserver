@@ -38,22 +38,24 @@ objpath_t objpath(const std::string &path);
 
 ObjBase::ObjBase(const char *name) : _oid(objpath(name)) { }
 
-template <typename T_VALUE, size_t N_DIFF> 
+template <typename T_VALUE, size_t N_DIFF>
 auto GetObjFxn<T_VALUE,N_DIFF>::operator()(void) const -> T_VALUE
-   { return std::move( ::jemallctl::mallctl_get<T_VALUE>(ObjBase::_oid)); } 
+   { return std::move( ::jemallctl::mallctl_get<T_VALUE>(ObjBase::_oid)); }
 
-template <typename T_VALUE, size_t N_DIFF> auto 
- SetObjFxn<T_VALUE,N_DIFF>::operator()(const T_VALUE &v) const -> int 
-   { return ::jemallctl::mallctl_set(ObjBase::_oid,v); } 
+template <typename T_VALUE, size_t N_DIFF> auto
+ SetObjFxn<T_VALUE,N_DIFF>::operator()(const T_VALUE &v) const -> int
+   { return ::jemallctl::mallctl_set(ObjBase::_oid,v); }
 
 int GetObjFxn<void,0>::operator()(void) const
-       { return ::jemallctl::mallctl_void(ObjBase::_oid); } 
+       { return ::jemallctl::mallctl_void(ObjBase::_oid); }
 
 /// implementation of simple oid-translating call
 
 objpath_t objpath(const std::string &path)
 {
-  objpath_t oid{10}; // longer than any oid target
+  objpath_t oid;
+
+  oid.resize(10); // longer than any oid target// *explicitly resize*
   size_t len = oid.size();
   mallctlnametomib(path.c_str(), oid.data(), &len);
   oid.resize(len);
@@ -67,13 +69,13 @@ auto mallctl_void(const objpath_t &oid) -> int
   return mallctlbymib(oid.data(),oid.size(),nullptr,nullptr,nullptr,0);
 }
 
-template <typename T_VALUE> auto 
+template <typename T_VALUE> auto
    mallctl_set(const objpath_t &oid, const T_VALUE &v) -> int
 {
   return mallctlbymib(oid.data(),oid.size(),nullptr,nullptr,const_cast<T_VALUE*>(&v),sizeof(v));
 }
 
-template <typename T_VALUE> auto 
+template <typename T_VALUE> auto
    mallctl_get(const objpath_t &oid) -> T_VALUE
 {
   T_VALUE v{}; // init to zero if a pod type
@@ -101,7 +103,11 @@ template <> auto mallctl_get<chunk_hooks_t>(const objpath_t &baseOid) -> chunk_h
 {
    objpath_t oid = baseOid;
    oid[1] = thread_arena();
-   return mallctl_get<chunk_hooks_t>(oid);
+
+   chunk_hooks_t v;
+   size_t len = sizeof(v);
+   mallctlbymib(oid.data(),oid.size(),&v,&len,nullptr,0);
+   return std::move(v);
 }
 
 template <> auto mallctl_set<chunk_hooks_t>(const objpath_t &baseOid, const chunk_hooks_t &hooks) -> int
@@ -118,7 +124,7 @@ template <> auto mallctl_set<chunk_hooks_t>(const objpath_t &baseOid, const chun
                     ( hooks.split ? : ohooks.split ),
                     ( hooks.merge ? : ohooks.merge )
                  };
-   return mallctl_set<chunk_hooks_t>(oid,nhooks);
+   return mallctlbymib(oid.data(),oid.size(),nullptr,nullptr,const_cast<chunk_hooks_t*>(&nhooks),sizeof(nhooks));
 }
 
 template struct GetObjFxn<uint64_t>;
@@ -134,7 +140,7 @@ template struct SetObjFxn<chunk_hooks_t>;
 const GetObjFxn<chunk_hooks_t>    thread_arena_hooks{"arena.0.chunk_hooks"};
 const SetObjFxn<chunk_hooks_t>    set_thread_arena_hooks{"arena.0.chunk_hooks"};
 
-// request-or-sense new values in statistics 
+// request-or-sense new values in statistics
 const GetObjFxn<uint64_t>         epoch{"epoch"};
 
 // request separated page sets for each NUMA node (when created)
