@@ -27,6 +27,9 @@
 
 #define DEBUG_TAG "hugepages"
 
+#undef Debug
+#define Debug(tag, a ...)  { false ? ink_eprintf(a) : (void)0; }
+
 #if ! MAP_HUGETLB 
 
 bool ats_hugepage_enabled() { return false; }
@@ -185,6 +188,7 @@ void *huge_alloc_and_madvise(void *chunk, size_t csize, size_t hpgsz,
                               bool *zero, bool *commit, unsigned madvflags, unsigned arena_ind)
 {
   Debug(DEBUG_TAG,"huge-alloc: %p %#lx @%#lx %d/%d arena=%d",chunk,csize,hpgsz,*zero,*commit,arena_ind);
+  int r = 0;
   // NOTE: if chunk was NULL then it is hugepage-identical and startpg is NULL too
   void *nxtchunk = static_cast<char*>(chunk) + csize;
   void *startpg = align_pointer_backward(chunk,hpgsz);
@@ -217,18 +221,21 @@ void *huge_alloc_and_madvise(void *chunk, size_t csize, size_t hpgsz,
     //    (or with small pages until they are replaced)
     if ( ( *commit || *zero ) && huge_commit(startpg,opsize,0,opsize,arena_ind) == true ) 
     {
-      munmap(chunk,opsize + hpgsz); // undo prev. mmap
+      r = munmap(chunk,opsize + hpgsz); // undo prev. mmap
+      ink_release_assert( ! r );
       return nullptr; // could not commit this many pages!                             //// ERROR alloc-commit fail
     }
 
     // clean up excess edges
     if ( startpg != chunk ) {
       Debug(DEBUG_TAG,"huge-munmap-front: %p - %p",startpg,chunk);
-      munmap(chunk, static_cast<char*>(startpg) - static_cast<char*>(chunk));
+      r = munmap(chunk, static_cast<char*>(startpg) - static_cast<char*>(chunk));
+      ink_release_assert( ! r );
     }
     if ( nxtchunk != nextpg ) {
       Debug(DEBUG_TAG,"huge-munmap-tail: %p - %p",nxtchunk,nextpg);
-      munmap(nxtchunk, static_cast<char*>(nxtchunk) - static_cast<char*>(nextpg));
+      r = munmap(nextpg, static_cast<char*>(nxtchunk) - static_cast<char*>(nextpg));
+      ink_release_assert( ! r );
     }
 
     // if we've committed .. we also zeroed (and opposite too)
@@ -236,7 +243,8 @@ void *huge_alloc_and_madvise(void *chunk, size_t csize, size_t hpgsz,
 
     // successfully created map 
 
-    madvise(startpg,opsize,madvflags | (MAP_NORESERVE|MADV_HUGEPAGE)); // apply flags to the new map remaining
+    r = madvise(startpg,opsize,madvflags|MADV_HUGEPAGE); // apply flags to the new map remaining
+    ink_release_assert( ! r );
     Debug(DEBUG_TAG,"huge-alloc: %lx -> %p ",csize,startpg);
     return startpg;                                                                  //// SUCCESS alloc 
   }
@@ -254,13 +262,16 @@ void *huge_alloc_and_madvise(void *chunk, size_t csize, size_t hpgsz,
       return nullptr; // mmap with prot-none failed                                   //// ERROR realloc-decommit fail
     }
     // apply flags over entire map range owned
-    madvise(startpg,opsize,madvflags|(MAP_NORESERVE|MADV_HUGEPAGE)); 
+    r = madvise(startpg,opsize,madvflags|MADV_HUGEPAGE); 
+    ink_release_assert( ! r );
+    Debug(DEBUG_TAG,"huge-realloc-decommit: %p %lx",chunk,csize);
     return chunk; // realloc is completed with no-zero/no-commit permissions          //// SUCCESS realloc-emptied
   }
 
   // will assert open protections for new realloc range
 
   // commit to writable memory allowed for new pages and old
+  Debug(DEBUG_TAG,"huge-realloc-recommit: %p %lx",startpg,csize);
   if ( huge_commit(startpg,opsize,0,opsize,arena_ind) == true ) {
     return nullptr; // cannot realloc this segment safely                             //// ERROR realloc-commit fail
   }
@@ -274,18 +285,25 @@ void *huge_alloc_and_madvise(void *chunk, size_t csize, size_t hpgsz,
 
   if ( chunk == startpg ) // allow passed flags for realloc'ed hugepages?
   {
-    madvise(startpg, opsize, madvflags|(MAP_NORESERVE|MADV_HUGEPAGE)); 
+    Debug(DEBUG_TAG,"huge-realloc-madvflags: %p %lx",startpg,opsize);
+    r = madvise(startpg, opsize, madvflags|MADV_HUGEPAGE); 
+    ink_release_assert( ! r );
   } 
   else if ( *zero ) // add safest flags and attempt partial purge to realloc'ed hugepage?
   {
+    Debug(DEBUG_TAG,"huge-realloc-purge: %p %lx",chunk,csize);
     huge_purge(chunk,csize,0,csize,arena_ind);
-    madvise(startpg, opsize, (MAP_NORESERVE|MADV_HUGEPAGE)); 
+    r = madvise(startpg, opsize, (MADV_HUGEPAGE)); 
+    ink_release_assert( ! r );
   } 
   else // just add safest flags to realloc'ed hugepage?
   {
-    madvise(startpg, opsize, (MAP_NORESERVE|MADV_HUGEPAGE)); // add safe flags to unaligned hugepages
+    Debug(DEBUG_TAG,"huge-realloc-nomadvflags: %p %lx",startpg,opsize);
+    r = madvise(startpg, opsize,MADV_HUGEPAGE); // add safe flags to unaligned hugepages
+    ink_release_assert( ! r );
   }
 
+  Debug(DEBUG_TAG,"huge-realloc: %p %lx",chunk,csize);
   return chunk; // realloc is complete                                                //// SUCCESS realloc-ready
 }
 
@@ -316,6 +334,7 @@ void *huge_nodump_alloc(void *chunk, size_t size, size_t alignment, bool *zero, 
 
 bool huge_dalloc(void *chunk, size_t size, bool committed, unsigned)
 {
+  int r = 0;
   Debug(DEBUG_TAG,"huge-dalloc: %p %lx",chunk,size);
   const size_t hpgsz = sizeof(MemoryPageHuge);
   void *startpg = align_pointer_backward(chunk, hpgsz);
@@ -348,7 +367,8 @@ bool huge_dalloc(void *chunk, size_t size, bool committed, unsigned)
 
   // NOTE: no concern about NUMA for unmap
   Debug(DEBUG_TAG,"huge-munmap-full: %p %#lx",chunk,size);
-  munmap(chunk,size); 
+  r = munmap(chunk,size); 
+  ink_release_assert( ! r );
   return false;
 }
 
@@ -364,10 +384,8 @@ bool huge_commit(void *chunk, size_t size, size_t offset, size_t length, unsigne
   size_t opsize = static_cast<char*>(endpg) - static_cast<char*>(startpg); 
 
   // NOTE: no concern about NUMA for unmap
-  chunk = mmap(startpg, opsize, (PROT_READ|PROT_WRITE), (MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED), -1, 0);
-  Debug(DEBUG_TAG,"huge-mmap-commit: %p %#lx -> %p",startpg,opsize,chunk);
-
-  return !! chunk;
+  Debug(DEBUG_TAG,"huge-mmap-commit: %p - %p",startpg,endpg);
+  return mprotect(startpg, opsize, PROT_READ|PROT_WRITE);
 }
 
 // undersize-aligned use of PROT_NONE
@@ -383,19 +401,18 @@ bool huge_decommit(void *chunk, size_t size, size_t offset, size_t length, unsig
 
   // nothing to do that will free any pages at all
   if ( endpg == startpg ) {
-    return true;
+    return true; // return failure
   }
 
-  chunk = mmap(startpg, opsize, PROT_NONE, (MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED), -1, 0);
-
-  return !! chunk;
+  Debug(DEBUG_TAG,"huge-decommit: %p - %p",startpg,endpg);
+  return mprotect(startpg, opsize, PROT_NONE);
 }
 
 // undersize-aligned use of madvise
 
 bool huge_purge(void *chunk, size_t size, size_t offset, size_t length, unsigned)
 {
-  Debug(DEBUG_TAG,"huge-decommit: %p %#lx %#lx %#lx",chunk,size,offset,length);
+  Debug(DEBUG_TAG,"huge-purge: %p %#lx %#lx %#lx",chunk,size,offset,length);
   const size_t hpgsz = sizeof(MemoryPageHuge);
   // only purge a subset of pages in the center that can be
   void *startpg = align_pointer_forward(static_cast<char*>(chunk) + offset, hpgsz);
