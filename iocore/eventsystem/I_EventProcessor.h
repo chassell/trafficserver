@@ -253,8 +253,8 @@ public:
   Event *reschedule_in(Event *e, ink_hrtime atimeout_in, int callback_event = EVENT_INTERVAL);
   Event *reschedule_every(Event *e, ink_hrtime aperiod, int callback_event = EVENT_INTERVAL);
 
-  void schedule_spawn(void(*fxn)(EThread*), EventType ev_type)
-    { return schedule_spawn(InitFxn_t(fxn),ev_type); }
+//  void schedule_spawn(void(*fxn)(EThread*), EventType ev_type)
+//    { return schedule_spawn(InitFxn_t(fxn),ev_type); }
 
   /// Schedule the function @a f to be called in a thread of type @a ev_type when it is spawned.
   void schedule_spawn(const InitFxn_t &fxn, EventType ev_type)
@@ -262,9 +262,6 @@ public:
     ink_assert(ev_type < MAX_EVENT_TYPES);
     thread_group[ev_type]._spawnQueue.push_back(fxn);
   }
-
-  /// Schedule the function @a f to be called in a thread of type @a ev_type when it is spawned.
-  void schedule_spawn(void(*fxn)(EThread*), EventType ev_type) { schedule_spawn(InitFxn_t(fxn), ev_type); }
 
   EventProcessor()
   {
