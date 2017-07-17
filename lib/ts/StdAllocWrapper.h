@@ -70,9 +70,9 @@ public:
      : name_(name), sz_( (element_size+sizeof(value_type)-1)/sizeof(value_type))
      { }
 
-  void *alloc_void() { return allocate(sz_); }
+  void *alloc_void() { return std::calloc(sz_,sizeof(value_type)); }
   void free_void(void *ptr) { deallocate(static_cast<value_type*>(ptr),sz_); }
-  void *alloc() { return allocate(sz_); }
+  void *alloc() { return std::calloc(sz_,sizeof(value_type)); }
   void free(void *ptr) { deallocate(static_cast<value_type*>(ptr),sz_); }
 
   void re_init(const char *name, unsigned int element_size, unsigned int chunk_size, unsigned int alignment, int advice) 
