@@ -128,7 +128,7 @@ public:
     @return event object representing the start of the thread.
 
   */
-  Event *spawn_thread(Continuation *cont, const char *thr_name, size_t stacksize = 0);
+  ink_thread spawn_thread(Continuation *cont, const char *thr_name, size_t stacksize = 0);
 
   /** Spawn a group of @a n_threads event dispatching threads.
 
