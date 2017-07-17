@@ -294,19 +294,86 @@ using CpuSetVector_t = std::vector<void*>;
 #else
 using CpuSetVector_t = std::vector<hwloc_const_cpuset_t>;
 using NodeSetVector_t = std::vector<hwloc_const_nodeset_t>;
+using NodesIDVector_t = std::vector<unsigned>;
 using ArenaIDVector_t = std::vector<unsigned>;
+
+static auto const kHwlocBitmapDeleter = [](hwloc_bitmap_t map){ map ? hwloc_bitmap_free(map) : (void) 0; };
+
+struct hwloc_bitmap : public std::unique_ptr<hwloc_bitmap_s,decltype(kHwlocBitmapDeleter)>
+{
+  using super = std::unique_ptr<hwloc_bitmap_s,decltype(kHwlocBitmapDeleter)>;
+  hwloc_bitmap() : super{ hwloc_bitmap_alloc(), kHwlocBitmapDeleter } 
+     { }
+  hwloc_bitmap(hwloc_const_bitmap_t map) : super{ hwloc_bitmap_dup(map), kHwlocBitmapDeleter } 
+     { }
+  operator hwloc_const_bitmap_t() const
+     { return get(); }
+  operator hwloc_bitmap_t()
+     { return get(); }
+};
 
 ////////////////////////////////// namespace numa
 namespace numa {
 
 extern hwloc_const_cpuset_t const kCpusAllowed;
 extern hwloc_const_nodeset_t const kNodesAllowed;
+extern NodeSetVector_t const kUniqueNodeSets;
 
-// early-assigned map of cpus per arenas [zero is default arena]
-extern NodeSetVector_t g_nodesByArena;
+// filled in on creation of arenas
+NodeSetVector_t g_nodesByArena = { kNodesAllowed };
+
+// list of arenas (arena ids) created from unique nodeset list
+ArenaIDVector_t g_arenaByNodesID = { 0 };
 
 hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
-ArenaIDVector_t::value_type get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+NodesIDVector_t::value_type get_nodes_id_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+
+ArenaIDVector_t::value_type get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
+{
+  static ink_mutex s_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+  auto nsid = get_nodes_id_by_affinity(objtype,affid);
+
+  if ( ! nsid ) {
+    return 0;
+  }
+
+  if ( g_arenaByNodesID.size() >= kUniqueNodeSets.size() && g_arenaByNodesID[nsid] ) {
+    return g_arenaByNodesID[nsid];
+  }
+
+  ink_scoped_mutex_lock lock{s_mutex};
+
+  g_arenaByNodesID.resize(kUniqueNodeSets.size()); 
+
+  if ( g_arenaByNodesID[nsid] ) {
+    return g_arenaByNodesID[nsid];
+  }
+
+  // need a new arena for this set of nodes
+
+  unsigned newArena = jemallctl::do_arenas_extend();
+
+  Debug("memory", "extending arena to %u", newArena);
+
+  int callerArena = jemallctl::thread_arena(); // push current arena (for a moment)
+
+  jemallctl::set_thread_arena(newArena);
+  jemallctl::set_thread_arena_hooks(get_jemallctl_huge_hooks()); // init hooks for hugepage
+
+  // re-use caller's arena for allocations
+  jemallctl::set_thread_arena(callerArena);
+
+  // store the node-set that this arena is going to partition off
+  if ( g_nodesByArena.size() < newArena+1 ) {
+    g_nodesByArena.resize(newArena+1); // filled with nullptr if needed
+  }
+
+  g_nodesByArena[newArena] = hwloc_bitmap{ kUniqueNodeSets[nsid] }.release();
+  g_arenaByNodesID[nsid] = newArena;
+
+  return newArena; // affid/cpuset now leads to this arena
+}
 
 unsigned new_affinity_id() 
 {
@@ -347,21 +414,6 @@ int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid) /
 int assign_thread_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid) // limit usable cpus to specific cpuset
   { return hwloc_set_cpubind(curr(), get_cpuset_by_affinity(objtype,affid), HWLOC_CPUBIND_STRICT); }
 
-static auto const kHwlocBitmapDeleter = [](hwloc_bitmap_t map){ map ? hwloc_bitmap_free(map) : (void) 0; };
-
-struct hwloc_bitmap : public std::unique_ptr<hwloc_bitmap_s,decltype(kHwlocBitmapDeleter)>
-{
-  using super = std::unique_ptr<hwloc_bitmap_s,decltype(kHwlocBitmapDeleter)>;
-  hwloc_bitmap() : super{ hwloc_bitmap_alloc(), kHwlocBitmapDeleter } 
-     { }
-  hwloc_bitmap(hwloc_const_bitmap_t map) : super{ hwloc_bitmap_dup(map), kHwlocBitmapDeleter } 
-     { }
-  operator hwloc_const_bitmap_t() const
-     { return get(); }
-  operator hwloc_bitmap_t()
-     { return get(); }
-};
-
 static void reorder_interleaved(CpuSetVector_t const &supers, CpuSetVector_t &subs);
 
 //
@@ -396,23 +448,23 @@ auto get_obj_cpusets(hwloc_obj_type_t objtype, CpuSetVector_t const &supers=CpuS
 //
 // use newVect cpusets and NUMA nodesets (may require new arenas)
 //
-auto cpusets_to_memory_arenas(CpuSetVector_t const &newVect) -> ArenaIDVector_t 
+auto cpusets_to_memory_arenas(const NodeSetVector_t &uniqueSets, CpuSetVector_t const &newVect) -> NodesIDVector_t 
 {
   // no differences for all threads?
   if ( newVect.size() <= 1 ) {
-    return std::move(ArenaIDVector_t(1));                           ///// RETURN (default single)
+    return std::move(NodesIDVector_t(1));                           ///// RETURN (default single)
   }
 
   // same NUMA node for all affinities?
   if ( hwloc_get_nbobjs_by_type(curr(), HWLOC_OBJ_NUMANODE) < 2 ) {
-    return std::move(ArenaIDVector_t(newVect.size()));              ///// RETURN (defaulted)
+    return std::move(NodesIDVector_t(newVect.size()));              ///// RETURN (defaulted)
   }
 
   // may create arenas if nodesets are different
 
   hwloc_bitmap nodeset;
 
-  ArenaIDVector_t arenaMap;
+  NodesIDVector_t arenaMap;
 
   for( auto &&cpuset : newVect )
   {
@@ -421,37 +473,17 @@ auto cpusets_to_memory_arenas(CpuSetVector_t const &newVect) -> ArenaIDVector_t
                               return hwloc_bitmap_isequal(nodeset,arenaset); 
                         };
 
-    unsigned i = std::find_if(g_nodesByArena.rbegin(), g_nodesByArena.rend(), equalNodesChk) - g_nodesByArena.rend();
+    unsigned i = std::find_if(uniqueSets.rbegin(), uniqueSets.rend(), equalNodesChk) 
+                                                      - uniqueSets.rend();
 
     // found a equal-nodes match?  chg i to arena-index.
-    if ( i-- ) {
-       arenaMap.push_back(i); // affid-cpuset now matches this arena
-       continue; // found an old arena                                       //// CONTINUE
+    if ( ! i-- ) {
+      i = uniqueSets.size(); // new index to use
+      const_cast<NodeSetVector_t&>(uniqueSets).push_back(hwloc_bitmap{ nodeset.get() }.release());
     }
 
-    // need a new arena for this set of nodes
-
-    unsigned newArena = jemallctl::do_arenas_extend();
-
-    Debug("memory", "extending arena to %u", newArena);
-
-    int callerArena = jemallctl::thread_arena(); // push current arena (for a moment)
-
-    jemallctl::set_thread_arena(newArena);
-    jemallctl::set_thread_arena_hooks(get_jemallctl_huge_hooks()); // init hooks for hugepage
-
-    // re-use caller's arena for allocations
-    jemallctl::set_thread_arena(callerArena);
-
-    // store the node-set that this arena is going to partition off
-    if ( g_nodesByArena.size() < newArena+1 ) {
-      g_nodesByArena.resize(newArena+1); // filled with nullptr if needed
-    }
-
-    g_nodesByArena[newArena] = hwloc_bitmap{ nodeset.get() }.release();
-    arenaMap.push_back(newArena); // affid/cpuset now leads to this arena
+    arenaMap.push_back(i); // affid-cpuset now matches this arena
   }
-
   return std::move(arenaMap);
 }
 
@@ -525,13 +557,6 @@ CpuSetVector_t const kSocketCPUSets = get_obj_cpusets(HWLOC_OBJ_SOCKET, kNumaCPU
 CpuSetVector_t const kCoreCPUSets = get_obj_cpusets(HWLOC_OBJ_CORE, kNumaCPUSets);     // cpusets for each core, in alternated order of memory nodes
 CpuSetVector_t const kProcCPUSets = get_obj_cpusets(HWLOC_OBJ_PU, kNumaCPUSets);       // cpusets for each processor-unit, in alternated order of memory nodes
 
-ArenaIDVector_t const kNumaAffArenas = cpusets_to_memory_arenas(kNumaCPUSets);
-ArenaIDVector_t const kSocketAffArenas = cpusets_to_memory_arenas(kSocketCPUSets);
-ArenaIDVector_t const kCoreAffArenas = cpusets_to_memory_arenas(kCoreCPUSets);
-ArenaIDVector_t const kProcAffArenas = cpusets_to_memory_arenas(kProcCPUSets);
-
-NodeSetVector_t g_nodesByArena = { kNodesAllowed };
-
 hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
 {
   switch(objtype) {
@@ -550,17 +575,26 @@ hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned a
   return kCPUSets.front();
 }
 
-unsigned get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
+// master list of nodesets 
+NodeSetVector_t const kUniqueNodeSets = { kNodesAllowed };
+
+// lists of indexes into kUniqueNodeSets and 
+NodesIDVector_t const kNumaAffNodes = cpusets_to_memory_arenas(kUniqueNodeSets,kNumaCPUSets);
+NodesIDVector_t const kSocketAffNodes = cpusets_to_memory_arenas(kUniqueNodeSets,kSocketCPUSets);
+NodesIDVector_t const kCoreAffNodes = cpusets_to_memory_arenas(kUniqueNodeSets,kCoreCPUSets);
+NodesIDVector_t const kProcAffNodes = cpusets_to_memory_arenas(kUniqueNodeSets,kProcCPUSets);
+
+unsigned get_nodes_id_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
 {
   switch(objtype) {
     case HWLOC_OBJ_NUMANODE:
-       return kNumaAffArenas[ affid % kNumaAffArenas.size() ];
+       return kNumaAffNodes[ affid % kNumaAffNodes.size() ];
     case HWLOC_OBJ_SOCKET:
-       return kSocketAffArenas[ affid % kSocketAffArenas.size() ];
+       return kSocketAffNodes[ affid % kSocketAffNodes.size() ];
     case HWLOC_OBJ_CORE:
-       return kCoreAffArenas[ affid % kCoreAffArenas.size() ];
+       return kCoreAffNodes[ affid % kCoreAffNodes.size() ];
     case HWLOC_OBJ_PU:
-       return kProcAffArenas[ affid % kProcAffArenas.size() ];
+       return kProcAffNodes[ affid % kProcAffNodes.size() ];
     default: 
        break;
   }
