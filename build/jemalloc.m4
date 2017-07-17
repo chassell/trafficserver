@@ -28,11 +28,11 @@ AS_IF([test -n "$with_jemalloc" -a "x$with_jemalloc" != "xno" ],[
   case "$withval" in
     (yes)
       PKG_CHECK_MODULES([JEMALLOC], [jemalloc >= 1.0], [have_jemalloc=yes], [:])
-      jemalloc_libdir="`$PKG_CONFIG jemalloc --variable=libdir`"
+      jemalloc_libdir="$($PKG_CONFIG jemalloc --variable=libdir)"
       ;;
     (*":"*)
-      jemalloc_incdir="`echo $withval |sed -e 's/:.*$//'`"
-      jemalloc_libdir="`echo $withval |sed -e 's/^.*://'`"
+      jemalloc_incdir="$(echo $withval |sed -e 's/:.*$//')"
+      jemalloc_libdir="$(echo $withval |sed -e 's/^.*://')"
       ;;
     (*)
       jemalloc_incdir="$withval/include"
@@ -70,6 +70,9 @@ dnl
 
   LDFLAGS="$save_ldflags"
   CPPFLAGS="$save_cppflags"
+  set -xv
+  LIBS="$(echo "$LIBS" | sed -e 's/ *-ljemalloc//' -e 's/$/ -ljemalloc/')"
+  set +xv
 
   AS_IF([test "x$have_jemalloc" == "xno" ], 
      [AC_MSG_ERROR([Failed to compile with jemalloc.h and -ljemalloc]) ])
