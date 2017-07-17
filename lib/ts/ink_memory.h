@@ -117,8 +117,8 @@ static inline size_t __attribute__((const)) ats_pagesize(void)
   return page_size;
 }
 
-using MemoryPage = std::aligned_storage<PAGE_SIZE,PAGE_SIZE>;
-using MemoryPageHuge = std::aligned_storage<(PAGE_SIZE<<9),(PAGE_SIZE<<9)>;
+using MemoryPage = std::aligned_storage<PAGE_SIZE,PAGE_SIZE>::type;
+using MemoryPageHuge = std::aligned_storage<(PAGE_SIZE<<9),(PAGE_SIZE<<9)>::type;
 
 /* Some convenience wrappers around strdup() functionality */
 char *_xstrdup(const char *str, int length, const char *path);
