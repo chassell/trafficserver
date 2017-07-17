@@ -29,6 +29,7 @@
 
 
  ****************************************************************************/
+#include "ts/jemallctl.h"
 
 #include "ts/ink_platform.h"
 #include "ts/ink_sys_control.h"
@@ -38,6 +39,7 @@
 #include "ts/ink_syslog.h"
 #include "ts/hugepages.h"
 #include "ts/runroot.cc"
+#include "ts/ink_memory.h"
 
 #include "api/ts/ts.h" // This is sadly needed because of us using TSThreadInit() for some reason.
 
@@ -1517,7 +1519,6 @@ main(int /* argc ATS_UNUSED */, const char **argv)
 #if defined(DEBUG) && defined(HAVE_MCHECK_PEDANTIC)
   mcheck_pedantic(NULL);
 #endif
-
   pcre_malloc = ats_malloc;
   pcre_free   = ats_free;
 
