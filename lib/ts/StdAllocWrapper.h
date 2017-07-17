@@ -91,7 +91,18 @@ class ObjAllocator : public std::allocator<T_OBJECT>
   using std::allocator<T_OBJECT>::deallocate; 
   using typename std::allocator<T_OBJECT>::value_type; 
  public: 
-  ObjAllocator(const char*name, unsigned chunk_size = 128) : name_(name) { }
+  ObjAllocator(const char*name, unsigned chunk_size = 128) : name_(name) 
+  { 
+    T_OBJECT *preCached[chunk_size];
+
+    for ( int n = chunk_size ; n-- ; ) {
+      preCached[chunk_size] = allocate(1);
+    }
+    for ( int n = chunk_size ; n-- ; ) {
+      free( preCached[chunk_size] );
+    }
+
+  }
 
   void *alloc_void() { return allocate(1); }
   void free_void(void *ptr) { deallocate(ptr); }
