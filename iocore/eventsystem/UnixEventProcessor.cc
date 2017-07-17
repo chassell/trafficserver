@@ -189,7 +189,8 @@ EventProcessor::ThreadGroupDescriptor::start(pthread_barrier_t &grpBarrier, EThr
 }
 
 
-Event *EventProcessor::spawn_thread(Continuation *cont, const char *thr_name, size_t stacksize)
+ink_thread 
+EventProcessor::spawn_thread(Continuation *cont, const char *thr_name, size_t stacksize)
 {
   EThread *&epEthread = all_dthreads[n_dthreads_nxt++];
   ink_semaphore stackWait;
@@ -222,6 +223,5 @@ Event *EventProcessor::spawn_thread(Continuation *cont, const char *thr_name, si
     contPtr->handleEvent(EVENT_IMMEDIATE, nullptr);
   };
 
-  Thread::start(stackWait, stacksize, startFxn);
-  return nullptr;
+  return Thread::start(stackWait, stacksize, startFxn);
 }
