@@ -36,13 +36,6 @@
 #include "HttpSM.h"
 #include "HttpDebugNames.h"
 
-// Initialize a thread to handle HTTP session management
-void
-initialize_thread_for_http_sessions
-{
-  
-}
-
 HttpSessionManager httpSessionManager;
 
 ServerSessionPool::ServerSessionPool() : Continuation(new_ProxyMutex()), m_ip_pool(1023), m_host_pool(1023)
