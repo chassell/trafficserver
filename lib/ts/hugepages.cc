@@ -23,6 +23,8 @@
 #include "ts/Diags.h"
 #include "ink_memory.h"
 
+#include <sys/mman.h>
+
 #define DEBUG_TAG "hugepages"
 
 #if ! MAP_HUGETLB 
