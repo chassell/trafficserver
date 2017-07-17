@@ -43,6 +43,7 @@
 #include "ts/ink_queue.h"
 #include "ts/ink_defs.h"
 #include "ts/ink_resource.h"
+#include "ts/ink_memory.h"
 
 #include <execinfo.h>    // for backtrace!
 
@@ -86,28 +87,39 @@ public:
 template <typename T_OBJECT>
 class ObjAllocator : public std::allocator<T_OBJECT>
 {
-  const char *name_;
-  using std::allocator<T_OBJECT>::allocate; 
-  using std::allocator<T_OBJECT>::deallocate; 
-  using typename std::allocator<T_OBJECT>::value_type; 
  public: 
+  using typename std::allocator<T_OBJECT>::value_type;
+
   ObjAllocator(const char*name, unsigned chunk_size = 128) : name_(name) 
   { 
     T_OBJECT *preCached[chunk_size];
 
     for ( int n = chunk_size ; n-- ; ) {
-      preCached[n] = allocate(1);
+      // create correct size and alignment
+      preCached[n] = static_cast<T_OBJECT*>( mallocx(sizeof(T_OBJECT), MALLOCX_ALIGN( alignof(T_OBJECT)) ) );
     }
     for ( int n = chunk_size ; n-- ; ) {
       free( preCached[n] );
     }
-
   }
 
-  void *alloc_void() { return allocate(1); }
+  void *alloc_void() { return allocate(); }
   void free_void(void *ptr) { deallocate(ptr); }
-  value_type *alloc() { return allocate(1); }
-  void free(value_type *ptr) { deallocate(ptr,1); }
+  value_type *alloc() { return allocate(); }
+  void free(value_type *ptr) { deallocate(ptr); }
+
+ protected:
+  T_OBJECT *allocate()
+  {
+    auto p = static_cast<T_OBJECT*>( mallocx(sizeof(T_OBJECT), MALLOCX_ALIGN( alignof(T_OBJECT))|MALLOCX_ZERO) );
+    this->construct(p); // default constructor + pre-zeroed
+    return p;
+  }
+
+  void deallocate(T_OBJECT *p) { sdallocx(p, sizeof(T_OBJECT), 0); }
+
+ private:
+  const char *name_;
 };
 
 class AllocatorStats { };
