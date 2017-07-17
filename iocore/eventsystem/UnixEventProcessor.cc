@@ -64,6 +64,7 @@ void pretty_print_cpuset(const char *thrname, hwloc_obj_type_t objtype, int affi
   Debug("iocore_thread", "EThread: %s -> %s# %d", thrname, objname, affid);
 #endif // HWLOC_API_VERSION
 }
+#endif
 
 EventProcessor::ThreadFxn_t EventProcessor::
 ThreadGroupDescriptor::s_dfltRunFxn = ThreadFxn_t( [](const InitFxn_t &readyFxn) { 
