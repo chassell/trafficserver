@@ -96,10 +96,10 @@ class ObjAllocator : public std::allocator<T_OBJECT>
     T_OBJECT *preCached[chunk_size];
 
     for ( int n = chunk_size ; n-- ; ) {
-      preCached[chunk_size] = allocate(1);
+      preCached[n] = allocate(1);
     }
     for ( int n = chunk_size ; n-- ; ) {
-      free( preCached[chunk_size] );
+      free( preCached[n] );
     }
 
   }
