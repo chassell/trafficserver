@@ -32,6 +32,7 @@
 #include "ts/ink_string.h"
 
 #include "ts/hugepages.h"
+#include "ts/ink_memory.h"
 
 ///////////////////////////////////////////////
 // Common Interface impl                     //
@@ -78,7 +79,9 @@ Thread::start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction
   auto page = (ats_hugepage_enabled() ? sizeof(MemoryPageHuge) : sizeof(MemoryPage) );
   stacksize = aligned_spacing( stacksize, page );
 
-  auto stack = ( ats_hugepage_enabled() ? new MemPageHuge[stacksize/sizeof(MemPageHuge)] : new MemPage[stacksize/sizeof(MemPage)] );
+  void *stack = ( ats_hugepage_enabled() 
+                       ? static_cast<void*>( new MemoryPageHuge[stacksize/sizeof(MemoryPageHuge)] ) 
+                       : static_cast<void*>( new MemoryPage[stacksize/sizeof(MemoryPage)] )          );
 
   ink_sem_init(&stackWait,0);
 
