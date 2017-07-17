@@ -75,10 +75,10 @@ Thread::start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction
     { static_cast<ThreadFunction*>(ptr)->operator()(); return nullptr; };
 
   // Make sure it is a multiple of our page size
-  auto page = (ats_hugepage_enabled() ? ats_hugepage_size() : ats_pagesize() );
+  auto page = (ats_hugepage_enabled() ? sizeof(MemoryPageHuge) : sizeof(MemoryPage) );
   stacksize = aligned_spacing( stacksize, page );
 
-  auto stack = ( ats_hugepage_enabled() ? ats_alloc_hugepage(stacksize) : ats_memalign(ats_pagesize(), stacksize) );
+  auto stack = ( ats_hugepage_enabled() ? new MemPageHuge[stacksize/sizeof(MemPageHuge)] : new MemPage[stacksize/sizeof(MemPage)] );
 
   ink_sem_init(&stackWait,0);
 
