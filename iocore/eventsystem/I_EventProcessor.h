@@ -260,6 +260,9 @@ public:
     thread_group[ev_type]._spawnQueue.push_back(fxn);
   }
 
+  /// Schedule the function @a f to be called in a thread of type @a ev_type when it is spawned.
+  void schedule_spawn(void(*fxn)(EThread*), EventType ev_type) { schedule_spawn(InitFxn_t(fxn), ev_type); }
+
   EventProcessor()
   {
     ink_zero(all_ethreads);

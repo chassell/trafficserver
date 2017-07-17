@@ -68,9 +68,9 @@ void pretty_print_cpuset(const char *thrname, hwloc_obj_type_t objtype, int affi
 
 EventProcessor::ThreadFxn_t EventProcessor::
 ThreadGroupDescriptor::s_dfltRunFxn = ThreadFxn_t( [](const InitFxn_t &readyFxn) { 
-                                             EThread _base{REGULAR,0}; // store an EThread obj
-                                             readyFxn(&_base);
-                                             _base.execute();
+                                             std::unique_ptr<EThread> _base{new EThread{REGULAR,0}}; // store an EThread obj
+                                             readyFxn(_base.get());
+                                             _base->execute();
                                           } );
 
 EventType
@@ -93,7 +93,7 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
   Debug("iocore_thread", "Thread stack size set to %zu", stacksize);
 
   pthread_barrier_t grpBarrier;
-  pthread_barrier_init(&grpBarrier,nullptr,n_threads+1);
+  ink_release_assert( pthread_barrier_init(&grpBarrier,nullptr,n_threads+1) == 0 );
 
   for (int i = 0; i < n_threads; ++i)
   {
@@ -178,7 +178,7 @@ EventProcessor::ThreadGroupDescriptor::start(pthread_barrier_t &grpBarrier, EThr
 
   auto startFxn = [&runFxn,&launchFxnPassed]() {
     // local copy [parent is blocked]
-    InitFxn_t launchFxn = launchFxnPassed;
+    InitFxn_t launchFxn{launchFxnPassed};
     runFxn(launchFxn); 
   };
 
@@ -210,11 +210,12 @@ Event *EventProcessor::spawn_thread(Continuation *cont, const char *thr_name, si
 
   auto startFxn = [&launchFxnPassed,cont]()
   {
-    EThread _base;
+    std::unique_ptr<EThread> _base{ new EThread };
+    InitFxn_t launchFxn{launchFxnPassed};
 
-    Continuation *contPtr  = cont;
+    Continuation *contPtr = cont;
 
-    launchFxnPassed(&_base);
+    launchFxn(_base.get());
 
     // parent can continue 
 
