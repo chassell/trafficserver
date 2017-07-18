@@ -330,8 +330,6 @@ NodesIDVector_t::value_type get_nodes_id_by_affinity(hwloc_obj_type_t objtype, u
 
 ArenaIDVector_t::value_type get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
 {
-  static ink_mutex s_mutex = PTHREAD_MUTEX_INITIALIZER;
-
   auto nsid = get_nodes_id_by_affinity(objtype,affid);
 
   if ( ! nsid ) {
@@ -342,6 +340,9 @@ ArenaIDVector_t::value_type get_arena_by_affinity(hwloc_obj_type_t objtype, unsi
     return g_arenaByNodesID[nsid];
   }
 
+  ink_release_assert(kUniqueNodeSets.size() > nsid);
+
+  static ink_mutex s_mutex = PTHREAD_MUTEX_INITIALIZER;
   ink_scoped_mutex_lock lock{s_mutex};
 
   g_arenaByNodesID.resize(kUniqueNodeSets.size()); 

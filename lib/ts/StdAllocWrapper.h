@@ -92,31 +92,31 @@ class ObjAllocator : public std::allocator<T_OBJECT>
 
   ObjAllocator(const char*name, unsigned chunk_size = 128) : name_(name) 
   { 
-    T_OBJECT *preCached[chunk_size];
+    value_type *preCached[chunk_size];
 
     for ( int n = chunk_size ; n-- ; ) {
       // create correct size and alignment
-      preCached[n] = static_cast<T_OBJECT*>( mallocx(sizeof(T_OBJECT), MALLOCX_ALIGN( alignof(T_OBJECT)) ) );
+      preCached[n] = static_cast<value_type*>( mallocx(sizeof(value_type), MALLOCX_ALIGN( alignof(value_type)) ) );
     }
     for ( int n = chunk_size ; n-- ; ) {
-      free( preCached[n] );
+      deallocate( preCached[n] );
     }
   }
 
   void *alloc_void() { return allocate(); }
-  void free_void(void *ptr) { deallocate(ptr); }
+  void free_void(void *ptr) { static_cast<value_type*>(ptr)->~value_type(); deallocate(ptr); }
   value_type *alloc() { return allocate(); }
-  void free(value_type *ptr) { deallocate(ptr); }
+  void free(value_type *ptr) { ptr->~value_type(); deallocate(ptr); }
 
  protected:
-  T_OBJECT *allocate()
+  value_type *allocate()
   {
-    auto p = static_cast<T_OBJECT*>( mallocx(sizeof(T_OBJECT), MALLOCX_ALIGN( alignof(T_OBJECT))|MALLOCX_ZERO) );
+    auto p = static_cast<value_type*>( mallocx(sizeof(value_type), MALLOCX_ALIGN( alignof(value_type))|MALLOCX_ZERO) );
     this->construct(p); // default constructor + pre-zeroed
     return p;
   }
 
-  void deallocate(T_OBJECT *p) { sdallocx(p, sizeof(T_OBJECT), 0); }
+  void deallocate(value_type *p) { sdallocx(p, sizeof(value_type), 0); }
 
  private:
   const char *name_;
