@@ -20,6 +20,7 @@
  */
 #ifndef _hugepages_h_
 #define _hugepages_h_
+#include "ink_memory.h"
 
 #include <cstring>
 
@@ -28,5 +29,10 @@ bool ats_hugepage_enabled(void);
 void ats_hugepage_init(int);
 void *ats_alloc_hugepage(size_t);
 bool ats_free_hugepage(void *, size_t);
+
+#if HAVE_LIBJEMALLOC
+chunk_hooks_t const &get_jemallctl_huge_hooks();
+chunk_hooks_t const &get_jemallctl_huge_nodump_hooks();
+#endif
 
 #endif

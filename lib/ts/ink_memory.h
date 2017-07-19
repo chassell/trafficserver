@@ -23,12 +23,17 @@
 #ifndef _ink_memory_h_
 #define _ink_memory_h_
 
+#include "ts/ink_config.h"
+#include "ts/ink_defs.h"
+
+#include <vector>
+#include <functional>
+#include <memory>
+
 #include <ctype.h>
 #include <string.h>
 #include <strings.h>
 #include <inttypes.h>
-
-#include "ts/ink_config.h"
 
 #if HAVE_UNISTD_H
 #include <unistd.h>
@@ -46,32 +51,21 @@
 #include <sys/mman.h>
 #endif
 
-#if TS_HAS_JEMALLOC
+#if HAVE_JEMALLOC_JEMALLOC_H
 #include <jemalloc/jemalloc.h>
+#elif HAVE_JEMALLOC_H
+#include <jemalloc.h>
 #else
 #if HAVE_MALLOC_H
 #include <malloc.h>
 #endif // ! HAVE_MALLOC_H
-#endif // ! TS_HAS_JEMALLOC
+#endif // ! HAVE_JEMALLOC_H && ! HAVE_JEMALLOC_JEMALLOC_H
 
-#ifndef MADV_NORMAL
-#define MADV_NORMAL 0
-#endif
 
-#ifndef MADV_RANDOM
-#define MADV_RANDOM 1
-#endif
-
-#ifndef MADV_SEQUENTIAL
-#define MADV_SEQUENTIAL 2
-#endif
-
-#ifndef MADV_WILLNEED
-#define MADV_WILLNEED 3
-#endif
-
-#ifndef MADV_DONTNEED
-#define MADV_DONTNEED 4
+#if HAVE_SYS_USER_H
+#include <sys/user.h>
+#elif ! PAGE_SIZE
+#define PAGE_SIZE 4096
 #endif
 
 #ifdef __cplusplus
@@ -87,11 +81,7 @@ void *ats_memalign(size_t alignment, size_t size);
 void ats_free(void *ptr);
 void *ats_free_null(void *ptr);
 void ats_memalign_free(void *ptr);
-int ats_mallopt(int param, int value);
-
-int ats_msync(caddr_t addr, size_t len, caddr_t end, int flags);
 int ats_madvise(caddr_t addr, size_t len, int flags);
-int ats_mlock(caddr_t addr, size_t len);
 
 void *ats_track_malloc(size_t size, uint64_t *stat);
 void *ats_track_realloc(void *ptr, size_t size, uint64_t *alloc_stat, uint64_t *free_stat);
@@ -116,6 +106,9 @@ static inline size_t __attribute__((const)) ats_pagesize(void)
   return page_size;
 }
 
+using MemoryPage = std::aligned_storage<PAGE_SIZE,PAGE_SIZE>::type;
+using MemoryPageHuge = std::aligned_storage<(PAGE_SIZE<<9),(PAGE_SIZE<<9)>::type;
+
 /* Some convenience wrappers around strdup() functionality */
 char *_xstrdup(const char *str, int length, const char *path);
 
@@ -127,6 +120,22 @@ char *_xstrdup(const char *str, int length, const char *path);
 #endif
 
 #ifdef __cplusplus
+
+#if HAVE_LIBJEMALLOC 
+namespace numa
+{
+  static inline hwloc_topology_t curr() { return ink_get_topology(); }
+
+  unsigned new_affinity_id();
+
+  hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+  int assign_thread_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit usable cpus to specific cpuset
+
+  // NOTE: creates new arenas under mutex if none present
+  unsigned get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+  int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit new pages to specific nodes
+}
+#endif
 
 template <typename PtrType, typename SizeType>
 static inline IOVec
@@ -378,6 +387,14 @@ public:
     return *this;
   }
 };
+
+template <class T_OBJ>
+auto ats_return_unique_copy( const T_OBJ &obj ) -> std::unique_ptr<T_OBJ>
+  { return std::unique_ptr<T_OBJ>( new T_OBJ(obj) ); }
+
+template <class T_OBJ>
+auto ats_return_unique( T_OBJ *ptr ) -> std::unique_ptr<T_OBJ>
+  { return std::unique_ptr<T_OBJ>(ptr); }
 
 namespace detail
 {

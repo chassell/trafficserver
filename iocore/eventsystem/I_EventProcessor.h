@@ -29,6 +29,8 @@
 #include "I_Processor.h"
 #include "I_Event.h"
 
+#include <atomic>
+
 #ifdef TS_MAX_THREADS_IN_EACH_THREAD_TYPE
 const int MAX_THREADS_IN_EACH_TYPE = TS_MAX_THREADS_IN_EACH_THREAD_TYPE;
 #else
@@ -100,6 +102,23 @@ class EThread;
 class EventProcessor : public Processor
 {
 public:
+  using InitFxn_t = std::function<void(EThread *)>;
+  using ThreadFxn_t = std::function<void(const InitFxn_t &)>;
+
+  /** Register an event type with @a name.
+
+      This must be called to get an event type to pass to @c spawn_event_threads
+      @see spawn_event_threads
+   */
+  EventType register_event_type(char const *name)
+  {
+    ThreadGroupDescriptor *tg = &(thread_group[n_thread_groups++]);
+    ink_release_assert(n_thread_groups <= MAX_EVENT_TYPES); // check for overflow
+
+    tg->_name = ats_strdup(name);
+    return n_thread_groups - 1;
+  }
+
   /**
     Spawn an additional thread for calling back the continuation. Spawns
     a dedicated thread (EThread) that calls back the continuation passed
@@ -110,7 +129,7 @@ public:
     @return event object representing the start of the thread.
 
   */
-  Event *spawn_thread(Continuation *cont, const char *thr_name, size_t stacksize = 0);
+  ink_thread spawn_thread(Continuation *cont, const char *thr_name, size_t stacksize = 0);
 
   /**
     Spawns a group of threads for an event type. Spawns the number of
@@ -121,7 +140,16 @@ public:
     @return EventType or thread id for the new group of threads.
 
   */
-  EventType spawn_event_threads(int n_threads, const char *et_name, size_t stacksize);
+  /// Convenience overload.
+  /// This registers @a name as an event type using @c registerEventType and then calls the real @c spawn_event_threads
+  EventType spawn_event_threads(int n_thread, const char *name, size_t stacksize)
+  {
+    int ev_type = this->register_event_type(name);
+    this->spawn_event_threads(ev_type, n_thread, stacksize);
+    return ev_type;
+  }
+
+  EventType spawn_event_threads(EventType ev_type, int n_threads, size_t stacksize = DEFAULT_STACKSIZE);
 
   /**
     Schedules the continuation on a specific EThread to receive an event
@@ -228,7 +256,24 @@ public:
   Event *reschedule_in(Event *e, ink_hrtime atimeout_in, int callback_event = EVENT_INTERVAL);
   Event *reschedule_every(Event *e, ink_hrtime aperiod, int callback_event = EVENT_INTERVAL);
 
-  EventProcessor();
+  /// Schedule the function @a f to be called in a thread of type @a ev_type when it is spawned.
+  void schedule_spawn(const InitFxn_t &fxn, EventType ev_type)
+  {
+    ink_assert(ev_type < MAX_EVENT_TYPES);
+    thread_group[ev_type]._spawnQueue.push_back(fxn);
+  }
+
+  EventProcessor()
+  {
+    ink_zero(all_ethreads);
+    ink_zero(all_dthreads);
+    // Because ET_NET is compile time set to 0 it *must* be the first type registered.
+    this->register_event_type("ET_NET");
+  }
+
+  ~EventProcessor() { }
+  EventProcessor(const EventProcessor &) = delete;
+  EventProcessor &operator=(const EventProcessor &) = delete;
 
   /**
     Initializes the EventProcessor and its associated threads. Spawns the
@@ -246,7 +291,7 @@ public:
     all of the threads in each of the thread groups.
 
   */
-  virtual void shutdown();
+  virtual void shutdown() override;
 
   /**
     Allocates size bytes on the event threads. This function is thread
@@ -273,10 +318,50 @@ public:
     thread group id and the second the EThread pointers for that group.
 
   */
-  EThread *eventthread[MAX_EVENT_TYPES][MAX_THREADS_IN_EACH_TYPE];
+  //  EThread *eventthread[MAX_EVENT_TYPES][MAX_THREADS_IN_EACH_TYPE];
 
-  unsigned int next_thread_for_type[MAX_EVENT_TYPES];
-  int n_threads_for_type[MAX_EVENT_TYPES];
+  /// Data kept for each thread group.
+  /// The thread group ID is the index into an array of these and so is not stored explicitly.
+  struct ThreadGroupDescriptor 
+  {
+    friend class EventProcessor;
+    static ThreadFxn_t s_dfltRunFxn;
+
+    ink_thread start(pthread_barrier_t &grpBarrier, EThread *&epEthread, int stacksize, const ThreadFxn_t &runFxn = s_dfltRunFxn);
+    unsigned n_threads() const                { return _count; }
+    unsigned next_round_robin()               { return _next_round_robin++; }
+    EThread **begin() { return &_thread[0]; }
+    EThread **end() { return &_thread[_count]; }
+    EThread *const &operator[](size_t i) const { return _thread[i]; }
+    operator EThread **()                     { return begin(); }
+
+    hwloc_obj_type_t _affcfg = hwloc_obj_type_t{};                              ///< config thread-affinity [default: entire machine]
+  private:
+    ats_scoped_str _name;                         ///< Name for the thread group.
+    std::atomic_uint _count{0};                  ///< # of threads of this type.
+    std::atomic_uint _next_round_robin{0};       ///< Index of thread to use for events assigned to this group.
+
+    /// The actual threads in this group.
+    EThread *_thread[MAX_THREADS_IN_EACH_TYPE] = { nullptr };
+
+    std::vector<InitFxn_t> _spawnQueue; ///< calls to init EThread upon spawning
+  };
+
+  std::atomic_uint n_ethreads_nxt;
+  std::atomic_uint n_dthreads_nxt;
+
+  /// Storage for per group data.
+  ThreadGroupDescriptor thread_group[MAX_EVENT_TYPES];
+
+  // two getter functors
+  struct { 
+       EventProcessor &_ep;
+       ThreadGroupDescriptor &operator[](size_t n) { return _ep.thread_group[n]; } 
+  } eventthread = { { *this } };
+  struct { 
+       EventProcessor &_ep;
+       int operator[](size_t n) { return static_cast<int>(_ep.thread_group[n].n_threads()); } 
+  } n_threads_for_type = { { *this } };
 
   /**
     Total number of threads controlled by this EventProcessor.  This is
@@ -284,19 +369,15 @@ public:
     those created by spawn_thread
 
   */
-  int n_ethreads;
+  int n_ethreads = 0;
 
   /**
     Total number of thread groups created so far. This is the count of
     all the thread groups (event types) created for this EventProcessor.
 
   */
-  int n_thread_groups;
+  int n_thread_groups = 0;
 
-private:
-  // prevent unauthorized copies (Not implemented)
-  EventProcessor(const EventProcessor &);
-  EventProcessor &operator=(const EventProcessor &);
 
 public:
   /*------------------------------------------------------*\
