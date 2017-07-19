@@ -733,9 +733,9 @@ CoreUtils::process_EThread(EThread *eth_test)
 
     printf("----------- EThread @ 0x%p ----------\n", eth_test);
 #if !defined(kfreebsd) && (defined(freebsd) || defined(darwin) || defined(openbsd))
-    printf("   thread_id: %p\n", loaded_eth->tid);
+    printf("   thread_id: %p\n", loaded_eth->tid());
 #else
-    printf("   thread_id: %i\n", (int)loaded_eth->tid);
+    printf("   thread_id: %i\n", (int)loaded_eth->tid());
 #endif
     //    printf("   NetHandler: 0x%x\n\n", (int) loaded_eth->netHandler);
   }

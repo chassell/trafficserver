@@ -29,15 +29,6 @@
 
 const int LOAD_BALANCE_INTERVAL = 1;
 
-TS_INLINE
-EventProcessor::EventProcessor() : n_ethreads(0), n_thread_groups(0), n_dthreads(0), thread_data_used(0)
-{
-  memset(all_ethreads, 0, sizeof(all_ethreads));
-  memset(all_dthreads, 0, sizeof(all_dthreads));
-  memset(n_threads_for_type, 0, sizeof(n_threads_for_type));
-  memset(next_thread_for_type, 0, sizeof(next_thread_for_type));
-}
-
 TS_INLINE off_t
 EventProcessor::allocate(int size)
 {
@@ -61,10 +52,11 @@ EventProcessor::assign_thread(EventType etype)
   int next;
 
   ink_assert(etype < MAX_EVENT_TYPES);
-  if (n_threads_for_type[etype] > 1)
-    next = next_thread_for_type[etype]++ % n_threads_for_type[etype];
-  else
+  if (n_threads_for_type[etype] > 1) {
+    next = thread_group[etype].next_round_robin() % n_threads_for_type[etype];
+  } else {
     next = 0;
+  }
   return (eventthread[etype][next]);
 }
 
