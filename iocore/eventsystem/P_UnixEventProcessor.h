@@ -53,11 +53,12 @@ EventProcessor::assign_thread(EventType etype)
   ThreadGroupDescriptor *tg = &thread_group[etype];
 
   ink_assert(etype < MAX_EVENT_TYPES);
-  if (tg->_count > 1)
-    next = tg->_next_round_robin++ % tg->_count;
-  else
+  if (tg->n_threads() > 1) {
+    next = tg->next_round_robin() % tg->n_threads();
+  } else {
     next = 0;
-  return tg->_thread[next];
+  }
+  return (*tg)[next];
 }
 
 TS_INLINE Event *

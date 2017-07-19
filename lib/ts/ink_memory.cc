@@ -35,6 +35,7 @@
 #endif
 
 #include <atomic>
+#include <algorithm>
 
 #include <cassert>
 #if defined(linux) && ! defined(_XOPEN_SOURCE)

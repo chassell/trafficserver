@@ -253,9 +253,6 @@ public:
   Event *reschedule_in(Event *e, ink_hrtime atimeout_in, int callback_event = EVENT_INTERVAL);
   Event *reschedule_every(Event *e, ink_hrtime aperiod, int callback_event = EVENT_INTERVAL);
 
-//  void schedule_spawn(void(*fxn)(EThread*), EventType ev_type)
-//    { return schedule_spawn(InitFxn_t(fxn),ev_type); }
-
   /// Schedule the function @a f to be called in a thread of type @a ev_type when it is spawned.
   void schedule_spawn(const InitFxn_t &fxn, EventType ev_type)
   {
@@ -324,22 +321,32 @@ public:
   /// The thread group ID is the index into an array of these and so is not stored explicitly.
   struct ThreadGroupDescriptor 
   {
+    friend class EventProcessor;
     static ThreadFxn_t s_dfltRunFxn;
 
     ink_thread start(pthread_barrier_t &grpBarrier, EThread *&epEthread, int stacksize, const ThreadFxn_t &runFxn = s_dfltRunFxn);
 
+    int n_threads() const                { return static_cast<int>(_count); }
+    int next_round_robin()               { return static_cast<int>(_next_round_robin++); }
+    EThread **begin() { return &_thread[0]; }
+    EThread **end() { return &_thread[_count]; }
+    EThread *const &operator[](size_t i) const { return _thread[i]; }
+    operator EThread **()                     { return begin(); }
+
     hwloc_obj_type_t _affcfg = hwloc_obj_type_t{};                              ///< config thread-affinity [default: entire machine]
+  private:
     ats_scoped_str _name;                         ///< Name for the thread group.
-    std::atomic_uint _count{0};                  ///< # of threads of this type.
     std::atomic_uint _next_round_robin{0};       ///< Index of thread to use for events assigned to this group.
     std::vector<InitFxn_t> _spawnQueue; ///< calls to init EThread upon spawning
 
+  public:
+    std::atomic_uint _count{0};                  ///< # of threads of this type.
     /// The actual threads in this group.
     EThread *_thread[MAX_THREADS_IN_EACH_TYPE] = { nullptr };
   };
 
-  std::atomic_uint n_ethreads_nxt{0};
-  std::atomic_uint n_dthreads_nxt{0};
+  std::atomic_uint n_ethreads_nxt;
+  std::atomic_uint n_dthreads_nxt;
 
   /// Storage for per group data.
   ThreadGroupDescriptor thread_group[MAX_EVENT_TYPES];

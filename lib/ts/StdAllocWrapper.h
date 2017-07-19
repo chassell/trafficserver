@@ -89,6 +89,7 @@ class ObjAllocator : public std::allocator<T_OBJECT>
 {
  public: 
   using typename std::allocator<T_OBJECT>::value_type;
+  using typename std::allocator<T_OBJECT>::pointer;
 
   ObjAllocator(const char*name, unsigned chunk_size = 128) : name_(name) 
   { 
@@ -104,9 +105,9 @@ class ObjAllocator : public std::allocator<T_OBJECT>
   }
 
   void *alloc_void() { return allocate(); }
-  void free_void(void *ptr) { static_cast<value_type*>(ptr)->~value_type(); deallocate(ptr); }
+  void free_void(void *ptr) { this->destroy(static_cast<pointer>(ptr)); deallocate(ptr); }
   value_type *alloc() { return allocate(); }
-  void free(value_type *ptr) { ptr->~value_type(); deallocate(ptr); }
+  void free(value_type *ptr) { this->destroy(ptr); deallocate(ptr); }
 
  protected:
   value_type *allocate()

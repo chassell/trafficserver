@@ -27,6 +27,24 @@
 
 #include <memory>
 
+#include "ts/ink_time.h"
+
+union Alias32 {
+  uint8_t byte[4];
+  int32_t i32;
+  uint32_t u32;
+};
+
+union Alias64 {
+  uint8_t byte[8];
+  int32_t i32[2];
+  uint32_t u32[2];
+  int64_t i64;
+  uint64_t u64;
+  ink_time_t i_time;
+};
+
+
 template <typename T_OBJ>
 inline T_OBJ *ats_align(std::size_t alignment, std::size_t size, T_OBJ *&ptr, std::size_t &space)
 {

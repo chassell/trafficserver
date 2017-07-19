@@ -32,6 +32,8 @@
 #include "ts/ink_defs.h"
 #include "ts/hugepages.h"
 
+#include <algorithm>
+
 /// Global singleton.
 class EventProcessor eventProcessor;
 
