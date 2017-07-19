@@ -31,14 +31,24 @@
 #include "P_EventSystem.h"
 #include "ts/ink_string.h"
 
+#include "ts/hugepages.h"
+#include "ts/ink_memory.h"
+
 ///////////////////////////////////////////////
 // Common Interface impl                     //
 ///////////////////////////////////////////////
 
-static ink_thread_key init_thread_key();
+ink_hrtime Thread::cur_time = ink_get_hrtime_internal();
+inkcoreapi ink_thread_key Thread::thread_data_key;
 
-ink_hrtime Thread::cur_time                       = 0;
-inkcoreapi ink_thread_key Thread::thread_data_key = init_thread_key();
+namespace
+{
+static bool initialized = ([]() -> bool {
+  // File scope initialization goes here.
+  ink_thread_key_create(&Thread::thread_data_key, nullptr);
+  return true;
+})();
+}
 
 Thread::Thread()
 {
@@ -47,59 +57,40 @@ Thread::Thread()
   mutex->nthread_holding = THREAD_MUTEX_THREAD_HOLDING;
 }
 
-static void
-key_destructor(void *value)
-{
-  (void)value;
-}
 
-ink_thread_key
-init_thread_key()
+Thread::~Thread()
 {
-  ink_thread_key_create(&Thread::thread_data_key, key_destructor);
-  return Thread::thread_data_key;
+  ink_release_assert(mutex->thread_holding == (EThread *)this);
+  mutex->nthread_holding -= THREAD_MUTEX_THREAD_HOLDING;
+  MUTEX_UNTAKE_LOCK(mutex, (EThread *)this);
 }
 
 ///////////////////////////////////////////////
 // Unix & non-NT Interface impl              //
 ///////////////////////////////////////////////
 
-struct thread_data_internal {
-  ThreadFunction f;
-  void *a;
-  Thread *me;
-  char name[MAX_THREAD_NAME_LENGTH];
-};
-
-static void *
-spawn_thread_internal(void *a)
-{
-  thread_data_internal *p = (thread_data_internal *)a;
-
-  p->me->set_specific();
-  ink_set_thread_name(p->name);
-  if (p->f)
-    p->f(p->a);
-  else
-    p->me->execute();
-  ats_free(a);
-  return nullptr;
-}
 
 ink_thread
-Thread::start(const char *name, size_t stacksize, ThreadFunction f, void *a, void *stack)
+Thread::start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction &hookFxn)
 {
-  thread_data_internal *p = (thread_data_internal *)ats_malloc(sizeof(thread_data_internal));
+  auto threadHook = [](void *ptr) -> void*
+    { static_cast<ThreadFunction*>(ptr)->operator()(); return nullptr; };
 
-  p->f  = f;
-  p->a  = a;
-  p->me = this;
-  memset(p->name, 0, MAX_THREAD_NAME_LENGTH);
-  ink_strlcpy(p->name, name, MAX_THREAD_NAME_LENGTH);
-  if (stacksize == 0) {
-    stacksize = DEFAULT_STACKSIZE;
-  }
-  tid = ink_thread_create(spawn_thread_internal, (void *)p, 0, stacksize, stack);
+  // Make sure it is a multiple of our page size
+  auto page = (ats_hugepage_enabled() ? sizeof(MemoryPageHuge) : sizeof(MemoryPage) );
+  stacksize = aligned_spacing( stacksize, page );
+
+  void *stack = ( ats_hugepage_enabled() 
+                       ? static_cast<void*>( new MemoryPageHuge[stacksize/sizeof(MemoryPageHuge)] ) 
+                       : static_cast<void*>( new MemoryPage[stacksize/sizeof(MemoryPage)] )          );
+
+  ink_sem_init(&stackWait,0);
+
+  auto tid = ink_thread_create(threadHook, const_cast<ThreadFunction*>(&hookFxn), false, stacksize, stack);
+
+  // wait on child init 
+  ink_sem_wait(&stackWait);
+  ink_sem_destroy(&stackWait);
 
   return tid;
 }

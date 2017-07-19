@@ -38,6 +38,7 @@
 #include "ts/ink_syslog.h"
 #include "ts/hugepages.h"
 #include "ts/runroot.cc"
+#include "ts/ink_memory.h"
 
 #include <syslog.h>
 

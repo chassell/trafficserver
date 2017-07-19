@@ -20,6 +20,9 @@
   See the License for the specific language governing permissions and
   limitations under the License.
  */
+#include "ts/jemallctl.h"
+#include "hugepages.h"
+
 #include "ts/ink_platform.h"
 #include "ts/ink_memory.h"
 #include "ts/ink_defs.h"
@@ -31,15 +34,19 @@
 #include <malloc_np.h> // for malloc_usable_size
 #endif
 
+#include <atomic>
+#include <algorithm>
+
 #include <cassert>
-#if defined(linux)
-// XXX: SHouldn't that be part of CPPFLAGS?
-#ifndef _XOPEN_SOURCE
+#if defined(linux) && ! defined(_XOPEN_SOURCE)
 #define _XOPEN_SOURCE 600
 #endif
-#endif
+
+#include <vector>
 #include <cstdlib>
 #include <cstring>
+
+#include <string>
 
 void *
 ats_malloc(size_t size)
@@ -143,18 +150,17 @@ ats_memalign_free(void *ptr)
 int
 ats_mallopt(int param ATS_UNUSED, int value ATS_UNUSED)
 {
-#if TS_HAS_JEMALLOC
+#if HAVE_LIBJEMALLOC
 // TODO: jemalloc code ?
-#else
-#if TS_HAS_TCMALLOC
-// TODO: tcmalloc code ?
-#else
-#if defined(linux)
-  return mallopt(param, value);
-#endif // ! defined(linux)
-#endif // ! TS_HAS_TCMALLOC
-#endif // ! TS_HAS_JEMALLOC
   return 0;
+#elif TS_HAS_TCMALLOC
+// TODO: tcmalloc code ?
+  return 0;
+#elif defined(linux)
+  return mallopt(param, value);
+#else
+  return 0;
+#endif
 }
 
 int
@@ -271,3 +277,324 @@ _xstrdup(const char *str, int length, const char * /* path ATS_UNUSED */)
   }
   return nullptr;
 }
+
+#if ! TS_USE_HWLOC
+using CpuSetVector_t = std::vector<void*>;
+#else
+using CpuSetVector_t = std::vector<hwloc_const_cpuset_t>;
+using NodeSetVector_t = std::vector<hwloc_const_nodeset_t>;
+using NodesIDVector_t = std::vector<unsigned>;
+using ArenaIDVector_t = std::vector<unsigned>;
+
+static auto const kHwlocBitmapDeleter = [](hwloc_bitmap_t map){ map ? hwloc_bitmap_free(map) : (void) 0; };
+
+struct hwloc_bitmap : public std::unique_ptr<hwloc_bitmap_s,decltype(kHwlocBitmapDeleter)>
+{
+  using super = std::unique_ptr<hwloc_bitmap_s,decltype(kHwlocBitmapDeleter)>;
+  hwloc_bitmap() : super{ hwloc_bitmap_alloc(), kHwlocBitmapDeleter } 
+     { }
+  hwloc_bitmap(hwloc_const_bitmap_t map) : super{ hwloc_bitmap_dup(map), kHwlocBitmapDeleter } 
+     { }
+  operator hwloc_const_bitmap_t() const
+     { return get(); }
+  operator hwloc_bitmap_t()
+     { return get(); }
+};
+
+////////////////////////////////// namespace numa
+namespace numa {
+
+extern hwloc_const_cpuset_t const kCpusAllowed;
+extern hwloc_const_nodeset_t const kNodesAllowed;
+extern NodeSetVector_t const kUniqueNodeSets;
+
+// filled in on creation of arenas
+NodeSetVector_t g_nodesByArena = { kNodesAllowed };
+
+// list of arenas (arena ids) created from unique nodeset list
+ArenaIDVector_t g_arenaByNodesID = { 0 };
+
+hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+NodesIDVector_t::value_type get_nodes_id_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+
+ArenaIDVector_t::value_type get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
+{
+  auto nsid = get_nodes_id_by_affinity(objtype,affid);
+
+  if ( ! nsid ) {
+    return 0;
+  }
+
+  if ( g_arenaByNodesID.size() >= kUniqueNodeSets.size() && g_arenaByNodesID[nsid] ) {
+    return g_arenaByNodesID[nsid];
+  }
+
+  ink_release_assert(kUniqueNodeSets.size() > nsid);
+
+  static ink_mutex s_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+  ink_mutex_acquire(&s_mutex);
+
+  g_arenaByNodesID.resize(kUniqueNodeSets.size()); 
+
+  if ( g_arenaByNodesID[nsid] ) {
+    return g_arenaByNodesID[nsid];
+  }
+
+  // need a new arena for this set of nodes
+
+  unsigned newArena = jemallctl::do_arenas_extend();
+
+  Debug("memory", "extending arena to %u", newArena);
+
+  int callerArena = jemallctl::thread_arena(); // push current arena (for a moment)
+
+  jemallctl::set_thread_arena(newArena);
+  jemallctl::set_thread_arena_hooks(get_jemallctl_huge_hooks()); // init hooks for hugepage
+
+  // re-use caller's arena for allocations
+  jemallctl::set_thread_arena(callerArena);
+
+  // store the node-set that this arena is going to partition off
+  if ( g_nodesByArena.size() < newArena+1 ) {
+    g_nodesByArena.resize(newArena+1); // filled with nullptr if needed
+  }
+
+  g_nodesByArena[newArena] = hwloc_bitmap{ kUniqueNodeSets[nsid] }.release();
+  g_arenaByNodesID[nsid] = newArena;
+
+  ink_mutex_release(&s_mutex);
+
+  return newArena; // affid/cpuset now leads to this arena
+}
+
+unsigned new_affinity_id() 
+{
+  static std::atomic_uint g_affinityId{1}; // zero is 'unset'
+  return ++g_affinityId;
+}
+
+bool is_same_thread_memory_affinity(hwloc_obj_type_t objtype, unsigned affid)
+  { return get_arena_by_affinity(objtype,affid) == jemallctl::thread_arena(); }
+
+int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid) // limit new pages to specific nodes
+{
+  // keep using old arena for a moment...
+
+  auto arena = get_arena_by_affinity(objtype,affid);
+
+  if ( arena > g_nodesByArena.size() ) {
+    return -1;
+  }
+
+  auto nodes = g_nodesByArena[arena];
+
+  if ( ! nodes || hwloc_bitmap_iszero(nodes) ) {
+    return -1;
+  }
+
+  // only get new pages from this nodeset ... (all if arena == 0)
+  auto r = hwloc_set_membind_nodeset(curr(), nodes, HWLOC_MEMBIND_INTERLEAVE, HWLOC_MEMBIND_THREAD);
+  if ( r ) {
+    return -1;
+  }
+
+  // thread-wide change in place
+  jemallctl::set_thread_arena(arena); // make it active now
+  return 0;
+}
+
+int assign_thread_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid) // limit usable cpus to specific cpuset
+  { return hwloc_set_cpubind(curr(), get_cpuset_by_affinity(objtype,affid), HWLOC_CPUBIND_STRICT); }
+
+static void reorder_interleaved(CpuSetVector_t const &supers, CpuSetVector_t &subs);
+
+//
+// produce a list of cpusets associated with the object passed
+//
+auto get_obj_cpusets(hwloc_obj_type_t objtype, CpuSetVector_t const &supers=CpuSetVector_t{}) -> CpuSetVector_t
+{
+  auto n = hwloc_get_nbobjs_by_type(curr(), objtype);
+
+  // is there no partition at all?
+  if ( n < 2 ) {
+    return std::move(CpuSetVector_t( { kCpusAllowed } )); // one set.. of all cpus
+  }
+
+  CpuSetVector_t sets;
+
+  while ( n-- ) 
+  {
+    hwloc_obj_t obj = hwloc_get_obj_by_type(curr(), objtype, n);
+    sets.emplace_back( obj ? obj->cpuset : kCpusAllowed );
+  }
+
+  // reorder any neighbors to interleave between superset-matching cpusets
+
+  if ( sets.size() >= 2 && supers.size() >= 2 ) {
+    reorder_interleaved(supers,sets);
+  }
+
+  return std::move(sets);
+}
+
+//
+// use newVect cpusets and NUMA nodesets (may require new arenas)
+//
+auto cpusets_to_memory_arenas(const NodeSetVector_t &uniqueSets, CpuSetVector_t const &newVect) -> NodesIDVector_t 
+{
+  // no differences for all threads?
+  if ( newVect.size() <= 1 ) {
+    return std::move(NodesIDVector_t(1));                           ///// RETURN (default single)
+  }
+
+  // same NUMA node for all affinities?
+  if ( hwloc_get_nbobjs_by_type(curr(), HWLOC_OBJ_NUMANODE) < 2 ) {
+    return std::move(NodesIDVector_t(newVect.size()));              ///// RETURN (defaulted)
+  }
+
+  // may create arenas if nodesets are different
+
+  hwloc_bitmap nodeset;
+
+  NodesIDVector_t arenaMap;
+
+  for( auto &&cpuset : newVect )
+  {
+    auto equalNodesChk = [cpuset,&nodeset](hwloc_const_bitmap_t arenaset) { 
+                              hwloc_cpuset_to_nodeset(curr(), cpuset, nodeset);
+                              return hwloc_bitmap_isequal(nodeset,arenaset); 
+                        };
+
+    unsigned i = std::find_if(uniqueSets.rbegin(), uniqueSets.rend(), equalNodesChk) 
+                                                      - uniqueSets.rend();
+
+    // found a equal-nodes match?  chg i to arena-index.
+    if ( ! i-- ) {
+      i = uniqueSets.size(); // new index to use
+      const_cast<NodeSetVector_t&>(uniqueSets).push_back(hwloc_bitmap{ nodeset.get() }.release());
+    }
+
+    arenaMap.push_back(i); // affid-cpuset now matches this arena
+  }
+  return std::move(arenaMap);
+}
+
+static inline 
+auto find_superset_bitmap(CpuSetVector_t const &supers, 
+                          CpuSetVector_t::const_iterator const &hint, 
+                          hwloc_const_bitmap_t sub) -> CpuSetVector_t::const_iterator
+{ 
+  auto IfSuperset = [&](hwloc_const_bitmap_t super) { return hwloc_bitmap_isincluded(sub,super); };
+
+  CpuSetVector_t::const_iterator sup = std::find_if(hint, supers.end(), IfSuperset);
+
+  if ( sup == supers.end() ) { 
+    sup = std::find_if(supers.begin(), hint, IfSuperset);
+  }
+
+  return sup; // may be equal to hint
+}
+
+static inline 
+auto find_first_non_overlap_bitmap(CpuSetVector_t::iterator begin, 
+                                  CpuSetVector_t::iterator end, 
+                                  hwloc_const_bitmap_t super) -> CpuSetVector_t::iterator
+  { return std::find_if(begin, end, [&](hwloc_const_bitmap_t sub) { return ! hwloc_bitmap_isincluded(sub,super); }); }
+
+static inline 
+auto find_first_non_subset_bitmap(CpuSetVector_t::iterator begin, 
+                                  CpuSetVector_t::iterator end, 
+                                  hwloc_const_bitmap_t super) -> CpuSetVector_t::iterator
+  { return std::find_if(begin, end, [&](hwloc_const_bitmap_t sub) { return ! hwloc_bitmap_isincluded(sub,super); }); }
+
+static void reorder_interleaved(CpuSetVector_t const &supers, CpuSetVector_t &subs)
+{
+  // use rotating search-window
+  auto adjSuper = supers.begin();
+
+  // remove superset-matching neighbors 
+
+  // get original
+  auto adjSet = subs.begin();
+
+  // needs to work with begin+1 to last-1 [can swap with begin+2 to last]
+  for( auto set = adjSet+1 ; set+1 != subs.end() ; (adjSet=set),++set )
+  {
+    adjSuper = find_superset_bitmap(supers,adjSuper,*adjSet);
+
+    auto swapFrom = set;
+    // first swap in the an *entirely* adjSuper-external cpuset, 
+    //    or (failing that) the a partly adjSuper-external cpuset
+    if ( (swapFrom=find_first_non_overlap_bitmap(set,subs.end(),*adjSuper)) == subs.end() 
+          && (swapFrom=find_first_non_subset_bitmap(set,subs.end(),*adjSuper)) == subs.end() ) 
+    {
+      continue; // give up if no cpus used outside this super-obj cpuset
+    }
+
+    // some neighbor has a different super-obj cpuset
+
+    if ( swapFrom != set ) {
+      std::swap(*set,*swapFrom);
+    }
+  }
+}
+
+hwloc_const_cpuset_t const kCpusAllowed = hwloc_topology_get_allowed_cpuset( curr() );
+hwloc_const_nodeset_t const kNodesAllowed = hwloc_topology_get_allowed_nodeset( curr() );
+
+CpuSetVector_t const kCPUSets = CpuSetVector_t{ kCpusAllowed };    // valid base cpuset
+
+CpuSetVector_t const kNumaCPUSets = get_obj_cpusets(HWLOC_OBJ_NUMANODE);               // cpusets for each memory node
+CpuSetVector_t const kSocketCPUSets = get_obj_cpusets(HWLOC_OBJ_SOCKET, kNumaCPUSets); // cpusets for each socket, in alternated order of memory nodes
+CpuSetVector_t const kCoreCPUSets = get_obj_cpusets(HWLOC_OBJ_CORE, kNumaCPUSets);     // cpusets for each core, in alternated order of memory nodes
+CpuSetVector_t const kProcCPUSets = get_obj_cpusets(HWLOC_OBJ_PU, kNumaCPUSets);       // cpusets for each processor-unit, in alternated order of memory nodes
+
+hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
+{
+  switch(objtype) {
+    case HWLOC_OBJ_NUMANODE:
+       return kNumaCPUSets[ affid % kNumaCPUSets.size() ];
+    case HWLOC_OBJ_SOCKET:
+       return kSocketCPUSets[ affid % kSocketCPUSets.size() ];
+    case HWLOC_OBJ_CORE:
+       return kCoreCPUSets[ affid % kCoreCPUSets.size() ];
+    case HWLOC_OBJ_PU:
+       return kProcCPUSets[ affid % kProcCPUSets.size() ];
+    default: 
+       break;
+  }
+
+  return kCPUSets.front();
+}
+
+// master list of nodesets 
+NodeSetVector_t const kUniqueNodeSets = { kNodesAllowed };
+
+// lists of indexes into kUniqueNodeSets and 
+NodesIDVector_t const kNumaAffNodes = cpusets_to_memory_arenas(kUniqueNodeSets,kNumaCPUSets);
+NodesIDVector_t const kSocketAffNodes = cpusets_to_memory_arenas(kUniqueNodeSets,kSocketCPUSets);
+NodesIDVector_t const kCoreAffNodes = cpusets_to_memory_arenas(kUniqueNodeSets,kCoreCPUSets);
+NodesIDVector_t const kProcAffNodes = cpusets_to_memory_arenas(kUniqueNodeSets,kProcCPUSets);
+
+unsigned get_nodes_id_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
+{
+  switch(objtype) {
+    case HWLOC_OBJ_NUMANODE:
+       return kNumaAffNodes[ affid % kNumaAffNodes.size() ];
+    case HWLOC_OBJ_SOCKET:
+       return kSocketAffNodes[ affid % kSocketAffNodes.size() ];
+    case HWLOC_OBJ_CORE:
+       return kCoreAffNodes[ affid % kCoreAffNodes.size() ];
+    case HWLOC_OBJ_PU:
+       return kProcAffNodes[ affid % kProcAffNodes.size() ];
+    default: 
+       break;
+  }
+
+  return 0;
+}
+
+} // namespace numa
+
+#endif
