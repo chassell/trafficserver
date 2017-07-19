@@ -39,8 +39,7 @@ libtsutil_la_LIBADD = \
   @OPENSSL_LIBS@ \
   @LIBTCL@ \
   @LIBRESOLV@ \
-  @LIBCAP@ \
-  -lc
+  @LIBCAP@
 
 libtsutil_la_SOURCES = \
   Allocator.h \
@@ -183,6 +182,8 @@ libtsutil_la_SOURCES = \
   ink_time.h \
   ink_uuid.cc \
   ink_uuid.h \
+  jemallctl.cc \
+  jemallctl.h \
   llqueue.cc \
   lockfile.cc \
   signals.cc \

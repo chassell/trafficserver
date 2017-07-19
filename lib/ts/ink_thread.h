@@ -295,6 +295,21 @@ ink_set_thread_name(const char *name ATS_UNUSED)
 #endif
 }
 
+static inline void
+ink_get_thread_name(char *name, size_t len)
+{
+  memset(name,'\0',len);
+#if defined(HAVE_PTHREAD_SETNAME_NP_1)
+  pthread_getname_np(name,len);
+#elif defined(HAVE_PTHREAD_SETNAME_NP_2)
+  pthread_getname_np(pthread_self(), name, len);
+#elif defined(HAVE_PTHREAD_SET_NAME_NP_2)
+  pthread_get_name_np(pthread_self(), name, len);
+#elif defined(HAVE_SYS_PRCTL_H) && defined(PR_SET_NAME)
+  prctl(PR_GET_NAME, name, 0, 0, 0);
+#endif
+}
+
 #endif /* #if defined(POSIX_THREAD) */
 
 #endif /*_INK_THREAD_H*/
