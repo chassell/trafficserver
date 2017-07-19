@@ -357,11 +357,11 @@ public:
   struct { 
        EventProcessor &_ep;
        ThreadGroupDescriptor &operator[](size_t n) { return _ep.thread_group[n]; } 
-  } eventthread = { { *this } };
+  } eventthread = { *this };
   struct { 
        EventProcessor &_ep;
        int operator[](size_t n) { return static_cast<int>(_ep.thread_group[n].n_threads()); } 
-  } n_threads_for_type = { { *this } };
+  } n_threads_for_type = { *this };
 
   /**
     Total number of threads controlled by this EventProcessor.  This is
