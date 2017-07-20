@@ -324,7 +324,7 @@ ServerRetryResponseCodes::ServerRetryResponseCodes(ParentRetry_t type, char *val
            HTTP_STATUS_SERVICE_UNAVAILABLE);
       codes.push_back(HTTP_STATUS_SERVICE_UNAVAILABLE);
     } else if (type == PARENT_RETRY_SIMPLE) {
-      Note("ServerRetryResponseCodes - unavailable_server_retry_responses is null loading default %d code.", HTTP_STATUS_NOT_FOUND);
+      Note("ServerRetryResponseCodes - simple_retry_responses is null loading default %d code.", HTTP_STATUS_NOT_FOUND);
       codes.push_back(HTTP_STATUS_NOT_FOUND);
     }
     return;
