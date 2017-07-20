@@ -80,13 +80,15 @@ Thread::start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction
   auto page = (ats_hugepage_enabled() ? sizeof(MemoryPageHuge) : sizeof(MemoryPage) );
   stacksize = aligned_spacing( stacksize, page );
 
+/*
   void *stack = ( ats_hugepage_enabled() 
                        ? static_cast<void*>( new MemoryPageHuge[stacksize/sizeof(MemoryPageHuge)] ) 
                        : static_cast<void*>( new MemoryPage[stacksize/sizeof(MemoryPage)] )          );
+*/
 
   ink_sem_init(&stackWait,0);
 
-  auto tid = ink_thread_create(threadHook, const_cast<ThreadFunction*>(&hookFxn), false, stacksize, stack);
+  auto tid = ink_thread_create(threadHook, const_cast<ThreadFunction*>(&hookFxn), false, stacksize);
 
   // wait on child init 
   ink_sem_wait(&stackWait);

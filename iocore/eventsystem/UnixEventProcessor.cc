@@ -84,7 +84,7 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
   ink_release_assert((n_ethreads + n_threads) <= MAX_EVENT_THREADS);
   ink_release_assert(ev_type < MAX_EVENT_TYPES);
 
-  stacksize = std::max(stacksize, static_cast<decltype(stacksize)>(INK_THREAD_STACK_MIN));
+  stacksize = std::max(stacksize, static_cast<decltype(stacksize)>(MIN_STACKSIZE));
   // Make sure it is a multiple of our page size
   if (ats_hugepage_enabled()) {
     stacksize = INK_ALIGN(stacksize, ats_hugepage_size());

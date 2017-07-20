@@ -79,7 +79,8 @@
 class ProxyMutex;
 
 constexpr int MAX_THREAD_NAME_LENGTH = 16;
-constexpr int DEFAULT_STACKSIZE      = 1048576; // 1MB
+constexpr int DEFAULT_STACKSIZE      = 1024*1024; // 1MB
+constexpr int MIN_STACKSIZE          = 100*1024; // 100K
 
 static inline unsigned this_thread_affinity_id();
 
