@@ -1,3 +1,5 @@
+#pragma once
+
 #include "ts/ink_platform.h"
 #include "ts/ink_memory.h"
 

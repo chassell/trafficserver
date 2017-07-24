@@ -48,6 +48,10 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 
+#ifdef __cplusplus
+#include <functional>
+#endif
+
 #ifndef tsapi
 #define tsapi
 #endif
@@ -777,9 +781,19 @@ typedef struct tsapi_bufferreader *TSIOBufferReader;
 typedef struct tsapi_hostlookupresult *TSHostLookupResult;
 typedef struct tsapi_aiocallback *TSAIOCallback;
 
+#ifdef __cplusplus
+typedef TSThreadFuncPtr = void*(*)(void *data);
+typedef TSEventFuncPtr = int(*)(TSCont contp, TSEvent event, void *edata);
+typedef TSConfigDestroyFuncPtr = void(*)(void *data);
+typedef TSThreadFunc std::function<TSThreadFuncPtr>;
+typedef TSEventFunc std::function<TSEventFuncPtr>;
+typedef TSConfigDestroyFunc std::function<TSConfigDestroyFuncPtr>;
+#else
 typedef void *(*TSThreadFunc)(void *data);
 typedef int (*TSEventFunc)(TSCont contp, TSEvent event, void *edata);
 typedef void (*TSConfigDestroyFunc)(void *data);
+#endif
+
 
 typedef struct {
   int success_event_id;

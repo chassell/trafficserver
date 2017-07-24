@@ -930,7 +930,7 @@ INKContInternal::INKContInternal()
 {
 }
 
-INKContInternal::INKContInternal(TSEventFunc funcp, TSMutex mutexp)
+INKContInternal::INKContInternal(TSEventFunctor funcp, TSMutex mutexp)
   : DummyVConnection((ProxyMutex *)mutexp),
     mdata(NULL),
     m_event_func(funcp),
@@ -944,7 +944,7 @@ INKContInternal::INKContInternal(TSEventFunc funcp, TSMutex mutexp)
 }
 
 void
-INKContInternal::init(TSEventFunc funcp, TSMutex mutexp)
+INKContInternal::init(TSEventFunctor funcp, TSMutex mutexp)
 {
   SET_HANDLER(&INKContInternal::handle_event);
 
@@ -1027,7 +1027,7 @@ INKVConnInternal::INKVConnInternal() : INKContInternal(), m_read_vio(), m_write_
   m_closed = 0;
 }
 
-INKVConnInternal::INKVConnInternal(TSEventFunc funcp, TSMutex mutexp)
+INKVConnInternal::INKVConnInternal(TSEventFunctor funcp, TSMutex mutexp)
   : INKContInternal(funcp, mutexp), m_read_vio(), m_write_vio(), m_output_vc(NULL)
 {
   m_closed = 0;
@@ -1035,7 +1035,7 @@ INKVConnInternal::INKVConnInternal(TSEventFunc funcp, TSMutex mutexp)
 }
 
 void
-INKVConnInternal::init(TSEventFunc funcp, TSMutex mutexp)
+INKVConnInternal::init(TSEventFunctor funcp, TSMutex mutexp)
 {
   INKContInternal::init(funcp, mutexp);
   SET_HANDLER(&INKVConnInternal::handle_event);
@@ -4181,6 +4181,22 @@ TSMgmtStringGet(const char *var_name, TSMgmtString *result)
 //
 ////////////////////////////////////////////////////////////////////
 
+#ifdef __cplusplus
+TSCont
+TSContCreate(TSEventFunctor funcp, TSMutex mutexp)
+{
+  // mutexp can be NULL
+  if (mutexp != NULL)
+    sdk_assert(sdk_sanity_check_mutex(mutexp) == TS_SUCCESS);
+
+  INKContInternal *i = INKContAllocator.alloc();
+
+  i->init(funcp, mutexp);
+  return (TSCont)i;
+}
+#endif
+
+
 TSCont
 TSContCreate(TSEventFunc funcp, TSMutex mutexp)
 {
@@ -6198,6 +6214,25 @@ TSActionDone(TSAction actionp)
 
 /* Connections */
 
+#ifdef __cplusplus
+TSVConn
+TSVConnCreate(TSEventFunctor event_funcp, TSMutex mutexp)
+{
+  if (mutexp == NULL)
+    mutexp = (TSMutex)new_ProxyMutex();
+
+  // TODO: probably don't need this if memory allocations fails properly
+  sdk_assert(sdk_sanity_check_mutex(mutexp) == TS_SUCCESS);
+
+  INKVConnInternal *i = INKVConnAllocator.alloc();
+
+  sdk_assert(sdk_sanity_check_null_ptr((void *)i) == TS_SUCCESS);
+
+  i->init(event_funcp, mutexp);
+  return reinterpret_cast<TSVConn>(i);
+}
+#endif
+
 TSVConn
 TSVConnCreate(TSEventFunc event_funcp, TSMutex mutexp)
 {
@@ -6386,6 +6421,17 @@ TSVConnCacheHttpInfoSet(TSVConn connp, TSCacheHttpInfo infop)
 }
 
 /* Transformations */
+#ifdef __cplusplus
+TSVConn
+TSTransformCreate(TSEventFunctor event_funcp, TSHttpTxn txnp)
+{
+  sdk_assert(sdk_sanity_check_txn(txnp) == TS_SUCCESS);
+  // TODO: This is somewhat of a leap of faith, but I think a TSHttpTxn is just another
+  // fancy continuation?
+  return TSVConnCreate(event_funcp, TSContMutexGet(reinterpret_cast<TSCont>(txnp)));
+}
+#endif
+
 
 TSVConn
 TSTransformCreate(TSEventFunc event_funcp, TSHttpTxn txnp)

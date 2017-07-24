@@ -96,3 +96,20 @@ Thread::start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction
 
   return tid;
 }
+
+void Continuation::save_call_context()
+{
+  _handlerArena = ::jemallctl::thread_arena();
+}
+
+int Continuation::push_context()
+{
+  auto tmp = ::jemallctl::thread_arena();
+  ::jemallctl::set_thread_arena(_handlerArena);
+  return tmp;
+}
+
+void Continuation::restore_context(int tmp)
+{
+  ::jemallctl::set_thread_arena(tmp);
+}
