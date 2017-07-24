@@ -244,6 +244,7 @@ test_MemView_LDADD = libtsutil.la
 test_Scalar_SOURCES = test_Scalar.cc Scalar.h
 
 CompileParseRules_SOURCES = CompileParseRules.cc
+CompileParseRules_LDADD = ;true            # link command doesn't need $(LIBS)
 
 clean-local:
 	rm -f ParseRulesCType ParseRulesCTypeToLower ParseRulesCTypeToUpper
