@@ -142,13 +142,12 @@ ats_stringdup(std::string const &p)
 #endif
 
 #ifdef __cplusplus
-
-#if HAVE_LIBJEMALLOC 
 namespace numa
 {
-  static inline hwloc_topology_t curr() { return ink_get_topology(); }
-
   unsigned new_affinity_id();
+
+#if TS_USE_HWLOC 
+  static inline hwloc_topology_t curr() { return ink_get_topology(); }
 
   hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
   int assign_thread_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit usable cpus to specific cpuset
@@ -156,8 +155,8 @@ namespace numa
   // NOTE: creates new arenas under mutex if none present
   unsigned get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
   int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit new pages to specific nodes
-}
 #endif
+}
 
 template <typename PtrType, typename SizeType>
 static inline IOVec

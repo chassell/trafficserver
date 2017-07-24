@@ -142,6 +142,7 @@ ats_free_hugepage(void *ptr, size_t s)
   return (munmap(ptr, size) == 0);
 }
 
+#if HAVE_LIBJEMALLOC
 /*
    void *(chunk_alloc_t)  (void *chunk, size_t size, size_t alignment, bool *zero, bool *commit, unsigned arena_ind);
    bool (chunk_dalloc_t)  (void *chunk, size_t size, bool committed, unsigned arena_ind);
@@ -462,5 +463,7 @@ bool huge_merge(void *chunk_a, size_t size_a, void *chunk_b, size_t size_b, bool
 
 chunk_hooks_t const &get_jemallctl_huge_hooks() { return huge_hooks; }
 chunk_hooks_t const &get_jemallctl_huge_nodump_hooks() { return huge_nodump_hooks; }
+
+#endif
 
 #endif

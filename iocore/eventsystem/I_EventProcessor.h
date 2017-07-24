@@ -330,7 +330,7 @@ public:
 
     hwloc_obj_type_t _affcfg = hwloc_obj_type_t{};                              ///< config thread-affinity [default: entire machine]
     ats_scoped_str _name;                         ///< Name for the thread group.
-    std::atomic_uint _count{0};                  ///< # of threads of this type.
+    std::atomic_int _count{0};                  ///< # of threads of this type.
     std::atomic_uint _next_round_robin{0};       ///< Index of thread to use for events assigned to this group.
     std::vector<InitFxn_t> _spawnQueue; ///< calls to init EThread upon spawning
 

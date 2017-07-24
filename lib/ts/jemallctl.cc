@@ -49,8 +49,16 @@ template <typename T_VALUE, size_t N_DIFF> auto
 int GetObjFxn<void,0>::operator()(void) const
        { return ::jemallctl::mallctl_void(ObjBase::_oid); }
 
-/// implementation of simple oid-translating call
-
+#if ! HAVE_LIBJEMALLOC
+objpath_t objpath(const std::string &path) { return objpath_t(); }
+auto mallctl_void(const objpath_t &oid) -> int { return -1; }
+template <typename T_VALUE> auto mallctl_set(const objpath_t &oid, const T_VALUE &v) -> int 
+   { return -1; }
+template <typename T_VALUE> auto mallctl_get(const objpath_t &oid) -> T_VALUE 
+   { return std::move(T_VALUE{}); }
+chunk_hooks_t const &get_hugepage_hooks() { return std::move(chunk_hooks_t{}); }
+chunk_hooks_t const &get_hugepage_nodump_hooks() { return std::move(chunk_hooks_t{}); }
+#else
 objpath_t objpath(const std::string &path)
 {
   objpath_t oid;
@@ -126,6 +134,7 @@ template <> auto mallctl_set<chunk_hooks_t>(const objpath_t &baseOid, const chun
                  };
    return mallctlbymib(oid.data(),oid.size(),nullptr,nullptr,const_cast<chunk_hooks_t*>(&nhooks),sizeof(nhooks));
 }
+#endif
 
 template struct GetObjFxn<uint64_t>;
 template struct GetObjFxn<unsigned>;
