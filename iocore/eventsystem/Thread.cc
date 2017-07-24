@@ -28,6 +28,8 @@
 
 
 **************************************************************************/
+#include "ts/jemallctl.h"
+
 #include "P_EventSystem.h"
 #include "ts/ink_string.h"
 
