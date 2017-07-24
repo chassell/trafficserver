@@ -243,6 +243,7 @@ test_tsutil_SOURCES = \
 	tests.cc
 
 CompileParseRules_SOURCES = CompileParseRules.cc
+CompileParseRules_LDADD = ;true            # link command doesn't need $(LIBS)
 
 clean-local:
 	rm -f ParseRulesCType ParseRulesCTypeToLower ParseRulesCTypeToUpper

@@ -472,8 +472,8 @@ auto cpusets_to_memory_arenas(const NodeSetVector_t &uniqueSets, CpuSetVector_t 
                               return hwloc_bitmap_isequal(nodeset,arenaset); 
                         };
 
-    unsigned i = std::find_if(uniqueSets.rbegin(), uniqueSets.rend(), equalNodesChk) 
-                                                      - uniqueSets.rend();
+    // rend() - [rbegin()/rend()] gives [size(),1] .. and 0 only if nothing found
+    unsigned i = uniqueSets.rend() - std::find_if(uniqueSets.rbegin(), uniqueSets.rend(), equalNodesChk);
 
     // found a equal-nodes match?  chg i to arena-index.
     if ( ! i-- ) {
