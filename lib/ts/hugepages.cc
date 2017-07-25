@@ -52,7 +52,7 @@ bool ats_free_hugepage(void *, size_t) { Debug(DEBUG_TAG, "MAP_HUGETLB not defin
 #define MEMINFO_PATH "/proc/meminfo"
 #define LINE_SIZE 256
 #define HUGEPAGESIZE_TOKEN      "Hugepagesize:"
-#define HUGEPAGESIZE_TOKEN_SIZE countof(HUGEPAGESIZE_TOKEN)
+#define HUGEPAGESIZE_TOKEN_SIZE ( countof(HUGEPAGESIZE_TOKEN)-1 )
 
 static int hugepage_size = -1;
 static bool hugepage_enabled;
