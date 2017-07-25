@@ -118,6 +118,9 @@ template<typename T, typename U> constexpr size_t offset_of(U T::*member)
 
 #if TS_USE_HWLOC
 #include <hwloc.h>
+#if HWLOC_API_VERSION < 0x00010b00
+#define HWLOC_OBJ_NUMANODE  HWLOC_OBJ_NODE
+#endif
 #elif __cplusplus
 // some signatures need this
 using hwloc_obj_type_t = int; 
