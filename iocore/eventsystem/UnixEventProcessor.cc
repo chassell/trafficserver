@@ -188,15 +188,18 @@ EventProcessor::ThreadGroupDescriptor::start(pthread_barrier_t &grpBarrier, EThr
   numa::assign_thread_memory_by_affinity(_affcfg, affid); 
 
   if ( runFxn ) {
-      return Thread::start(stackWait, stacksize, [&launchFxnRef,&runFxn]() { runFxn(launchFxnRef); });
+      // use a custom call
+      return Thread::start(stackWait, stacksize, [&launchFxnRef,&runFxn]() 
+            { runFxn(launchFxnRef); });
   }
 
-  return Thread::start(stackWait, stacksize, [&launchFxnRef,&runFxn]() 
+  // use a default call
+  return Thread::start(stackWait, stacksize, [&launchFxnRef]() 
      {
-         // parent thread is waiting ... so copy lambda-params now
+         // parent thread is waiting ... so copy-pass lambda-params
          Thread::launch(new EThread{REGULAR,0}, launchFxnRef);
 
-         // parent has continued --> params are untouchable
+         // parent has continued --> passed params are untouchable
          this_thread()->execute(); // parent has continued on
      } );
 

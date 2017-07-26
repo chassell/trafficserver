@@ -173,7 +173,7 @@ public:
   {
     // launchFxn was copied as param [on stack]
     thread->set_specific(); // assign thread structure
-    launchFxn(thread); // callback must (1) release stackWait
+    launchFxn(thread); // callback must sem_post to stackWait in start() call above
   }
 
   virtual void execute() = 0;
