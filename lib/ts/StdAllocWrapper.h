@@ -82,7 +82,7 @@ protected:
   void *allocate()
     { return mallocx(_sz, (MALLOCX_ALIGN(_sz)|MALLOCX_ZERO|MALLOCX_ARENA(_arena)) ); }
   void deallocate(void *p) 
-    { sdallocx(p, _sz, MALLOCX_ARENA(_arena)); }
+    { dallocx(p, MALLOCX_ARENA(_arena)); }
 };
 
 template <typename T_OBJECT>
@@ -117,7 +117,7 @@ class ObjAllocator : public std::allocator<T_OBJECT>
     return p;
   }
 
-  void deallocate(value_type *p) { sdallocx(p, sizeof(value_type), 0); }
+  void deallocate(value_type *p) { dallocx(p, 0); }
 
  private:
   const char *_name;
