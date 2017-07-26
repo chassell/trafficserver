@@ -29,5 +29,6 @@ bool ats_hugepage_enabled(void);
 void ats_hugepage_init(int);
 void *ats_alloc_hugepage(size_t);
 bool ats_free_hugepage(void *, size_t);
+void *ats_alloc_hugepage_stack(size_t);
 
 #endif

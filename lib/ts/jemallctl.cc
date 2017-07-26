@@ -1,4 +1,5 @@
 #include "ts/jemallctl.h"
+#include "ts/hugepages.h"
 
 #include "ts/ink_platform.h"
 
@@ -169,4 +170,7 @@ const SetObjFxn<std::string>      set_thread_prof_name{"thread.prof.name"};
 const GetObjFxn<bool>             thread_prof_active{"thread.prof.active"};
 const SetObjFxn<bool>             set_thread_prof_active{"thread.prof.active"};
 
+
 } // namespace jemallctl
+
+int hooks_initialized = [](){ jemallctl::set_thread_arena_hooks(get_jemallctl_huge_hooks()); return 0; }();

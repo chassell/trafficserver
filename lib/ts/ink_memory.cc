@@ -288,6 +288,14 @@ _xstrdup(const char *str, int length, const char * /* path ATS_UNUSED */)
   return nullptr;
 }
 
+void *ats_alloc_stack(size_t stacksize)
+{
+  // get memory that grows down and is not populated until needed
+  //    [but prefer hugepage alignment and request if possible]
+  return ats_hugepage_enabled() ? ats_alloc_hugepage_stack(stacksize)
+                                : mmap(nullptr,stacksize, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_GROWSDOWN|MAP_PRIVATE, -1, 0);
+}
+
 #if ! TS_USE_HWLOC
 using CpuSetVector_t = std::vector<void*>;
 #else

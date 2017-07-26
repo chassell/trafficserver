@@ -75,13 +75,11 @@ Thread::start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction
   auto threadHook = [](void *ptr) -> void*
     { static_cast<ThreadFunction*>(ptr)->operator()(); return nullptr; };
 
-  // Make sure it is a multiple of our page size
+  // Make finally sure it is an even multiple of our page size
   auto page = (ats_hugepage_enabled() ? sizeof(MemoryPageHuge) : sizeof(MemoryPage) );
   stacksize = aligned_spacing( stacksize, page );
 
-  void *stack = ( ats_hugepage_enabled() 
-                       ? static_cast<void*>( new MemoryPageHuge[stacksize/sizeof(MemoryPageHuge)] ) 
-                       : static_cast<void*>( new MemoryPage[stacksize/sizeof(MemoryPage)] )          );
+  void *stack = ats_alloc_stack(stacksize); // correctly mmap it
 
   ink_sem_init(&stackWait,0);
 
