@@ -102,8 +102,8 @@ class EThread;
 class EventProcessor : public Processor
 {
 public:
-  using InitFxn_t = std::function<void(EThread *)>;
-  using ThreadFxn_t = std::function<void(const InitFxn_t &)>;
+  using EThreadInitFxn_t = Thread::EThreadInitFxn_t;
+  using ThreadFxn_t = std::function<void(const EThreadInitFxn_t &)>;
 
   /** Register an event type with @a name.
 
@@ -149,7 +149,7 @@ public:
     return ev_type;
   }
 
-  EventType spawn_event_threads(EventType ev_type, int n_threads, size_t stacksize = DEFAULT_STACKSIZE);
+  EventType spawn_event_threads(EventType ev_type, int n_threads, size_t stacksize = DEFAULT_STACKSIZE, const ThreadFxn_t &runFxn = ThreadFxn_t{});
 
   /**
     Schedules the continuation on a specific EThread to receive an event
@@ -256,7 +256,7 @@ public:
   Event *reschedule_every(Event *e, ink_hrtime aperiod, int callback_event = EVENT_INTERVAL);
 
   /// Schedule the function @a f to be called in a thread of type @a ev_type when it is spawned.
-  void schedule_spawn(const InitFxn_t &fxn, EventType ev_type)
+  void schedule_spawn(const EThreadInitFxn_t &fxn, EventType ev_type)
   {
     ink_assert(ev_type < MAX_EVENT_TYPES);
     thread_group[ev_type]._spawnQueue.push_back(fxn);
@@ -324,9 +324,8 @@ public:
   struct ThreadGroupDescriptor 
   {
     friend class EventProcessor;
-    static ThreadFxn_t s_dfltRunFxn;
 
-    ink_thread start(pthread_barrier_t &grpBarrier, EThread *&epEthread, int stacksize, const ThreadFxn_t &runFxn = s_dfltRunFxn);
+    ink_thread start(pthread_barrier_t &grpBarrier, EThread *&epEthread, int stacksize, const ThreadFxn_t &runFxn = ThreadFxn_t{});
     unsigned n_threads() const                { return _count; }
     unsigned next_round_robin()               { return _next_round_robin++; }
     EThread **begin() { return &_thread[0]; }
@@ -343,7 +342,7 @@ public:
     /// The actual threads in this group.
     EThread *_thread[MAX_THREADS_IN_EACH_TYPE] = { nullptr };
 
-    std::vector<InitFxn_t> _spawnQueue; ///< calls to init EThread upon spawning
+    std::vector<EThreadInitFxn_t> _spawnQueue; ///< calls to init EThread upon spawning
   };
 
   std::atomic_uint n_ethreads_nxt;

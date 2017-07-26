@@ -77,6 +77,7 @@
 #include <functional>
 
 class ProxyMutex;
+class EThread;
 
 constexpr int MAX_THREAD_NAME_LENGTH = 16;
 constexpr int DEFAULT_STACKSIZE      = 1024*1024; // 1MB
@@ -104,6 +105,8 @@ using ThreadFunction = std::function<void()>;
 class Thread
 {
 public:
+  using EThreadInitFxn_t = std::function<void(EThread *)>;
+
   /*-------------------------------------------*\
   | Common Interface                            |
   \*-------------------------------------------*/
@@ -164,6 +167,14 @@ public:
       is called in the thread context. Otherwise the method @c execute is invoked.
   */
   static ink_thread start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction &hookFxn);
+
+  template <class T_THREAD, class T_FUNCTOR>
+  static void launch(T_THREAD *thread, T_FUNCTOR launchFxn)
+  {
+    // launchFxn was copied as param [on stack]
+    thread->set_specific(); // assign thread structure
+    launchFxn(thread); // callback must (1) release stackWait
+  }
 
   virtual void execute() = 0;
 
