@@ -29,7 +29,6 @@
 
 
  ****************************************************************************/
-#include "ts/jemallctl.h"
 
 #include "ts/ink_platform.h"
 #include "ts/ink_sys_control.h"
@@ -38,7 +37,6 @@
 #include "ts/ink_stack_trace.h"
 #include "ts/ink_syslog.h"
 #include "ts/hugepages.h"
-#include "ts/ink_memory.h"
 
 #include <syslog.h>
 
@@ -1484,8 +1482,6 @@ main(int /* argc ATS_UNUSED */, const char **argv)
 #if defined(DEBUG) && defined(HAVE_MCHECK_PEDANTIC)
   mcheck_pedantic(NULL);
 #endif
-
-  jemallctl::set_thread_arena_hooks(get_jemallctl_huge_hooks()); // init hooks for hugepage
 
   pcre_malloc = ats_malloc;
   pcre_free   = ats_free;

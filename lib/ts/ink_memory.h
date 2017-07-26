@@ -84,6 +84,8 @@ void ats_memalign_free(void *ptr);
 int ats_msync(caddr_t addr, size_t len, caddr_t end, int flags);
 int ats_madvise(caddr_t addr, size_t len, int flags);
 
+void *ats_alloc_stack(size_t stacksize);
+
 void *ats_track_malloc(size_t size, uint64_t *stat);
 void *ats_track_realloc(void *ptr, size_t size, uint64_t *alloc_stat, uint64_t *free_stat);
 void ats_track_free(void *ptr, uint64_t *stat);

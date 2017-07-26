@@ -56,9 +56,8 @@ Thread::Thread()
 {
   mutex = new_ProxyMutex();
   MUTEX_TAKE_LOCK(mutex, (EThread *)this);
-  mutex->nthread_holding = THREAD_MUTEX_THREAD_HOLDING;
+  mutex->nthread_holding += THREAD_MUTEX_THREAD_HOLDING;
 }
-
 
 Thread::~Thread()
 {
@@ -78,19 +77,15 @@ Thread::start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction
   auto threadHook = [](void *ptr) -> void*
     { static_cast<ThreadFunction*>(ptr)->operator()(); return nullptr; };
 
-  // Make sure it is a multiple of our page size
+  // Make finally sure it is an even multiple of our page size
   auto page = (ats_hugepage_enabled() ? sizeof(MemoryPageHuge) : sizeof(MemoryPage) );
   stacksize = aligned_spacing( stacksize, page );
 
-/*
-  void *stack = ( ats_hugepage_enabled() 
-                       ? static_cast<void*>( new MemoryPageHuge[stacksize/sizeof(MemoryPageHuge)] ) 
-                       : static_cast<void*>( new MemoryPage[stacksize/sizeof(MemoryPage)] )          );
-*/
+  void *stack = ats_alloc_stack(stacksize); // correctly mmap it
 
   ink_sem_init(&stackWait,0);
 
-  auto tid = ink_thread_create(threadHook, const_cast<ThreadFunction*>(&hookFxn), false, stacksize);
+  auto tid = ink_thread_create(threadHook, const_cast<ThreadFunction*>(&hookFxn), false, stacksize, stack);
 
   // wait on child init 
   ink_sem_wait(&stackWait);
