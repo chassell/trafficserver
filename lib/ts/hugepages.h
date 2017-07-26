@@ -31,9 +31,13 @@ void *ats_alloc_hugepage(size_t);
 bool ats_free_hugepage(void *, size_t);
 void *ats_alloc_hugepage_stack(size_t);
 
-#if HAVE_LIBJEMALLOC
-chunk_hooks_t const &get_jemallctl_huge_hooks();
-chunk_hooks_t const &get_jemallctl_huge_nodump_hooks();
-#endif
+void *huge_normal_alloc(void *chunk, size_t size, size_t alignment, bool *zero, bool *commit, unsigned arena_ind);
+void *huge_nodump_alloc(void *chunk, size_t size, size_t alignment, bool *zero, bool *commit, unsigned arena_ind);
+bool huge_dalloc(void *chunk, size_t size, bool committed, unsigned arena_ind);
+bool huge_commit(void *chunk, size_t size, size_t offset, size_t length, unsigned arena_ind);
+bool huge_decommit(void *chunk, size_t size, size_t offset, size_t length, unsigned arena_ind);
+bool huge_purge(void *chunk, size_t size, size_t offset, size_t length, unsigned arena_ind);
+bool huge_split(void *chunk, size_t size, size_t size_a, size_t size_b, bool committed, unsigned arena_ind);
+bool huge_merge(void *chunk_a, size_t size_a, void *chunk_b, size_t size_b, bool committed, unsigned arena_ind);
 
 #endif

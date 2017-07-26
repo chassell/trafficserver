@@ -367,7 +367,7 @@ ArenaIDVector_t::value_type get_arena_by_affinity(hwloc_obj_type_t objtype, unsi
   int callerArena = jemallctl::thread_arena(); // push current arena (for a moment)
 
   jemallctl::set_thread_arena(newArena);
-  jemallctl::set_thread_arena_hooks(get_jemallctl_huge_hooks()); // init hooks for hugepage
+  jemallctl::set_thread_arena_hooks(jemallctl::get_hugepage_hooks()); // init hooks for hugepage
 
   // re-use caller's arena for allocations
   jemallctl::set_thread_arena(callerArena);
