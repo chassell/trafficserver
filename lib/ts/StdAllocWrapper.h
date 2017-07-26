@@ -40,9 +40,12 @@
 #ifndef _StdAllocWrapper_h_
 #define _StdAllocWrapper_h_
 
+#include "ts/jemallctl.h"
+
 #include "ts/ink_queue.h"
 #include "ts/ink_defs.h"
 #include "ts/ink_resource.h"
+#include "ts/ink_align.h"
 #include "ts/ink_memory.h"
 
 #include <execinfo.h>    // for backtrace!
@@ -51,37 +54,35 @@
 #include <memory>
 #include <cstdlib>
 
-#define Allocator      RawAllocator
+#define Allocator      AlignedAllocator
 #define ClassAllocator ObjAllocator
 #define ProxyAllocator AllocatorStats
 
 // NOTE: block competing includes after this one
 #define _Allocator_h_
 
-class RawAllocator : public std::allocator<uint64_t>
+class AlignedAllocator
 {
-  const char *name_ = nullptr;
-  size_t      sz_ = 0; // number of int64s
+  const char *_name = nullptr;
+  size_t      _sz = 0; // bytes and alignment (both)
+  size_t      _arena = 0; // jemalloc arena
 
 public:
-  using std::allocator<uint64_t>::value_type;
+  AlignedAllocator() { }
+  AlignedAllocator(const char *name, unsigned int element_size);
 
-  RawAllocator() { }
-  RawAllocator(const char *name, unsigned int element_size)
-     : name_(name), sz_( (element_size+sizeof(value_type)-1)/sizeof(value_type))
-     { }
+  void *alloc_void() { return allocate(); }
+  void free_void(void *ptr) { deallocate(ptr); }
+  void *alloc()  { return alloc_void(); }
+  void free(void *ptr) { free_void(ptr); }
 
-  void *alloc_void() { return std::calloc(sz_,sizeof(value_type)); }
-  void free_void(void *ptr) { deallocate(static_cast<value_type*>(ptr),sz_); }
-  void *alloc() { return std::calloc(sz_,sizeof(value_type)); }
-  void free(void *ptr) { deallocate(static_cast<value_type*>(ptr),sz_); }
+  void re_init(const char *name, unsigned int element_size, unsigned int chunk_size, unsigned int alignment, int advice);
 
-  void re_init(const char *name, unsigned int element_size, unsigned int chunk_size, unsigned int alignment, int advice) 
-  {
-    name_ = name; 
-    sz_ = element_size;
-    // XXX ignores alignment and advice!
-  }
+protected:
+  void *allocate()
+    { return mallocx(_sz, (MALLOCX_ALIGN(_sz)|MALLOCX_ZERO|MALLOCX_ARENA(_arena)) ); }
+  void deallocate(void *p) 
+    { sdallocx(p, _sz, MALLOCX_ARENA(_arena)); }
 };
 
 template <typename T_OBJECT>
@@ -90,7 +91,7 @@ class ObjAllocator : public std::allocator<T_OBJECT>
  public: 
   using typename std::allocator<T_OBJECT>::value_type;
 
-  ObjAllocator(const char*name, unsigned chunk_size = 128) : name_(name) 
+  ObjAllocator(const char*name, unsigned chunk_size = 128) : _name(name) 
   { 
     value_type *preCached[chunk_size];
 
@@ -119,7 +120,7 @@ class ObjAllocator : public std::allocator<T_OBJECT>
   void deallocate(value_type *p) { sdallocx(p, sizeof(value_type), 0); }
 
  private:
-  const char *name_;
+  const char *_name;
 };
 
 class AllocatorStats { };

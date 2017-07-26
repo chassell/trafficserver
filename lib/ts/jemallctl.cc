@@ -50,7 +50,15 @@ template <typename T_VALUE, size_t N_DIFF> auto
 int GetObjFxn<void,0>::operator()(void) const
        { return ::jemallctl::mallctl_void(ObjBase::_oid); }
 
-/// implementation of simple oid-translating call
+#if ! HAVE_LIBJEMALLOC
+objpath_t objpath(const std::string &path) { return objpath_t(); }
+auto mallctl_void(const objpath_t &oid) -> int { return -1; }
+template <typename T_VALUE> auto mallctl_set(const objpath_t &oid, const T_VALUE &v) -> int 
+   { return -1; }
+template <typename T_VALUE> auto mallctl_get(const objpath_t &oid) -> T_VALUE 
+   { return std::move(T_VALUE{}); }
+
+#else
 
 objpath_t objpath(const std::string &path)
 {
@@ -127,6 +135,7 @@ template <> auto mallctl_set<chunk_hooks_t>(const objpath_t &baseOid, const chun
                  };
    return mallctlbymib(oid.data(),oid.size(),nullptr,nullptr,const_cast<chunk_hooks_t*>(&nhooks),sizeof(nhooks));
 }
+#endif
 
 template struct GetObjFxn<uint64_t>;
 template struct GetObjFxn<unsigned>;
@@ -162,6 +171,36 @@ const GetObjFxn<bool>             thread_prof_active{"thread.prof.active"};
 const SetObjFxn<bool>             set_thread_prof_active{"thread.prof.active"};
 
 
+chunk_hooks_t const huge_hooks = { 
+  &huge_normal_alloc, &huge_dalloc,
+  &huge_commit, &huge_decommit,
+  &huge_purge,
+  &huge_split, &huge_merge
+};
+
+chunk_hooks_t const huge_nodump_hooks = { 
+  &huge_nodump_alloc, &huge_dalloc,
+  &huge_commit, &huge_decommit,
+  &huge_purge,
+  &huge_split, &huge_merge
+};
+
+chunk_hooks_t const &get_hugepage_hooks() { return huge_hooks; }
+chunk_hooks_t const &get_hugepage_hooks_nodump() { return huge_nodump_hooks; }
+
+int const proc_arena = [](){ 
+  jemallctl::set_thread_arena(0);
+  jemallctl::set_thread_arena_hooks(huge_hooks); 
+  return 0;
+}();
+
+int const proc_arena_nodump = [](){ 
+  int n = jemallctl::do_arenas_extend();
+  jemallctl::set_thread_arena(n);
+  jemallctl::set_thread_arena_hooks(huge_nodump_hooks); 
+  jemallctl::set_thread_arena(proc_arena); // default again
+  return n;
+}();
+
 } // namespace jemallctl
 
-int hooks_initialized = [](){ jemallctl::set_thread_arena_hooks(get_jemallctl_huge_hooks()); return 0; }();

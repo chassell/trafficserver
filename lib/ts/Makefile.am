@@ -40,6 +40,8 @@ libtsutil_la_LIBADD = \
 
 libtsutil_la_SOURCES = \
   Allocator.h \
+  StdAllocWrapper.h \
+  StdAllocWrapper.cc \
   Arena.cc \
   Arena.h \
   BaseLogFile.cc \
