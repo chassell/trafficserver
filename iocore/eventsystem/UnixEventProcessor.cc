@@ -68,34 +68,8 @@ void pretty_print_cpuset(const char *thrname, hwloc_obj_type_t objtype, int affi
 }
 #endif
 
-//
-// s_dfltRunFxn: Default stateless thread lifetime hook.  [i.e. replaceable by custom fxns]
-//
-EventProcessor::ThreadFxn_t EventProcessor::
-ThreadGroupDescriptor::s_dfltRunFxn = ThreadFxn_t( 
-   // readyFxn functor 
-   //    1) refers to a new thread-stack lambda "launchFxn" ...
-   //    2) stack-constructed from the ref an parent-stack lambda 
-   //    3) using both "start()::launchFxnPassed" and "start()::startFxn" ...
-   //
-   // therefore none of the data in startFxn or launchFxnPassed references can be used again
-   [](const InitFxn_t &readyFxn) 
-   {
-     // parent thread is waiting
-     std::unique_ptr<EThread> _base{new EThread{REGULAR,0}}; // store an EThread obj
-
-     // init and set up EThread 
-     readyFxn(_base.get());
-     // [stackWait-releases parent when done]
-
-     // free-running thread now
-     _base->execute(); 
-
-     // thread is complete
-   } );
-
 EventType
-EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t stacksize)
+EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t stacksize, const ThreadFxn_t &runFxn)
 {
   ink_release_assert( 0 < n_threads && n_threads <= (MAX_EVENT_THREADS - n_ethreads) );
   ink_release_assert(ev_type < MAX_EVENT_TYPES);
@@ -122,7 +96,7 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
     ink_release_assert( ! epEThread ); // must hold nothing
 
     // pass barrier and external EThread-hook into thread-group for spawn
-    thread_group[ev_type].start(grpBarrier, epEThread, stacksize, ThreadGroupDescriptor::s_dfltRunFxn);
+    thread_group[ev_type].start(grpBarrier, epEThread, stacksize, runFxn);
 
     // thread has allocated and initialized its EThread 
     // now only waiting on barrier
@@ -172,10 +146,12 @@ EventProcessor::ThreadGroupDescriptor::start(pthread_barrier_t &grpBarrier, EThr
   int const affid = numa::new_affinity_id();
   ink_semaphore stackWait;
 
-  auto launchFxnPassed = [this,&epEThread,affid,&stackWait,&grpBarrier](EThread *t) -> int
+  auto launchFxnRef = [this,&epEThread,affid,&stackWait,&grpBarrier](EThread *t) -> int
   {
-    EThread *&tgEThread = _thread[_count++]; // keep unique location
-    ptrdiff_t id = ( &tgEThread - &_thread[0] );
+    // NOTE: "grab" unique location [atomic]
+    EThread *&tgEThread = _thread[_count++];
+
+    ptrdiff_t id = ( &tgEThread - &_thread[0] ); // record index of it
 
     char thr_name[MAX_THREAD_NAME_LENGTH+1];
     snprintf(thr_name, sizeof(thr_name), "[%s %ld]", _name.get(), id);
@@ -186,7 +162,6 @@ EventProcessor::ThreadGroupDescriptor::start(pthread_barrier_t &grpBarrier, EThr
 
     t->id = id; // index
     t->set_affinity_id(affid);
-    t->set_specific();
 
     // parallel with waiting parent now 
     ink_sem_post(&stackWait); 
@@ -203,23 +178,32 @@ EventProcessor::ThreadGroupDescriptor::start(pthread_barrier_t &grpBarrier, EThr
 
     // perform all inits for EThread 
     for( auto &&cb : _spawnQueue ) {
-      cb(t);
+      cb(t); // init calls
     }
 
     return id;
   };
 
-  auto startFxn = [&runFxn,&launchFxnPassed]() {
-    // local copy [parent is blocked]
-    InitFxn_t launchFxn{launchFxnPassed};
-    runFxn(launchFxn); 
-  };
-
   // change to new memory before creating stack
   numa::assign_thread_memory_by_affinity(_affcfg, affid); 
 
-  // NOTE: pauses until stackFxn is thread-unneeded
-  return Thread::start(stackWait, stacksize, startFxn);
+  if ( runFxn ) {
+      // use a custom call
+      return Thread::start(stackWait, stacksize, [&launchFxnRef,&runFxn]() 
+            { runFxn(launchFxnRef); });
+  }
+
+  // use a default call
+  return Thread::start(stackWait, stacksize, [&launchFxnRef]() 
+     {
+         // parent thread is waiting ... so copy-pass lambda-params
+         Thread::launch(new EThread{REGULAR,0}, launchFxnRef);
+
+         // parent has continued --> passed params are untouchable
+         this_thread()->execute(); // parent has continued on
+     } );
+
+  // NOTE: pauses until launchFxnRef/stackWait are child-unneeded
 }
 
 
@@ -236,13 +220,11 @@ EventProcessor::spawn_thread(Continuation *cont, const char *thr_name, size_t st
   stacksize = std::max(stacksize, static_cast<decltype(stacksize)>(MIN_STACKSIZE));
   stacksize = aligned_spacing( stacksize, page );
 
-  auto launchFxnPassed = [this,&epEThread,&stackWait,thr_name,cont](EThread *t) -> int
+  auto launchFxnRef = [this,&epEThread,&stackWait,thr_name,cont](EThread *t) -> int
   {
     ink_set_thread_name(thr_name);
 
     epEThread = t;
-
-    t->set_specific();
 
     // parallel with parent now 
     ink_sem_post(&stackWait);
@@ -250,21 +232,17 @@ EventProcessor::spawn_thread(Continuation *cont, const char *thr_name, size_t st
     return 0;
   };
 
-  auto startFxn = [&launchFxnPassed,cont]()
+  auto startFxn = [&launchFxnRef,cont]()
   {
-    std::unique_ptr<EThread> _base{ new EThread };
-    InitFxn_t launchFxn{launchFxnPassed};
+    auto contV = cont;
+    // parent thread is waiting .. so copy lambda-params now
+    Thread::launch(new EThread{DEDICATED, nullptr}, launchFxnRef);
 
-    Continuation *contPtr = cont;
-
-    launchFxn(_base.get());
-
-    // parent can continue 
-
-    contPtr->handleEvent(EVENT_IMMEDIATE, nullptr);
+    // parent has continued --> params are untouchable
+    contV->handleEvent(EVENT_IMMEDIATE,nullptr); // use cont as entire call
   };
 
-  // NOTE: pauses until stackFxn is thread-unneeded
+  // NOTE: pauses until launchFxnRef/stackWait are child-unneeded
   auto r = Thread::start(stackWait, stacksize, startFxn);
 
   // ready to be included as valid now

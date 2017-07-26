@@ -82,7 +82,7 @@ protected:
   void *allocate()
     { return mallocx(_sz, (MALLOCX_ALIGN(_sz)|MALLOCX_ZERO|MALLOCX_ARENA(_arena)) ); }
   void deallocate(void *p) 
-    { sdallocx(p, _sz, MALLOCX_ARENA(_arena)); }
+    { dallocx(p, MALLOCX_ARENA(_arena)); }
 };
 
 template <typename T_OBJECT>

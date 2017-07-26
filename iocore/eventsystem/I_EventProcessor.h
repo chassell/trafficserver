@@ -101,8 +101,8 @@ class EThread;
 class EventProcessor : public Processor
 {
 public:
-  using InitFxn_t = std::function<void(EThread *)>;
-  using ThreadFxn_t = std::function<void(const InitFxn_t &)>;
+  using EThreadInitFxn_t = Thread::EThreadInitFxn_t;
+  using ThreadFxn_t = std::function<void(const EThreadInitFxn_t &)>;
 
   /** Register an event type with @a name.
 
@@ -137,8 +137,6 @@ public:
       @return EventType or thread id for the new group of threads (@a ev_type)
 
   */
-  EventType spawn_event_threads(EventType ev_type, int n_threads, size_t stacksize = DEFAULT_STACKSIZE);
-
   /// Convenience overload.
   /// This registers @a name as an event type using @c registerEventType and then calls the real @c spawn_event_threads
   EventType spawn_event_threads(const char *name, int n_thread, size_t stacksize = DEFAULT_STACKSIZE)
@@ -147,6 +145,8 @@ public:
     this->spawn_event_threads(ev_type, n_thread, stacksize);
     return ev_type;
   }
+
+  EventType spawn_event_threads(EventType ev_type, int n_threads, size_t stacksize = DEFAULT_STACKSIZE, const ThreadFxn_t &runFxn = ThreadFxn_t{});
 
   /**
     Schedules the continuation on a specific EThread to receive an event
@@ -253,11 +253,8 @@ public:
   Event *reschedule_in(Event *e, ink_hrtime atimeout_in, int callback_event = EVENT_INTERVAL);
   Event *reschedule_every(Event *e, ink_hrtime aperiod, int callback_event = EVENT_INTERVAL);
 
-//  void schedule_spawn(void(*fxn)(EThread*), EventType ev_type)
-//    { return schedule_spawn(InitFxn_t(fxn),ev_type); }
-
   /// Schedule the function @a f to be called in a thread of type @a ev_type when it is spawned.
-  void schedule_spawn(const InitFxn_t &fxn, EventType ev_type)
+  void schedule_spawn(const EThreadInitFxn_t &fxn, EventType ev_type)
   {
     ink_assert(ev_type < MAX_EVENT_TYPES);
     thread_group[ev_type]._spawnQueue.push_back(fxn);
@@ -324,15 +321,13 @@ public:
   /// The thread group ID is the index into an array of these and so is not stored explicitly.
   struct ThreadGroupDescriptor 
   {
-    static ThreadFxn_t s_dfltRunFxn;
-
-    ink_thread start(pthread_barrier_t &grpBarrier, EThread *&epEthread, int stacksize, const ThreadFxn_t &runFxn = s_dfltRunFxn);
+    ink_thread start(pthread_barrier_t &grpBarrier, EThread *&epEthread, int stacksize, const ThreadFxn_t &runFxn =ThreadFxn_t{});
 
     hwloc_obj_type_t _affcfg = hwloc_obj_type_t{};                              ///< config thread-affinity [default: entire machine]
     ats_scoped_str _name;                         ///< Name for the thread group.
     std::atomic_int _count{0};                  ///< # of threads of this type.
     std::atomic_uint _next_round_robin{0};       ///< Index of thread to use for events assigned to this group.
-    std::vector<InitFxn_t> _spawnQueue; ///< calls to init EThread upon spawning
+    std::vector<EThreadInitFxn_t> _spawnQueue; ///< calls to init EThread upon spawning
 
     /// The actual threads in this group.
     EThread *_thread[MAX_THREADS_IN_EACH_TYPE] = { nullptr };
