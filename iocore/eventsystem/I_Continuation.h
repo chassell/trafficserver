@@ -228,7 +228,7 @@ public:
   int
   handleEvent(int event = CONTINUATION_EVENT_NONE, void *data = 0)
   {
-    return _handlerApply(this,event,data);
+    return ContinuationHandlerFtor_t{_handlerApply}(this,event,data);
   }
 
   /**
@@ -244,9 +244,10 @@ private:
   template <class T_FUNCTOR>
   int wrap_callback(T_FUNCTOR const &ftor, ContinuationHandler fxn, const char *name);
 
-  void save_call_context();
-  int push_context();
-  void restore_context(int);
+  void store_callback_context();
+  int restore_callback_context();
+
+  static void reset_caller_context(int);
 
 private:
   ContinuationHandler       _handler = nullptr;
@@ -296,14 +297,15 @@ inline int Continuation::wrap_callback(T_FUNCTOR const &ftor, ContinuationHandle
 #ifdef DEBUG
   handler_name = name;
 #endif
-  save_call_context();
+  store_callback_context();
 
   // copy ftor into new lambda
   _handlerApply = [ftor](Continuation *self, int event, void *vparg) -> int
   {
-    auto tmp = self->push_context(); 
+    auto tmp = self->restore_callback_context(); 
     auto r = ftor(self,event,vparg);
-    self->restore_context(tmp);
+    // self may be deleted by now!
+    Continuation::reset_caller_context(tmp);
     return r;
   };
 
