@@ -21,6 +21,7 @@
   limitations under the License.
  */
 #include "ts/jemallctl.h"
+#include "ts/hugepages.h"
 
 #include "ts/ink_platform.h"
 #include "ts/ink_memory.h"

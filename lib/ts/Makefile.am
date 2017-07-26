@@ -44,6 +44,8 @@ libtsutil_la_LIBADD = \
   @LIBCAP@
 
 libtsutil_la_SOURCES = \
+  jemallctl.cc \
+  jemallctl.h \
   Allocator.h \
   Arena.cc \
   Arena.h \
@@ -153,8 +155,6 @@ libtsutil_la_SOURCES = \
   IpMapConf.h \
   IpMap.h \
   I_Version.h \
-  jemallctl.cc \
-  jemallctl.h \
   Layout.cc \
   List.h \
   llqueue.cc \

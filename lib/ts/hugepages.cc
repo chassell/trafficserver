@@ -27,6 +27,9 @@
 
 #define DEBUG_TAG "hugepages"
 
+#undef Debug
+#define Debug(a,b ...)
+
 #if ! MAP_HUGETLB 
 
 bool ats_hugepage_enabled() { return false; }
@@ -150,30 +153,9 @@ ats_free_hugepage(void *ptr, size_t s)
    bool (chunk_merge_t)   (void *chunk_a, size_t size_a, void *chunk_b, size_t size_b, bool committed, unsigned arena_ind);
 */
 
-namespace {
-
-void *huge_normal_alloc(void *chunk, size_t size, size_t alignment, bool *zero, bool *commit, unsigned arena_ind);
-void *huge_nodump_alloc(void *chunk, size_t size, size_t alignment, bool *zero, bool *commit, unsigned arena_ind);
-bool huge_dalloc(void *chunk, size_t size, bool committed, unsigned arena_ind);
 bool huge_commit(void *chunk, size_t size, size_t offset, size_t length, unsigned arena_ind);
 bool huge_decommit(void *chunk, size_t size, size_t offset, size_t length, unsigned arena_ind);
 bool huge_purge(void *chunk, size_t size, size_t offset, size_t length, unsigned arena_ind);
-bool huge_split(void *chunk, size_t size, size_t size_a, size_t size_b, bool committed, unsigned arena_ind);
-bool huge_merge(void *chunk_a, size_t size_a, void *chunk_b, size_t size_b, bool committed, unsigned arena_ind);
-
-chunk_hooks_t const huge_hooks = { 
-  &huge_normal_alloc, &huge_dalloc,
-  &huge_commit, &huge_decommit,
-  &huge_purge,
-  &huge_split, &huge_merge
-};
-
-chunk_hooks_t const huge_nodump_hooks = { 
-  &huge_nodump_alloc, &huge_dalloc,
-  &huge_commit, &huge_decommit,
-  &huge_purge,
-  &huge_split, &huge_merge
-};
 
 #if defined(linux)
 
@@ -464,14 +446,12 @@ bool huge_merge(void *chunk_a, size_t size_a, void *chunk_b, size_t size_b, bool
 
 #endif // linux
 
-}
-
 void *
 ats_alloc_hugepage_stack(size_t stacksize)
 {
   Debug(DEBUG_TAG,"#%lu",stacksize);
 
-  // get aligned mapping, unpopulated
+  // get aligned mapping, unpopulated and madvise for hugepage
   void *alignedMapping = huge_normal_alloc(nullptr, stacksize, 0, nullptr, nullptr, 0);
   Debug(DEBUG_TAG,"%p - %p",alignedMapping, static_cast<char *>(alignedMapping)+stacksize);
 
@@ -479,11 +459,11 @@ ats_alloc_hugepage_stack(size_t stacksize)
   auto r = mmap(alignedMapping, stacksize, PROT_READ|PROT_WRITE, (MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED|MAP_GROWSDOWN), -1, 0);
   ink_release_assert( r == alignedMapping );
 
+  auto rr = madvise(alignedMapping, stacksize,MADV_HUGEPAGE); // re-apply flags to the new map remaining
+  ink_release_assert( ! rr );
+
   return alignedMapping;
 }
-
-chunk_hooks_t const &get_jemallctl_huge_hooks() { return huge_hooks; }
-chunk_hooks_t const &get_jemallctl_huge_nodump_hooks() { return huge_nodump_hooks; }
 
 #endif
 

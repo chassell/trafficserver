@@ -57,9 +57,9 @@ template <typename T_VALUE> auto mallctl_set(const objpath_t &oid, const T_VALUE
    { return -1; }
 template <typename T_VALUE> auto mallctl_get(const objpath_t &oid) -> T_VALUE 
    { return std::move(T_VALUE{}); }
-chunk_hooks_t const &get_hugepage_hooks() { return std::move(chunk_hooks_t{}); }
-chunk_hooks_t const &get_hugepage_nodump_hooks() { return std::move(chunk_hooks_t{}); }
+
 #else
+
 objpath_t objpath(const std::string &path)
 {
   objpath_t oid;
@@ -171,6 +171,24 @@ const GetObjFxn<bool>             thread_prof_active{"thread.prof.active"};
 const SetObjFxn<bool>             set_thread_prof_active{"thread.prof.active"};
 
 
+chunk_hooks_t const huge_hooks = { 
+  &huge_normal_alloc, &huge_dalloc,
+  &huge_commit, &huge_decommit,
+  &huge_purge,
+  &huge_split, &huge_merge
+};
+
+chunk_hooks_t const huge_nodump_hooks = { 
+  &huge_nodump_alloc, &huge_dalloc,
+  &huge_commit, &huge_decommit,
+  &huge_purge,
+  &huge_split, &huge_merge
+};
+
+chunk_hooks_t const &get_hugepage_hooks() { return huge_hooks; }
+chunk_hooks_t const &get_hugepage_hooks_nodump() { return huge_nodump_hooks; }
+
+int hooks_initialized = [](){ jemallctl::set_thread_arena_hooks(huge_hooks); return 0; }();
+
 } // namespace jemallctl
 
-int hooks_initialized = [](){ jemallctl::set_thread_arena_hooks(get_jemallctl_huge_hooks()); return 0; }();

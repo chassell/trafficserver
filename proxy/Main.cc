@@ -43,6 +43,8 @@
 
 #include "api/ts/ts.h" // This is sadly needed because of us using TSThreadInit() for some reason.
 
+#include "api/ts/ts.h" // This is sadly needed because of us using TSThreadInit() for some reason.
+
 #include <syslog.h>
 #include <algorithm>
 
