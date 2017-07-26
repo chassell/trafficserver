@@ -188,7 +188,19 @@ chunk_hooks_t const huge_nodump_hooks = {
 chunk_hooks_t const &get_hugepage_hooks() { return huge_hooks; }
 chunk_hooks_t const &get_hugepage_hooks_nodump() { return huge_nodump_hooks; }
 
-int hooks_initialized = [](){ jemallctl::set_thread_arena_hooks(huge_hooks); return 0; }();
+int const proc_arena = [](){ 
+  jemallctl::set_thread_arena(0);
+  jemallctl::set_thread_arena_hooks(huge_hooks); 
+  return 0;
+}();
+
+int const proc_arena_nodump = [](){ 
+  int n = jemallctl::do_arenas_extend();
+  jemallctl::set_thread_arena(n);
+  jemallctl::set_thread_arena_hooks(huge_nodump_hooks); 
+  jemallctl::set_thread_arena(proc_arena); // default again
+  return n;
+}();
 
 } // namespace jemallctl
 

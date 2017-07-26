@@ -47,6 +47,8 @@ libtsutil_la_SOURCES = \
   jemallctl.cc \
   jemallctl.h \
   Allocator.h \
+  StdAllocWrapper.h \
+  StdAllocWrapper.cc \
   Arena.cc \
   Arena.h \
   BaseLogFile.cc \

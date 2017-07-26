@@ -230,8 +230,12 @@ void *huge_alloc_and_madvise(void *chunk, size_t csize, size_t hpgsz,
 
     // successfully created map 
 
-    r = madvise(startpg,opsize,madvflags|MADV_HUGEPAGE); // apply flags to the new map remaining
+    r = madvise(startpg,opsize,MADV_HUGEPAGE);
     ink_release_assert( ! r );
+    if ( madvflags ) {
+      r = madvise(startpg,opsize,madvflags);
+      ink_release_assert( ! r );
+    }
     Debug(DEBUG_TAG,"return: %lx -> %p ",csize,startpg);
     return startpg;                                                                  //// SUCCESS alloc 
   }
@@ -249,8 +253,12 @@ void *huge_alloc_and_madvise(void *chunk, size_t csize, size_t hpgsz,
       return nullptr; // mmap with prot-none failed                                   //// ERROR realloc-decommit fail
     }
     // apply flags over entire map range owned
-    r = madvise(startpg,opsize,madvflags|MADV_HUGEPAGE); 
+    r = madvise(startpg,opsize,MADV_HUGEPAGE); 
     ink_release_assert( ! r );
+    if ( madvflags ) {
+      r = madvise(startpg,opsize,madvflags);
+      ink_release_assert( ! r );
+    }
     Debug(DEBUG_TAG,"realloc-empty: %p %lx",chunk,csize);
     return chunk; // realloc is completed with no-zero/no-commit permissions          //// SUCCESS realloc-emptied
   }
@@ -266,27 +274,33 @@ void *huge_alloc_and_madvise(void *chunk, size_t csize, size_t hpgsz,
   // memory is writable and committed by OS
 
   *commit = true;
-  madvflags |= ( *zero ? MADV_DONTNEED : 0 ); // add purge flag in if needed..
+  if ( *zero ) {
+    r = madvise(startpg,opsize,MADV_DONTNEED);
+  }
 
   // apply flags to the new map remaining
 
   if ( chunk == startpg ) // allow passed flags for realloc'ed hugepages?
   {
     Debug(DEBUG_TAG,"realloc-madvflags: %p %lx",startpg,opsize);
-    r = madvise(startpg, opsize, madvflags|MADV_HUGEPAGE); 
+    r = madvise(startpg, opsize, MADV_HUGEPAGE); 
     ink_release_assert( ! r );
+    if ( madvflags ) {
+      r = madvise(startpg, opsize, madvflags); 
+      ink_release_assert( ! r );
+    }
   } 
   else if ( *zero ) // add safest flags and attempt partial purge to realloc'ed hugepage?
   {
     Debug(DEBUG_TAG,"realloc-purge: %p %lx",chunk,csize);
     huge_purge(chunk,csize,0,csize,arena_ind);
-    r = madvise(startpg, opsize, (MADV_HUGEPAGE)); 
+    r = madvise(startpg, opsize, MADV_HUGEPAGE); 
     ink_release_assert( ! r );
   } 
   else // just add safest flags to realloc'ed hugepage?
   {
     Debug(DEBUG_TAG,"realloc-nomadvflags: %p %lx",startpg,opsize);
-    r = madvise(startpg, opsize,MADV_HUGEPAGE); // add safe flags to unaligned hugepages
+    r = madvise(startpg, opsize, MADV_HUGEPAGE); // add safe flags to unaligned hugepages
     ink_release_assert( ! r );
   }
 

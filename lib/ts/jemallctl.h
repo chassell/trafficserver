@@ -10,6 +10,9 @@ struct chunk_hooks_t {};
 
 namespace jemallctl {
 
+extern int const proc_arena;
+extern int const proc_arena_nodump;
+
 using objpath_t = std::vector<size_t>;
 
 struct ObjBase {
