@@ -116,7 +116,8 @@ public:
     processors and you should not modify it directly.
 
   */
-  ink_thread tid() { return _tid; }
+  ink_thread  tid() const         { return _tid; }
+  unsigned    affinity_id() const { return _affid; }
 
   /**
     Thread lock to ensure atomic operations. The thread lock available
