@@ -82,8 +82,6 @@ class EThread;
 constexpr int MAX_THREAD_NAME_LENGTH = 16;
 constexpr int MIN_STACKSIZE          = 100*1024; // 100K
 
-static inline unsigned this_thread_affinity_id();
-
 /// The signature of a function to be called by a thread.
 using ThreadFunction = std::function<void()>;
 
@@ -196,13 +194,11 @@ public:
   static ink_hrtime get_hrtime_updated();
 
 private:
-  friend inline unsigned ::this_thread_affinity_id();
   ink_thread _tid = ink_thread{};
   unsigned _affid = 0U;
 };
 
 Thread *this_thread();
-static inline unsigned this_thread_affinity_id() { return this_thread()->_affid; }
 
 TS_INLINE ink_hrtime
 Thread::get_hrtime()

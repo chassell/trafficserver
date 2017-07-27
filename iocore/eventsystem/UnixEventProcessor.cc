@@ -78,7 +78,7 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
   auto page = (ats_hugepage_enabled() ? sizeof(MemoryPageHuge) : sizeof(MemoryPage) );
 
   // correctly define size of stack now
-  stacksize = std::max(stacksize, static_cast<decltype(stacksize)>(MIN_STACKSIZE));
+  stacksize = std::max(0UL+stacksize,0UL+MIN_STACKSIZE);
   stacksize = aligned_spacing( stacksize, page );
 
   Debug("iocore_thread", "Thread stack size set to %zu", stacksize);
