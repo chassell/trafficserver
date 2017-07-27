@@ -21,46 +21,13 @@
   limitations under the License.
  */
 
-#ifndef __ARENA_H__
-#define __ARENA_H__
+#pragma once
 
-#if HAVE_LIBJEMALLOC
-#include <memory>
-#include <jemalloc/jemalloc.h>
-
-struct Arena : public std::allocator<uint64_t>
-{
-  void *alloc(size_t size) { return allocate((size+1)/sizeof(uint64_t)); }
-  void free(void *mem, size_t size) { deallocate(static_cast<uint64_t*>(mem), size); }
-
-  char *str_alloc(size_t len) { return static_cast<char*>(alloc(len+1)); }
-  char *str_store(const char *str, size_t len)
-  {
-     char *mem = str_alloc(len);
-     memcpy(mem, str, len);
-     mem[len] = '\0';
-     return mem;
-  }
-
-  void str_free(char *str) { free(str,0); }
-
-  // does it the long hard way
-  static size_t str_length(const char *str) 
-  { 
-    size_t l = ::sallocx(str,0);
-    while ( l && ! str[--l] ) 
-       { }
-    return l+1; // assume nul is ending
-  }
-
-  static void reset() { }
-};
-
-#else
+#include "ts/ink_assert.h"
+#include "ts/ink_memory.h"
 
 #include <sys/types.h>
 #include <memory.h>
-#include "ts/ink_assert.h"
 
 struct ArenaBlock {
   ArenaBlock *next;
@@ -200,6 +167,34 @@ Arena::str_store(const char *str, size_t len)
   return mem;
 }
 
-#endif
+struct JemallocArena : public std::allocator<uint64_t>
+{
+  void *alloc(size_t size) { return allocate((size+1)/sizeof(uint64_t)); }
+  void free(void *mem, size_t size) { deallocate(static_cast<uint64_t*>(mem), size); }
 
-#endif /* __ARENA_H__ */
+  char *str_alloc(size_t len) { return static_cast<char*>(alloc(len+1)); }
+  char *str_store(const char *str, size_t len)
+  {
+     char *mem = str_alloc(len);
+     memcpy(mem, str, len);
+     mem[len] = '\0';
+     return mem;
+  }
+
+  void str_free(char *str) { free(str,0); }
+
+  // does it the long hard way
+  static size_t str_length(const char *str) 
+  {
+    size_t l = sallocx(str,0);
+    while ( l && ! str[--l] ) 
+       { }
+    return l+1; // assume nul is ending
+  }
+
+  static void reset() { }
+};
+
+#if HAVE_LIBJEMALLOC
+#define Arena JemallocArena
+#endif

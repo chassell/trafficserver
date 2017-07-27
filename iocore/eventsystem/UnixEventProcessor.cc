@@ -104,6 +104,7 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
 
   // all threads are ready when passed
   pthread_barrier_wait(&grpBarrier);
+  pthread_barrier_destroy(&grpBarrier);
 
   // count threads as visible
   n_ethreads = n_ethreads_nxt; 

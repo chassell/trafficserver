@@ -63,12 +63,12 @@
 #error "include I_EventSystem.h or P_EventSystem.h"
 #endif
 
+//
+// NOTE: only public include for either file
+//
 #if HAVE_LIBJEMALLOC
 #include "ts/StdAllocWrapper.h"
 #else
-//
-// NOTE: only include of I_ProxyAllocator.h
-//
 #include "I_ProxyAllocator.h"
 #endif
 

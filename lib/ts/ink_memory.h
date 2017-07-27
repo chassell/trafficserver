@@ -56,11 +56,19 @@
 #include <jemalloc/jemalloc.h>
 #elif HAVE_JEMALLOC_H
 #include <jemalloc.h>
-#else
+
+#else // no jemalloc includes used
+
+#define mallocx(...)    nullptr_t{}
+#define sallocx(...)    size_t{}
+#define sdallocx(...)
+#define dallocx(...)
+
 #if HAVE_MALLOC_H
 #include <malloc.h>
-#endif // ! HAVE_MALLOC_H
-#endif // ! HAVE_JEMALLOC_H && ! HAVE_JEMALLOC_JEMALLOC_H
+#endif
+
+#endif // no jemalloc includes used
 
 
 #if HAVE_SYS_USER_H

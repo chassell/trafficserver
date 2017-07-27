@@ -37,20 +37,7 @@
 
  */
 
-#ifndef _Allocator_h_
-#define _Allocator_h_
-
-#if HAVE_LIBJEMALLOC
-
-#include "ts/StdAllocWrapper.h"
-
-#define ink_freelists_dump(a)
-#define ink_freelists_dump_baselinerel(a)
-#define ink_freelists_snap_baseline(a)
-
-#define ink_freelist_init_ops(a)
-
-#else // not HAVE_LIBJEMALLOC ////////////////
+#pragma once
 
 #include "ts/ink_defs.h"
 #include "ts/ink_queue.h"
@@ -59,6 +46,7 @@
 #include <execinfo.h>
 #include <new>
 #include <cstdlib>
+
 
 #define RND16(_x) (((_x) + 15) & ~15)
 
@@ -300,6 +288,30 @@ private:
   ink_mutex trackerLock;
 };
 
-#endif // not HAVE_LIBJEMALLOC ////////// 
+#if HAVE_LIBJEMALLOC
 
-#endif // _Allocator_h_
+// these calls can be removed
+#define ink_freelists_dump(...)
+#define ink_freelists_dump_baselinerel(...)
+#define ink_freelists_snap_baseline(...)
+
+#define ink_freelist_init_ops(...)
+
+#include "ts/StdAllocWrapper.h"
+
+// cover up use of original Allocators above
+#define Allocator      AlignedAllocator
+#define ClassAllocator ObjAllocator
+#define ProxyAllocator ThreadAllocatorStub
+
+class ThreadAllocatorStub { };
+
+// define use of for thread Allocators
+#define THREAD_ALLOC(allocObj,t)         ( ::allocObj.alloc() )
+#define THREAD_ALLOC_INIT(allocObj,t)    ( ::allocObj.alloc() )
+#define THREAD_FREE(ptr,allocObj,t)      ( ::allocObj.free(ptr) )
+
+extern int thread_freelist_high_watermark;
+extern int thread_freelist_low_watermark;
+
+#endif
