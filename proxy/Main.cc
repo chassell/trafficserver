@@ -39,6 +39,7 @@
 #include "ts/hugepages.h"
 
 #include <syslog.h>
+#include <algorithm>
 
 #if !defined(linux)
 #include <sys/lock.h>

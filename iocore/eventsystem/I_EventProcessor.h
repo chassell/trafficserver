@@ -270,7 +270,8 @@ public:
     this->register_event_type("ET_NET");
   }
 
-  ~EventProcessor() { }
+  virtual ~EventProcessor() { }
+
   EventProcessor(const EventProcessor &) = delete;
   EventProcessor &operator=(const EventProcessor &) = delete;
 

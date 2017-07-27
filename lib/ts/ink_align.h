@@ -45,6 +45,9 @@ union Alias64 {
 };
 
 
+//
+// workalike to std::align() ... though it's not a great API
+//
 template <typename T_OBJ>
 inline T_OBJ *ats_align(std::size_t alignment, std::size_t size, T_OBJ *&ptr, std::size_t &space)
 {
@@ -78,7 +81,7 @@ aligned_spacing(size_t len, size_t block=INK_MIN_ALIGN)
 }
 
 //
-// Move a pointer forward until it meets the alignment width.
+// Move a pointer backward until it meets an alignment width one before the next.
 //
 static inline void *
 align_pointer_backward(const void *pointer_, size_t alignment)

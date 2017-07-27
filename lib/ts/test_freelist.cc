@@ -21,10 +21,13 @@
   limitations under the License.
  */
 
-#include <stdlib.h>
-#include <string.h>
+#include "ts/Allocator.h"
+
 #include "ts/ink_thread.h"
 #include "ts/ink_queue.h"
+
+#include <cstdlib>
+#include <cstring>
 
 #define NTHREADS 64
 InkFreeList *flist = NULL;

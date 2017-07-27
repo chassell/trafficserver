@@ -142,7 +142,6 @@ ats_free_hugepage(void *ptr, size_t s)
   return (munmap(ptr, size) == 0);
 }
 
-#if HAVE_LIBJEMALLOC
 /*
    void *(chunk_alloc_t)  (void *chunk, size_t size, size_t alignment, bool *zero, bool *commit, unsigned arena_ind);
    bool (chunk_dalloc_t)  (void *chunk, size_t size, bool committed, unsigned arena_ind);
@@ -458,8 +457,6 @@ bool huge_merge(void *chunk_a, size_t size_a, void *chunk_b, size_t size_b, bool
   return false; // they were safely split before?  always successful
 }
 
-#endif // linux
-
 void *
 ats_alloc_hugepage_stack(size_t stacksize)
 {
@@ -479,6 +476,6 @@ ats_alloc_hugepage_stack(size_t stacksize)
   return alignedMapping;
 }
 
-#endif
+#endif // linux
 
 #endif

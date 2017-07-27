@@ -21,9 +21,8 @@
   limitations under the License.
 
   Provides three classes
-    - Allocator for allocating memory blocks of fixed size
-    - ClassAllocator for allocating objects
-    - SpaceClassAllocator for allocating sparce objects (most members uninitialized)
+    - AlignedAllocator for allocating memory blocks of fixed size / alignment
+    - ObjAllocator for allocating objects
 
   These class provides a efficient way for handling dynamic allocation.
   The fast allocator maintains its own freepool of objects from
@@ -37,8 +36,7 @@
 
  */
 
-#ifndef _StdAllocWrapper_h_
-#define _StdAllocWrapper_h_
+#pragma once
 
 #include "ts/jemallctl.h"
 
@@ -54,12 +52,6 @@
 #include <memory>
 #include <cstdlib>
 
-#define Allocator      AlignedAllocator
-#define ClassAllocator ObjAllocator
-#define ProxyAllocator AllocatorStats
-
-// NOTE: block competing includes after this one
-#define _Allocator_h_
 
 class AlignedAllocator
 {
@@ -122,14 +114,3 @@ class ObjAllocator : public std::allocator<T_OBJECT>
  private:
   const char *_name;
 };
-
-class AllocatorStats { };
-
-extern int thread_freelist_high_watermark;
-extern int thread_freelist_low_watermark;
-
-#define THREAD_ALLOC(a,thread)         ( ::a.alloc() )
-#define THREAD_ALLOC_INIT(a,thread)    ( ::a.alloc() )
-#define THREAD_FREE(ptr,a,thread)      ( ::a.free(ptr) )
-
-#endif // _Allocator_h_

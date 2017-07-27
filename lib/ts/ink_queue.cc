@@ -47,14 +47,14 @@
 #include "ts/hugepages.h"
 #include "ts/Diags.h"
 
-#undef HAVE_LIBJEMALLOC 
-
-#include "ts/Allocator.h"
-
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <cassert>
 #include <cstdlib>
+
+// in order to prevent global-defs defs
+#undef HAVE_LIBJEMALLOC 
+#include "ts/Allocator.h"
 
 #define DEBUG_TAG "freelist"
 
@@ -68,9 +68,6 @@
 #define SANITY
 #define DEADBEEF
 #endif
-
-// declare (standard signature) only...
-int ats_madvise(caddr_t addr, size_t len, int flags);
 
 struct ink_freelist_ops {
   void *(*fl_new)(InkFreeList *);
