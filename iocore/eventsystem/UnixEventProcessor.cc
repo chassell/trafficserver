@@ -185,26 +185,33 @@ EventProcessor::ThreadGroupDescriptor::start(pthread_barrier_t &grpBarrier, EThr
     return id;
   };
 
-  // change to new memory before creating stack
+  // change to new memory before creating stack (inherited by child)
   numa::assign_thread_memory_by_affinity(_affcfg, affid); 
 
+  ink_thread r;
+
+  // NOTE: both pause until launchFxnRef/stackWait are child-unneeded
+
   if ( runFxn ) {
-      // use a custom call
-      return Thread::start(stackWait, stacksize, [&launchFxnRef,&runFxn]() 
+    // custom callback
+    r = Thread::start(stackWait, stacksize, [&launchFxnRef,&runFxn]() 
             { runFxn(launchFxnRef); });
+  } else {
+
+    // default callback
+    r = Thread::start(stackWait, stacksize, [&launchFxnRef]() 
+       {
+             // parent thread is waiting ... so copy-pass lambda-params
+             Thread::launch(new EThread{REGULAR,0}, launchFxnRef);
+
+           // parent has continued --> passed params are untouchable
+           this_thread()->execute(); // parent has continued on
+       });
   }
 
-  // use a default call
-  return Thread::start(stackWait, stacksize, [&launchFxnRef]() 
-     {
-         // parent thread is waiting ... so copy-pass lambda-params
-         Thread::launch(new EThread{REGULAR,0}, launchFxnRef);
+  numa::reset_thread_memory_by_cpuset();
 
-         // parent has continued --> passed params are untouchable
-         this_thread()->execute(); // parent has continued on
-     } );
-
-  // NOTE: pauses until launchFxnRef/stackWait are child-unneeded
+  return r;
 }
 
 

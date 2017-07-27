@@ -165,6 +165,7 @@ namespace numa
   // NOTE: creates new arenas under mutex if none present
   unsigned get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
   int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit new pages to specific nodes
+  void reset_thread_memory_by_cpuset(); // limit new pages to whatever cpuset is limited to
 #endif
 }
 
