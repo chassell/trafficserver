@@ -133,8 +133,6 @@ char *_xstrdup(const char *str, int length, const char *path);
 #ifdef __cplusplus
 namespace numa
 {
-  static inline hwloc_topology_t curr() { return ink_get_topology(); }
-
   unsigned new_affinity_id();
 
 #if TS_USE_HWLOC 
