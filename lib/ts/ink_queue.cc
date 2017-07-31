@@ -52,11 +52,6 @@
 #include "ts/hugepages.h"
 #include "ts/Diags.h"
 
-
-// in order to compile correctly
-#undef HAVE_LIBJEMALLOC
-#include "ts/Allocator.h"
-
 #define DEBUG_TAG "freelist"
 
 /*
