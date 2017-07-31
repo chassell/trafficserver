@@ -64,10 +64,17 @@
 -- - include I_Event.h or
   P_Event.h
 #endif
+
+#include "ts/Allocator.h"
+#if !HAVE_LIBJEMALLOC
+#include "I_ProxyAllocator.h"
+#endif
+
+#include <functional>
+
 #include "ts/ink_platform.h"
 #include "ts/ink_thread.h"
-#include "I_ProxyAllocator.h"
-  class Thread;
+
 class ProxyMutex;
 
 #define THREADAPI
@@ -107,7 +114,7 @@ public:
     processors and you should not modify it directly.
 
   */
-  ink_thread tid;
+  ink_thread tid = 0;
 
   /**
     Thread lock to ensure atomic operations. The thread lock available
@@ -124,7 +131,6 @@ public:
 
   static ink_hrtime cur_time;
   inkcoreapi static ink_thread_key thread_data_key;
-  Ptr<ProxyMutex> mutex_ptr;
 
   // For THREAD_ALLOC
   ProxyAllocator eventAllocator;
