@@ -28,9 +28,6 @@
 #include "ts/ink_string.h"
 #include "ts/I_Layout.h"
 
-#include <fstream>
-#include <unordered_map>
-
 static Layout *layout = nullptr;
 
 Layout *
@@ -178,14 +175,11 @@ Layout::check_runroot()
 
 Layout::Layout(ts::string_view const _prefix)
 {
-  if (!_prefix.empty()) {
+  if (_prefix.size() != 0) {
     prefix.assign(_prefix.data(), _prefix.size());
   } else {
     std::string path;
     int len;
-    if (check_runroot()) {
-      return;
-    }
     if (getenv("TS_ROOT") != nullptr) {
       std::string env_path(getenv("TS_ROOT"));
       len = env_path.size();
