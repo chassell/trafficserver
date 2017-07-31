@@ -76,6 +76,18 @@
 #endif
 #endif // ! HAVE_JEMALLOC_H && ! HAVE_JEMALLOC_JEMALLOC_H
 
+#else // no jemalloc includes used
+
+#define mallocx(...) nullptr
+#define sallocx(...) size_t()
+#define sdallocx(...)
+#define dallocx(...)
+
+#if HAVE_MALLOC_H
+#include <malloc.h>
+#endif
+#endif // ! HAVE_JEMALLOC_H && ! HAVE_JEMALLOC_JEMALLOC_H
+
 #if HAVE_LIBJEMALLOC
 #ifdef __cplusplus
 // c++: inline-override stdc++ version
