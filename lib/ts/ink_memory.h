@@ -36,7 +36,7 @@
 #include <inttypes.h>
 #include <string>
 
-#Include "ts/string_view.h"
+#include "ts/string_view.h"
 #include "ts/ink_config.h"
 
 #ifdef __cplusplus
@@ -68,7 +68,6 @@
 
 #define mallocx(...) nullptr
 #define sallocx(...) size_t()
-  size_t {}
 #define sdallocx(...)
 #define dallocx(...)
 
