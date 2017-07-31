@@ -26,6 +26,8 @@
 #include "ts/ink_config.h"
 #include "ts/ink_defs.h"
 
+#include <vector>
+#include <functional>
 #include <memory>
 
 #include <ctype.h>
@@ -75,7 +77,6 @@
 #if HAVE_MALLOC_H
 #include <malloc.h>
 #endif
-#endif // ! HAVE_JEMALLOC_H && ! HAVE_JEMALLOC_JEMALLOC_H
 
 #if HAVE_LIBJEMALLOC
 #ifdef __cplusplus
@@ -125,21 +126,6 @@ operator delete[](void *p, size_t n) noexcept
 #endif
 #endif
 
-#ifndef MADV_NORMAL
-#define MADV_NORMAL 0
-#endif
-
-#ifndef MADV_RANDOM
-#define MADV_RANDOM 1
-#endif
-
-#ifndef MADV_SEQUENTIAL
-#define MADV_SEQUENTIAL 2
-#endif
-
-#ifndef MADV_WILLNEED
-#define MADV_WILLNEED 3
-#endif
 
 #if HAVE_SYS_USER_H
 #include <sys/user.h>
@@ -171,9 +157,7 @@ void *ats_memalign(size_t alignment, size_t size);
 void ats_free(void *ptr);
 void *ats_free_null(void *ptr);
 void ats_memalign_free(void *ptr);
-int ats_msync(caddr_t addr, size_t len, caddr_t end, int flags);
-int ats_madvise(caddr_t addr, size_t len, int flags);
-int ats_mlock(caddr_t addr, size_t len);
+
 void *ats_alloc_stack(size_t stacksize);
 
 void *ats_track_malloc(size_t size, uint64_t *stat);
@@ -233,15 +217,31 @@ int create_global_nodump_arena();
 unsigned new_affinity_id();
 
 #if TS_USE_HWLOC 
-static inline hwloc_topology_t curr() { return ink_get_topology(); }
+  static inline hwloc_topology_t curr() { return ink_get_topology(); }
 
-hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
-int assign_thread_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit usable cpus to specific cpuset
+  hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+  int assign_thread_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit usable cpus to specific cpuset
 
-// NOTE: creates new arenas under mutex if none present
-unsigned get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
-int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit new pages to specific nodes
-void reset_thread_memory_by_cpuset(); // limit new pages to whatever cpuset is limited to
+  // NOTE: creates new arenas under mutex if none present
+  unsigned get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+  int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit new pages to specific nodes
+  void reset_thread_memory_by_cpuset(); // limit new pages to whatever cpuset is limited to
+
+  auto constexpr kHwlocBitmapDeleter = [](hwloc_bitmap_t map){ map ? hwloc_bitmap_free(map) : (void) 0; };
+
+  struct hwloc_bitmap : public std::unique_ptr<hwloc_bitmap_s,void(*)(hwloc_bitmap_t)>
+  {
+    using super = std::unique_ptr<hwloc_bitmap_s,void(*)(hwloc_bitmap_t)>;
+    hwloc_bitmap() : super{ hwloc_bitmap_alloc(), kHwlocBitmapDeleter } 
+       { }
+    hwloc_bitmap(hwloc_const_bitmap_t map) : super{ hwloc_bitmap_dup(map), kHwlocBitmapDeleter } 
+       { }
+    operator hwloc_const_bitmap_t() const
+       { return get(); }
+    operator hwloc_bitmap_t()
+       { return get(); }
+  };
+
 #endif
 }
 
