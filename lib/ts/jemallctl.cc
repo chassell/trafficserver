@@ -22,7 +22,6 @@
  */
 
 #include "ts/jemallctl.h"
-#include "ts/hugepages.h"
 
 #include "ts/ink_platform.h"
 
@@ -32,6 +31,7 @@
 #include "ts/ink_stack_trace.h"
 #include "ts/Diags.h"
 #include "ts/ink_atomic.h"
+#include "ts/ink_align.h"
 
 #include <cassert>
 #if defined(linux) && !defined(_XOPEN_SOURCE)
@@ -88,17 +88,20 @@ objpath(const std::string &path)
 {
   return objpath_t();
 }
+
 auto
 mallctl_void(const objpath_t &oid) -> int
 {
   return -1;
 }
+
 template <typename T_VALUE>
 auto
 mallctl_set(const objpath_t &oid, const T_VALUE &v) -> int
 {
   return -1;
 }
+
 template <typename T_VALUE>
 auto
 mallctl_get(const objpath_t &oid) -> T_VALUE
@@ -200,66 +203,73 @@ template struct SetObjFxn<unsigned>;
 template struct SetObjFxn<bool>;
 template struct SetObjFxn<chunk_hooks_t>;
 
-const GetObjFxn<chunk_hooks_t> thread_arena_hooks{"arena.0.chunk_hooks"};
-const SetObjFxn<chunk_hooks_t> set_thread_arena_hooks{"arena.0.chunk_hooks"};
+const GetObjFxn<chunk_hooks_t>    thread_arena_hooks{"arena.0.chunk_hooks"};
+const SetObjFxn<chunk_hooks_t>    set_thread_arena_hooks{"arena.0.chunk_hooks"};
 
 // request-or-sense new values in statistics
-const GetObjFxn<uint64_t> epoch{"epoch"};
+const GetObjFxn<uint64_t>         epoch{"epoch"};
 
 // request separated page sets for each NUMA node (when created)
-const GetObjFxn<unsigned> do_arenas_extend{"arenas.extend"}; // unsigned r-
+const GetObjFxn<unsigned>         do_arenas_extend{"arenas.extend"}; // unsigned r-
 
 // assigned arena for local thread
-const GetObjFxn<unsigned> thread_arena{"thread.arena"};     // unsigned rw
-const SetObjFxn<unsigned> set_thread_arena{"thread.arena"}; // unsigned rw
-const DoObjFxn do_thread_tcache_flush{"thread.tcache.flush"};
+const GetObjFxn<unsigned>         thread_arena{"thread.arena"}; // unsigned rw
+const SetObjFxn<unsigned>         set_thread_arena{"thread.arena"}; // unsigned rw
+const DoObjFxn                    do_thread_tcache_flush{"thread.tcache.flush"};
 
-const GetObjFxn<bool> config_thp{"config.thp"};
-const GetObjFxn<std::string> config_malloc_conf{"config.malloc_conf"};
+const GetObjFxn<bool>             config_thp{"config.thp"};
+const GetObjFxn<std::string>      config_malloc_conf{"config.malloc_conf"};
 
-const GetObjFxn<std::string> thread_prof_name{"thread.prof.name"};
-const SetObjFxn<std::string> set_thread_prof_name{"thread.prof.name"};
+const GetObjFxn<std::string>      thread_prof_name{"thread.prof.name"};
+const SetObjFxn<std::string>      set_thread_prof_name{"thread.prof.name"};
 
-const GetObjFxn<bool> thread_prof_active{"thread.prof.active"};
-const SetObjFxn<bool> set_thread_prof_active{"thread.prof.active"};
+const GetObjFxn<bool>             thread_prof_active{"thread.prof.active"};
+const SetObjFxn<bool>             set_thread_prof_active{"thread.prof.active"};
 
-chunk_hooks_t const huge_hooks = {
-#if HAVE_LIBJEMALLOC
-  &huge_normal_alloc, &huge_dalloc, &huge_commit, &huge_decommit,
-  &huge_purge,        &huge_split,  &huge_merge
-#endif
-};
+const GetObjFxn<bool>             global_prof_active{"thread.prof.active"};
+const SetObjFxn<bool>             set_global_prof_active{"thread.prof.active"};
 
-chunk_hooks_t const huge_nodump_hooks = {
-#if HAVE_LIBJEMALLOC
-  &huge_nodump_alloc, &huge_dalloc, &huge_commit, &huge_decommit,
-  &huge_purge,        &huge_split,  &huge_merge
-#endif
-};
+const GetObjFxn<uint64_t*>        thread_allocated_ptr{"thread.allocatedp"};
+const GetObjFxn<uint64_t*>        thread_deallocated_ptr{"thread.deallocatedp"};
 
-chunk_hooks_t const &
-get_hugepage_hooks()
+int const proc_arena = 0; // default arena for jemalloc
+
+#if ! HAVE_LIBJEMALLOC
+int const proc_arena_nodump = 0; // default arena for jemalloc
+#else
+namespace
 {
-  return huge_hooks;
+  chunk_alloc_t *s_origAllocHook = nullptr; // safe pre-main
 }
-chunk_hooks_t const &
-get_hugepage_hooks_nodump()
-{
-  return huge_nodump_hooks;
-}
-
-int const proc_arena = []() {
-  jemallctl::set_thread_arena(0);
-  jemallctl::set_thread_arena_hooks(huge_hooks);
-  return 0;
-}();
 
 int const proc_arena_nodump = []() {
+  auto origArena = jemallctl::thread_arena();
+
   int n = jemallctl::do_arenas_extend();
   jemallctl::set_thread_arena(n);
-  jemallctl::set_thread_arena_hooks(huge_nodump_hooks);
-  jemallctl::set_thread_arena(proc_arena); // default again
+
+  chunk_hooks_t origHooks = jemallctl::thread_arena_hooks();
+  s_origAllocHook         = origHooks.alloc;
+
+  origHooks.alloc = [](void *old, size_t len, size_t aligned, bool *zero, bool *commit, unsigned arena) {
+    void *r = (*s_origAllocHook)(old, len, aligned, zero, commit, arena);
+
+    if (r) {
+      madvise(r, aligned_spacing(len, aligned), MADV_DONTDUMP);
+    }
+
+    return r;
+  };
+
+  jemallctl::set_thread_arena_hooks(origHooks);
+  jemallctl::set_thread_arena(origArena); // default again
   return n;
 }();
+#endif
+
+chunk_hooks_t const &get_hugepage_hooks()
+{
+  return std::move(jemallctl::thread_arena_hooks()); // noop for now
+}
 
 } // namespace jemallctl

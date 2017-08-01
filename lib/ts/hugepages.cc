@@ -20,10 +20,11 @@
  */
 #include "hugepages.h"
 
-#include "ts/Diags.h"
-#include "ink_memory.h"
 
+#include <cstdio>
 #include <sys/mman.h>
+#include "ts/Diags.h"
+#include "ts/ink_align.h"
 
 #define DEBUG_TAG "hugepages"
 
@@ -64,12 +65,6 @@ ats_free_hugepage(void *, size_t)
 
 // XXX don't need to ifdef these out as much as hide them
 
-#include "ts/Diags.h"
-#include "ts/ink_align.h"
-
-#include <cstdio>
-#include <sys/mman.h>
-#include <sys/user.h>
 
 #define MEMINFO_PATH "/proc/meminfo"
 #define LINE_SIZE 256
