@@ -91,6 +91,7 @@ void *ats_memalign(size_t alignment, size_t size);
 void ats_free(void *ptr);
 void *ats_free_null(void *ptr);
 void ats_memalign_free(void *ptr);
+int ats_msync(caddr_t addr, size_t len, caddr_t end, int flags);
 int ats_madvise(caddr_t addr, size_t len, int flags);
 
 void *ats_alloc_stack(size_t stacksize);
