@@ -31,20 +31,21 @@
 #endif
 #include "ts/ink_defs.h"
 
+namespace {
 #if TS_USE_HWLOC
-static const hwloc_obj_type_t kAffinity_objs[] = 
-   { HWLOC_OBJ_MACHINE, HWLOC_OBJ_NUMANODE, HWLOC_OBJ_SOCKET, HWLOC_OBJ_CORE
+const hwloc_obj_type_t kAffinity_objs[] = {
+  HWLOC_OBJ_MACHINE, HWLOC_OBJ_NUMANODE, HWLOC_OBJ_SOCKET, HWLOC_OBJ_CORE
 #if HAVE_HWLOC_OBJ_PU
-         , HWLOC_OBJ_PU   // include only if valid in HWLOC version
+  ,
+  HWLOC_OBJ_PU // include only if valid in HWLOC version
 #endif
-  };
+};
 #endif
 
-static const char *const kAffinity_obj_names[] =
-   { "[Unrestricted]",         "NUMA Node",        "Socket",         "Core"
-         , "Logical CPU"  // [ignore if not found]
-   };
-
+const char *const kAffinity_obj_names[] = {
+  "[Unrestricted]", "NUMA Node", "Socket", "Core", "Logical CPU" // [ignore if not found]
+};
+}
 
 EventType
 EventProcessor::spawn_event_threads(int n_threads, const char *et_name, size_t stacksize)
@@ -120,9 +121,9 @@ EventProcessor::start(int n_event_threads, size_t stacksize)
   int affinity = 1;
   REC_ReadConfigInteger(affinity, "proxy.config.exec_thread.affinity");
   hwloc_obj_type_t obj_type = kAffinity_objs[affinity];
-  int obj_count = 0;
-  const char *obj_name = kAffinity_obj_names[affinity];
-  obj_count = hwloc_get_nbobjs_by_type(ink_get_topology(), obj_type);
+  int obj_count             = 0;
+  const char *obj_name      = kAffinity_obj_names[affinity];
+  obj_count                 = hwloc_get_nbobjs_by_type(ink_get_topology(), obj_type);
   Debug("iocore_thread", "Affinity: %d %ss: %d PU: %d", affinity, obj_name, obj_count, ink_number_of_processors());
 
 #endif
