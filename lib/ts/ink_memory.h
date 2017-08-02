@@ -77,6 +77,7 @@
 #if HAVE_MALLOC_H
 #include <malloc.h>
 #endif
+#endif // ! HAVE_JEMALLOC_H && ! HAVE_JEMALLOC_JEMALLOC_H
 
 #if HAVE_LIBJEMALLOC
 #ifdef __cplusplus
@@ -213,8 +214,9 @@ ats_stringdup(ts::string_view const &p)
 
 namespace numa
 {
-int create_global_nodump_arena();
-unsigned new_affinity_id();
+  int create_global_nodump_arena();
+
+  unsigned new_affinity_id();
 
 #if TS_USE_HWLOC 
   static inline hwloc_topology_t curr() { return ink_get_topology(); }
@@ -241,10 +243,6 @@ unsigned new_affinity_id();
     operator hwloc_bitmap_t()
        { return get(); }
   };
-
-
-int create_global_nodump_arena();
-unsigned new_affinity_id();
 
 #if TS_USE_HWLOC 
 static inline hwloc_topology_t curr() { return ink_get_topology(); }
