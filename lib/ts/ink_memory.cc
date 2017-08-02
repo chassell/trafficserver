@@ -324,6 +324,21 @@ using NodeSetVector_t = std::vector<hwloc_const_nodeset_t>;
 using NodesIDVector_t = std::vector<unsigned>;
 using ArenaIDVector_t = std::vector<unsigned>;
 
+static auto const kHwlocBitmapDeleter = [](hwloc_bitmap_t map){ map ? hwloc_bitmap_free(map) : (void) 0; };
+
+struct hwloc_bitmap : public std::unique_ptr<hwloc_bitmap_s,decltype(kHwlocBitmapDeleter)>
+{
+  using super = std::unique_ptr<hwloc_bitmap_s,decltype(kHwlocBitmapDeleter)>;
+  hwloc_bitmap() : super{ hwloc_bitmap_alloc(), kHwlocBitmapDeleter } 
+     { }
+  hwloc_bitmap(hwloc_const_bitmap_t map) : super{ hwloc_bitmap_dup(map), kHwlocBitmapDeleter } 
+     { }
+  operator hwloc_const_bitmap_t() const
+     { return get(); }
+  operator hwloc_bitmap_t()
+     { return get(); }
+};
+
 ////////////////////////////////// namespace numa
 namespace numa {
 
