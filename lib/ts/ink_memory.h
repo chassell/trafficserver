@@ -141,8 +141,10 @@ operator delete[](void *p, size_t n) noexcept
 #define MADV_WILLNEED 3
 #endif
 
-#ifndef MADV_DONTNEED
-#define MADV_DONTNEED 4
+#if HAVE_SYS_USER_H
+#include <sys/user.h>
+#elif ! PAGE_SIZE
+#define PAGE_SIZE 4096
 #endif
 
 #ifdef __cplusplus
@@ -228,6 +230,19 @@ ats_stringdup(ts::string_view const &p)
 namespace numa
 {
 int create_global_nodump_arena();
+unsigned new_affinity_id();
+
+#if TS_USE_HWLOC 
+static inline hwloc_topology_t curr() { return ink_get_topology(); }
+
+hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+int assign_thread_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit usable cpus to specific cpuset
+
+// NOTE: creates new arenas under mutex if none present
+unsigned get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit new pages to specific nodes
+void reset_thread_memory_by_cpuset(); // limit new pages to whatever cpuset is limited to
+#endif
 }
 
 template <typename PtrType, typename SizeType>

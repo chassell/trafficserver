@@ -46,25 +46,13 @@ public:
   void init();
   /// Set the affinity for the current thread.
   int set_affinity(int, Event *);
-  /// Allocate a stack.
-  /// @internal This is the external entry point and is different depending on
-  /// whether HWLOC is enabled.
-  void *alloc_stack(EThread *t, size_t stacksize);
-
-protected:
-  /// Allocate a hugepage stack.
-  /// If huge pages are not enable, allocate a basic stack.
-  void *alloc_hugepage_stack(size_t stacksize);
-
 #if TS_USE_HWLOC
 
-  /// Allocate a stack based on NUMA information, if possible.
-  void *alloc_numa_stack(EThread *t, size_t stacksize);
-
+  hwloc_obj_type_t cpuset_type() const { return obj_type; }
 private:
-  hwloc_obj_type_t obj_type = HWLOC_OBJ_MACHINE;
-  int obj_count             = 0;
-  char const *obj_name      = nullptr;
+  hwloc_obj_type_t obj_type = HWLOC_OBJ_NODE;
+  int obj_count        = 0;
+  char const *obj_name = nullptr;
 #endif
 };
 
@@ -135,11 +123,6 @@ public:
 } Thread_Init_Func;
 }
 
-void *
-ThreadAffinityInitializer::alloc_hugepage_stack(size_t stacksize)
-{
-  return ats_hugepage_enabled() ? ats_alloc_hugepage(stacksize) : ats_memalign(ats_pagesize(), stacksize);
-}
 
 #if TS_USE_HWLOC
 void
@@ -187,70 +170,24 @@ int
 ThreadAffinityInitializer::set_affinity(int, Event *)
 {
   EThread *t = this_ethread();
+  numa::assign_thread_cpuset_by_affinity(obj_type, t->id);
+  numa::reset_thread_memory_by_cpuset();
 
-  if (obj_count > 0) {
-    // Get our `obj` instance with index based on the thread number we are on.
-    hwloc_obj_t obj = hwloc_get_obj_by_type(ink_get_topology(), obj_type, t->id % obj_count);
+  if ( obj_count < 2 ) {
+    return 0;
+  }
+  // Get our `obj` instance with index based on the thread number we are on.
+  hwloc_bitmap cpuset;
+  hwloc_get_cpubind(ink_get_topology(), cpuset, HWLOC_CPUBIND_THREAD);
 #if HWLOC_API_VERSION >= 0x00010100
-    int cpu_mask_len = hwloc_bitmap_snprintf(NULL, 0, obj->cpuset) + 1;
-    char *cpu_mask   = (char *)alloca(cpu_mask_len);
-    hwloc_bitmap_snprintf(cpu_mask, cpu_mask_len, obj->cpuset);
-    Debug("iocore_thread", "EThread: %p %s: %d CPU Mask: %s\n", t, obj_name, obj->logical_index, cpu_mask);
+  int cpu_mask_len = hwloc_bitmap_snprintf(NULL, 0, cpuset) + 1;
+  char *cpu_mask   = (char *)alloca(cpu_mask_len);
+  hwloc_bitmap_snprintf(cpu_mask, cpu_mask_len, cpuset);
+  Debug("iocore_thread", "EThread: %p %s: CPU Mask: %s\n", t, obj_name, t->id % obj_count, cpu_mask);
 #else
-    Debug("iocore_thread", "EThread: %d %s: %d", _name, obj->logical_index);
+  Debug("iocore_thread", "EThread: %d %s", t->id % obj_count, _name);
 #endif // HWLOC_API_VERSION
-    hwloc_set_thread_cpubind(ink_get_topology(), t->tid, obj->cpuset, HWLOC_CPUBIND_STRICT);
-  } else {
-    Warning("hwloc returned an unexpected number of objects -- CPU affinity disabled");
-  }
   return 0;
-}
-
-void *
-ThreadAffinityInitializer::alloc_numa_stack(EThread *t, size_t stacksize)
-{
-  hwloc_membind_policy_t mem_policy = HWLOC_MEMBIND_DEFAULT;
-  hwloc_nodeset_t nodeset           = hwloc_bitmap_alloc();
-  int num_nodes                     = 0;
-  void *stack                       = nullptr;
-  hwloc_obj_t obj                   = hwloc_get_obj_by_type(ink_get_topology(), obj_type, t->id % obj_count);
-
-  // Find the NUMA node set that correlates to our next thread CPU set
-  hwloc_cpuset_to_nodeset(ink_get_topology(), obj->cpuset, nodeset);
-  // How many NUMA nodes will we be needing to allocate across?
-  num_nodes = hwloc_get_nbobjs_inside_cpuset_by_type(ink_get_topology(), obj->cpuset, HWLOC_OBJ_NODE);
-
-  if (num_nodes == 1) {
-    // The preferred memory policy. The thread lives in one NUMA node.
-    mem_policy = HWLOC_MEMBIND_BIND;
-  } else if (num_nodes > 1) {
-    // If we have mode than one NUMA node we should interleave over them.
-    mem_policy = HWLOC_MEMBIND_INTERLEAVE;
-  }
-
-  if (mem_policy != HWLOC_MEMBIND_DEFAULT) {
-    // Let's temporarily set the memory binding to our destination NUMA node
-    hwloc_set_membind_nodeset(ink_get_topology(), nodeset, mem_policy, HWLOC_MEMBIND_THREAD);
-  }
-
-  // Alloc our stack
-  stack = this->alloc_hugepage_stack(stacksize);
-
-  if (mem_policy != HWLOC_MEMBIND_DEFAULT) {
-    // Now let's set it back to default for this thread.
-    hwloc_set_membind_nodeset(ink_get_topology(), hwloc_topology_get_topology_nodeset(ink_get_topology()), HWLOC_MEMBIND_DEFAULT,
-                              HWLOC_MEMBIND_THREAD);
-  }
-
-  hwloc_bitmap_free(nodeset);
-
-  return stack;
-}
-
-void *
-ThreadAffinityInitializer::alloc_stack(EThread *t, size_t stacksize)
-{
-  return this->obj_count > 0 ? this->alloc_numa_stack(t, stacksize) : this->alloc_hugepage_stack(stacksize);
 }
 
 #else
@@ -264,12 +201,6 @@ int
 ThreadAffinityInitializer::set_affinity(int, Event *)
 {
   return 0;
-}
-
-void *
-ThreadAffinityInitializer::alloc_stack(EThread *, size_t stacksize)
-{
-  return this->alloc_hugepage_stack(stacksize);
 }
 
 #endif // TS_USE_HWLOC
@@ -363,12 +294,15 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
   Debug("iocore_thread", "Thread stack size set to %zu", stacksize);
 
   for (i = 0; i < n_threads; ++i) {
+    numa::assign_thread_memory_by_affinity(thread_initializer.cpuset_type(), i);
+
     EThread *t                   = new EThread(REGULAR, n_ethreads + i);
     all_ethreads[n_ethreads + i] = t;
     tg->_thread[i]               = t;
     t->id                        = i; // unfortunately needed to support affinity and NUMA logic.
     t->set_event_type(ev_type);
     t->schedule_spawn(&thread_initializer);
+    snprintf(thr_name, MAX_THREAD_NAME_LENGTH, "[%s %d]", tg->_name.get(), i);
   }
   tg->_count = n_threads;
   n_ethreads += n_threads;
@@ -377,11 +311,14 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
   // the group. Some thread set up depends on knowing the total number of threads but that can't be
   // safely updated until all the EThread instances are created and stored in the table.
   for (i = 0; i < n_threads; ++i) {
-    Debug("iocore_thread_start", "Created %s thread #%d", tg->_name.get(), i + 1);
-    snprintf(thr_name, MAX_THREAD_NAME_LENGTH, "[%s %d]", tg->_name.get(), i);
-    void *stack = Thread_Affinity_Initializer.alloc_stack(tg->_thread[i], stacksize);
+    numa::assign_thread_memory_by_affinity(thread_initializer.cpuset_type(), i);
+
+    void *stack = ats_alloc_stack(stacksize);
+    // inherit these current settings upon spawning
     tg->_thread[i]->start(thr_name, stack, stacksize);
   }
+
+  reset_thread_memory_by_cpuset();
 
   Debug("iocore_thread", "Created thread group '%s' id %d with %d threads", tg->_name.get(), ev_type, n_threads);
 
