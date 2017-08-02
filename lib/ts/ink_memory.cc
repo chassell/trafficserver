@@ -29,6 +29,7 @@
 #include "ts/ink_stack_trace.h"
 #include "ts/Diags.h"
 #include "ts/ink_atomic.h"
+#include "ts/ink_align.h"
 
 #if defined(freebsd)
 #include <malloc_np.h> // for malloc_usable_size
@@ -299,10 +300,19 @@ _xstrdup(const char *str, int length, const char * /* path ATS_UNUSED */)
 
 void *ats_alloc_stack(size_t stacksize)
 {
-  // get memory that grows down and is not populated until needed
+  if ( ! ats_hugepage_enabled() ) 
+  {
+    // get memory that grows down and is not populated until needed
+    return mmap(nullptr,stacksize, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_GROWSDOWN|MAP_PRIVATE, -1, 0);
+  }
+
   //    [but prefer hugepage alignment and request if possible]
-  return ats_hugepage_enabled() ? ats_alloc_hugepage_stack(stacksize)
-                                : mmap(nullptr,stacksize, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_GROWSDOWN|MAP_PRIVATE, -1, 0);
+  auto p = mmap(nullptr,stacksize, PROT_READ|PROT_WRITE, (MAP_ANONYMOUS|MAP_GROWSDOWN|MAP_PRIVATE), -1, 0);
+  if ( stacksize == aligned_spacing(stacksize,ats_hugepage_size()) ) {
+      madvise(p,stacksize,MADV_HUGEPAGE); // opt in
+  }
+
+  return p;
 }
 
 #if ! TS_USE_HWLOC
@@ -367,14 +377,6 @@ ArenaIDVector_t::value_type get_arena_by_affinity(hwloc_obj_type_t objtype, unsi
   unsigned newArena = jemallctl::do_arenas_extend();
 
   Debug("memory", "extending arena to %u", newArena);
-
-  int callerArena = jemallctl::thread_arena(); // push current arena (for a moment)
-
-  jemallctl::set_thread_arena(newArena);
-  jemallctl::set_thread_arena_hooks(jemallctl::get_hugepage_hooks()); // init hooks for hugepage
-
-  // re-use caller's arena for allocations
-  jemallctl::set_thread_arena(callerArena);
 
   // store the node-set that this arena is going to partition off
   if ( g_nodesByArena.size() < newArena+1 ) {
