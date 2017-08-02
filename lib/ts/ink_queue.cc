@@ -37,7 +37,12 @@
   ****************************************************************************/
 
 #include "ts/ink_config.h"
-
+#include <assert.h>
+#include <memory.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/mman.h>
 #include "ts/ink_atomic.h"
 #include "ts/ink_queue.h"
 #include "ts/ink_memory.h"
@@ -47,12 +52,6 @@
 #include "ts/hugepages.h"
 #include "ts/Diags.h"
 
-#include <sys/types.h>
-#include <sys/mman.h>
-#include <cassert>
-#include <cstdlib>
-
-// in order to prevent global-defs defs
 #undef HAVE_LIBJEMALLOC
 #include "ts/Allocator.h"
 

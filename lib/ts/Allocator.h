@@ -37,15 +37,15 @@
 
  */
 
-#pragma once
+#ifndef _Allocator_h_
+#define _Allocator_h_
 
-#include "ts/ink_defs.h"
-#include "ts/ink_queue.h"
-#include "ts/ink_resource.h"
-
-#include <execinfo.h>
 #include <new>
-#include <cstdlib>
+#include <stdlib.h>
+#include "ts/ink_queue.h"
+#include "ts/ink_defs.h"
+#include "ts/ink_resource.h"
+#include <execinfo.h>
 
 #define RND16(_x) (((_x) + 15) & ~15)
 
@@ -314,3 +314,5 @@ extern int thread_freelist_high_watermark;
 extern int thread_freelist_low_watermark;
 
 #endif
+
+#endif // _Allocator_h_

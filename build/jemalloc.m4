@@ -70,9 +70,7 @@ dnl
 
   LDFLAGS="$save_ldflags"
   CPPFLAGS="$save_cppflags"
-  set -xv
   LIBS="$(echo "$LIBS" | sed -e 's/ *-ljemalloc//' -e 's/$/ -ljemalloc/')"
-  set +xv
 
   AS_IF([test "x$have_jemalloc" == "xno" ], 
      [AC_MSG_ERROR([Failed to compile with jemalloc.h and -ljemalloc]) ])

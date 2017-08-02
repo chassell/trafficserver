@@ -49,7 +49,7 @@
   in the Event Subsystem are registered with this key. Thus, whenever you
   call this_ethread() you get a pointer to EThread. If you happen to call
   this_ethread() from inside a thread which is not an EThread, you will
-  get a nullptr value (since that thread will not be  registered with the
+  get a NULL value (since that thread will not be  registered with the
   EThread key). This will hopefully make the use of this_ethread() safer.
   Note that an event created with EThread can also call this_thread(),
   in which case, it will get a pointer to Thread (rather than to EThread).
@@ -61,16 +61,22 @@
 
 #if !defined(_I_EventSystem_h) && !defined(_P_EventSystem_h)
 #error "include I_EventSystem.h or P_EventSystem.h"
+-- - include I_Event.h or
+  P_Event.h
 #endif
 
-//
-// NOTE: only public include for either file
-//
-#if HAVE_LIBJEMALLOC
-#include "ts/StdAllocWrapper.h"
-#else
+#include "ts/Allocator.h"
+#if !HAVE_LIBJEMALLOC
 #include "I_ProxyAllocator.h"
 #endif
+
+#include <functional>
+
+#include "ts/ink_platform.h"
+#include "ts/ink_thread.h"
+
+  class Thread;
+class ProxyMutex;
 
 #include "ts/ink_thread.h"
 
@@ -79,13 +85,15 @@
 class ProxyMutex;
 class EThread;
 
-constexpr int MAX_THREAD_NAME_LENGTH = 16;
-constexpr int DEFAULT_STACKSIZE      = 1024 * 1024; // 1MB
-constexpr int MIN_STACKSIZE          = 100 * 1024;  // 100K
-
 /// The signature of a function to be called by a thread.
 using ThreadFunction = std::function<void()>;
 
+
+extern ProxyMutex *global_mutex;
+
+static const int MAX_THREAD_NAME_LENGTH = 16;
+static const int DEFAULT_STACKSIZE      = 1048576; // 1MB
+static const int MIN_STACKSIZE          = 100 * 1024;  // 100K
 /**
   Base class for the threads in the Event System. Thread is the base
   class for all the thread classes in the Event System. Objects of the
@@ -103,8 +111,6 @@ using ThreadFunction = std::function<void()>;
 class Thread
 {
 public:
-  using EThreadInitFxn_t = std::function<void(EThread *)>;
-
   /*-------------------------------------------*\
   | Common Interface                            |
   \*-------------------------------------------*/
@@ -116,16 +122,7 @@ public:
     processors and you should not modify it directly.
 
   */
-  ink_thread
-  tid() const
-  {
-    return _tid;
-  }
-  unsigned
-  affinity_id() const
-  {
-    return _affid;
-  }
+  ink_thread tid = 0;
 
   /**
     Thread lock to ensure atomic operations. The thread lock available
@@ -133,23 +130,16 @@ public:
     regions. Do not modify this member directly.
 
   */
-  Ptr<ProxyMutex> mutex;
+  ProxyMutex *mutex;
 
   // PRIVATE
-  Thread();
-  Thread(const Thread &) = delete;
-  Thread &operator=(const Thread &) = delete;
-  virtual ~Thread();
-
   void set_specific();
-  void
-  set_affinity_id(unsigned affid)
-  {
-    _affid = affid;
-  }
+  Thread();
+  virtual ~Thread();
 
   static ink_hrtime cur_time;
   inkcoreapi static ink_thread_key thread_data_key;
+  Ptr<ProxyMutex> mutex_ptr;
 
   // For THREAD_ALLOC
   ProxyAllocator eventAllocator;
@@ -170,25 +160,18 @@ public:
   ProxyAllocator ioAllocator;
   ProxyAllocator ioBlockAllocator;
 
-public:
-  /** Start the underlying thread.
+private:
+  // prevent unauthorized copies (Not implemented)
+  Thread(const Thread &);
+  Thread &operator=(const Thread &);
 
-      The thread name is set to @a name. The stack for the thread is either @a stack or, if that is
-      @c nullptr a stack of size @a stacksize is allocated and used. If @a f is present and valid it
-      is called in the thread context. Otherwise the method @c execute is invoked.
-  */
+public:
   static ink_thread start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction &hookFxn);
 
-  template <class T_THREAD, class T_FUNCTOR>
-  static void
-  launch(T_THREAD *thread, T_FUNCTOR launchFxn)
+  virtual void
+  execute()
   {
-    // launchFxn was copied as param [on stack]
-    thread->set_specific(); // assign thread structure
-    launchFxn(thread);      // callback must sem_post to stackWait in start() call above
   }
-
-  virtual void execute() = 0;
 
   /** Get the current ATS high resolution time.
       This gets a cached copy of the time so it is very fast and reasonably accurate.
@@ -207,13 +190,9 @@ public:
       @note This also updates the cached time.
   */
   static ink_hrtime get_hrtime_updated();
-
-private:
-  ink_thread _tid = ink_thread{};
-  unsigned _affid = 0U;
 };
 
-Thread *this_thread();
+extern Thread *this_thread();
 
 TS_INLINE ink_hrtime
 Thread::get_hrtime()

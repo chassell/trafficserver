@@ -21,7 +21,7 @@
   limitations under the License.
  */
 #include "ts/jemallctl.h"
-#include "hugepages.h"
+#include "ts/hugepages.h"
 
 #include "ts/ink_platform.h"
 #include "ts/ink_memory.h"
@@ -29,13 +29,13 @@
 #include "ts/ink_stack_trace.h"
 #include "ts/Diags.h"
 #include "ts/ink_atomic.h"
+#include "ts/ink_align.h"
 
 #if defined(freebsd)
 #include <malloc_np.h> // for malloc_usable_size
 #endif
 
 #include <atomic>
-#include <algorithm>
 
 #include <cassert>
 #if defined(linux) && !defined(_XOPEN_SOURCE)
@@ -43,9 +43,9 @@
 #endif
 
 #include <vector>
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
-
 #include <string>
 
 void *
@@ -290,10 +290,18 @@ _xstrdup(const char *str, int length, const char * /* path ATS_UNUSED */)
 void *
 ats_alloc_stack(size_t stacksize)
 {
-  // get memory that grows down and is not populated until needed
+  if (!ats_hugepage_enabled()) {
+    // get memory that grows down and is not populated until needed
+    return mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE, -1, 0);
+  }
+
   //    [but prefer hugepage alignment and request if possible]
-  return ats_hugepage_enabled() ? ats_alloc_hugepage_stack(stacksize) : mmap(nullptr, stacksize, PROT_READ | PROT_WRITE,
-                                                                             MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE, -1, 0);
+  auto p = mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, (MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE), -1, 0);
+  if (stacksize == aligned_spacing(stacksize, ats_hugepage_size())) {
+    madvise(p, stacksize, MADV_HUGEPAGE); // opt in
+  }
+
+  return p;
 }
 
 #if !TS_USE_HWLOC
@@ -303,16 +311,6 @@ using CpuSetVector_t  = std::vector<hwloc_const_cpuset_t>;
 using NodeSetVector_t = std::vector<hwloc_const_nodeset_t>;
 using NodesIDVector_t = std::vector<unsigned>;
 using ArenaIDVector_t = std::vector<unsigned>;
-
-static auto const kHwlocBitmapDeleter = [](hwloc_bitmap_t map) { map ? hwloc_bitmap_free(map) : (void)0; };
-
-struct hwloc_bitmap : public std::unique_ptr<hwloc_bitmap_s, decltype(kHwlocBitmapDeleter)> {
-  using super = std::unique_ptr<hwloc_bitmap_s, decltype(kHwlocBitmapDeleter)>;
-  hwloc_bitmap() : super{hwloc_bitmap_alloc(), kHwlocBitmapDeleter} {}
-  hwloc_bitmap(hwloc_const_bitmap_t map) : super{hwloc_bitmap_dup(map), kHwlocBitmapDeleter} {}
-  operator hwloc_const_bitmap_t() const { return get(); }
-  operator hwloc_bitmap_t() { return get(); }
-};
 
 ////////////////////////////////// namespace numa
 namespace numa
@@ -341,13 +339,14 @@ get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
   ink_release_assert(kUniqueNodeSets.size() > nsid);
 
   static ink_mutex s_mutex = PTHREAD_MUTEX_INITIALIZER;
-
   ink_mutex_acquire(&s_mutex);
 
   g_arenaByNodesID.resize(kUniqueNodeSets.size());
 
   if (g_arenaByNodesID[nsid]) {
-    return g_arenaByNodesID[nsid];
+    auto r = g_arenaByNodesID[nsid];
+    ink_mutex_release(&s_mutex);
+    return r;
   }
 
   // need a new arena for this set of nodes
@@ -355,14 +354,6 @@ get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
   unsigned newArena = jemallctl::do_arenas_extend();
 
   Debug("memory", "extending arena to %u", newArena);
-
-  int callerArena = jemallctl::thread_arena(); // push current arena (for a moment)
-
-  jemallctl::set_thread_arena(newArena);
-  jemallctl::set_thread_arena_hooks(jemallctl::get_hugepage_hooks()); // init hooks for hugepage
-
-  // re-use caller's arena for allocations
-  jemallctl::set_thread_arena(callerArena);
 
   // store the node-set that this arena is going to partition off
   if (g_nodesByArena.size() < newArena + 1) {
@@ -373,7 +364,6 @@ get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
   g_arenaByNodesID[nsid]   = newArena;
 
   ink_mutex_release(&s_mutex);
-
   return newArena; // affid/cpuset now leads to this arena
 }
 

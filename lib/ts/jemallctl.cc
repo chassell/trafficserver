@@ -88,20 +88,17 @@ objpath(const std::string &path)
 {
   return objpath_t();
 }
-
 auto
 mallctl_void(const objpath_t &oid) -> int
 {
   return -1;
 }
-
 template <typename T_VALUE>
 auto
 mallctl_set(const objpath_t &oid, const T_VALUE &v) -> int
 {
   return -1;
 }
-
 template <typename T_VALUE>
 auto
 mallctl_get(const objpath_t &oid) -> T_VALUE
@@ -203,38 +200,32 @@ template struct SetObjFxn<unsigned>;
 template struct SetObjFxn<bool>;
 template struct SetObjFxn<chunk_hooks_t>;
 
-const GetObjFxn<chunk_hooks_t>    thread_arena_hooks{"arena.0.chunk_hooks"};
-const SetObjFxn<chunk_hooks_t>    set_thread_arena_hooks{"arena.0.chunk_hooks"};
+const GetObjFxn<chunk_hooks_t> thread_arena_hooks{"arena.0.chunk_hooks"};
+const SetObjFxn<chunk_hooks_t> set_thread_arena_hooks{"arena.0.chunk_hooks"};
 
 // request-or-sense new values in statistics
-const GetObjFxn<uint64_t>         epoch{"epoch"};
+const GetObjFxn<uint64_t> epoch{"epoch"};
 
 // request separated page sets for each NUMA node (when created)
-const GetObjFxn<unsigned>         do_arenas_extend{"arenas.extend"}; // unsigned r-
+const GetObjFxn<unsigned> do_arenas_extend{"arenas.extend"}; // unsigned r-
 
 // assigned arena for local thread
-const GetObjFxn<unsigned>         thread_arena{"thread.arena"}; // unsigned rw
-const SetObjFxn<unsigned>         set_thread_arena{"thread.arena"}; // unsigned rw
-const DoObjFxn                    do_thread_tcache_flush{"thread.tcache.flush"};
+const GetObjFxn<unsigned> thread_arena{"thread.arena"};     // unsigned rw
+const SetObjFxn<unsigned> set_thread_arena{"thread.arena"}; // unsigned rw
+const DoObjFxn do_thread_tcache_flush{"thread.tcache.flush"};
 
-const GetObjFxn<bool>             config_thp{"config.thp"};
-const GetObjFxn<std::string>      config_malloc_conf{"config.malloc_conf"};
+const GetObjFxn<bool> config_thp{"config.thp"};
+const GetObjFxn<std::string> config_malloc_conf{"config.malloc_conf"};
 
-const GetObjFxn<std::string>      thread_prof_name{"thread.prof.name"};
-const SetObjFxn<std::string>      set_thread_prof_name{"thread.prof.name"};
+const GetObjFxn<std::string> thread_prof_name{"thread.prof.name"};
+const SetObjFxn<std::string> set_thread_prof_name{"thread.prof.name"};
 
-const GetObjFxn<bool>             thread_prof_active{"thread.prof.active"};
-const SetObjFxn<bool>             set_thread_prof_active{"thread.prof.active"};
-
-const GetObjFxn<bool>             global_prof_active{"thread.prof.active"};
-const SetObjFxn<bool>             set_global_prof_active{"thread.prof.active"};
-
-const GetObjFxn<uint64_t*>        thread_allocated_ptr{"thread.allocatedp"};
-const GetObjFxn<uint64_t*>        thread_deallocated_ptr{"thread.deallocatedp"};
+const GetObjFxn<bool> thread_prof_active{"thread.prof.active"};
+const SetObjFxn<bool> set_thread_prof_active{"thread.prof.active"};
 
 int const proc_arena = 0; // default arena for jemalloc
 
-#if ! HAVE_LIBJEMALLOC
+#if !HAVE_LIBJEMALLOC
 int const proc_arena_nodump = 0; // default arena for jemalloc
 #else
 namespace
@@ -266,10 +257,5 @@ int const proc_arena_nodump = []() {
   return n;
 }();
 #endif
-
-chunk_hooks_t const &get_hugepage_hooks()
-{
-  return std::move(jemallctl::thread_arena_hooks()); // noop for now
-}
 
 } // namespace jemallctl

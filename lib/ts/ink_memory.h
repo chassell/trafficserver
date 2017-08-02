@@ -35,6 +35,8 @@
 #include <strings.h>
 #include <inttypes.h>
 
+#include "ts/ink_config.h"
+
 #if HAVE_UNISTD_H
 #include <unistd.h>
 #endif
@@ -58,10 +60,8 @@
 
 #else // no jemalloc includes used
 
-#define mallocx(...) \
-  nullptr_t {}
-#define sallocx(...) \
-  size_t {}
+#define mallocx(...) nullptr
+#define sallocx(...) size_t()
 #define sdallocx(...)
 #define dallocx(...)
 
@@ -118,9 +118,6 @@ static inline size_t __attribute__((const)) ats_pagesize(void)
   return page_size;
 }
 
-using MemoryPage     = std::aligned_storage<PAGE_SIZE, PAGE_SIZE>::type;
-using MemoryPageHuge = std::aligned_storage<(PAGE_SIZE << 9), (PAGE_SIZE << 9)>::type;
-
 /* Some convenience wrappers around strdup() functionality */
 char *_xstrdup(const char *str, int length, const char *path);
 
@@ -150,6 +147,17 @@ int assign_thread_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid); 
 unsigned get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
 int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit new pages to specific nodes
 void reset_thread_memory_by_cpuset();                                           // limit new pages to whatever cpuset is limited to
+
+auto constexpr kHwlocBitmapDeleter = [](hwloc_bitmap_t map) { map ? hwloc_bitmap_free(map) : (void)0; };
+
+struct hwloc_bitmap : public std::unique_ptr<hwloc_bitmap_s, void (*)(hwloc_bitmap_t)> {
+  using super = std::unique_ptr<hwloc_bitmap_s, void (*)(hwloc_bitmap_t)>;
+  hwloc_bitmap() : super{hwloc_bitmap_alloc(), kHwlocBitmapDeleter} {}
+  hwloc_bitmap(hwloc_const_bitmap_t map) : super{hwloc_bitmap_dup(map), kHwlocBitmapDeleter} {}
+  operator hwloc_const_bitmap_t() const { return get(); }
+  operator hwloc_bitmap_t() { return get(); }
+};
+
 #endif
 }
 
@@ -403,20 +411,6 @@ public:
     return *this;
   }
 };
-
-template <class T_OBJ>
-auto
-ats_return_unique_copy(const T_OBJ &obj) -> std::unique_ptr<T_OBJ>
-{
-  return std::unique_ptr<T_OBJ>(new T_OBJ(obj));
-}
-
-template <class T_OBJ>
-auto
-ats_return_unique(T_OBJ *ptr) -> std::unique_ptr<T_OBJ>
-{
-  return std::unique_ptr<T_OBJ>(ptr);
-}
 
 namespace detail
 {

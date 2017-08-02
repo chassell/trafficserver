@@ -151,7 +151,7 @@ protected:
   void
   deallocate(value_type *p)
   {
-    dallocx(p, 0);
+    sdallocx(p, sizeof(value_type), 0);
   }
 
 private:
