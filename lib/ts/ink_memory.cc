@@ -29,6 +29,7 @@
 #include "ts/ink_stack_trace.h"
 #include "ts/Diags.h"
 #include "ts/ink_atomic.h"
+#include "ts/ink_align.h"
 
 #if defined(freebsd)
 #include <malloc_np.h> // for malloc_usable_size
@@ -350,14 +351,6 @@ ArenaIDVector_t::value_type get_arena_by_affinity(hwloc_obj_type_t objtype, unsi
   unsigned newArena = jemallctl::do_arenas_extend();
 
   Debug("memory", "extending arena to %u", newArena);
-
-  int callerArena = jemallctl::thread_arena(); // push current arena (for a moment)
-
-  jemallctl::set_thread_arena(newArena);
-  jemallctl::set_thread_arena_hooks(jemallctl::get_hugepage_hooks()); // init hooks for hugepage
-
-  // re-use caller's arena for allocations
-  jemallctl::set_thread_arena(callerArena);
 
   // store the node-set that this arena is going to partition off
   if ( g_nodesByArena.size() < newArena+1 ) {
