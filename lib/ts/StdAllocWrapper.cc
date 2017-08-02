@@ -41,7 +41,7 @@ AlignedAllocator::re_init(const char *name, unsigned int element_size, unsigned 
   } else if (advice == MADV_NORMAL) {
     _arena = jemallctl::proc_arena;
   } else {
-    ink_abort("allocator re_init: unknown madvise() flags: %x", advice);
+    ink_fatal("allocator re_init: unknown madvise() flags: %x", advice);
   }
 
   void *preCached[chunk_size];
