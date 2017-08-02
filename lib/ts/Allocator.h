@@ -40,7 +40,7 @@
 #ifndef _Allocator_h_
 #define _Allocator_h_
 
-#Include <new>
+#include <new>
 #include <stdlib.h>
 #include "ts/ink_queue.h"
 #include "ts/ink_defs.h"
