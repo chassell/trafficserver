@@ -75,6 +75,7 @@
 #include "ts/ink_platform.h"
 #include "ts/ink_thread.h"
 
+  class Thread;
 class ProxyMutex;
 
 #define THREADAPI
@@ -131,6 +132,7 @@ public:
 
   static ink_hrtime cur_time;
   inkcoreapi static ink_thread_key thread_data_key;
+  Ptr<ProxyMutex> mutex_ptr;
 
   // For THREAD_ALLOC
   ProxyAllocator eventAllocator;
