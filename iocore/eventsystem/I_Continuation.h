@@ -143,14 +143,30 @@ public:
   */
   ContFlags control_flags;
 
-  void set_next_call(nullptr_t, ...)
+  struct HdlrAssign {
+    const char *_label;
+    const char *_file;
+    unsigned    _line;
+    ContinuationHandlerMethodPtr_t _fxn;
+  };
+
+  struct HdlrAssignSet
+  {
+    enum { MAX_TARGET_LOCS = 20 };
+    static unsigned        s_hdlrAssignSetCnt;
+
+    const HdlrAssign      *_locations[MAX_TARGET_LOCS];
+    unsigned int           _id = []() { return ++s_hdlrAssignSetCnt; }();
+  };
+
+  void set_next_hdlr(nullptr_t, ...)
   {
     _handlerApply = ContinuationHandlerFtor_t{};
     _handler      = nullptr;
   }
 
   void
-  set_next_call(int, ...)
+  set_next_hdlr(int, ...)
   {
     _handlerApply = ContinuationHandlerFtor_t{};
     _handler      = nullptr;
@@ -158,7 +174,7 @@ public:
 
   // class method-pointer full args
   inline auto
-  set_next_call(ContinuationHandlerMethodPtr_t &fxn, Continuation *oldobj, const char *name = 0) -> int
+  set_next_hdlr(ContinuationHandlerMethodPtr_t &fxn, Continuation *oldobj, HdlrAssignSet *cbSet, const HdlrAssign *&currCb ) -> int
   {
     auto f = [fxn, oldobj](Continuation *self, int event, void *arg) {
       (oldobj != self ? ink_warning("detected obj mismatch %p %p", oldobj, self) : void(0));
@@ -170,7 +186,7 @@ public:
   // class method-pointer full args
   template <class T_OBJ, typename T_ARG>
   inline auto
-  set_next_call(int (T_OBJ::*fxn)(int, T_ARG), T_OBJ *oldobj, const char *name = 0) -> int
+  set_next_hdlr(int (T_OBJ::*fxn)(int, T_ARG), T_OBJ *oldobj, HdlrAssignSet *cbSet, const HdlrAssign *&currCb) -> int
   {
     auto f = [fxn, oldobj](Continuation *self, int event, void *arg) {
       auto obj = static_cast<T_OBJ *>(self);
@@ -183,7 +199,7 @@ public:
   // class method with event arg
   template <class T_OBJ>
   inline auto
-  set_next_call(int (T_OBJ::*fxn)(int), T_OBJ *oldobj, const char *name = 0) -> int
+  set_next_hdlr(int (T_OBJ::*fxn)(int), T_OBJ *oldobj, const char *name = 0) -> int
   {
     auto f = [fxn, oldobj](Continuation *self, int event, void *) {
       auto obj = static_cast<T_OBJ *>(self);
@@ -196,7 +212,7 @@ public:
   // class method with no args
   template <class T_OBJ>
   inline auto
-  set_next_call(int (T_OBJ::*fxn)(void), T_OBJ *oldobj, const char *name = 0) -> int
+  set_next_hdlr(int (T_OBJ::*fxn)(void), T_OBJ *oldobj, const char *name = 0) -> int
   {
     auto f = [fxn, oldobj](Continuation *self, int, void *) {
       auto obj = static_cast<T_OBJ *>(self);
@@ -209,7 +225,7 @@ public:
   // lambda or call with no object
   template <class T_CALLABLE>
   inline auto
-  set_next_call(T_CALLABLE const &callable, const char *name = 0) -> decltype(callable()(1, nullptr), 0)
+  set_next_hdlr(T_CALLABLE const &callable, const char *name = 0) -> decltype(callable()(1, nullptr), 0)
   {
     using FunctorOp = decltype(T_CALLABLE::operator());
     using SecondArg = typename std::function<FunctorOp>::second_argument_type;
@@ -261,6 +277,10 @@ private:
   int _handlerArena = 0;
 };
 
+namespace {
+Continuation::HdlrAssignSet s_fileAssignSet;
+}
+
 /**
 Sets the Continuation's handler. The preferred mechanism for
 setting the Continuation's handler.
@@ -268,11 +288,14 @@ setting the Continuation's handler.
   @param _h Pointer to the function used to callback with events.
 
 */
-#ifdef DEBUG
-#define SET_HANDLER(_h) this->set_next_call((_h), this, (#_h) + 0U)
-#else
-#define SET_HANDLER(_h) this->set_next_call((_h), this)
-#endif
+#define SET_HANDLER(_h) \
+   do {                                                                        \
+     static Continuation::HdlrAssign const kInstance =                         \
+                     { &s_fileAssignSet,                                       \
+                       ((#_h)+0), (__FILE__+0), __LINE__,                      \
+                        (ContinuationHandlerMethodPtr_t) _h };                 \
+     this->set_next_hdlr( _h, this, kInstance, __COUNTER__ );                  \
+   } while(false)
 
 /**
   Sets a Continuation's handler.
@@ -283,11 +306,6 @@ setting the Continuation's handler.
   @param _h Pointer to the function used to callback with events.
 
 */
-#ifdef DEBUG
-#define SET_CONTINUATION_HANDLER(_c, _h) (_c)->set_next_call((_h), (_c), #_h + 0)
-#else
-#define SET_CONTINUATION_HANDLER(_c, _h) (_c)->set_next_call((_h), (_c))
-#endif
 
 inline Continuation::Continuation(ProxyMutex *amutex) : mutex(amutex)
 {

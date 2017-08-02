@@ -36,11 +36,16 @@
 ///////////////////////////////////////////////
 // Common Interface impl                     //
 ///////////////////////////////////////////////
+TS_INLINE
+Thread::~Thread()
+{
+}
+
 TS_INLINE void
 Thread::set_specific()
 {
   ink_thread_setspecific(Thread::thread_data_key, this);
-  _tid = ink_thread_self();
+  tid = ink_thread_self();
 }
 
 TS_INLINE Thread *
