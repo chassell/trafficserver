@@ -297,6 +297,7 @@ _xstrdup(const char *str, int length, const char * /* path ATS_UNUSED */)
   }
   return nullptr;
 }
+
 void *ats_alloc_stack(size_t stacksize)
 {
   // get memory that grows down and is not populated until needed
@@ -368,6 +369,13 @@ ArenaIDVector_t::value_type get_arena_by_affinity(hwloc_obj_type_t objtype, unsi
 
   Debug("memory", "extending arena to %u", newArena);
 
+  int callerArena = jemallctl::thread_arena(); // push current arena (for a moment)
+
+  jemallctl::set_thread_arena(newArena);
+  jemallctl::set_thread_arena_hooks(jemallctl::get_hugepage_hooks()); // init hooks for hugepage
+
+  // re-use caller's arena for allocations
+  jemallctl::set_thread_arena(callerArena);
   // store the node-set that this arena is going to partition off
   if ( g_nodesByArena.size() < newArena+1 ) {
     g_nodesByArena.resize(newArena+1); // filled with nullptr if needed

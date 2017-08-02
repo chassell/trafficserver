@@ -315,6 +315,7 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
 
     void *stack = ats_alloc_stack(stacksize);
     // inherit these current settings upon spawning
+    snprintf(thr_name, MAX_THREAD_NAME_LENGTH, "[%s %d]", tg->_name.get(), i);
     tg->_thread[i]->start(thr_name, stack, stacksize);
   }
 
