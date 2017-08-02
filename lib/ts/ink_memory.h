@@ -143,6 +143,22 @@ namespace numa
   unsigned get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
   int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit new pages to specific nodes
   void reset_thread_memory_by_cpuset(); // limit new pages to whatever cpuset is limited to
+
+  auto constexpr kHwlocBitmapDeleter = [](hwloc_bitmap_t map){ map ? hwloc_bitmap_free(map) : (void) 0; };
+
+  struct hwloc_bitmap : public std::unique_ptr<hwloc_bitmap_s,void(*)(hwloc_bitmap_t)>
+  {
+    using super = std::unique_ptr<hwloc_bitmap_s,void(*)(hwloc_bitmap_t)>;
+    hwloc_bitmap() : super{ hwloc_bitmap_alloc(), kHwlocBitmapDeleter } 
+       { }
+    hwloc_bitmap(hwloc_const_bitmap_t map) : super{ hwloc_bitmap_dup(map), kHwlocBitmapDeleter } 
+       { }
+    operator hwloc_const_bitmap_t() const
+       { return get(); }
+    operator hwloc_bitmap_t()
+       { return get(); }
+  };
+
 #endif
 }
 
