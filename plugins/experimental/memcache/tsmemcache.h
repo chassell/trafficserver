@@ -95,13 +95,13 @@ struct MCAccept : public Continuation {
   }
 };
 
-#define TS_PUSH_HANDLER(_h)                    \
-  do {                                         \
+#define TS_PUSH_HANDLER(_h)                      \
+  do {                                           \
     handler_stack[ihandler_stack++] = handler(); \
-    SET_HANDLER(_h);                           \
+    SET_HANDLER(_h);                             \
   } while (0)
 
-#define TS_POP_HANDLER     SET_HANDLER(handler_stack[--ihandler_stack])
+#define TS_POP_HANDLER SET_HANDLER(handler_stack[--ihandler_stack])
 #define TS_POP_CALL(_event, _data) handleEvent((TS_POP_HANDLER, _event), _data)
 #define TS_SET_CALL(_h, _event, _data) handleEvent((SET_HANDLER(_h), _event), _data)
 #define ASCII_RESPONSE(_s) ascii_response((_s "\r\n"), sizeof(_s "\r\n") - 1)

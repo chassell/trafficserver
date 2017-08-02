@@ -502,16 +502,16 @@ struct CacheVC : public CacheVConnection {
   // end region C
 };
 
-#define PUSH_HANDLER(_x)                                          \
-  do {                                                            \
+#define PUSH_HANDLER(_x)                                            \
+  do {                                                              \
     ink_assert(handler() != (ContinuationHandler)(&CacheVC::dead)); \
-    save_handler = handler();                                     \
-    SET_HANDLER(_x);                                              \
+    save_handler = handler();                                       \
+    SET_HANDLER(_x);                                                \
   } while (0)
 
-#define POP_HANDLER                                               \
-  do {                                                            \
-    SET_HANDLER(save_handler);                                    \
+#define POP_HANDLER                                                 \
+  do {                                                              \
+    SET_HANDLER(save_handler);                                      \
     ink_assert(handler() != (ContinuationHandler)(&CacheVC::dead)); \
   } while (0)
 

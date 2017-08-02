@@ -58,8 +58,10 @@
 
 #else // no jemalloc includes used
 
-#define mallocx(...)    nullptr_t{}
-#define sallocx(...)    size_t{}
+#define mallocx(...) \
+  nullptr_t {}
+#define sallocx(...) \
+  size_t {}
 #define sdallocx(...)
 #define dallocx(...)
 
@@ -69,10 +71,9 @@
 
 #endif // no jemalloc includes used
 
-
 #if HAVE_SYS_USER_H
 #include <sys/user.h>
-#elif ! PAGE_SIZE
+#elif !PAGE_SIZE
 #define PAGE_SIZE 4096
 #endif
 
@@ -117,8 +118,8 @@ static inline size_t __attribute__((const)) ats_pagesize(void)
   return page_size;
 }
 
-using MemoryPage = std::aligned_storage<PAGE_SIZE,PAGE_SIZE>::type;
-using MemoryPageHuge = std::aligned_storage<(PAGE_SIZE<<9),(PAGE_SIZE<<9)>::type;
+using MemoryPage     = std::aligned_storage<PAGE_SIZE, PAGE_SIZE>::type;
+using MemoryPageHuge = std::aligned_storage<(PAGE_SIZE << 9), (PAGE_SIZE << 9)>::type;
 
 /* Some convenience wrappers around strdup() functionality */
 char *_xstrdup(const char *str, int length, const char *path);
@@ -133,18 +134,22 @@ char *_xstrdup(const char *str, int length, const char *path);
 #ifdef __cplusplus
 namespace numa
 {
-  unsigned new_affinity_id();
+unsigned new_affinity_id();
 
-#if TS_USE_HWLOC 
-  static inline hwloc_topology_t curr() { return ink_get_topology(); }
+#if TS_USE_HWLOC
+static inline hwloc_topology_t
+curr()
+{
+  return ink_get_topology();
+}
 
-  hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
-  int assign_thread_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit usable cpus to specific cpuset
+hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+int assign_thread_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit usable cpus to specific cpuset
 
-  // NOTE: creates new arenas under mutex if none present
-  unsigned get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
-  int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit new pages to specific nodes
-  void reset_thread_memory_by_cpuset(); // limit new pages to whatever cpuset is limited to
+// NOTE: creates new arenas under mutex if none present
+unsigned get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit new pages to specific nodes
+void reset_thread_memory_by_cpuset();                                           // limit new pages to whatever cpuset is limited to
 #endif
 }
 
@@ -400,12 +405,18 @@ public:
 };
 
 template <class T_OBJ>
-auto ats_return_unique_copy( const T_OBJ &obj ) -> std::unique_ptr<T_OBJ>
-  { return std::unique_ptr<T_OBJ>( new T_OBJ(obj) ); }
+auto
+ats_return_unique_copy(const T_OBJ &obj) -> std::unique_ptr<T_OBJ>
+{
+  return std::unique_ptr<T_OBJ>(new T_OBJ(obj));
+}
 
 template <class T_OBJ>
-auto ats_return_unique( T_OBJ *ptr ) -> std::unique_ptr<T_OBJ>
-  { return std::unique_ptr<T_OBJ>(ptr); }
+auto
+ats_return_unique(T_OBJ *ptr) -> std::unique_ptr<T_OBJ>
+{
+  return std::unique_ptr<T_OBJ>(ptr);
+}
 
 namespace detail
 {

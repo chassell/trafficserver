@@ -297,9 +297,9 @@ ink_set_thread_name(const char *name ATS_UNUSED)
 static inline void
 ink_get_thread_name(char *name, size_t len)
 {
-  memset(name,'\0',len);
+  memset(name, '\0', len);
 #if defined(HAVE_PTHREAD_SETNAME_NP_1)
-  pthread_getname_np(name,len);
+  pthread_getname_np(name, len);
 #elif defined(HAVE_PTHREAD_SETNAME_NP_2)
   pthread_getname_np(pthread_self(), name, len);
 #elif defined(HAVE_PTHREAD_SET_NAME_NP_2)

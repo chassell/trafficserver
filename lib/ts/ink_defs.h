@@ -79,20 +79,22 @@
 
 #include <type_traits>
 
-template<typename T_ELEM>
-constexpr std::size_t countof()
+template <typename T_ELEM>
+constexpr std::size_t
+countof()
 {
   using T = typename std::remove_reference<T_ELEM>::type;
-  static_assert(std::is_array<T>::value, 
-                "countof() requires an array argument");
-  static_assert(std::extent<T>::value > 0,  // [0]
+  static_assert(std::is_array<T>::value, "countof() requires an array argument");
+  static_assert(std::extent<T>::value > 0, // [0]
                 "zero- or unknown-size array");
   return std::extent<T>::value;
 }
 
-template<typename T, typename U> constexpr size_t offset_of(U T::*member)
+template <typename T, typename U>
+constexpr size_t
+offset_of(U T::*member)
 {
-  return reinterpret_cast<char*>(&(static_cast<T*>(nullptr)->*member)) - static_cast<char*>(nullptr);
+  return reinterpret_cast<char *>(&(static_cast<T *>(nullptr)->*member)) - static_cast<char *>(nullptr);
 }
 
 #define countof(a) countof<decltype(a)>()
@@ -151,11 +153,11 @@ max(const T a, const T b)
 #if TS_USE_HWLOC
 #include <hwloc.h>
 #if HWLOC_API_VERSION < 0x00010b00
-#define HWLOC_OBJ_NUMANODE  HWLOC_OBJ_NODE
+#define HWLOC_OBJ_NUMANODE HWLOC_OBJ_NODE
 #endif
 #elif __cplusplus
 // some signatures need this
-using hwloc_obj_type_t = int; 
+using hwloc_obj_type_t = int;
 #endif
 
 #ifndef ROUNDUP

@@ -70,43 +70,47 @@ Thread::~Thread()
 // Unix & non-NT Interface impl              //
 ///////////////////////////////////////////////
 
-
 ink_thread
 Thread::start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction &hookFxn)
 {
-  auto threadHook = [](void *ptr) -> void*
-    { static_cast<ThreadFunction*>(ptr)->operator()(); return nullptr; };
+  auto threadHook = [](void *ptr) -> void * {
+    static_cast<ThreadFunction *>(ptr)->operator()();
+    return nullptr;
+  };
 
   // Make finally sure it is an even multiple of our page size
-  auto page = (ats_hugepage_enabled() ? sizeof(MemoryPageHuge) : sizeof(MemoryPage) );
-  stacksize = aligned_spacing( stacksize, page );
+  auto page = (ats_hugepage_enabled() ? sizeof(MemoryPageHuge) : sizeof(MemoryPage));
+  stacksize = aligned_spacing(stacksize, page);
 
   void *stack = ats_alloc_stack(stacksize); // correctly mmap it
 
-  ink_sem_init(&stackWait,0);
+  ink_sem_init(&stackWait, 0);
 
-  auto tid = ink_thread_create(threadHook, const_cast<ThreadFunction*>(&hookFxn), false, stacksize, stack);
+  auto tid = ink_thread_create(threadHook, const_cast<ThreadFunction *>(&hookFxn), false, stacksize, stack);
 
-  // wait on child init 
+  // wait on child init
   ink_sem_wait(&stackWait);
   ink_sem_destroy(&stackWait);
 
   return tid;
 }
 
-void Continuation::store_callback_context()
+void
+Continuation::store_callback_context()
 {
   _handlerArena = ::jemallctl::thread_arena();
 }
 
-int Continuation::restore_callback_context()
+int
+Continuation::restore_callback_context()
 {
   auto tmp = ::jemallctl::thread_arena();
   ::jemallctl::set_thread_arena(_handlerArena);
   return tmp;
 }
 
-void Continuation::reset_caller_context(int tmp)
+void
+Continuation::reset_caller_context(int tmp)
 {
   ::jemallctl::set_thread_arena(tmp);
 }

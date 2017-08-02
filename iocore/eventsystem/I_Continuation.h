@@ -59,10 +59,10 @@ class EThread;
 #define CONTINUATION_CONT 1
 
 using ContinuationHandlerMethodPtr_t = int (Continuation::*)(int event, void *data);
-using ContinuationHandlerFxn_t = int(Continuation *, int event, void *data);
-using ContinuationHandlerFtor_t = std::function<ContinuationHandlerFxn_t>;
+using ContinuationHandlerFxn_t       = int(Continuation *, int event, void *data);
+using ContinuationHandlerFtor_t      = std::function<ContinuationHandlerFxn_t>;
 
-//typedef int (Continuation::*ContinuationHandler)(int event, void *data);
+// typedef int (Continuation::*ContinuationHandler)(int event, void *data);
 using ContinuationHandler = ContinuationHandlerMethodPtr_t;
 
 class force_VFPT_to_top
@@ -108,7 +108,11 @@ public:
     issues.
 
   */
-  ContinuationHandler handler() { return _handler; }
+  ContinuationHandler
+  handler()
+  {
+    return _handler;
+  }
 
 #ifdef DEBUG
   const char *handler_name = nullptr;
@@ -139,77 +143,80 @@ public:
   */
   ContFlags control_flags;
 
-  void set_next_call(nullptr_t, ... ) { 
-    _handlerApply = ContinuationHandlerFtor_t{}; 
-    _handler = nullptr;
+  void set_next_call(nullptr_t, ...)
+  {
+    _handlerApply = ContinuationHandlerFtor_t{};
+    _handler      = nullptr;
   }
 
-  void set_next_call(int, ... ) { 
-    _handlerApply = ContinuationHandlerFtor_t{}; 
-    _handler = nullptr;
+  void
+  set_next_call(int, ...)
+  {
+    _handlerApply = ContinuationHandlerFtor_t{};
+    _handler      = nullptr;
   }
 
   // class method-pointer full args
-  inline auto set_next_call(ContinuationHandlerMethodPtr_t &fxn, Continuation *oldobj, const char *name = 0) -> int
+  inline auto
+  set_next_call(ContinuationHandlerMethodPtr_t &fxn, Continuation *oldobj, const char *name = 0) -> int
   {
-    auto f = [fxn,oldobj](Continuation *self, int event, void *arg) 
-    {
-      ( oldobj != self ? ink_warning("detected obj mismatch %p %p",oldobj,self) : void(0) );
-      return (self->*fxn)(event,arg); 
+    auto f = [fxn, oldobj](Continuation *self, int event, void *arg) {
+      (oldobj != self ? ink_warning("detected obj mismatch %p %p", oldobj, self) : void(0));
+      return (self->*fxn)(event, arg);
     };
-    return wrap_callback(f, (ContinuationHandler) fxn, name);
+    return wrap_callback(f, (ContinuationHandler)fxn, name);
   };
 
   // class method-pointer full args
   template <class T_OBJ, typename T_ARG>
-  inline auto set_next_call(int(T_OBJ::*fxn)(int,T_ARG), T_OBJ *oldobj, const char *name = 0) -> int
+  inline auto
+  set_next_call(int (T_OBJ::*fxn)(int, T_ARG), T_OBJ *oldobj, const char *name = 0) -> int
   {
-    auto f = [fxn,oldobj](Continuation *self, int event, void *arg) 
-    {
-      auto obj = static_cast<T_OBJ*>(self);
-      ( oldobj != obj ? ink_warning("detected obj mismatch %p %p",oldobj,obj) : void(0) );
-      return (obj->*fxn)(event,static_cast<T_ARG>(arg)); 
+    auto f = [fxn, oldobj](Continuation *self, int event, void *arg) {
+      auto obj = static_cast<T_OBJ *>(self);
+      (oldobj != obj ? ink_warning("detected obj mismatch %p %p", oldobj, obj) : void(0));
+      return (obj->*fxn)(event, static_cast<T_ARG>(arg));
     };
-    return wrap_callback(f, (ContinuationHandler) fxn, name);
+    return wrap_callback(f, (ContinuationHandler)fxn, name);
   };
 
   // class method with event arg
   template <class T_OBJ>
-  inline auto set_next_call(int(T_OBJ::*fxn)(int), T_OBJ *oldobj, const char *name = 0) -> int
+  inline auto
+  set_next_call(int (T_OBJ::*fxn)(int), T_OBJ *oldobj, const char *name = 0) -> int
   {
-    auto f = [fxn,oldobj](Continuation *self, int event, void *) { 
-      auto obj = static_cast<T_OBJ*>(self);
-      ( oldobj != obj ? ink_warning("detected obj mismatch %p %p",oldobj,obj) : void(0) );
-      return (obj->*fxn)(event); 
+    auto f = [fxn, oldobj](Continuation *self, int event, void *) {
+      auto obj = static_cast<T_OBJ *>(self);
+      (oldobj != obj ? ink_warning("detected obj mismatch %p %p", oldobj, obj) : void(0));
+      return (obj->*fxn)(event);
     };
-    return wrap_callback(f, (ContinuationHandler) fxn, name);
+    return wrap_callback(f, (ContinuationHandler)fxn, name);
   }
 
   // class method with no args
   template <class T_OBJ>
-  inline auto set_next_call(int(T_OBJ::*fxn)(void), T_OBJ *oldobj, const char *name = 0) -> int
+  inline auto
+  set_next_call(int (T_OBJ::*fxn)(void), T_OBJ *oldobj, const char *name = 0) -> int
   {
-    auto f = [fxn,oldobj](Continuation *self, int, void *) { 
-      auto obj = static_cast<T_OBJ*>(self);
-      ( oldobj != obj ? ink_warning("detected obj mismatch %p %p",oldobj,obj) : void(0) );
-      return (obj->*fxn)(); 
+    auto f = [fxn, oldobj](Continuation *self, int, void *) {
+      auto obj = static_cast<T_OBJ *>(self);
+      (oldobj != obj ? ink_warning("detected obj mismatch %p %p", oldobj, obj) : void(0));
+      return (obj->*fxn)();
     };
-    return wrap_callback(f, (ContinuationHandler) fxn, name);
+    return wrap_callback(f, (ContinuationHandler)fxn, name);
   }
 
-  // lambda or call with no object 
+  // lambda or call with no object
   template <class T_CALLABLE>
-  inline auto set_next_call(T_CALLABLE const &callable, const char *name = 0) 
-     -> decltype( callable()(1,nullptr), 0 )
+  inline auto
+  set_next_call(T_CALLABLE const &callable, const char *name = 0) -> decltype(callable()(1, nullptr), 0)
   {
-    using FunctorOp = decltype( T_CALLABLE::operator() );
+    using FunctorOp = decltype(T_CALLABLE::operator());
     using SecondArg = typename std::function<FunctorOp>::second_argument_type;
 
     // should copy it
-    auto f = [callable](Continuation *self, int event, void *arg) { 
-      return callable(event,static_cast<SecondArg>(arg)); 
-    };
-    return wrap_callback(f, (ContinuationHandler) handleEvent, name);
+    auto f = [callable](Continuation *self, int event, void *arg) { return callable(event, static_cast<SecondArg>(arg)); };
+    return wrap_callback(f, (ContinuationHandler)handleEvent, name);
   }
 
   /**
@@ -228,7 +235,7 @@ public:
   int
   handleEvent(int event = CONTINUATION_EVENT_NONE, void *data = 0)
   {
-    return ContinuationHandlerFtor_t{_handlerApply}(this,event,data);
+    return ContinuationHandlerFtor_t{_handlerApply}(this, event, data);
   }
 
   /**
@@ -241,8 +248,7 @@ public:
   Continuation(ProxyMutex *amutex = NULL);
 
 private:
-  template <class T_FUNCTOR>
-  int wrap_callback(T_FUNCTOR const &ftor, ContinuationHandler fxn, const char *name);
+  template <class T_FUNCTOR> int wrap_callback(T_FUNCTOR const &ftor, ContinuationHandler fxn, const char *name);
 
   void store_callback_context();
   int restore_callback_context();
@@ -250,9 +256,9 @@ private:
   static void reset_caller_context(int);
 
 private:
-  ContinuationHandler       _handler = nullptr;
+  ContinuationHandler _handler = nullptr;
   ContinuationHandlerFtor_t _handlerApply;
-  int                       _handlerArena = 0;
+  int _handlerArena = 0;
 };
 
 /**
@@ -263,9 +269,9 @@ setting the Continuation's handler.
 
 */
 #ifdef DEBUG
-#define SET_HANDLER(_h) this->set_next_call((_h),this,(#_h)+0U)
+#define SET_HANDLER(_h) this->set_next_call((_h), this, (#_h) + 0U)
 #else
-#define SET_HANDLER(_h) this->set_next_call((_h),this)
+#define SET_HANDLER(_h) this->set_next_call((_h), this)
 #endif
 
 /**
@@ -278,20 +284,20 @@ setting the Continuation's handler.
 
 */
 #ifdef DEBUG
-#define SET_CONTINUATION_HANDLER(_c, _h) (_c)->set_next_call((_h),(_c),#_h+0)
+#define SET_CONTINUATION_HANDLER(_c, _h) (_c)->set_next_call((_h), (_c), #_h + 0)
 #else
-#define SET_CONTINUATION_HANDLER(_c, _h) (_c)->set_next_call((_h),(_c))
+#define SET_CONTINUATION_HANDLER(_c, _h) (_c)->set_next_call((_h), (_c))
 #endif
 
-inline Continuation::Continuation(ProxyMutex *amutex)
-  : mutex(amutex)
+inline Continuation::Continuation(ProxyMutex *amutex) : mutex(amutex)
 {
   // Pick up the control flags from the creating thread
   this->control_flags.set_flags(get_cont_flags().get_flags());
 }
 
 template <class T_FUNCTOR>
-inline int Continuation::wrap_callback(T_FUNCTOR const &ftor, ContinuationHandler fxn, const char *name)
+inline int
+Continuation::wrap_callback(T_FUNCTOR const &ftor, ContinuationHandler fxn, const char *name)
 {
   _handler = fxn;
 #ifdef DEBUG
@@ -300,10 +306,9 @@ inline int Continuation::wrap_callback(T_FUNCTOR const &ftor, ContinuationHandle
   store_callback_context();
 
   // copy ftor into new lambda
-  _handlerApply = [ftor](Continuation *self, int event, void *vparg) -> int
-  {
-    auto tmp = self->restore_callback_context(); 
-    auto r = ftor(self,event,vparg);
+  _handlerApply = [ftor](Continuation *self, int event, void *vparg) -> int {
+    auto tmp = self->restore_callback_context();
+    auto r   = ftor(self, event, vparg);
     // self may be deleted by now!
     Continuation::reset_caller_context(tmp);
     return r;

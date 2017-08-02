@@ -53,7 +53,7 @@
 #include <cstdlib>
 
 // in order to prevent global-defs defs
-#undef HAVE_LIBJEMALLOC 
+#undef HAVE_LIBJEMALLOC
 #include "ts/Allocator.h"
 
 #define DEBUG_TAG "freelist"

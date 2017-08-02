@@ -80,8 +80,8 @@ class ProxyMutex;
 class EThread;
 
 constexpr int MAX_THREAD_NAME_LENGTH = 16;
-constexpr int DEFAULT_STACKSIZE      = 1024*1024; // 1MB
-constexpr int MIN_STACKSIZE          = 100*1024; // 100K
+constexpr int DEFAULT_STACKSIZE      = 1024 * 1024; // 1MB
+constexpr int MIN_STACKSIZE          = 100 * 1024;  // 100K
 
 /// The signature of a function to be called by a thread.
 using ThreadFunction = std::function<void()>;
@@ -116,8 +116,16 @@ public:
     processors and you should not modify it directly.
 
   */
-  ink_thread  tid() const         { return _tid; }
-  unsigned    affinity_id() const { return _affid; }
+  ink_thread
+  tid() const
+  {
+    return _tid;
+  }
+  unsigned
+  affinity_id() const
+  {
+    return _affid;
+  }
 
   /**
     Thread lock to ensure atomic operations. The thread lock available
@@ -134,7 +142,11 @@ public:
   virtual ~Thread();
 
   void set_specific();
-  void set_affinity_id(unsigned affid) { _affid = affid; }
+  void
+  set_affinity_id(unsigned affid)
+  {
+    _affid = affid;
+  }
 
   static ink_hrtime cur_time;
   inkcoreapi static ink_thread_key thread_data_key;
@@ -168,11 +180,12 @@ public:
   static ink_thread start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction &hookFxn);
 
   template <class T_THREAD, class T_FUNCTOR>
-  static void launch(T_THREAD *thread, T_FUNCTOR launchFxn)
+  static void
+  launch(T_THREAD *thread, T_FUNCTOR launchFxn)
   {
     // launchFxn was copied as param [on stack]
     thread->set_specific(); // assign thread structure
-    launchFxn(thread); // callback must sem_post to stackWait in start() call above
+    launchFxn(thread);      // callback must sem_post to stackWait in start() call above
   }
 
   virtual void execute() = 0;

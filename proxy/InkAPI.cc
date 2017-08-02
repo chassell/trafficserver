@@ -4196,7 +4196,6 @@ TSContCreate(TSEventFunctor funcp, TSMutex mutexp)
 }
 #endif
 
-
 TSCont
 TSContCreate(TSEventFunc funcp, TSMutex mutexp)
 {
@@ -6431,7 +6430,6 @@ TSTransformCreate(TSEventFunctor event_funcp, TSHttpTxn txnp)
   return TSVConnCreate(event_funcp, TSContMutexGet(reinterpret_cast<TSCont>(txnp)));
 }
 #endif
-
 
 TSVConn
 TSTransformCreate(TSEventFunc event_funcp, TSHttpTxn txnp)

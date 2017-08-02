@@ -47,7 +47,6 @@
 #include <new>
 #include <cstdlib>
 
-
 #define RND16(_x) (((_x) + 15) & ~15)
 
 struct _InkFreeList {
@@ -81,9 +80,7 @@ inkcoreapi void ink_freelist_free_bulk(InkFreeList *f, void *head, void *tail, s
 void ink_freelists_dump(FILE *f);
 void ink_freelists_dump_baselinerel(FILE *f);
 void ink_freelists_snap_baseline();
-
-} 
-
+}
 
 /** Allocator for fixed size memory blocks. */
 class Allocator
@@ -300,16 +297,18 @@ private:
 #include "ts/StdAllocWrapper.h"
 
 // cover up use of original Allocators above
-#define Allocator      AlignedAllocator
+#define Allocator AlignedAllocator
 #define ClassAllocator ObjAllocator
 #define ProxyAllocator ThreadAllocatorStub
 
-class ThreadAllocatorStub { };
+class ThreadAllocatorStub
+{
+};
 
 // define use of for thread Allocators
-#define THREAD_ALLOC(allocObj,t)         ( ::allocObj.alloc() )
-#define THREAD_ALLOC_INIT(allocObj,t)    ( ::allocObj.alloc() )
-#define THREAD_FREE(ptr,allocObj,t)      ( ::allocObj.free(ptr) )
+#define THREAD_ALLOC(allocObj, t) (::allocObj.alloc())
+#define THREAD_ALLOC_INIT(allocObj, t) (::allocObj.alloc())
+#define THREAD_FREE(ptr, allocObj, t) (::allocObj.free(ptr))
 
 extern int thread_freelist_high_watermark;
 extern int thread_freelist_low_watermark;
