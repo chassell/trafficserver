@@ -177,15 +177,15 @@ ThreadAffinityInitializer::set_affinity(int, Event *)
     return 0;
   }
   // Get our `obj` instance with index based on the thread number we are on.
-  hwloc_bitmap cpuset;
+  numa::hwloc_bitmap cpuset;
   hwloc_get_cpubind(ink_get_topology(), cpuset, HWLOC_CPUBIND_THREAD);
 #if HWLOC_API_VERSION >= 0x00010100
   int cpu_mask_len = hwloc_bitmap_snprintf(NULL, 0, cpuset) + 1;
   char *cpu_mask   = (char *)alloca(cpu_mask_len);
   hwloc_bitmap_snprintf(cpu_mask, cpu_mask_len, cpuset);
-  Debug("iocore_thread", "EThread: %p %s: CPU Mask: %s\n", t, obj_name, t->id % obj_count, cpu_mask);
+  Debug("iocore_thread", "EThread: %p %s: %d CPU Mask: %s\n", t, obj_name, t->id % obj_count, cpu_mask);
 #else
-  Debug("iocore_thread", "EThread: %d %s", t->id % obj_count, _name);
+  Debug("iocore_thread", "EThread: %d %s: %d", t->id % obj_count, _name);
 #endif // HWLOC_API_VERSION
   return 0;
 }
@@ -294,7 +294,7 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
   Debug("iocore_thread", "Thread stack size set to %zu", stacksize);
 
   for (i = 0; i < n_threads; ++i) {
-    numa::assign_thread_memory_by_affinity(thread_initializer.cpuset_type(), i);
+    numa::assign_thread_memory_by_affinity(Thread_Affinity_Initializer.cpuset_type(), i);
 
     EThread *t                   = new EThread(REGULAR, n_ethreads + i);
     all_ethreads[n_ethreads + i] = t;
@@ -311,7 +311,7 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
   // the group. Some thread set up depends on knowing the total number of threads but that can't be
   // safely updated until all the EThread instances are created and stored in the table.
   for (i = 0; i < n_threads; ++i) {
-    numa::assign_thread_memory_by_affinity(thread_initializer.cpuset_type(), i);
+    numa::assign_thread_memory_by_affinity(Thread_Affinity_Initializer.cpuset_type(), i);
 
     void *stack = ats_alloc_stack(stacksize);
     // inherit these current settings upon spawning
@@ -319,7 +319,7 @@ EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t sta
     tg->_thread[i]->start(thr_name, stack, stacksize);
   }
 
-  reset_thread_memory_by_cpuset();
+  numa::reset_thread_memory_by_cpuset();
 
   Debug("iocore_thread", "Created thread group '%s' id %d with %d threads", tg->_name.get(), ev_type, n_threads);
 

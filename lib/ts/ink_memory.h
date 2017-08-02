@@ -26,6 +26,8 @@
 #include "ts/ink_config.h"
 #include "ts/ink_defs.h"
 
+#include <vector>
+#include <functional>
 #include <memory>
 
 #include <ctype.h>
@@ -240,7 +242,6 @@ unsigned new_affinity_id();
        { return get(); }
   };
 
-#endif
 
 int create_global_nodump_arena();
 unsigned new_affinity_id();
