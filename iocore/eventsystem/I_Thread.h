@@ -78,16 +78,9 @@
   class Thread;
 class ProxyMutex;
 
-#include "ts/ink_thread.h"
-
-#include <functional>
-
-class ProxyMutex;
-class EThread;
-
-/// The signature of a function to be called by a thread.
-using ThreadFunction = std::function<void()>;
-
+#define THREADAPI
+#define THREADAPI_RETURN_TYPE void *
+typedef THREADAPI_RETURN_TYPE(THREADAPI *ThreadFunction)(void *arg);
 
 extern ProxyMutex *global_mutex;
 
@@ -160,13 +153,16 @@ public:
   ProxyAllocator ioAllocator;
   ProxyAllocator ioBlockAllocator;
 
+  uint64_t &alloc_bytes_count() const { return *_allocTotalP; }
+  uint64_t &dealloc_bytes_count() const { return *_deallocTotalP; }
+
 private:
   // prevent unauthorized copies (Not implemented)
   Thread(const Thread &);
   Thread &operator=(const Thread &);
 
 public:
-  static ink_thread start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction &hookFxn);
+  ink_thread start(const char *name, size_t stacksize = DEFAULT_STACKSIZE, ThreadFunction f = NULL, void *a = NULL);
 
   virtual void
   execute()
@@ -190,6 +186,9 @@ public:
       @note This also updates the cached time.
   */
   static ink_hrtime get_hrtime_updated();
+
+  uint64_t *_allocTotalP = nullptr;
+  uint64_t *_deallocTotalP = nullptr;
 };
 
 extern Thread *this_thread();

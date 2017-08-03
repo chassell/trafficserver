@@ -31,86 +31,120 @@
 #include "ts/jemallctl.h"
 
 #include "P_EventSystem.h"
+#include "I_Thread.h"
 #include "ts/ink_string.h"
 
-#include "ts/hugepages.h"
-#include "ts/ink_memory.h"
+#include <chrono>
 
 ///////////////////////////////////////////////
 // Common Interface impl                     //
 ///////////////////////////////////////////////
 
-ink_hrtime Thread::cur_time = ink_get_hrtime_internal();
-inkcoreapi ink_thread_key Thread::thread_data_key;
+static ink_thread_key init_thread_key();
 
-namespace
-{
-static bool initialized = ([]() -> bool {
-  // File scope initialization goes here.
-  ink_thread_key_create(&Thread::thread_data_key, nullptr);
-  return true;
-})();
-}
+ProxyMutex *global_mutex                          = NULL;
+ink_hrtime Thread::cur_time                       = 0;
+inkcoreapi ink_thread_key Thread::thread_data_key = init_thread_key();
 
 Thread::Thread()
 {
-  mutex = new_ProxyMutex();
+  mutex     = new_ProxyMutex();
+  mutex_ptr = mutex;
   MUTEX_TAKE_LOCK(mutex, (EThread *)this);
-  mutex->nthread_holding += THREAD_MUTEX_THREAD_HOLDING;
+  mutex->nthread_holding = THREAD_MUTEX_THREAD_HOLDING;
 }
 
-Thread::~Thread()
+static void
+key_destructor(void *value)
 {
-  ink_release_assert(mutex->thread_holding == (EThread *)this);
-  mutex->nthread_holding -= THREAD_MUTEX_THREAD_HOLDING;
-  MUTEX_UNTAKE_LOCK(mutex, (EThread *)this);
+  (void)value;
+}
+
+ink_thread_key
+init_thread_key()
+{
+  ink_thread_key_create(&Thread::thread_data_key, key_destructor);
+  return Thread::thread_data_key;
 }
 
 ///////////////////////////////////////////////
 // Unix & non-NT Interface impl              //
 ///////////////////////////////////////////////
 
-ink_thread
-Thread::start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction &hookFxn)
+struct thread_data_internal {
+  ThreadFunction f;
+  void *a;
+  Thread *me;
+  char name[MAX_THREAD_NAME_LENGTH];
+};
+
+static void *
+spawn_thread_internal(void *a)
 {
-  auto threadHook = [](void *ptr) -> void * {
-    static_cast<ThreadFunction *>(ptr)->operator()();
-    return nullptr;
-  };
+  thread_data_internal *p = (thread_data_internal *)a;
 
-  // Make finally sure it is an even multiple of our page size
-  auto page = (ats_hugepage_enabled() ? sizeof(MemoryPageHuge) : sizeof(MemoryPage));
-  stacksize = aligned_spacing(stacksize, page);
+  p->me->set_specific();
+  ink_set_thread_name(p->name);
+  if (p->f)
+    p->f(p->a);
+  else
+    p->me->execute();
+  ats_free(a);
+  return NULL;
+}
 
-  void *stack = ats_alloc_stack(stacksize); // correctly mmap it
+ink_thread
+Thread::start(const char *name, size_t stacksize, ThreadFunction f, void *a)
+{
+  thread_data_internal *p = (thread_data_internal *)ats_malloc(sizeof(thread_data_internal));
 
-  ink_sem_init(&stackWait, 0);
-
-  auto tid = ink_thread_create(threadHook, const_cast<ThreadFunction *>(&hookFxn), false, stacksize, stack);
-
-  // wait on child init
-  ink_sem_wait(&stackWait);
-  ink_sem_destroy(&stackWait);
+  p->f  = f;
+  p->a  = a;
+  p->me = this;
+  memset(p->name, 0, MAX_THREAD_NAME_LENGTH);
+  ink_strlcpy(p->name, name, MAX_THREAD_NAME_LENGTH);
+  tid = ink_thread_create(spawn_thread_internal, (void *)p, 0, stacksize);
 
   return tid;
 }
 
-void
-Continuation::store_callback_context()
-{
-  _handlerArena = ::jemallctl::thread_arena();
-}
+unsigned Continuation::HdlrAssignSet::s_hdlrAssignSetCnt = 0;
 
 int
-Continuation::restore_callback_context()
+Continuation::handleEvent(int event, void *data)
 {
-  auto tmp = ::jemallctl::thread_arena();
-  ::jemallctl::set_thread_arena(_handlerArena);
-  return tmp;
+  ink_release_assert( _handler );
+
+  auto logPtr = _handlerLogPtr;
+  auto &log = *logPtr;
+  auto &cbrec = *_handler;
+
+  if ( ! logPtr ) {
+    logPtr = _handlerLogPtr = std::make_shared<EventHdlrLog>();
+  }
+
+  auto called = std::chrono::steady_clock::now();
+  auto alloced = this_thread()->alloc_bytes_count();
+  auto dealloced = this_thread()->dealloc_bytes_count();
+
+  auto r = (*cbrec._callable)(this,event,data);
+
+  auto duration = std::chrono::steady_clock::now() - called;
+  auto span = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
+
+  uint16_t logv = 8*sizeof(unsigned int) - __builtin_clz(static_cast<unsigned int>(span));
+
+  log.emplace_back( 
+     EventHdlrLogRec{ this_thread()->alloc_bytes_count() - alloced,
+                      this_thread()->dealloc_bytes_count() - dealloced,
+                      cbrec.get_id(),
+                      logv } );
+
+  // deleted continuation?
+  if ( logPtr.use_count() < 2 ) {
+    // done and time to print it...
+  }
+  return r;
+
 }
 
-void
-Continuation::reset_caller_context(int tmp)
-{
-  ::jemallctl::set_thread_arena(tmp);
-}

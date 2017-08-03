@@ -32,6 +32,7 @@
 #define _P_Thread_h_
 
 #include "I_Thread.h"
+#include "ts/jemallctl.h"
 
 ///////////////////////////////////////////////
 // Common Interface impl                     //
@@ -46,6 +47,8 @@ Thread::set_specific()
 {
   ink_thread_setspecific(Thread::thread_data_key, this);
   tid = ink_thread_self();
+  _allocTotalP = jemallctl::thread_allocatedp();
+  _deallocTotalP = jemallctl::thread_deallocatedp();
 }
 
 TS_INLINE Thread *

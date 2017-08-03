@@ -24,7 +24,7 @@
 
   Continuations have a handleEvent() method to invoke them. Users
   can determine the behavior of a Continuation by suppling a
-  "ContinuationHandler" (member function name) which is invoked
+  "Hdlr" (member function name) which is invoked
   when events arrive. This function can be changed with the
   "setHandler" method.
 
@@ -40,6 +40,8 @@
 #include "ts/List.h"
 #include "I_Lock.h"
 #include "ts/ContFlags.h"
+
+#include <chrono>
 
 class Continuation;
 class ContinuationQueue;
@@ -57,13 +59,6 @@ class EThread;
 
 #define CONTINUATION_DONE 0
 #define CONTINUATION_CONT 1
-
-using ContinuationHandlerMethodPtr_t = int (Continuation::*)(int event, void *data);
-using ContinuationHandlerFxn_t       = int(Continuation *, int event, void *data);
-using ContinuationHandlerFtor_t      = std::function<ContinuationHandlerFxn_t>;
-
-// typedef int (Continuation::*ContinuationHandler)(int event, void *data);
-using ContinuationHandler = ContinuationHandlerMethodPtr_t;
 
 class force_VFPT_to_top
 {
@@ -99,6 +94,13 @@ public:
 class Continuation : private force_VFPT_to_top
 {
 public:
+  struct HdlrAssignRec;
+
+  using Hdlr_t = const HdlrAssignRec*;
+  using HdlrMethodPtr_t = int (Continuation::*)(int event, void *data);
+  using HdlrFxn_t       = int(Continuation *, int event, void *data);
+  using HdlrFtor_t      = std::function<HdlrFxn_t>;
+
   /**
     The current continuation handler function.
 
@@ -108,10 +110,10 @@ public:
     issues.
 
   */
-  ContinuationHandler
+  const HdlrAssignRec &
   handler()
   {
-    return _handler;
+    return *_handler;
   }
 
 #ifdef DEBUG
@@ -143,11 +145,27 @@ public:
   */
   ContFlags control_flags;
 
-  struct HdlrAssign {
-    const char *_label;
-    const char *_file;
-    unsigned    _line;
-    ContinuationHandlerMethodPtr_t _fxn;
+  struct HdlrAssignSet;
+  struct HdlrAssignRec {
+    HdlrAssignSet    &_fileSet;      // static-global for compile
+    const char *const _label;        // at point of assign
+    const char *const _file;         // at point of assign
+    unsigned    const _line;         // at point of assign
+    unsigned    const _assignID;     // unique for each in compile-object
+    const HdlrMethodPtr_t _fxnPtr; // distinct method-pointer (not usable)
+    const HdlrFxn_t  *_callable; // distinct method-pointer (not usable)
+
+    unsigned int get_id() const { 
+      return _fileSet._id | _assignID;
+    }
+
+    template <class T_OBJ, typename T_ARG>
+    bool operator!=(int(T_OBJ::*b)(int,T_ARG)) const
+    {
+      return _fxnPtr != (HdlrMethodPtr_t) b;
+    }
+
+    operator Hdlr_t() const { return this; }
   };
 
   struct HdlrAssignSet
@@ -155,85 +173,40 @@ public:
     enum { MAX_TARGET_LOCS = 20 };
     static unsigned        s_hdlrAssignSetCnt;
 
-    const HdlrAssign      *_locations[MAX_TARGET_LOCS];
-    unsigned int           _id = []() { return ++s_hdlrAssignSetCnt; }();
+    Hdlr_t                 _locations[MAX_TARGET_LOCS];
+    unsigned int           _id = []() { return (++s_hdlrAssignSetCnt << 6); }();
   };
 
-  void set_next_hdlr(nullptr_t, ...)
+  struct EventHdlrLogRec
   {
-    _handlerApply = ContinuationHandlerFtor_t{};
-    _handler      = nullptr;
-  }
+    size_t       _allocDelta:32;
+    size_t       _deallocDelta:32;
+    unsigned int _id:16;
+    unsigned int _logUSec:16;
+  };
 
+  using EventHdlrLog = std::vector<EventHdlrLogRec>;
+  using EventHdlrLogPtr = std::shared_ptr<EventHdlrLog>;
+
+  void 
+  set_next_hdlr(nullptr_t)
+  {
+    _handler = nullptr;
+  };
+
+  // class method-pointer full args
+  void 
+  set_next_hdlr(Hdlr_t &prev)
+  {
+    _handler = prev; // no special treatment currently
+  };
+
+  // class method-pointer full args
   void
-  set_next_hdlr(int, ...)
+  set_next_hdlr(const HdlrAssignRec &cbAssign)
   {
-    _handlerApply = ContinuationHandlerFtor_t{};
-    _handler      = nullptr;
-  }
-
-  // class method-pointer full args
-  inline auto
-  set_next_hdlr(ContinuationHandlerMethodPtr_t &fxn, Continuation *oldobj, HdlrAssignSet *cbSet, const HdlrAssign *&currCb ) -> int
-  {
-    auto f = [fxn, oldobj](Continuation *self, int event, void *arg) {
-      (oldobj != self ? ink_warning("detected obj mismatch %p %p", oldobj, self) : void(0));
-      return (self->*fxn)(event, arg);
-    };
-    return wrap_callback(f, (ContinuationHandler)fxn, name);
+    _handler = &cbAssign;
   };
-
-  // class method-pointer full args
-  template <class T_OBJ, typename T_ARG>
-  inline auto
-  set_next_hdlr(int (T_OBJ::*fxn)(int, T_ARG), T_OBJ *oldobj, HdlrAssignSet *cbSet, const HdlrAssign *&currCb) -> int
-  {
-    auto f = [fxn, oldobj](Continuation *self, int event, void *arg) {
-      auto obj = static_cast<T_OBJ *>(self);
-      (oldobj != obj ? ink_warning("detected obj mismatch %p %p", oldobj, obj) : void(0));
-      return (obj->*fxn)(event, static_cast<T_ARG>(arg));
-    };
-    return wrap_callback(f, (ContinuationHandler)fxn, name);
-  };
-
-  // class method with event arg
-  template <class T_OBJ>
-  inline auto
-  set_next_hdlr(int (T_OBJ::*fxn)(int), T_OBJ *oldobj, const char *name = 0) -> int
-  {
-    auto f = [fxn, oldobj](Continuation *self, int event, void *) {
-      auto obj = static_cast<T_OBJ *>(self);
-      (oldobj != obj ? ink_warning("detected obj mismatch %p %p", oldobj, obj) : void(0));
-      return (obj->*fxn)(event);
-    };
-    return wrap_callback(f, (ContinuationHandler)fxn, name);
-  }
-
-  // class method with no args
-  template <class T_OBJ>
-  inline auto
-  set_next_hdlr(int (T_OBJ::*fxn)(void), T_OBJ *oldobj, const char *name = 0) -> int
-  {
-    auto f = [fxn, oldobj](Continuation *self, int, void *) {
-      auto obj = static_cast<T_OBJ *>(self);
-      (oldobj != obj ? ink_warning("detected obj mismatch %p %p", oldobj, obj) : void(0));
-      return (obj->*fxn)();
-    };
-    return wrap_callback(f, (ContinuationHandler)fxn, name);
-  }
-
-  // lambda or call with no object
-  template <class T_CALLABLE>
-  inline auto
-  set_next_hdlr(T_CALLABLE const &callable, const char *name = 0) -> decltype(callable()(1, nullptr), 0)
-  {
-    using FunctorOp = decltype(T_CALLABLE::operator());
-    using SecondArg = typename std::function<FunctorOp>::second_argument_type;
-
-    // should copy it
-    auto f = [callable](Continuation *self, int event, void *arg) { return callable(event, static_cast<SecondArg>(arg)); };
-    return wrap_callback(f, (ContinuationHandler)handleEvent, name);
-  }
 
   /**
     Receives the event code and data for an Event.
@@ -249,10 +222,7 @@ public:
 
   */
   int
-  handleEvent(int event = CONTINUATION_EVENT_NONE, void *data = 0)
-  {
-    return ContinuationHandlerFtor_t{_handlerApply}(this, event, data);
-  }
+  handleEvent(int event = CONTINUATION_EVENT_NONE, void *data = 0);
 
   /**
     Contructor of the Continuation object. It should not be used
@@ -264,38 +234,41 @@ public:
   Continuation(ProxyMutex *amutex = NULL);
 
 private:
-  template <class T_FUNCTOR> int wrap_callback(T_FUNCTOR const &ftor, ContinuationHandler fxn, const char *name);
-
-  void store_callback_context();
-  int restore_callback_context();
-
-  static void reset_caller_context(int);
-
-private:
-  ContinuationHandler _handler = nullptr;
-  ContinuationHandlerFtor_t _handlerApply;
-  int _handlerArena = 0;
+  Hdlr_t           _handler = nullptr; // choice of record
+  HdlrFtor_t       _handlerApply;
+  EventHdlrLogPtr  _handlerLogPtr;
 };
+
+using ContinuationHandler = Continuation::Hdlr_t;
 
 namespace {
 Continuation::HdlrAssignSet s_fileAssignSet;
 }
 
-/**
-Sets the Continuation's handler. The preferred mechanism for
-setting the Continuation's handler.
+/*
+  Sets the Continuation's handler. The only mechanism for
+  setting the Continuation's handler.
 
   @param _h Pointer to the function used to callback with events.
 
 */
-#define SET_HANDLER(_h) \
-   do {                                                                        \
-     static Continuation::HdlrAssign const kInstance =                         \
-                     { &s_fileAssignSet,                                       \
-                       ((#_h)+0), (__FILE__+0), __LINE__,                      \
-                        (ContinuationHandlerMethodPtr_t) _h };                 \
-     this->set_next_hdlr( _h, this, kInstance, __COUNTER__ );                  \
+#define CLEAR_HANDLER() this->set_next_hdlr(nullptr);
+
+#define SET_CONTINUATION_HANDLER(obj,_h) \
+   do {                                                    \
+     static Continuation::HdlrAssignRec const kInstance =  \
+                     { s_fileAssignSet,                    \
+                       ((#_h)+0),                          \
+                       (__FILE__+0),                       \
+                       __LINE__,                           \
+                       __COUNTER__,                        \
+                      (Continuation::HdlrMethodPtr_t) _h,                \
+                      ::wrap_handler<decltype(_h),(_h)>()  \
+                     };                                    \
+     (obj)->set_next_hdlr(kInstance);                       \
    } while(false)
+
+#define SET_HANDLER(_h) SET_CONTINUATION_HANDLER(this,_h)
 
 /**
   Sets a Continuation's handler.
@@ -313,26 +286,24 @@ inline Continuation::Continuation(ProxyMutex *amutex) : mutex(amutex)
   this->control_flags.set_flags(get_cont_flags().get_flags());
 }
 
-template <class T_FUNCTOR>
-inline int
-Continuation::wrap_callback(T_FUNCTOR const &ftor, ContinuationHandler fxn, const char *name)
+template<typename T_FN, T_FN FXN>
+struct fxn_traits;
+
+// specialization.. if valid
+template<class T_OBJ, class T_ARG, int(T_OBJ::*FXN)(int,T_ARG)>
+struct fxn_traits<int(T_OBJ::*)(int,T_ARG),FXN>
 {
-  _handler = fxn;
-#ifdef DEBUG
-  handler_name = name;
-#endif
-  store_callback_context();
+  constexpr Continuation::HdlrFxn_t *operator()(void)
+  {
+    return [](Continuation *self, int event, void *arg) {
+       return (static_cast<T_OBJ*>(self)->*FXN)(event, static_cast<T_ARG>(arg));
+     };
+  }
+};
 
-  // copy ftor into new lambda
-  _handlerApply = [ftor](Continuation *self, int event, void *vparg) -> int {
-    auto tmp = self->restore_callback_context();
-    auto r   = ftor(self, event, vparg);
-    // self may be deleted by now!
-    Continuation::reset_caller_context(tmp);
-    return r;
-  };
-
-  return 0;
+template<typename T_FXN, T_FXN FXN>
+static constexpr Continuation::HdlrFxn_t *wrap_handler() {
+  return fxn_traits<T_FXN,FXN>{}();
 }
 
 #endif /*_Continuation_h_*/

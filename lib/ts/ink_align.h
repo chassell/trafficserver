@@ -60,6 +60,17 @@ aligned_spacing(size_t len, size_t block = INK_MIN_ALIGN)
 }
 
 //
+// Move a pointer backward until it meets one behind the next alignment
+//
+static inline void *
+align_pointer_backward(const void *pointer, size_t alignment)
+{
+    auto intptr = reinterpret_cast<intptr_t>(pointer);
+    intptr = 0-INK_ALIGN(0-intptr, alignment);
+    return reinterpret_cast<void*>(intptr);
+}
+
+//
 // Move a pointer forward until it meets the alignment width.
 //
 static inline void *

@@ -36,6 +36,7 @@ struct chunk_hooks_t {
 
 namespace jemallctl
 {
+
 extern int const proc_arena;
 extern int const proc_arena_nodump;
 
@@ -81,6 +82,8 @@ extern const GetObjFxn<unsigned> do_arenas_extend;
 extern const GetObjFxn<unsigned> thread_arena;
 extern const SetObjFxn<unsigned> set_thread_arena;
 extern const DoObjFxn do_thread_tcache_flush;
+extern const GetObjFxn<uint64_t*> thread_allocatedp;
+extern const GetObjFxn<uint64_t*> thread_deallocatedp;
 
 // from the build-time config
 extern const GetObjFxn<bool> config_thp;
@@ -91,6 +94,10 @@ extern const GetObjFxn<std::string> thread_prof_name;
 extern const SetObjFxn<std::string> set_thread_prof_name;
 extern const GetObjFxn<bool> thread_prof_active;
 extern const SetObjFxn<bool> set_thread_prof_active;
+
+extern const GetObjFxn<bool> thread_prof_active;
+extern const SetObjFxn<bool> set_thread_prof_active;
+
 }
 
 #endif // _JEMALLCTL_H
