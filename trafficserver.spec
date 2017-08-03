@@ -42,10 +42,8 @@ make DESTDIR=$RPM_BUILD_ROOT install
 # ..so why haven't we fixed them? VSSCDNENG-767
 
 mkdir -p $RPM_BUILD_ROOT/opt/trafficserver/etc/trafficserver/snapshots
-mkdir -p $RPM_BUILD_ROOT/opt/trafficserver/rc
-cp $RPM_BUILD_DIR/%{name}/rc/trafficserver $RPM_BUILD_ROOT/opt/trafficserver/rc/
-cp $RPM_BUILD_DIR/%{name}/rc/trafficserver.service $RPM_BUILD_ROOT/opt/trafficserver/rc/
-cp $RPM_BUILD_DIR/%{name}/tools/rc_admin.pl $RPM_BUILD_ROOT/opt/trafficserver/rc/
+mkdir -p $RPM_BUILD_ROOT/usr/lib/systemd/system
+cp $RPM_BUILD_DIR/%{name}/rc/trafficserver.service $RPM_BUILD_ROOT/usr/lib/systemd/system/
 
 %clean
 rm -rf $RPM_BUILD_ROOT
@@ -54,19 +52,24 @@ rm -rf $RPM_BUILD_ROOT
 id ats &>/dev/null || /usr/sbin/useradd -u 176 -r ats -s /sbin/nologin -d /
 
 %post
-/opt/trafficserver/rc/rc_admin.pl post-install install /opt/trafficserver
+/bin/systemctl daemon-reload
+/bin/systemctl enable trafficserver
 
 %preun
+/bin/systemctl stop trafficserver
+
 # if 0 uninstall, if 1 upgrade
 if [ "$1" = "0" ]; then
-	/opt/trafficserver/rc/rc_admin.pl pre-uninstall uninstall /opt/trafficserver
-elif [ "$1" = "1" ]; then
-	/opt/trafficserver/rc/rc_admin.pl pre-uninstall upgrade /opt/trafficserver
+	/bin/systemctl disable trafficserver
 fi
 
 %postun
 # Helpful in understanding order of operations in relation to install/uninstall/upgrade:
-#     http://www.ibm.com/developerworks/library/l-rpm2/
+#     https://fedoraproject.org/wiki/Packaging:Scriptlets
+
+# Always do this because the service file may have been updated.
+/bin/systemctl daemon-reload
+
 # if 0 uninstall, if 1 upgrade
 if [ "$1" = "0" ]; then
 	id ats &>/dev/null && /usr/sbin/userdel ats
@@ -74,6 +77,7 @@ fi
 
 %files
 %defattr(-,root,root)
+%attr(644,-,-) /usr/lib/systemd/system/trafficserver.service
 %dir /opt/trafficserver
 /opt/trafficserver/bin
 /opt/trafficserver/include
@@ -81,7 +85,6 @@ fi
 /opt/trafficserver/man
 /opt/trafficserver/libexec
 /opt/trafficserver/share
-/opt/trafficserver/rc
 %dir /opt/trafficserver/var
 %attr(-,ats,ats) /opt/trafficserver/var/trafficserver
 %dir /opt/trafficserver/var/log
