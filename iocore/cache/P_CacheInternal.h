@@ -511,7 +511,7 @@ struct CacheVC : public CacheVConnection {
 
 #define POP_HANDLER                                                 \
   do {                                                              \
-    set_next_hdlr(save_handler);                                      \
+    SET_SAVED_HANDLER(save_handler);                                      \
     ink_assert(handler() != &CacheVC::dead); \
   } while (0)
 
@@ -691,7 +691,7 @@ CacheVC::die()
       // change the saved handler
       PUSH_HANDLER(&CacheVC::openReadClose);
       // restore current handler
-      Continuation::set_next_hdlr(hold);
+      SET_SAVED_HANDLER(hold);
     } else {
       SET_HANDLER(&CacheVC::openReadClose);
       if (!recursive)

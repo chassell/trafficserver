@@ -103,10 +103,16 @@ EventProcessor::start(int n_event_threads, size_t stacksize)
   n_ethreads      = n_event_threads;
   n_thread_groups = 1;
 
+  {
+    auto t = this_thread();
+    ink_thread_setspecific(Thread::thread_data_key, nullptr);
+    delete t;
+  }
+
   for (i = 0; i < n_event_threads; i++) {
     EThread *t = new EThread(REGULAR, i);
     if (i == 0) {
-      ink_thread_setspecific(Thread::thread_data_key, t);
+      t->set_specific();
       global_mutex = t->mutex;
       Thread::get_hrtime_updated();
     }

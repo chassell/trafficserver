@@ -99,6 +99,7 @@ public:
   using Hdlr_t = const HdlrAssignRec*;
   using HdlrMethodPtr_t = int (Continuation::*)(int event, void *data);
   using HdlrFxn_t       = int(Continuation *, int event, void *data);
+  using HdlrFxnFxn_t    = HdlrFxn_t*(void);
   using HdlrFtor_t      = std::function<HdlrFxn_t>;
 
   /**
@@ -113,7 +114,7 @@ public:
   const HdlrAssignRec &
   handler()
   {
-    return *_handler;
+    return *_handlerRec;
   }
 
 #ifdef DEBUG
@@ -150,14 +151,12 @@ public:
     HdlrAssignSet    &_fileSet;      // static-global for compile
     const char *const _label;        // at point of assign
     const char *const _file;         // at point of assign
-    unsigned    const _line;         // at point of assign
-    unsigned    const _assignID;     // unique for each in compile-object
+    uint16_t    const _line;         // at point of assign
+    uint16_t    const _assignID;     // unique for each in compile-object
     const HdlrMethodPtr_t _fxnPtr; // distinct method-pointer (not usable)
-    const HdlrFxn_t  *_callable; // distinct method-pointer (not usable)
+    const HdlrFxnFxn_t *_cbGenerator; // ref to custom wrapper function-ptr callable 
 
-    unsigned int get_id() const { 
-      return _fileSet._id | _assignID;
-    }
+    constexpr operator Hdlr_t() { return this; }
 
     template <class T_OBJ, typename T_ARG>
     bool operator!=(int(T_OBJ::*b)(int,T_ARG)) const
@@ -165,12 +164,14 @@ public:
       return _fxnPtr != (HdlrMethodPtr_t) b;
     }
 
-    operator Hdlr_t() const { return this; }
+    unsigned int get_id() const { 
+      return _fileSet._id | _assignID;
+    }
   };
 
   struct HdlrAssignSet
   {
-    enum { MAX_TARGET_LOCS = 20 };
+    enum { MAX_TARGET_LOCS = 60 };
     static unsigned        s_hdlrAssignSetCnt;
 
     Hdlr_t                 _locations[MAX_TARGET_LOCS];
@@ -191,6 +192,7 @@ public:
   void 
   set_next_hdlr(nullptr_t)
   {
+    _handlerRec = nullptr;
     _handler = nullptr;
   };
 
@@ -198,14 +200,16 @@ public:
   void 
   set_next_hdlr(Hdlr_t &prev)
   {
-    _handler = prev; // no special treatment currently
+    _handlerRec = prev;
+    _handler = (*prev->_cbGenerator)();  // exe loader-time value only
   };
 
   // class method-pointer full args
   void
   set_next_hdlr(const HdlrAssignRec &cbAssign)
   {
-    _handler = &cbAssign;
+    _handlerRec = &cbAssign;
+    _handler = (*cbAssign._cbGenerator)(); // exe loader-time value only
   };
 
   /**
@@ -234,7 +238,8 @@ public:
   Continuation(ProxyMutex *amutex = NULL);
 
 private:
-  Hdlr_t           _handler = nullptr; // choice of record
+  Hdlr_t           _handlerRec = nullptr; // choice of record
+  HdlrFxn_t       *_handler = nullptr; // choice of record
   HdlrFtor_t       _handlerApply;
   EventHdlrLogPtr  _handlerLogPtr;
 };
@@ -255,20 +260,26 @@ Continuation::HdlrAssignSet s_fileAssignSet;
 #define CLEAR_HANDLER() this->set_next_hdlr(nullptr);
 
 #define SET_CONTINUATION_HANDLER(obj,_h) \
-   do {                                                    \
-     static Continuation::HdlrAssignRec const kInstance =  \
-                     { s_fileAssignSet,                    \
+   ({                                                      \
+     constexpr auto kHdlrAssignID = __COUNTER__;               \
+     static_assert(kHdlrAssignID < Continuation::HdlrAssignSet::MAX_TARGET_LOCS, \
+        "cont-targets exceeded file limit");               \
+     static constexpr auto kHdlrAssignRec =                       \
+                     Continuation::HdlrAssignRec{          \
+                       s_fileAssignSet,                    \
                        ((#_h)+0),                          \
                        (__FILE__+0),                       \
                        __LINE__,                           \
-                       __COUNTER__,                        \
-                      (Continuation::HdlrMethodPtr_t) _h,                \
-                      ::wrap_handler<decltype(_h),(_h)>()  \
+                       kHdlrAssignID,                      \
+                      (Continuation::HdlrMethodPtr_t) _h,  \
+                      &::cb_wrapper<decltype(_h),(_h)>::gen_hdlrfxn  \
                      };                                    \
-     (obj)->set_next_hdlr(kInstance);                       \
-   } while(false)
+     (obj)->set_next_hdlr(kHdlrAssignRec);                 \
+   })
 
 #define SET_HANDLER(_h) SET_CONTINUATION_HANDLER(this,_h)
+
+#define SET_SAVED_HANDLER(_var) this->set_next_hdlr(_var)
 
 /**
   Sets a Continuation's handler.
@@ -287,13 +298,12 @@ inline Continuation::Continuation(ProxyMutex *amutex) : mutex(amutex)
 }
 
 template<typename T_FN, T_FN FXN>
-struct fxn_traits;
+struct cb_wrapper;
 
-// specialization.. if valid
-template<class T_OBJ, class T_ARG, int(T_OBJ::*FXN)(int,T_ARG)>
-struct fxn_traits<int(T_OBJ::*)(int,T_ARG),FXN>
+template<class T_OBJ, typename T_ARG, int(T_OBJ::*FXN)(int,T_ARG)>
+struct cb_wrapper<int(T_OBJ::*)(int,T_ARG),FXN>
 {
-  constexpr Continuation::HdlrFxn_t *operator()(void)
+  static Continuation::HdlrFxn_t *gen_hdlrfxn(void)
   {
     return [](Continuation *self, int event, void *arg) {
        return (static_cast<T_OBJ*>(self)->*FXN)(event, static_cast<T_ARG>(arg));
@@ -301,9 +311,37 @@ struct fxn_traits<int(T_OBJ::*)(int,T_ARG),FXN>
   }
 };
 
-template<typename T_FXN, T_FXN FXN>
-static constexpr Continuation::HdlrFxn_t *wrap_handler() {
-  return fxn_traits<T_FXN,FXN>{}();
-}
+template<class T_OBJ, class T_AOBJ, int(T_OBJ::*FXN)(T_AOBJ*)>
+struct cb_wrapper<int(T_OBJ::*)(T_AOBJ*),FXN>
+{
+  static Continuation::HdlrFxn_t *gen_hdlrfxn(void)
+  {
+    return [](Continuation *self, int event, void *arg) {
+       return (static_cast<T_OBJ*>(self)->*FXN)(static_cast<T_AOBJ*>(arg));
+     };
+  }
+};
+
+template<class T_OBJ, int(T_OBJ::*FXN)(int)>
+struct cb_wrapper<int(T_OBJ::*)(int),FXN>
+{
+  static Continuation::HdlrFxn_t *gen_hdlrfxn(void)
+  {
+    return [](Continuation *self, int event, void *) {
+       return (static_cast<T_OBJ*>(self)->*FXN)(event);
+     };
+  }
+};
+
+template<class T_OBJ, int(T_OBJ::*FXN)(void)>
+struct cb_wrapper<int(T_OBJ::*)(void),FXN>
+{
+  static Continuation::HdlrFxn_t *gen_hdlrfxn(void)
+  {
+    return [](Continuation *self, int, void *) {
+       return (static_cast<T_OBJ*>(self)->*FXN)();
+     };
+  }
+};
 
 #endif /*_Continuation_h_*/

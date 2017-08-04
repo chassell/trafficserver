@@ -108,6 +108,16 @@ Thread::start(const char *name, size_t stacksize, ThreadFunction f, void *a)
   return tid;
 }
 
+uint64_t &Thread::alloc_bytes_count_direct() 
+{ 
+  return *jemallctl::thread_allocatedp(); 
+}
+
+uint64_t &Thread::dealloc_bytes_count_direct() 
+{ 
+  return *jemallctl::thread_deallocatedp(); 
+}
+
 unsigned Continuation::HdlrAssignSet::s_hdlrAssignSetCnt = 0;
 
 int
@@ -115,19 +125,15 @@ Continuation::handleEvent(int event, void *data)
 {
   ink_release_assert( _handler );
 
-  auto logPtr = _handlerLogPtr;
+  auto logPtr = ( _handlerLogPtr ? : std::make_shared<EventHdlrLog>() );
   auto &log = *logPtr;
-  auto &cbrec = *_handler;
-
-  if ( ! logPtr ) {
-    logPtr = _handlerLogPtr = std::make_shared<EventHdlrLog>();
-  }
+  auto &cbrec = *_handlerRec;
 
   auto called = std::chrono::steady_clock::now();
-  auto alloced = this_thread()->alloc_bytes_count();
-  auto dealloced = this_thread()->dealloc_bytes_count();
+  auto alloced = Thread::alloc_bytes_count(); 
+  auto dealloced = Thread::dealloc_bytes_count();
 
-  auto r = (*cbrec._callable)(this,event,data);
+  auto r = (*_handler)(this,event,data);
 
   auto duration = std::chrono::steady_clock::now() - called;
   auto span = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
@@ -138,7 +144,8 @@ Continuation::handleEvent(int event, void *data)
      EventHdlrLogRec{ this_thread()->alloc_bytes_count() - alloced,
                       this_thread()->dealloc_bytes_count() - dealloced,
                       cbrec.get_id(),
-                      logv } );
+                      logv } 
+     );
 
   // deleted continuation?
   if ( logPtr.use_count() < 2 ) {

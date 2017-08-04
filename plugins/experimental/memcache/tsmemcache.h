@@ -101,13 +101,9 @@ struct MCAccept : public Continuation {
     SET_HANDLER(_h);                             \
   } while (0)
 
-#define TS_POP_HANDLER SET_HANDLER(handler_stack[--ihandler_stack])
+#define TS_POP_HANDLER SET_SAVED_HANDLER(handler_stack[--ihandler_stack])
 #define TS_POP_CALL(_event, _data) handleEvent((TS_POP_HANDLER, _event), _data)
-#define TS_SET_CALL(_h, _event, _data) \
-   do {                                          \
-     SET_HANDLER(_h);                            \
-     handleEvent(_event, _data)                  \
-   } while(false);                              
+#define TS_SET_CALL(_h, _event, _data) handleEvent((SET_HANDLER(_h), _event), _data)
 #define ASCII_RESPONSE(_s) ascii_response((_s "\r\n"), sizeof(_s "\r\n") - 1)
 #define ASCII_ERROR() ascii_response(("ERROR\r\n"), sizeof("ERROR\r\n") - 1)
 #define ASCII_CLIENT_ERROR(_s) ascii_response(("CLIENT_ERROR: " _s "\r\n"), sizeof("CLIENT_ERROR: " _s "\r\n") - 1)
