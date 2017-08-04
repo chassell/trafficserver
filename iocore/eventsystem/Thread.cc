@@ -204,11 +204,10 @@ void Continuation::HdlrAssignGrp::printLog(void *ptr, EventHdlrLogPtr logPtr)
      do {
        std::string label = rec._label;
        auto colon = label.rfind("::");
-       if ( colon == label.npos ) { 
-         break;
+       if ( colon != label.npos ) { 
+         label.erase(colon); // to the end
        }
 
-       label.erase(colon); // to the end
        auto amp = label.rfind('&');
        if ( amp == label.npos ) {
          break;
