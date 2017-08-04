@@ -95,12 +95,17 @@ class Continuation : private force_VFPT_to_top
 {
 public:
   struct HdlrAssignRec;
+  struct EventHdlrLogRec;
 
   using Hdlr_t = const HdlrAssignRec*;
   using HdlrMethodPtr_t = int (Continuation::*)(int event, void *data);
   using HdlrFxn_t       = int(Continuation *, int event, void *data);
   using HdlrFxnFxn_t    = HdlrFxn_t*(void);
   using HdlrFtor_t      = std::function<HdlrFxn_t>;
+
+  using EventHdlrLog = std::vector<EventHdlrLogRec>;
+  using EventHdlrLogPtr = std::shared_ptr<EventHdlrLog>;
+
 
   /**
     The current continuation handler function.
@@ -146,50 +151,62 @@ public:
   */
   ContFlags control_flags;
 
-  struct HdlrAssignSet;
-  struct HdlrAssignRec {
-    HdlrAssignSet    &_fileSet;      // static-global for compile
+  struct HdlrAssignGrp;
+  struct HdlrAssignRec 
+  {
+    HdlrAssignGrp    &_assignGrp;      // static-global for compile
     const char *const _label;        // at point of assign
     const char *const _file;         // at point of assign
-    uint16_t    const _line;         // at point of assign
-    uint16_t    const _assignID;     // unique for each in compile-object
-    const HdlrMethodPtr_t _fxnPtr; // distinct method-pointer (not usable)
+    uint32_t    const _line:20;      // at point of assign
+    uint32_t    const _assignID:8;   // unique for each in compile-object
+    const HdlrMethodPtr_t _fxnPtr;   // distinct method-pointer (not usable)
     const HdlrFxnFxn_t *_cbGenerator; // ref to custom wrapper function-ptr callable 
 
-    constexpr operator Hdlr_t() { return this; }
+    operator Hdlr_t() const { return this; }
+    unsigned int id() const { return _assignID; };
+    unsigned int grpid() const;
 
     template <class T_OBJ, typename T_ARG>
     bool operator!=(int(T_OBJ::*b)(int,T_ARG)) const
     {
       return _fxnPtr != (HdlrMethodPtr_t) b;
     }
-
-    unsigned int get_id() const { 
-      return _fileSet._id | _assignID;
-    }
   };
 
-  struct HdlrAssignSet
+  struct HdlrAssignGrp
   {
-    enum { MAX_TARGET_LOCS = 60 };
-    static unsigned        s_hdlrAssignSetCnt;
+    enum { MAX_ASSIGN_COUNTER = 60, MAX_ASSIGNGRPS = 255 };
 
-    Hdlr_t                 _locations[MAX_TARGET_LOCS];
-    unsigned int           _id = []() { return (++s_hdlrAssignSetCnt << 6); }();
+  private:
+    static unsigned             s_hdlrAssignGrpCnt;
+    static const HdlrAssignGrp *s_assignGrps[MAX_ASSIGNGRPS];
+
+  public:
+    static void                 printLog(void *ptr, EventHdlrLogPtr logPtr);
+
+    HdlrAssignGrp();
+
+    inline unsigned int add_if_unkn(const HdlrAssignRec &rec);
+
+    static Hdlr_t lookup(const EventHdlrLogRec &rec);
+
+  private:
+    Hdlr_t                      _assigns[MAX_ASSIGN_COUNTER] = { nullptr };
+    unsigned int                _id;
   };
 
   struct EventHdlrLogRec
   {
+    unsigned int _assignID:8;
+    unsigned int _assignGrpID:8;
     size_t       _allocDelta:32;
     size_t       _deallocDelta:32;
-    unsigned int _id:16;
     unsigned int _logUSec:16;
+
+    operator Hdlr_t() const { return HdlrAssignGrp::lookup(*this); }
   };
 
-  using EventHdlrLog = std::vector<EventHdlrLogRec>;
-  using EventHdlrLogPtr = std::shared_ptr<EventHdlrLog>;
-
-  void 
+  inline void 
   set_next_hdlr(nullptr_t)
   {
     _handlerRec = nullptr;
@@ -197,7 +214,7 @@ public:
   };
 
   // class method-pointer full args
-  void 
+  inline void 
   set_next_hdlr(Hdlr_t &prev)
   {
     _handlerRec = prev;
@@ -205,7 +222,7 @@ public:
   };
 
   // class method-pointer full args
-  void
+  inline void
   set_next_hdlr(const HdlrAssignRec &cbAssign)
   {
     _handlerRec = &cbAssign;
@@ -238,16 +255,16 @@ public:
   Continuation(ProxyMutex *amutex = NULL);
 
 private:
-  Hdlr_t           _handlerRec = nullptr; // choice of record
-  HdlrFxn_t       *_handler = nullptr; // choice of record
+  Hdlr_t           _handlerRec = nullptr; // (cause to change upon first use)
+  HdlrFxn_t       *_handler = nullptr;    // actual wrapper-fxn-ptr compiled
   HdlrFtor_t       _handlerApply;
-  EventHdlrLogPtr  _handlerLogPtr;
+  EventHdlrLogPtr  _handlerLogPtr;        // current stored log
 };
 
 using ContinuationHandler = Continuation::Hdlr_t;
 
 namespace {
-Continuation::HdlrAssignSet s_fileAssignSet;
+Continuation::HdlrAssignGrp s_fileAssignGrp;
 }
 
 /*
@@ -262,11 +279,11 @@ Continuation::HdlrAssignSet s_fileAssignSet;
 #define SET_CONTINUATION_HANDLER(obj,_h) \
    ({                                                      \
      constexpr auto kHdlrAssignID = __COUNTER__;               \
-     static_assert(kHdlrAssignID < Continuation::HdlrAssignSet::MAX_TARGET_LOCS, \
+     static_assert(kHdlrAssignID < Continuation::HdlrAssignGrp::MAX_ASSIGN_COUNTER, \
         "cont-targets exceeded file limit");               \
      static constexpr auto kHdlrAssignRec =                       \
                      Continuation::HdlrAssignRec{          \
-                       s_fileAssignSet,                    \
+                       s_fileAssignGrp,                    \
                        ((#_h)+0),                          \
                        (__FILE__+0),                       \
                        __LINE__,                           \
@@ -343,5 +360,13 @@ struct cb_wrapper<int(T_OBJ::*)(void),FXN>
      };
   }
 };
+
+inline unsigned int Continuation::HdlrAssignGrp::add_if_unkn(const HdlrAssignRec &rec) 
+{
+   if ( ! _assigns[rec.id()] ) {
+      _assigns[rec.id()] = &rec; // should be room
+   }
+   return _id;
+}
 
 #endif /*_Continuation_h_*/
