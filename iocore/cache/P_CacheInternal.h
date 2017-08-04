@@ -688,8 +688,9 @@ CacheVC::die()
     if (is_io_in_progress()) {
       // preserve current
       auto hold = handler(); 
-      // change the saved handler
-      PUSH_HANDLER(&CacheVC::openReadClose);
+      // add the new-pushed handler
+      SET_HANDLER(&CacheVC::openReadClose);
+      save_handler = handler();
       // restore current handler
       SET_SAVED_HANDLER(hold);
     } else {
