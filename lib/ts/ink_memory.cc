@@ -332,39 +332,13 @@ get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
     return 0;
   }
 
-  if (g_arenaByNodesID.size() >= kUniqueNodeSets.size() && g_arenaByNodesID[nsid]) {
+  // arena has been made for this?
+  if (nsid < g_arenaByNodesID.size() && g_arenaByNodesID[nsid]) {
     return g_arenaByNodesID[nsid];
   }
 
-  ink_release_assert(kUniqueNodeSets.size() > nsid);
-
-  static ink_mutex s_mutex = PTHREAD_MUTEX_INITIALIZER;
-  ink_mutex_acquire(&s_mutex);
-
-  g_arenaByNodesID.resize(kUniqueNodeSets.size());
-
-  if (g_arenaByNodesID[nsid]) {
-    auto r = g_arenaByNodesID[nsid];
-    ink_mutex_release(&s_mutex);
-    return r;
-  }
-
-  // need a new arena for this set of nodes
-
-  unsigned newArena = jemallctl::do_arenas_extend();
-
-  Debug("memory", "extending arena to %u", newArena);
-
-  // store the node-set that this arena is going to partition off
-  if (g_nodesByArena.size() < newArena + 1) {
-    g_nodesByArena.resize(newArena + 1); // filled with nullptr if needed
-  }
-
-  g_nodesByArena[newArena] = hwloc_bitmap{kUniqueNodeSets[nsid]}.release();
-  g_arenaByNodesID[nsid]   = newArena;
-
-  ink_mutex_release(&s_mutex);
-  return newArena; // affid/cpuset now leads to this arena
+  // nsid found is new or simply has no arena yet
+  return create_thread_memory_arena_fork(nsid); // affid/cpuset now leads to this arena
 }
 
 unsigned
@@ -579,8 +553,6 @@ get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
 
 // unique nodesets
 NodeSetVector_t const kUniqueNodeSets = {kNodesAllowed};
-// unique nodeset index mapping to arenas
-ArenaIDVector_t g_arenaByNodesID = {0}; // lookup with same index as kUniqueNodeSets
 
 // arena indexed map to actual nodeset [pointers]
 NodeSetVector_t g_nodesByArena = {kNodesAllowed}; // lookup with same index as Arena id
@@ -590,6 +562,9 @@ NodesIDVector_t const kNumaAffNodes   = cpusets_to_nodes_id(kUniqueNodeSets, kNu
 NodesIDVector_t const kSocketAffNodes = cpusets_to_nodes_id(kUniqueNodeSets, kSocketCPUSets);
 NodesIDVector_t const kCoreAffNodes   = cpusets_to_nodes_id(kUniqueNodeSets, kCoreCPUSets);
 NodesIDVector_t const kProcAffNodes   = cpusets_to_nodes_id(kUniqueNodeSets, kProcCPUSets);
+
+// unique nodeset index mapping to arenas
+ArenaIDVector_t g_arenaByNodesID{ static_cast<unsigned>(kUniqueNodeSets.size()), 0 }; // lookup with same index as kUniqueNodeSets
 
 unsigned
 get_nodes_id_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
@@ -637,6 +612,43 @@ void reset_thread_memory_by_cpuset() // limit new pages to specific nodes as the
   hwloc_set_membind_nodeset(curr(), kUniqueNodeSets[list.front()], HWLOC_MEMBIND_INTERLEAVE, HWLOC_MEMBIND_THREAD);
   // assign arena that matches
   jemallctl::set_thread_arena(g_arenaByNodesID[list.front()]);
+}
+
+int create_thread_memory_arena_fork(int nsid)
+{
+  if ( nsid < 0 ) {
+    nsid = g_arenaByNodesID.rend() - std::find(g_arenaByNodesID.rbegin(), g_arenaByNodesID.rend(), jemallctl::thread_arena());
+    // use nsid as zero if no arena# known match found 
+    nsid && --nsid;
+  }
+
+  // this set of numa-nodes is the original to fork from...
+
+  size_t newArena = 0;
+
+  {
+    // mutex as we change the vector size
+    static ink_mutex s_mutex = PTHREAD_MUTEX_INITIALIZER;
+    ink_mutex_acquire(&s_mutex);
+
+    // need a new arena for this set of nodes
+
+    newArena = jemallctl::do_arenas_extend();
+
+    Debug("memory", "extending arena to %lu", newArena);
+    Note("extending arena %u to %lu", g_arenaByNodesID[nsid], newArena);
+
+    // store the node-set that this arena is going to partition off
+    if (g_nodesByArena.size() < newArena + 1U) {
+      g_nodesByArena.resize(newArena + 1U); // filled with nullptr if needed
+    }
+
+    g_nodesByArena[newArena] = hwloc_bitmap{kUniqueNodeSets[nsid]}.release();
+    g_arenaByNodesID[nsid]   = static_cast<unsigned>(newArena);
+
+    ink_mutex_release(&s_mutex);
+  }
+  return newArena; // affid/cpuset now leads to this arena
 }
 
 } // namespace numa

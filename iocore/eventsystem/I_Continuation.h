@@ -42,6 +42,7 @@
 #include "ts/ContFlags.h"
 
 #include <chrono>
+#include <typeindex>
 
 class Continuation;
 class ContinuationQueue;
@@ -320,6 +321,10 @@ struct cb_wrapper;
 template<class T_OBJ, typename T_ARG, int(T_OBJ::*FXN)(int,T_ARG)>
 struct cb_wrapper<int(T_OBJ::*)(int,T_ARG),FXN>
 {
+  static const std::type_index hdlrfxn_typeindex(void) {
+    return typeid(FXN);
+  }
+
   static Continuation::HdlrFxn_t *gen_hdlrfxn(void)
   {
     return [](Continuation *self, int event, void *arg) {
@@ -331,6 +336,10 @@ struct cb_wrapper<int(T_OBJ::*)(int,T_ARG),FXN>
 template<class T_OBJ, class T_AOBJ, int(T_OBJ::*FXN)(T_AOBJ*)>
 struct cb_wrapper<int(T_OBJ::*)(T_AOBJ*),FXN>
 {
+  static const std::type_index hdlrfxn_typeindex(void) {
+    return typeid(FXN);
+  }
+
   static Continuation::HdlrFxn_t *gen_hdlrfxn(void)
   {
     return [](Continuation *self, int event, void *arg) {
@@ -342,6 +351,10 @@ struct cb_wrapper<int(T_OBJ::*)(T_AOBJ*),FXN>
 template<class T_OBJ, int(T_OBJ::*FXN)(int)>
 struct cb_wrapper<int(T_OBJ::*)(int),FXN>
 {
+  static const std::type_index hdlrfxn_typeindex(void) {
+    return typeid(FXN);
+  }
+
   static Continuation::HdlrFxn_t *gen_hdlrfxn(void)
   {
     return [](Continuation *self, int event, void *) {
@@ -353,6 +366,10 @@ struct cb_wrapper<int(T_OBJ::*)(int),FXN>
 template<class T_OBJ, int(T_OBJ::*FXN)(void)>
 struct cb_wrapper<int(T_OBJ::*)(void),FXN>
 {
+  static const std::type_info *hdlrfxn_typeindex(void) {
+    return typeid(FXN);
+  }
+
   static Continuation::HdlrFxn_t *gen_hdlrfxn(void)
   {
     return [](Continuation *self, int, void *) {

@@ -66,9 +66,6 @@ template <> struct GetObjFxn<void, 0> : public ObjBase {
 
 using DoObjFxn = GetObjFxn<void, 0>;
 
-chunk_hooks_t const &get_hugepage_hooks();
-chunk_hooks_t const &get_hugepage_nodump_hooks();
-
 extern const GetObjFxn<chunk_hooks_t> thread_arena_hooks;
 extern const SetObjFxn<chunk_hooks_t> set_thread_arena_hooks;
 

@@ -147,6 +147,7 @@ int assign_thread_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid); 
 unsigned get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
 int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit new pages to specific nodes
 void reset_thread_memory_by_cpuset();                                           // limit new pages to whatever cpuset is limited to
+int create_thread_memory_arena_fork(int nodesid=-1);
 
 auto constexpr kHwlocBitmapDeleter = [](hwloc_bitmap_t map) { map ? hwloc_bitmap_free(map) : (void)0; };
 

@@ -238,10 +238,13 @@ namespace
 }
 
 int const proc_arena_nodump = []() {
+
   auto origArena = jemallctl::thread_arena();
 
-  int n = jemallctl::do_arenas_extend();
-  jemallctl::set_thread_arena(n);
+  // fork from base nodes set (id#0)
+  auto newArena = numa::create_thread_memory_arena_fork(0);
+
+  jemallctl::set_thread_arena(newArena);
 
   chunk_hooks_t origHooks = jemallctl::thread_arena_hooks();
   s_origAllocHook         = origHooks.alloc;
@@ -258,7 +261,7 @@ int const proc_arena_nodump = []() {
 
   jemallctl::set_thread_arena_hooks(origHooks);
   jemallctl::set_thread_arena(origArena); // default again
-  return n;
+  return newArena;
 }();
 #endif
 
