@@ -227,42 +227,4 @@ const SetObjFxn<bool> set_thread_prof_active{"thread.prof.active"};
 const GetObjFxn<uint64_t*> thread_allocatedp{"thread.allocatedp"};
 const GetObjFxn<uint64_t*> thread_deallocatedp{"thread.deallocatedp"};
 
-int const proc_arena = 0; // default arena for jemalloc
-
-#if !HAVE_LIBJEMALLOC
-int const proc_arena_nodump = 0; // default arena for jemalloc
-#else
-namespace
-{
-  chunk_alloc_t *s_origAllocHook = nullptr; // safe pre-main
-}
-
-int const proc_arena_nodump = []() {
-
-  auto origArena = jemallctl::thread_arena();
-
-  // fork from base nodes set (id#0)
-  auto newArena = numa::create_thread_memory_arena_fork(0);
-
-  jemallctl::set_thread_arena(newArena);
-
-  chunk_hooks_t origHooks = jemallctl::thread_arena_hooks();
-  s_origAllocHook         = origHooks.alloc;
-
-  origHooks.alloc = [](void *old, size_t len, size_t aligned, bool *zero, bool *commit, unsigned arena) {
-    void *r = (*s_origAllocHook)(old, len, aligned, zero, commit, arena);
-
-    if (r) {
-      madvise(r, aligned_spacing(len, aligned), MADV_DONTDUMP);
-    }
-
-    return r;
-  };
-
-  jemallctl::set_thread_arena_hooks(origHooks);
-  jemallctl::set_thread_arena(origArena); // default again
-  return newArena;
-}();
-#endif
-
 } // namespace jemallctl

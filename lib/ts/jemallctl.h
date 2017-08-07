@@ -37,9 +37,6 @@ struct chunk_hooks_t {
 namespace jemallctl
 {
 
-extern int const proc_arena;
-extern int const proc_arena_nodump;
-
 using objpath_t = std::vector<size_t>;
 
 struct ObjBase {
@@ -94,6 +91,7 @@ extern const SetObjFxn<bool> set_thread_prof_active;
 
 extern const GetObjFxn<bool> thread_prof_active;
 extern const SetObjFxn<bool> set_thread_prof_active;
+
 
 }
 

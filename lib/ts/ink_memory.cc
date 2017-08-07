@@ -564,7 +564,7 @@ NodesIDVector_t const kCoreAffNodes   = cpusets_to_nodes_id(kUniqueNodeSets, kCo
 NodesIDVector_t const kProcAffNodes   = cpusets_to_nodes_id(kUniqueNodeSets, kProcCPUSets);
 
 // unique nodeset index mapping to arenas
-ArenaIDVector_t g_arenaByNodesID{ static_cast<unsigned>(kUniqueNodeSets.size()), 0 }; // lookup with same index as kUniqueNodeSets
+ArenaIDVector_t g_arenaByNodesID{ 256UL, 0 }; // lookup with same index as kUniqueNodeSets
 
 unsigned
 get_nodes_id_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
@@ -631,6 +631,10 @@ int create_thread_memory_arena_fork(int nsid)
     static ink_mutex s_mutex = PTHREAD_MUTEX_INITIALIZER;
     ink_mutex_acquire(&s_mutex);
 
+    if ( g_arenaByNodesID.size() < kUniqueNodeSets.size() ) {
+      g_arenaByNodesID.resize(kUniqueNodeSets.size()); // filled with zeros if needed
+    }
+
     // need a new arena for this set of nodes
 
     newArena = jemallctl::do_arenas_extend();
@@ -649,6 +653,39 @@ int create_thread_memory_arena_fork(int nsid)
     ink_mutex_release(&s_mutex);
   }
   return newArena; // affid/cpuset now leads to this arena
+}
+
+namespace
+{
+  chunk_alloc_t *s_origAllocHook = nullptr; // safe pre-main
+}
+
+int create_global_nodump_arena()
+{
+  auto origArena = jemallctl::thread_arena();
+
+  // fork from base nodes set (id#0)
+  auto newArena = create_thread_memory_arena_fork(0);
+
+  jemallctl::set_thread_arena(newArena);
+
+  chunk_hooks_t origHooks = jemallctl::thread_arena_hooks();
+  s_origAllocHook         = origHooks.alloc;
+
+  origHooks.alloc = [](void *old, size_t len, size_t aligned, bool *zero, bool *commit, unsigned arena) {
+    void *r = (*s_origAllocHook)(old, len, aligned, zero, commit, arena);
+
+    if (r) {
+      madvise(r, aligned_spacing(len, aligned), MADV_DONTDUMP);
+    }
+
+    return r;
+  };
+
+  jemallctl::set_thread_arena_hooks(origHooks);
+
+  jemallctl::set_thread_arena(origArena); // default again
+  return newArena;
 }
 
 } // namespace numa
