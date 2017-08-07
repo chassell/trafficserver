@@ -84,6 +84,8 @@ spawn_thread_internal(void *a)
 {
   thread_data_internal *p = (thread_data_internal *)a;
 
+  jemallctl::set_thread_arena(0); // default init first
+
   p->me->set_specific();
   ink_set_thread_name(p->name);
   if (p->f)
@@ -144,13 +146,15 @@ Continuation::handleEvent(int event, void *data)
 
   uint16_t logv = 8*sizeof(unsigned int) - __builtin_clz(static_cast<unsigned int>(span));
 
-  log.emplace_back( 
-     EventHdlrLogRec{ cbrec.id(),
-                      cbrec.grpid(),
-                      this_thread()->alloc_bytes_count() - alloced,
-                      this_thread()->dealloc_bytes_count() - dealloced,
-                      logv } 
-     );
+  Note("handle-event: arena %u",jemallctl::thread_arena());
+
+  EventHdlrLogRec v{ cbrec.id(),
+                     cbrec.grpid(),
+                     this_thread()->alloc_bytes_count() - alloced,
+                     this_thread()->dealloc_bytes_count() - dealloced,
+                     logv };
+
+  log.push_back(v);
 
   // deleted continuation?  call a printer to log it / compile it
   if ( logPtr.use_count() == 1 ) {

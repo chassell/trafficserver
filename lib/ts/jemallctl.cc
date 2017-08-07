@@ -58,7 +58,7 @@ template <typename T_VALUE> auto mallctl_set(const objpath_t &oid, const T_VALUE
 
 objpath_t objpath(const std::string &path);
 
-ObjBase::ObjBase(const char *name) : _oid(objpath(name))
+ObjBase::ObjBase(const char *name) : _oid(objpath(name)), _name(name)
 {
 }
 
@@ -73,6 +73,14 @@ template <typename T_VALUE, size_t N_DIFF>
 auto
 SetObjFxn<T_VALUE, N_DIFF>::operator()(const T_VALUE &v) const -> int
 {
+  return ::jemallctl::mallctl_set(ObjBase::_oid, v);
+}
+
+template <>
+auto
+SetObjFxn<unsigned,0>::operator()(const unsigned &v) const -> int
+{
+  Debug("memory","setting %s: %u",_name,v); 
   return ::jemallctl::mallctl_set(ObjBase::_oid, v);
 }
 

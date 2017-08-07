@@ -329,6 +329,7 @@ get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
   auto nsid = get_nodes_id_by_affinity(objtype, affid);
 
   if (!nsid) {
+    Debug("memory", "returned nsid 0");
     return 0;
   }
 
@@ -338,6 +339,7 @@ get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
   }
 
   // nsid found is new or simply has no arena yet
+  Debug("memory", "creating new from nsid %u",nsid);
   return create_thread_memory_arena_fork(nsid); // affid/cpuset now leads to this arena
 }
 
@@ -361,22 +363,26 @@ int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid) /
   auto arena = get_arena_by_affinity(objtype, affid);
 
   if (arena >= g_nodesByArena.size()) {
+    Warning("arena chosen is beyond known nodes %u",arena);
     return -1;
   }
 
   auto nodes = g_nodesByArena[arena];
 
   if (!nodes || hwloc_bitmap_iszero(nodes)) {
+    Warning("nodes are null or empty %u",arena);
     return -1;
   }
 
   // only get new pages from this nodeset ... (all if arena == 0)
   auto r = hwloc_set_membind_nodeset(curr(), nodes, HWLOC_MEMBIND_INTERLEAVE, HWLOC_MEMBIND_THREAD);
   if (r) {
+    Warning("mem binding failed %u",arena);
     return -1;
   }
 
   // thread-wide change in place
+  Debug("memory","mem arena used %u",arena);
   jemallctl::set_thread_arena(arena); // make it active now
   return 0;
 }
@@ -589,6 +595,7 @@ void reset_thread_memory_by_cpuset() // limit new pages to specific nodes as the
 {
   // there aren't any choices?
   if (kUniqueNodeSets.size() < 2) {
+    Debug("memory", "unique-nodes less than 2");
     auto r = assign_thread_memory_by_affinity(HWLOC_OBJ_MACHINE, 0); // set to default arena
     ink_release_assert(!r);
     return; // simple
@@ -602,12 +609,18 @@ void reset_thread_memory_by_cpuset() // limit new pages to specific nodes as the
   // search for matches to earlier memory-nodesets
   //
   auto list = cpusets_to_nodes_id(kUniqueNodeSets, CpuSetVector_t{cpuset.get()});
-  if (list.empty() || list.front() >= g_arenaByNodesID.size()) {
+  if (list.empty() || list.front() >= g_arenaByNodesID.size()) 
+  {
+    int cpu_mask_len = hwloc_bitmap_snprintf(NULL, 0, cpuset) + 1;
+    char *cpu_mask   = (char *)alloca(cpu_mask_len);
+    hwloc_bitmap_snprintf(cpu_mask, cpu_mask_len, cpuset);
+    Debug("memory", "reset failed to find node set match: %s",cpu_mask);
     r = assign_thread_memory_by_affinity(HWLOC_OBJ_MACHINE, 0); // set to default arena
     ink_release_assert(!r);
     return;
   }
 
+  Debug("memory", "peforming reset to %u:",list.front());
   // reset limited nodes to use
   hwloc_set_membind_nodeset(curr(), kUniqueNodeSets[list.front()], HWLOC_MEMBIND_INTERLEAVE, HWLOC_MEMBIND_THREAD);
   // assign arena that matches
@@ -616,7 +629,9 @@ void reset_thread_memory_by_cpuset() // limit new pages to specific nodes as the
 
 int create_thread_memory_arena_fork(int nsid)
 {
-  if ( nsid < 0 ) {
+  if ( nsid < 0 ) 
+  {
+    Debug("memory", "creating arena based on %u", jemallctl::thread_arena());
     nsid = g_arenaByNodesID.rend() - std::find(g_arenaByNodesID.rbegin(), g_arenaByNodesID.rend(), jemallctl::thread_arena());
     // use nsid as zero if no arena# known match found 
     nsid && --nsid;

@@ -1484,6 +1484,8 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   mcheck_pedantic(NULL);
 #endif
 
+  numa::reset_thread_memory_by_cpuset();
+
   pcre_malloc = ats_malloc;
   pcre_free   = ats_free;
 

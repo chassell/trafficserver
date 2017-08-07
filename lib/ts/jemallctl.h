@@ -44,6 +44,7 @@ struct ObjBase {
 
 protected:
   const objpath_t _oid;
+  const char *_name;
 };
 
 template <typename T_VALUE, size_t N_DIFF = 0> struct GetObjFxn : public ObjBase {
