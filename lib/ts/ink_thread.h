@@ -127,7 +127,7 @@ ink_thread_key_delete(ink_thread_key key)
 }
 
 static inline ink_thread
-ink_thread_create(void *(*f)(void *), void *a, int detached = 0, size_t stacksize = 0)
+ink_thread_create(void *(*f)(void *), void *a, int detached = 0, size_t stacksize = 0, void *stack = nullptr)
 {
   ink_thread t;
   int ret;
@@ -137,7 +137,11 @@ ink_thread_create(void *(*f)(void *), void *a, int detached = 0, size_t stacksiz
   pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM);
 
   if (stacksize) {
-    pthread_attr_setstacksize(&attr, stacksize);
+    if (stack) {
+      pthread_attr_setstack(&attr, stack, stacksize);
+    } else {
+      pthread_attr_setstacksize(&attr, stacksize);
+    }
   }
 
   if (detached) {
@@ -287,6 +291,21 @@ ink_set_thread_name(const char *name ATS_UNUSED)
   pthread_set_name_np(pthread_self(), name);
 #elif defined(HAVE_SYS_PRCTL_H) && defined(PR_SET_NAME)
   prctl(PR_SET_NAME, name, 0, 0, 0);
+#endif
+}
+
+static inline void
+ink_get_thread_name(char *name, size_t len)
+{
+  memset(name, '\0', len);
+#if defined(HAVE_PTHREAD_SETNAME_NP_1)
+  pthread_getname_np(name, len);
+#elif defined(HAVE_PTHREAD_SETNAME_NP_2)
+  pthread_getname_np(pthread_self(), name, len);
+#elif defined(HAVE_PTHREAD_SET_NAME_NP_2)
+  pthread_get_name_np(pthread_self(), name, len);
+#elif defined(HAVE_SYS_PRCTL_H) && defined(PR_SET_NAME)
+  prctl(PR_GET_NAME, name, 0, 0, 0);
 #endif
 }
 

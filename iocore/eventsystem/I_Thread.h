@@ -86,7 +86,7 @@ extern ProxyMutex *global_mutex;
 
 static const int MAX_THREAD_NAME_LENGTH = 16;
 static const int DEFAULT_STACKSIZE      = 1048576; // 1MB
-
+static const int MIN_STACKSIZE          = 100 * 1024;  // 100K
 /**
   Base class for the threads in the Event System. Thread is the base
   class for all the thread classes in the Event System. Objects of the
@@ -115,7 +115,7 @@ public:
     processors and you should not modify it directly.
 
   */
-  ink_thread tid;
+  ink_thread tid = 0;
 
   /**
     Thread lock to ensure atomic operations. The thread lock available
@@ -123,7 +123,7 @@ public:
     regions. Do not modify this member directly.
 
   */
-  ProxyMutex *mutex;
+  ProxyMutex *mutex = nullptr;
 
   // PRIVATE
   void set_specific();
@@ -152,6 +152,9 @@ public:
   ProxyAllocator ioDataAllocator;
   ProxyAllocator ioAllocator;
   ProxyAllocator ioBlockAllocator;
+
+  static inline uint64_t &alloc_bytes_count();
+  static inline uint64_t &dealloc_bytes_count();
 
 private:
   // prevent unauthorized copies (Not implemented)
@@ -183,6 +186,12 @@ public:
       @note This also updates the cached time.
   */
   static ink_hrtime get_hrtime_updated();
+
+  static uint64_t &alloc_bytes_count_direct();
+  static uint64_t &dealloc_bytes_count_direct();
+
+  uint64_t *_allocTotalP = nullptr;
+  uint64_t *_deallocTotalP = nullptr;
 };
 
 extern Thread *this_thread();
@@ -198,5 +207,16 @@ Thread::get_hrtime_updated()
 {
   return cur_time = ink_get_hrtime_internal();
 }
+
+inline uint64_t &Thread::alloc_bytes_count() {
+  auto t = this_thread(); 
+  return ( t ? *t->_allocTotalP : alloc_bytes_count_direct() );
+}
+
+inline uint64_t &Thread::dealloc_bytes_count() {
+  auto t = this_thread(); 
+  return ( t ? *t->_deallocTotalP : dealloc_bytes_count_direct() );
+}
+
 
 #endif /*_I_Thread_h*/

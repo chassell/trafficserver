@@ -39,6 +39,7 @@
 #include "ts/hugepages.h"
 
 #include <syslog.h>
+#include <algorithm>
 
 #if !defined(linux)
 #include <sys/lock.h>
@@ -1561,7 +1562,7 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   REC_ReadConfigInteger(enabled, "proxy.config.allocator.hugepages");
   ats_hugepage_init(enabled);
   Debug("hugepages", "ats_pagesize reporting %zu", ats_pagesize());
-  Debug("hugepages", "ats_hugepage_size reporting %zu", ats_hugepage_size());
+  Note("ats_hugepage_size reporting %zu", ats_hugepage_size());
 
   if (!num_accept_threads)
     REC_ReadConfigInteger(num_accept_threads, "proxy.config.accept_threads");

@@ -18,6 +18,8 @@
   See the License for the specific language governing permissions and
   limitations under the License.
  */
+#include "hugepages.h"
+
 
 #include <cstdio>
 #include <sys/mman.h>
@@ -26,46 +28,72 @@
 
 #define DEBUG_TAG "hugepages"
 
-#ifdef MAP_HUGETLB
+#undef Debug
+#define Debug(a, b...)
+
+#if !MAP_HUGETLB
+
+bool
+ats_hugepage_enabled()
+{
+  return false;
+}
+void
+ats_hugepage_init(int)
+{
+  Debug(DEBUG_TAG "_init", "MAP_HUGETLB not defined");
+}
+size_t
+ats_hugepage_size()
+{
+  Debug(DEBUG_TAG, "MAP_HUGETLB not defined");
+  return 0;
+}
+void *ats_alloc_hugepage(size_t)
+{
+  Debug(DEBUG_TAG, "MAP_HUGETLB not defined");
+  return nullptr;
+}
+bool
+ats_free_hugepage(void *, size_t)
+{
+  Debug(DEBUG_TAG, "MAP_HUGETLB not defined");
+  return false;
+}
+
+#else
+
+// XXX don't need to ifdef these out as much as hide them
+
+
 #define MEMINFO_PATH "/proc/meminfo"
 #define LINE_SIZE 256
-#define TOKEN "Hugepagesize:"
-#define TOKEN_SIZE (strlen(TOKEN))
+#define HUGEPAGESIZE_TOKEN "Hugepagesize:"
+#define HUGEPAGESIZE_TOKEN_SIZE (countof(HUGEPAGESIZE_TOKEN) - 1)
 
 static int hugepage_size = -1;
 static bool hugepage_enabled;
-#endif
 
 size_t
 ats_hugepage_size(void)
 {
-#ifdef MAP_HUGETLB
   return hugepage_size;
-#else
-  Debug(DEBUG_TAG, "MAP_HUGETLB not defined");
-  return 0;
-#endif
 }
 
 bool
 ats_hugepage_enabled(void)
 {
-#ifdef MAP_HUGETLB
   return hugepage_enabled;
-#else
-  return false;
-#endif
 }
 
 void
 ats_hugepage_init(int enabled)
 {
-#ifdef MAP_HUGETLB
   FILE *fp;
   char line[LINE_SIZE];
   char *p, *ep;
 
-  hugepage_size = 0;
+  hugepage_size = PAGE_SIZE;
 
   if (!enabled) {
     Debug(DEBUG_TAG "_init", "hugepages not enabled");
@@ -80,8 +108,8 @@ ats_hugepage_init(int enabled)
   }
 
   while (fgets(line, sizeof(line), fp)) {
-    if (strncmp(line, TOKEN, TOKEN_SIZE) == 0) {
-      p = line + TOKEN_SIZE;
+    if (strncmp(line, HUGEPAGESIZE_TOKEN, HUGEPAGESIZE_TOKEN_SIZE) == 0) {
+      p = line + HUGEPAGESIZE_TOKEN_SIZE;
       while (*p == ' ') {
         p++;
       }
@@ -101,15 +129,11 @@ ats_hugepage_init(int enabled)
   }
 
   Debug(DEBUG_TAG "_init", "Hugepage size = %d", hugepage_size);
-#else
-  Debug(DEBUG_TAG "_init", "MAP_HUGETLB not defined");
-#endif
 }
 
 void *
 ats_alloc_hugepage(size_t s)
 {
-#ifdef MAP_HUGETLB
   size_t size;
   void *mem;
 
@@ -124,25 +148,48 @@ ats_alloc_hugepage(size_t s)
 
   Debug(DEBUG_TAG, "Request/Allocation (%zu/%zu) {%p}", s, size, mem);
   return mem;
-#else
-  (void)s;
-  Debug(DEBUG_TAG, "MAP_HUGETLB not defined");
-  return NULL;
-#endif
 }
 
 bool
 ats_free_hugepage(void *ptr, size_t s)
 {
-#ifdef MAP_HUGETLB
   size_t size;
 
   size = INK_ALIGN(s, ats_hugepage_size());
   return (munmap(ptr, size) == 0);
-#else
-  (void)ptr;
-  (void)s;
-  Debug(DEBUG_TAG, "MAP_HUGETLB not defined");
-  return false;
-#endif
 }
+
+void *
+ats_alloc_hugepage_stack(size_t stacksize)
+{
+  Debug(DEBUG_TAG, "#%lu", stacksize);
+
+  auto hpgsz    = ats_hugepage_size();
+
+  stacksize = aligned_spacing(stacksize,PAGE_SIZE); // align correctly first
+
+  // get unpopulated swath...
+  auto chunk    = mmap(nullptr, stacksize + hpgsz, PROT_NONE, (MAP_PRIVATE | MAP_ANONYMOUS), -1, 0);
+
+  // NOTE: if chunk was NULL then it is hugepage-identical and startpg is NULL too
+  void *nxtchunk = static_cast<char *>(chunk) + stacksize + hpgsz;
+  void *startpg  = align_pointer_forward(chunk, hpgsz);
+  void *nextpg   = align_pointer_backward(nxtchunk, hpgsz);
+  size_t opsize  = static_cast<char *>(nextpg) - static_cast<char *>(startpg); // maybe bigger than original
+
+  // clean up leading edge
+  if (startpg != chunk) {
+    munmap(chunk, static_cast<char *>(startpg) - static_cast<char *>(chunk));
+  }
+
+  // clean up trailing edge
+  if (nxtchunk != nextpg) {
+    munmap(nextpg, static_cast<char *>(nxtchunk) - static_cast<char *>(nextpg));
+  }
+
+  void *alignedMapping = mmap(startpg, opsize, PROT_READ | PROT_WRITE, (MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED | MAP_GROWSDOWN), -1, 0);
+  madvise(startpg, opsize, MADV_HUGEPAGE);
+  return alignedMapping;
+}
+
+#endif
