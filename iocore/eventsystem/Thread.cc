@@ -198,15 +198,21 @@ void Continuation::HdlrAssignGrp::printLog(void *ptr, EventHdlrLogPtr logPtr)
        continue;
      }
 
-     const char *e = ( n == len-1 ? "~~" 
-                          : ! n ? "**" 
-                                : "  " );
+     if ( ! i._allocDelta && ! i._deallocDelta ) {
+        continue;
+     }
+
+     const char *e = ( len == 1 ? "  " 
+                    : n == len-1 ? "~~" 
+                          : ! n ? "!!" 
+                                : "##" );
+ 
 
      const HdlrAssignRec &rec = *recp;
      const char *debug = "conttrace";
+     std::string label = rec._label;
 
      do {
-       std::string label = rec._label;
        auto colon = label.rfind("::");
        if ( colon != label.npos ) { 
          label.erase(colon); // to the end
@@ -222,9 +228,11 @@ void Continuation::HdlrAssignGrp::printLog(void *ptr, EventHdlrLogPtr logPtr)
        debug = label.c_str();
      } while(false);
 
-     if ( ! i._allocDelta && ! i._deallocDelta ) {
-       Debug(debug,"%s(%lu) %p:[ -------------------- ~%5ldus callback %s] [%s:%d]",
-               e, n, ptr, (1UL<<i._logUSec), rec._label, rec._file, rec._line);
+
+     if ( len == 1 ) 
+     {
+       Debug(debug,"                 [ +%9ld -%9ld ~%5ldus callback %s] [%s:%d]",
+                                       i._allocDelta, i._deallocDelta, (1UL<<i._logUSec), rec._label, rec._file, rec._line);
        continue;
      }
 
