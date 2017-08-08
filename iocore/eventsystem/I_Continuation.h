@@ -92,20 +92,23 @@ public:
 
 */
 
+struct EventHdlrLogRec;
+using EventHdlrLog = std::vector<EventHdlrLogRec>;
+using EventHdlrLogPtr = std::shared_ptr<EventHdlrLog>;
+
 class Continuation : private force_VFPT_to_top
 {
 public:
   struct HdlrAssignRec;
-  struct EventHdlrLogRec;
 
   using Hdlr_t = const HdlrAssignRec*;
   using HdlrMethodPtr_t = int (Continuation::*)(int event, void *data);
   using HdlrFxn_t       = int(Continuation *, int event, void *data);
-  using HdlrFxnFxn_t    = HdlrFxn_t*(void);
+  using HdlrCompare_t    = bool(HdlrMethodPtr_t);
   using HdlrFtor_t      = std::function<HdlrFxn_t>;
 
-  using EventHdlrLog = std::vector<EventHdlrLogRec>;
-  using EventHdlrLogPtr = std::shared_ptr<EventHdlrLog>;
+  using HdlrFxnGen_t    = HdlrFxn_t*(void);
+  using HdlrCompareGen_t = HdlrCompare_t *(void);
 
 
   /**
@@ -160,18 +163,18 @@ public:
     const char *const _file;         // at point of assign
     uint32_t    const _line:20;      // at point of assign
     uint32_t    const _assignID:8;   // unique for each in compile-object
-    const HdlrMethodPtr_t _fxnPtr;   // distinct method-pointer (not usable)
-    const HdlrFxnFxn_t *_cbGenerator; // ref to custom wrapper function-ptr callable 
+    const HdlrCompareGen_t *_cbCompareGen;   // distinct method-pointer (not usable)
+    const HdlrFxnGen_t *_cbGenerator;     // ref to custom wrapper function-ptr callable 
 
     operator Hdlr_t() const { return this; }
     unsigned int id() const { return _assignID; };
     unsigned int grpid() const;
 
     template <class T_OBJ, typename T_ARG>
-    bool operator!=(int(T_OBJ::*b)(int,T_ARG)) const
-    {
-      return _fxnPtr != (HdlrMethodPtr_t) b;
+    bool operator!=(int(T_OBJ::*b)(int,T_ARG)) const {
+      return _cbCompareGen()(reinterpret_cast<HdlrMethodPtr_t>(b));
     }
+
   };
 
   struct HdlrAssignGrp
@@ -194,17 +197,6 @@ public:
   private:
     Hdlr_t                      _assigns[MAX_ASSIGN_COUNTER] = { nullptr };
     unsigned int                _id;
-  };
-
-  struct EventHdlrLogRec
-  {
-    unsigned int _assignID:8;
-    unsigned int _assignGrpID:8;
-    size_t       _allocDelta:32;
-    size_t       _deallocDelta:32;
-    unsigned int _logUSec:16;
-
-    operator Hdlr_t() const { return HdlrAssignGrp::lookup(*this); }
   };
 
   inline void 
@@ -289,7 +281,7 @@ Continuation::HdlrAssignGrp s_fileAssignGrp;
                        (__FILE__+0),                       \
                        __LINE__,                           \
                        kHdlrAssignID,                      \
-                      (Continuation::HdlrMethodPtr_t) _h,  \
+                      &::cb_wrapper<decltype(_h),(_h)>::gen_hdlrcompare,  \
                       &::cb_wrapper<decltype(_h),(_h)>::gen_hdlrfxn  \
                      };                                    \
      (obj)->set_next_hdlr(kHdlrAssignRec);                 \
@@ -321,10 +313,12 @@ struct cb_wrapper;
 template<class T_OBJ, typename T_ARG, int(T_OBJ::*FXN)(int,T_ARG)>
 struct cb_wrapper<int(T_OBJ::*)(int,T_ARG),FXN>
 {
-  static const std::type_index hdlrfxn_typeindex(void) {
-    return typeid(FXN);
+  static Continuation::HdlrCompare_t *gen_hdlrcompare(void)
+  {
+    return [](Continuation::HdlrMethodPtr_t ofxn) {
+       return reinterpret_cast<Continuation::HdlrMethodPtr_t>(FXN) == ofxn;
+     };
   }
-
   static Continuation::HdlrFxn_t *gen_hdlrfxn(void)
   {
     return [](Continuation *self, int event, void *arg) {
@@ -336,10 +330,12 @@ struct cb_wrapper<int(T_OBJ::*)(int,T_ARG),FXN>
 template<class T_OBJ, class T_AOBJ, int(T_OBJ::*FXN)(T_AOBJ*)>
 struct cb_wrapper<int(T_OBJ::*)(T_AOBJ*),FXN>
 {
-  static const std::type_index hdlrfxn_typeindex(void) {
-    return typeid(FXN);
+  static Continuation::HdlrFxn_t *gen_hdlrcompare(void)
+  {
+    return [](Continuation::HdlrMethodPtr_t ofxn) {
+       return reinterpret_cast<Continuation::HdlrMethodPtr_t>(FXN) == ofxn;
+     };
   }
-
   static Continuation::HdlrFxn_t *gen_hdlrfxn(void)
   {
     return [](Continuation *self, int event, void *arg) {
@@ -351,10 +347,12 @@ struct cb_wrapper<int(T_OBJ::*)(T_AOBJ*),FXN>
 template<class T_OBJ, int(T_OBJ::*FXN)(int)>
 struct cb_wrapper<int(T_OBJ::*)(int),FXN>
 {
-  static const std::type_index hdlrfxn_typeindex(void) {
-    return typeid(FXN);
+  static Continuation::HdlrFxn_t *gen_hdlrcompare(void)
+  {
+    return [](Continuation::HdlrMethodPtr_t ofxn) {
+       return reinterpret_cast<Continuation::HdlrMethodPtr_t>(FXN) == ofxn;
+     };
   }
-
   static Continuation::HdlrFxn_t *gen_hdlrfxn(void)
   {
     return [](Continuation *self, int event, void *) {
@@ -366,10 +364,12 @@ struct cb_wrapper<int(T_OBJ::*)(int),FXN>
 template<class T_OBJ, int(T_OBJ::*FXN)(void)>
 struct cb_wrapper<int(T_OBJ::*)(void),FXN>
 {
-  static const std::type_info *hdlrfxn_typeindex(void) {
-    return typeid(FXN);
+  static Continuation::HdlrFxn_t *gen_hdlrcompare(void)
+  {
+    return [](Continuation::HdlrMethodPtr_t ofxn) {
+       return reinterpret_cast<Continuation::HdlrMethodPtr_t>(FXN) == ofxn;
+     };
   }
-
   static Continuation::HdlrFxn_t *gen_hdlrfxn(void)
   {
     return [](Continuation *self, int, void *) {
@@ -385,5 +385,6 @@ inline unsigned int Continuation::HdlrAssignGrp::add_if_unkn(const HdlrAssignRec
    }
    return _id;
 }
+
 
 #endif /*_Continuation_h_*/

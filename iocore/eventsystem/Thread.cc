@@ -124,6 +124,21 @@ uint64_t &Thread::dealloc_bytes_count_direct()
 unsigned Continuation::HdlrAssignGrp::s_hdlrAssignGrpCnt = 0;
 const Continuation::HdlrAssignGrp *Continuation::HdlrAssignGrp::s_assignGrps[MAX_ASSIGNGRPS] = { nullptr };
 
+struct EventHdlrLogRec
+{
+  size_t       _allocDelta:32;
+  size_t       _deallocDelta:32;
+
+  unsigned int _delayVal:15;
+  unsigned int _delayMSec:1;
+  unsigned int _event:16;
+
+  unsigned int _assignID:8;
+  unsigned int _assignGrpID:8;
+
+  operator Continuation::Hdlr_t() const { return Continuation::HdlrAssignGrp::lookup(*this); }
+};
+
 int
 Continuation::handleEvent(int event, void *data)
 {
@@ -144,15 +159,28 @@ Continuation::handleEvent(int event, void *data)
   auto duration = std::chrono::steady_clock::now() - called;
   auto span = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
 
-  uint16_t logv = 8*sizeof(unsigned int) - __builtin_clz(static_cast<unsigned int>(span));
+  auto val = span;
+  auto flag = false;
 
-  Note("handle-event: arena %u",jemallctl::thread_arena());
+  if ( span >= 10000L ) {
+    flag = true;
+    val += 500L;
+    val /= 1000L;
+  } 
 
-  EventHdlrLogRec v{ cbrec.id(),
-                     cbrec.grpid(),
-                     this_thread()->alloc_bytes_count() - alloced,
+  if ( jemallctl::thread_arena() ) {
+    Debug("memory","handle-event: arena %u",jemallctl::thread_arena());
+  }
+
+  EventHdlrLogRec v{ this_thread()->alloc_bytes_count() - alloced,
                      this_thread()->dealloc_bytes_count() - dealloced,
-                     logv };
+                     static_cast<unsigned>(val),
+                     flag,
+                     event,
+
+                     cbrec.id(),
+                     cbrec.grpid(),
+                   };
 
   log.push_back(v);
 
@@ -190,11 +218,12 @@ void Continuation::HdlrAssignGrp::printLog(void *ptr, EventHdlrLogPtr logPtr)
   for( auto &&i : *logPtr ) 
   {
      size_t n = &i - &logPtr->front();
+     const char *units = ( i._delayMSec ? "ms" : "us" ); 
 
      Hdlr_t recp = i; // convert
      if ( ! recp ) {
-       Debug("conttrace","%p:[ +%9ld -%9ld 2^(%5d)us unkn: %d/%d]",
-             ptr, i._allocDelta,i._deallocDelta,i._logUSec,i._assignID,i._assignGrpID);
+       Debug("conttrace","%p:%05u[[ +%9ld -%9ld 2^(%5d)%s unkn: %d/%d]",
+             ptr, i._event, i._allocDelta,i._deallocDelta, i._delayVal, units, i._assignID,i._assignGrpID);
        continue;
      }
 
@@ -231,12 +260,12 @@ void Continuation::HdlrAssignGrp::printLog(void *ptr, EventHdlrLogPtr logPtr)
 
      if ( len == 1 ) 
      {
-       Debug(debug,"                 [ +%9ld -%9ld ~%5ldus callback %s] [%s:%d]",
-                                       i._allocDelta, i._deallocDelta, (1UL<<i._logUSec), rec._label, rec._file, rec._line);
+       Debug(debug,"                 :%05u[ +%9ld -%9ld ~%5d%s callback %s] [%s:%d]",
+                                       i._event, i._allocDelta, i._deallocDelta, i._delayVal, units, rec._label, rec._file, rec._line);
        continue;
      }
 
-     Debug(debug,"%s(%lu) %p:[ +%9ld -%9ld ~%5ldus callback %s] [%s:%d]",
-             e, n, ptr, i._allocDelta, i._deallocDelta, (1UL<<i._logUSec), rec._label, rec._file, rec._line);
+     Debug(debug,"%s(%lu) %p:%05u[ +%9ld -%9ld ~%5d%s callback %s] [%s:%d]",
+             e, n, ptr, i._event, i._allocDelta, i._deallocDelta, i._delayVal, units, rec._label, rec._file, rec._line);
   }
 }
