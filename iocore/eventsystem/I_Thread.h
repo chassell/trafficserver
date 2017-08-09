@@ -156,6 +156,8 @@ public:
   static inline uint64_t &alloc_bytes_count();
   static inline uint64_t &dealloc_bytes_count();
 
+  bool swap_call_chains(EventChainPtr_t *toswap); 
+
 private:
   // prevent unauthorized copies (Not implemented)
   Thread(const Thread &);
@@ -192,6 +194,8 @@ public:
 
   uint64_t *_allocTotalP = nullptr;
   uint64_t *_deallocTotalP = nullptr;
+
+  EventChainPtr_t   _currentCallChain;
 };
 
 extern Thread *this_thread();

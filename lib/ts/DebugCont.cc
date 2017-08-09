@@ -41,29 +41,6 @@
 // Common Interface impl                     //
 ///////////////////////////////////////////////
 
-
-unsigned EventHdlrAssignGrp::s_hdlrAssignGrpCnt = 0;
-const EventHdlrAssignGrp *EventHdlrAssignGrp::s_assignGrps[EventHdlrAssignRec::MAX_ASSIGNGRPS] = { nullptr };
-
-inline unsigned int EventHdlrAssignGrp::add_if_unkn(const EventHdlrAssignRec &rec) 
-{
-   if ( ! _assigns[rec.id()] ) {
-      _assigns[rec.id()] = &rec; // should be room
-   }
-   return _id;
-}
-
-inline unsigned int EventHdlrAssignRec::grpid() const
-{ 
-  return _assignGrp.add_if_unkn(*this); 
-}
-
-inline EventHdlrAssignRec::Ptr_t 
-EventHdlrAssignGrp::lookup(const EventHdlrID &rec)
-{
-  return s_assignGrps[rec._assignGrpID]->_assigns[rec._assignID];
-}
-
 void EventHdlrAssignGrp::printLog(void *ptr, EventHdlrLogPtr logPtr, EventHdlrChainPtr chainPtr)
 {
   unsigned len = static_cast<unsigned>(logPtr->size());
@@ -152,8 +129,8 @@ EventHdlrState::operator()(Continuation *self,int event, void *data)
 
   auto called = std::chrono::steady_clock::now();
 
-  auto alloced = *jemallctl::thread_allocatedp();
-  auto dealloced = *jemallctl::thread_deallocatedp();
+  auto alloced = jemallctl::alloc_bytes_count();
+  auto dealloced = jemallctl::dealloc_bytes_count()b;
 
   auto r = (*cbrec._wrapHdlr_Gen())(self,event,data);
 
@@ -181,4 +158,22 @@ EventHdlrState::operator()(Continuation *self,int event, void *data)
 
   cbrec._assignGrp.printLog(ptr,std::move(logPtr), std::move(chainPtr));
   return r;
+}
+
+EventHdlrState()
+    : _eventChainPtr( std::make_shared<EventHdlrChain>() )
+{
+  _eventChainPtr->reserve(16); // add some room
+  _eventChainPtr->emplace_back{ 
+  
+}
+
+EventCallContext::EventCallContext(EventHdlr_t next)
+   : _nextHdlrRec(next)
+{
+}
+
+EventCallContext::~EventCallContext()
+{
+
 }

@@ -28,15 +28,11 @@
 
 
 **************************************************************************/
-#include "ts/DebugCont.h"
-#include "ts/jemallctl.h"
+#include "I_Thread.h"
 
 #include "P_EventSystem.h"
-#include "I_Thread.h"
 #include "ts/ink_string.h"
-
-#include <chrono>
-#include <string>
+#include "ts/jemallctl.h"
 
 ///////////////////////////////////////////////
 // Common Interface impl                     //
@@ -112,6 +108,15 @@ Thread::start(const char *name, size_t stacksize, ThreadFunction f, void *a)
   return tid;
 }
 
+bool Thread::swap_call_chain(EventChainPtr_t *toswap)
+{
+  if ( _currentCallChain == *toswap ) {
+    return false;
+  }
+  _currentCallChain.swap(*toswap); // low cost (no refcount chg)
+  return true;
+}
+
 uint64_t &Thread::alloc_bytes_count_direct() 
 { 
   return *jemallctl::thread_allocatedp(); 
@@ -120,4 +125,14 @@ uint64_t &Thread::alloc_bytes_count_direct()
 uint64_t &Thread::dealloc_bytes_count_direct() 
 { 
   return *jemallctl::thread_deallocatedp(); 
+}
+
+uint64_t jemallctl::alloc_bytes_count() 
+{ 
+  return this_thread()->alloc_bytes_count();
+}
+
+uint64_t jemallctl::dealloc_bytes_count() 
+{ 
+  return this_thread()->dealloc_bytes_count();
 }
