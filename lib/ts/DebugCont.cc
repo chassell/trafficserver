@@ -45,13 +45,6 @@
 unsigned EventHdlrAssignGrp::s_hdlrAssignGrpCnt = 0;
 const EventHdlrAssignGrp *EventHdlrAssignGrp::s_assignGrps[EventHdlrAssignRec::MAX_ASSIGNGRPS] = { nullptr };
 
-EventHdlrAssignGrp::EventHdlrAssignGrp() 
-   : _id(s_hdlrAssignGrpCnt++) 
-{
-   ink_release_assert( _id < EventHdlrAssignRec::MAX_ASSIGNGRPS );
-   s_assignGrps[_id] = this; // should be room
-}
-
 inline unsigned int EventHdlrAssignGrp::add_if_unkn(const EventHdlrAssignRec &rec) 
 {
    if ( ! _assigns[rec.id()] ) {
@@ -162,7 +155,7 @@ EventHdlrState::operator()(Continuation *self,int event, void *data)
   auto alloced = *jemallctl::thread_allocatedp();
   auto dealloced = *jemallctl::thread_deallocatedp();
 
-  auto r = (*cbrec._cbGenerator())(self,event,data);
+  auto r = (*cbrec._wrapHdlr_Gen())(self,event,data);
 
   auto duration = std::chrono::steady_clock::now() - called;
   float span = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();

@@ -60,6 +60,7 @@ namespace io
         delete s;
       }
 
+     public:
       static int
       handleRead(TSCont c, TSEvent e, void *)
       {

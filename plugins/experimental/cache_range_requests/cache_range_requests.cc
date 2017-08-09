@@ -91,7 +91,7 @@ range_header_check(TSHttpTxn txnp)
       if (!hdr_value || length <= 0) {
         DEBUG_LOG("Not a range request.");
       } else {
-        if (NULL == (txn_contp = TSContCreate((TSEventFunc)transaction_handler, NULL))) {
+        if (NULL == (txn_contp = TSContCreate(transaction_handler, NULL))) {
           ERROR_LOG("failed to create the transaction handler continuation.");
         } else {
           txn_state              = (struct txndata *)TSmalloc(sizeof(struct txndata));
@@ -369,7 +369,7 @@ TSPluginInit(int argc, const char *argv[])
     return;
   }
 
-  if (NULL == (txnp_cont = TSContCreate((TSEventFunc)handle_read_request_header, NULL))) {
+  if (NULL == (txnp_cont = TSContCreate(handle_read_request_header, NULL))) {
     ERROR_LOG("failed to create the transaction continuation handler.");
     return;
   } else {

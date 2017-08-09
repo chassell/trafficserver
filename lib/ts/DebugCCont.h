@@ -62,7 +62,7 @@ struct EventCHdlrAssignGrp
   unsigned int          _id;
 };
 
-EventCHdlrAssignGrp_t s_fileAssignGrp = { { NULL }, 0 };
+static EventCHdlrAssignGrp_t s_fileAssignGrp = { { (void*)0 }, 0 };
 
 #define STATIC_C_HANDLER_RECORD(_h, name) \
      static const EventCHdlrAssignRec_t name = \
@@ -75,7 +75,12 @@ EventCHdlrAssignGrp_t s_fileAssignGrp = { { NULL }, 0 };
                        (_h)                   \
                      }
 
-// #define TSThreadCreate(func,data)
+#define TSThreadCreate(func,data)                              \
+            ({                                                 \
+               STATIC_C_HANDLER_RECORD((func),kHdlrAssignRec); \
+               TSThreadCreate(func,data);                      \
+             })
+
 
 #define TSContCreate(func,mutexp)                              \
             ({                                                 \

@@ -56,10 +56,13 @@ using EventHdlrChainPtr = std::shared_ptr<EventHdlrChain>;
 using EventHdlrFxn_t       = int(Continuation *, int event, void *data);
 using EventHdlrFxnPtr_t    = EventHdlrFxn_t *;
 using EventHdlrMethodPtr_t = int (Continuation::*)(int event, void *data);
-using EventHdlrCompare_t    = bool(EventHdlrMethodPtr_t);
+using EventHdlrCompare_t    = bool(EventHdlrMethodPtr_t, EventHdlrFxnPtr_t);
 using EventHdlrFxnGen_t    = EventHdlrFxn_t*(void);
 using EventHdlrCompareGen_t = EventHdlrCompare_t *(void);
 
+///////////////////////////////////////////////////////////////////////////////////
+///
+///////////////////////////////////////////////////////////////////////////////////
 struct EventHdlrAssignRec 
 {
   using Ptr_t = const EventHdlrAssignRec *;
@@ -67,13 +70,14 @@ struct EventHdlrAssignRec
 
   enum { MAX_ASSIGN_COUNTER = 60, MAX_ASSIGNGRPS = 255 };
 
-  EventHdlrAssignGrp    &_assignGrp;      // static-global for compile
+  EventHdlrAssignGrp &_assignGrp;      // static-global for compile
   const char *const _label;        // at point of assign
   const char *const _file;         // at point of assign
   uint32_t    const _line:20;      // at point of assign
   uint32_t    const _assignID:8;   // unique for each in compile-object
-  const EventHdlrCompareGen_t *_cbCompareGen;   // distinct method-pointer (not usable)
-  const EventHdlrFxnGen_t *_cbGenerator;     // ref to custom wrapper function-ptr callable 
+
+  const EventHdlrCompareGen_t *_equalHdlr_Gen; // distinct method-pointer (not usable)
+  const EventHdlrFxnGen_t     *_wrapHdlr_Gen; // ref to custom wrapper function-ptr callable 
 
 public:
   unsigned int id() const { return _assignID; };
@@ -82,27 +86,39 @@ public:
   void set() const;
 
   template<typename T_FN, T_FN FXN>
-  struct gen_hdlrfxn;
+  struct gen_wrap_hdlr;
 
+  // SFINAE check that FXN constant can be converted to HdlrMethodPtr_t
   template<typename T_FN, T_FN FXN>
-  inline static auto gen_hdlrcompare() -> 
+  inline static auto gen_equal_hdlr_test() -> 
      decltype( reinterpret_cast<EventHdlrMethodPtr_t>(FXN), &std::declval<EventHdlrCompare_t>() )
   {
-    return [](EventHdlrMethodPtr_t ofxn) {
-       return reinterpret_cast<EventHdlrMethodPtr_t>(FXN) == ofxn;
+    // use first arg only
+    return [](EventHdlrMethodPtr_t method, EventHdlrFxnPtr_t fxn) {
+       return method && reinterpret_cast<EventHdlrMethodPtr_t>(FXN) == method;
     };
   }
 
+  // SFINAE check that FXN constant can be converted to HdlrFxnPtr_t
   template<typename T_FN, T_FN FXN>
-  inline static auto gen_hdlrcompare(void) -> 
+  inline static auto gen_equal_hdlr_test(void) -> 
      decltype( reinterpret_cast<EventHdlrFxnPtr_t>(FXN), &std::declval<EventHdlrCompare_t>() )
   {
-    return nullptr;
+    // use latter arg only
+    return [](EventHdlrMethodPtr_t method, EventHdlrFxnPtr_t fxn) {
+       return fxn && reinterpret_cast<EventHdlrFxnPtr_t>(FXN) == fxn;
+    };
   }
 
-  bool operator!=(EventHdlrMethodPtr_t b) const { return _cbCompareGen && _cbCompareGen()(b); }
+  bool operator!=(EventHdlrMethodPtr_t a) const 
+     { return ! _equalHdlr_Gen || ! _equalHdlr_Gen()(a,nullptr); }
+  bool operator!=(EventHdlrFxnPtr_t b) const 
+     { return ! _equalHdlr_Gen || ! _equalHdlr_Gen()(nullptr,b); }
 };
 
+///////////////////////////////////////////////////////////////////////////////////
+///
+///////////////////////////////////////////////////////////////////////////////////
 class EventHdlrState 
 {
   using Ptr_t = EventHdlrAssignRec::Ptr_t;
@@ -117,12 +133,15 @@ public:
   int operator()(TSCont,TSEvent,void *data);
 
   template <class T_OBJ, typename T_ARG>
-  bool operator!=(int(T_OBJ::*b)(int,T_ARG)) const {
-    return ! _handlerRec || *_handlerRec != reinterpret_cast<EventHdlrMethodPtr_t>(b);
+  bool operator!=(int(T_OBJ::*a)(int,T_ARG)) const {
+    return ! _handlerRec || *_handlerRec != reinterpret_cast<EventHdlrMethodPtr_t>(a);
   }
 
-  EventHdlrState &operator=(decltype(nullptr))
-  {
+  bool operator!=(TSEventFunc b) const {
+    return ! _handlerRec || *_handlerRec != reinterpret_cast<EventHdlrFxnPtr_t>(b);
+  }
+
+  EventHdlrState &operator=(decltype(nullptr)) {
     _handlerRec = nullptr;
     return *this;
   }
@@ -146,17 +165,9 @@ public:
   }
 };
 
-template<class T_OBJ, typename T_ARG, int(T_OBJ::*FXN)(int,T_ARG)>
-struct EventHdlrAssignRec::gen_hdlrfxn<int(T_OBJ::*)(int,T_ARG),FXN>
-{
-  static EventHdlrFxn_t *fxn(void)
-  {
-    return [](Continuation *self, int event, void *arg) {
-       return (static_cast<T_OBJ*>(self)->*FXN)(event, static_cast<T_ARG>(arg));
-     };
-  }
-};
-
+///////////////////////////////////////////////////////////////////////////////////
+///
+///////////////////////////////////////////////////////////////////////////////////
 struct EventHdlrAssignGrp
 {
 private:
@@ -167,7 +178,12 @@ public:
   static void                       printLog(void *ptr, EventHdlrLogPtr logPtr, EventHdlrChainPtr chain);
   static EventHdlrAssignRec::Ptr_t lookup(const EventHdlrID &rec);
 
-  EventHdlrAssignGrp();
+  EventHdlrAssignGrp() 
+     : _id(s_hdlrAssignGrpCnt++) 
+  {
+//     ink_release_assert( _id < EventHdlrAssignRec::MAX_ASSIGNGRPS );
+     s_assignGrps[_id] = this; // should be room
+  }
 
   unsigned int add_if_unkn(EventHdlrAssignRec::Ref_t rec);
 
@@ -190,15 +206,15 @@ struct EventHdlrID
   unsigned int _assignGrpID:8;
   unsigned int _event:16;
 
-  operator EventHdlrAssignRec::Ptr_t() const { return EventHdlrAssignGrp::lookup(*this); }
+  operator EventHdlrAssignRec::Ptr_t() const { 
+    return EventHdlrAssignGrp::lookup(*this); 
+  }
 };
 
 
 namespace {
 EventHdlrAssignGrp s_fileAssignGrp;
 }
-
-struct tsapi_cont {};
 
 // 
 // DeferredCall::defer(...)      
@@ -222,8 +238,8 @@ struct tsapi_cont {};
                        (__FILE__+0),                       \
                        __LINE__,                           \
                        __COUNTER__,                        \
-                      &EventHdlrAssignRec::gen_hdlrcompare<decay_t,(_h)>,  \
-                      &EventHdlrAssignRec::gen_hdlrfxn<decay_t,(_h)>::fxn       \
+                      &EventHdlrAssignRec::gen_equal_hdlr_test<decay_t,(_h)>,  \
+                      &EventHdlrAssignRec::gen_wrap_hdlr<decay_t,(_h)>::fxn       \
                      };                                    \
      static_assert(name._assignID < EventHdlrAssignRec::MAX_ASSIGN_COUNTER, \
         "cont-targets exceeded file limit")
@@ -232,13 +248,27 @@ struct tsapi_cont {};
             EVENT_HANDLER_RECORD(_h, kHdlrAssignRec); \
             kHdlrAssignRec.set()
 
+// standard Continuation handler signature(s)
+template<class T_OBJ, typename T_ARG, int(T_OBJ::*FXN)(int,T_ARG)>
+struct EventHdlrAssignRec::gen_wrap_hdlr<int(T_OBJ::*)(int,T_ARG),FXN>
+{
+  static EventHdlrFxn_t *fxn(void)
+  {
+    return [](Continuation *self, int event, void *arg) {
+       return (static_cast<T_OBJ*>(self)->*FXN)(event, static_cast<T_ARG>(arg));
+     };
+  }
+};
+
 #endif
 
+////////////////////////////////////////////////////////////////////////
 #if defined(__TS_API_H__) && ! defined(_I_DebugCont_API_)
 #define _I_DebugCont_API_
 
-template <int (*FXN)(tsapi_cont*, TSEvent, void*) >
-struct EventHdlrAssignRec::gen_hdlrfxn<int (*)(tsapi_cont*, TSEvent, void*),FXN>
+// standard TSAPI event handler signature
+template <TSEventFunc FXN>
+struct EventHdlrAssignRec::gen_wrap_hdlr<TSEventFunc,FXN>
 {
   static EventHdlrFxn_t *fxn(void)
   {
@@ -248,14 +278,27 @@ struct EventHdlrAssignRec::gen_hdlrfxn<int (*)(tsapi_cont*, TSEvent, void*),FXN>
   }
 };
 
-template<void *(*FXN)(void*)>
-struct EventHdlrAssignRec::gen_hdlrfxn<void *(*)(void*),FXN>
+// standard TSAPI thread init signature
+template<TSThreadFunc FXN>
+struct EventHdlrAssignRec::gen_wrap_hdlr<TSThreadFunc,FXN>
 {
   static EventHdlrFxn_t *fxn(void)
   {
     return [](Continuation *self, int event, void *data) {
       return 0;  // never used
     };
+  }
+};
+
+// extra case that showed up
+template <void(*FXN)(TSCont,TSEvent,void *data)>
+struct EventHdlrAssignRec::gen_wrap_hdlr<void(*)(TSCont,TSEvent,void *data),FXN>
+{
+  static EventHdlrFxn_t *fxn(void)
+  {
+    return [](Continuation *self, int event, void *data) {
+       return (*FXN)(reinterpret_cast<TSCont>(self), static_cast<TSEvent>(event), data),0;
+     };
   }
 };
 
@@ -268,17 +311,17 @@ struct EventHdlrAssignRec::gen_hdlrfxn<void *(*)(void*),FXN>
 #define TSContCreate(func,mutexp)                              \
             ({                                                 \
                SET_NEXT_HANDLER_RECORD(func);                  \
-               TSContCreate(func,mutexp);                      \
+               TSContCreate(reinterpret_cast<TSEventFunc>(func),mutexp);                      \
              })
 #define TSTransformCreate(func,txnp)                           \
             ({                                                 \
                SET_NEXT_HANDLER_RECORD(func);                  \
-               TSTransformCreate(func,txnp);                 \
+               TSTransformCreate(reinterpret_cast<TSEventFunc>(func),txnp);                 \
              })
 #define TSVConnCreate(func,mutexp)                             \
             ({                                                 \
                SET_NEXT_HANDLER_RECORD(func);                  \
-               TSVConnCreate(func,mutexp);                     \
+               TSVConnCreate(reinterpret_cast<TSEventFunc>(func),mutexp);                     \
              })
 
 #endif
