@@ -2389,4 +2389,10 @@ tsapi const char *TSHttpEventNameLookup(TSEvent event);
 }
 #endif /* __cplusplus */
 
+#ifdef __cplusplus
+#include "ts/DebugCont.h"
+#else
+#include "ts/DebugCCont.h"
+#endif
+
 #endif /* __TS_API_H__ */

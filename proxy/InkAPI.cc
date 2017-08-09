@@ -921,7 +921,7 @@ FileImpl::fgets(char *buf, int length)
 INKContInternal::INKContInternal()
   : DummyVConnection(NULL),
     mdata(NULL),
-    m_event_func(NULL),
+//    m_event_func(NULL),
     m_event_count(0),
     m_closed(1),
     m_deletable(0),
@@ -930,10 +930,10 @@ INKContInternal::INKContInternal()
 {
 }
 
-INKContInternal::INKContInternal(TSEventFunctor funcp, TSMutex mutexp)
+INKContInternal::INKContInternal(decltype(nullptr), TSMutex mutexp)
   : DummyVConnection((ProxyMutex *)mutexp),
     mdata(NULL),
-    m_event_func(funcp),
+//    m_event_func(),
     m_event_count(0),
     m_closed(1),
     m_deletable(0),
@@ -944,7 +944,7 @@ INKContInternal::INKContInternal(TSEventFunctor funcp, TSMutex mutexp)
 }
 
 void
-INKContInternal::init(TSEventFunctor funcp, TSMutex mutexp)
+INKContInternal::init(TSEventFunc funcp, TSMutex mutexp)
 {
   SET_HANDLER(&INKContInternal::handle_event);
 
@@ -1027,15 +1027,15 @@ INKVConnInternal::INKVConnInternal() : INKContInternal(), m_read_vio(), m_write_
   m_closed = 0;
 }
 
-INKVConnInternal::INKVConnInternal(TSEventFunctor funcp, TSMutex mutexp)
-  : INKContInternal(funcp, mutexp), m_read_vio(), m_write_vio(), m_output_vc(NULL)
+INKVConnInternal::INKVConnInternal(void*, TSMutex mutexp)
+  : INKContInternal(nullptr, mutexp), m_read_vio(), m_write_vio(), m_output_vc(NULL)
 {
   m_closed = 0;
   SET_HANDLER(&INKVConnInternal::handle_event);
 }
 
 void
-INKVConnInternal::init(TSEventFunctor funcp, TSMutex mutexp)
+INKVConnInternal::init(TSEventFunc funcp, TSMutex mutexp)
 {
   INKContInternal::init(funcp, mutexp);
   SET_HANDLER(&INKVConnInternal::handle_event);
@@ -4181,7 +4181,10 @@ TSMgmtStringGet(const char *var_name, TSMgmtString *result)
 //
 ////////////////////////////////////////////////////////////////////
 
+#undef TSContCreate
+
 #ifdef __cplusplus
+/*
 TSCont
 TSContCreate(TSEventFunctor funcp, TSMutex mutexp)
 {
@@ -4194,6 +4197,7 @@ TSContCreate(TSEventFunctor funcp, TSMutex mutexp)
   i->init(funcp, mutexp);
   return (TSCont)i;
 }
+*/
 #endif
 
 TSCont
@@ -6212,8 +6216,10 @@ TSActionDone(TSAction actionp)
 }
 
 /* Connections */
+#undef TSVConnCreate
 
 #ifdef __cplusplus
+/*
 TSVConn
 TSVConnCreate(TSEventFunctor event_funcp, TSMutex mutexp)
 {
@@ -6230,6 +6236,7 @@ TSVConnCreate(TSEventFunctor event_funcp, TSMutex mutexp)
   i->init(event_funcp, mutexp);
   return reinterpret_cast<TSVConn>(i);
 }
+*/
 #endif
 
 TSVConn
@@ -6419,8 +6426,11 @@ TSVConnCacheHttpInfoSet(TSVConn connp, TSCacheHttpInfo infop)
     vc->set_http_info((CacheHTTPInfo *)infop);
 }
 
+#undef TSTransformCreate
+
 /* Transformations */
 #ifdef __cplusplus
+/*
 TSVConn
 TSTransformCreate(TSEventFunctor event_funcp, TSHttpTxn txnp)
 {
@@ -6429,6 +6439,7 @@ TSTransformCreate(TSEventFunctor event_funcp, TSHttpTxn txnp)
   // fancy continuation?
   return TSVConnCreate(event_funcp, TSContMutexGet(reinterpret_cast<TSCont>(txnp)));
 }
+*/
 #endif
 
 TSVConn

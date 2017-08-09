@@ -24,7 +24,7 @@
 
   Continuations have a handleEvent() method to invoke them. Users
   can determine the behavior of a Continuation by suppling a
-  "Hdlr" (member function name) which is invoked
+  "ContinuationHandler" (member function name) which is invoked
   when events arrive. This function can be changed with the
   "setHandler" method.
 
@@ -35,6 +35,8 @@
 
 #ifndef _I_Continuation_h_
 #define _I_Continuation_h_
+
+#include "ts/DebugCont.h"
 
 #include "ts/ink_platform.h"
 #include "ts/List.h"
@@ -57,6 +59,8 @@ class EThread;
 
 #define CONTINUATION_DONE 0
 #define CONTINUATION_CONT 1
+
+using ContinuationHandler = EventHdlrState;
 
 class force_VFPT_to_top
 {
@@ -89,29 +93,12 @@ public:
 
 */
 
-struct EventHdlrAssignRec;
-struct EventHdlrLogRec;
-struct EventHdlrID;
-
-using EventHdlrLog = std::vector<EventHdlrLogRec>;
-using EventHdlrChain = std::vector<EventHdlrID>;
-using EventHdlrLogPtr = std::shared_ptr<EventHdlrLog>;
-using EventHdlrChainPtr = std::shared_ptr<EventHdlrChain>;
-
-using EventHdlrFxn_t       = int(Continuation *, int event, void *data);
-using EventHdlrMethodPtr_t = int (Continuation::*)(int event, void *data);
-using EventHdlrCompare_t    = bool(EventHdlrMethodPtr_t);
-using EventHdlrFxnGen_t    = EventHdlrFxn_t*(void);
-using EventHdlrCompareGen_t = EventHdlrCompare_t *(void);
-
-
 class Continuation : private force_VFPT_to_top
 {
 public:
-  using Hdlr_t = const EventHdlrAssignRec*;
-  using HdlrRef_t = const EventHdlrAssignRec&;
-  using HdlrFtor_t      = std::function<EventHdlrFxn_t>;
-
+  using Hdlr_t       = EventHdlrAssignRec::Ptr_t;
+  using HdlrRef_t    = EventHdlrAssignRec::Ref_t;
+  using HdlrFtor_t   = std::function<EventHdlrFxn_t>;
 
 /**
   The current continuation handler function.
@@ -122,11 +109,7 @@ public:
     issues.
 
   */
-  HdlrRef_t
-  handler()
-  {
-    return *_handlerRec;
-  }
+  const EventHdlrState &handler() const { return _handler; }
 
 #ifdef DEBUG
   const char *handler_name = nullptr;
@@ -157,26 +140,6 @@ public:
   */
   ContFlags control_flags;
 
-  inline void 
-  set_next_hdlr(nullptr_t)
-  {
-    _handlerRec = nullptr;
-  };
-
-  // class method-pointer full args
-  inline void 
-  set_next_hdlr(Hdlr_t &prev)
-  {
-    _handlerRec = prev;
-  };
-
-  // class method-pointer full args
-  inline void
-  set_next_hdlr(HdlrRef_t cbAssign)
-  {
-    _handlerRec = &cbAssign;
-  };
-
   /**
     Receives the event code and data for an Event.
 
@@ -191,7 +154,10 @@ public:
 
   */
   int
-  handleEvent(int event = CONTINUATION_EVENT_NONE, void *data = 0);
+  handleEvent(int event = CONTINUATION_EVENT_NONE, void *data = 0)
+  {
+    return _handler(this,event,data);
+  }
 
   /**
     Contructor of the Continuation object. It should not be used
@@ -202,144 +168,41 @@ public:
   */
   Continuation(ProxyMutex *amutex = NULL);
 
-private:
-  Hdlr_t           _handlerRec = nullptr; // (cause to change upon first use)
-  HdlrFtor_t       _handlerApply;
-  EventHdlrLogPtr   _handlerLogPtr;        // current stored log
-  EventHdlrChainPtr _handlerChainPtr;      // current stored "path"
-};
+  Continuation &operator=(nullptr_t)
+  {
+    _handler = nullptr;
+    return *this;
+  }
 
-using ContinuationHandler = Continuation::Hdlr_t;
+  // class method-pointer full args
+  Continuation &operator=(const EventHdlrState &prev)
+  {
+    _handler = prev;
+    return *this;
+  }
 
-struct EventHdlrAssignGrp
-{
-  enum { MAX_ASSIGN_COUNTER = 60, MAX_ASSIGNGRPS = 255 };
-
-private:
-  static unsigned             s_hdlrAssignGrpCnt;
-  static const EventHdlrAssignGrp *s_assignGrps[MAX_ASSIGNGRPS];
-
-public:
-  static void                 printLog(void *ptr, EventHdlrLogPtr logPtr, EventHdlrChainPtr chain);
-  static Continuation::Hdlr_t lookup(const EventHdlrID &rec);
-
-  EventHdlrAssignGrp();
-
-  unsigned int add_if_unkn(Continuation::HdlrRef_t rec);
+  // class method-pointer full args
+  Continuation &operator=(HdlrRef_t cbAssign)
+  {
+    _handler = cbAssign;
+    return *this;
+  }
 
 private:
-  Continuation::Hdlr_t        _assigns[MAX_ASSIGN_COUNTER] = { nullptr };
-  unsigned int                _id;
+  EventHdlrState    _handler;
 };
 
-struct EventHdlrAssignRec 
-{
-  EventHdlrAssignGrp    &_assignGrp;      // static-global for compile
-  const char *const _label;        // at point of assign
-  const char *const _file;         // at point of assign
-  uint32_t    const _line:20;      // at point of assign
-  uint32_t    const _assignID:8;   // unique for each in compile-object
-  const EventHdlrCompareGen_t *_cbCompareGen;   // distinct method-pointer (not usable)
-  const EventHdlrFxnGen_t *_cbGenerator;     // ref to custom wrapper function-ptr callable 
-
-  operator const EventHdlrAssignRec *() const { return this; }
-  unsigned int id() const { return _assignID; };
-  unsigned int grpid() const;
-
-  template<typename T_FN, T_FN FXN>
-  struct gen_hdlr;
-
-  template<typename T_FN, T_FN FXN>
-  static EventHdlrCompare_t *gen_hdlrcompare(void)
-  {
-    return [](EventHdlrMethodPtr_t ofxn) {
-       return reinterpret_cast<EventHdlrMethodPtr_t>(FXN) == ofxn;
-    };
-  }
-
-  template <class T_OBJ, typename T_ARG>
-  bool operator!=(int(T_OBJ::*b)(int,T_ARG)) const {
-    return _cbCompareGen()(reinterpret_cast<EventHdlrMethodPtr_t>(b));
-  }
-
-};
-
-
-template<class T_OBJ, typename T_ARG, int(T_OBJ::*FXN)(int,T_ARG)>
-struct EventHdlrAssignRec::gen_hdlr<int(T_OBJ::*)(int,T_ARG),FXN>
-{
-  static EventHdlrFxn_t *fxn(void)
-  {
-    return [](Continuation *self, int event, void *arg) {
-       return (static_cast<T_OBJ*>(self)->*FXN)(event, static_cast<T_ARG>(arg));
-     };
-  }
-};
-
-template<class T_OBJ, class T_AOBJ, int(T_OBJ::*FXN)(T_AOBJ*)>
-struct EventHdlrAssignRec::gen_hdlr<int(T_OBJ::*)(T_AOBJ*),FXN>
-{
-  static EventHdlrFxn_t *fxn(void)
-  {
-    return [](Continuation *self, int event, void *arg) {
-       return (static_cast<T_OBJ*>(self)->*FXN)(static_cast<T_AOBJ*>(arg));
-     };
-  }
-};
-
-template<class T_OBJ, int(T_OBJ::*FXN)(int)>
-struct EventHdlrAssignRec::gen_hdlr<int(T_OBJ::*)(int),FXN>
-{
-  static EventHdlrFxn_t *fxn(void)
-  {
-    return [](Continuation *self, int event, void *) {
-       return (static_cast<T_OBJ*>(self)->*FXN)(event);
-     };
-  }
-};
-
-template<class T_OBJ, int(T_OBJ::*FXN)(void)>
-struct EventHdlrAssignRec::gen_hdlr<int(T_OBJ::*)(void),FXN>
-{
-  static EventHdlrFxn_t *fxn(void)
-  {
-    return [](Continuation *self, int, void *) {
-       return (static_cast<T_OBJ*>(self)->*FXN)();
-     };
-  }
-};
-
-/*
-  Sets the Continuation's handler. The only mechanism for
+/**
+  Sets the Continuation's handler. The preferred mechanism for
   setting the Continuation's handler.
 
   @param _h Pointer to the function used to callback with events.
 
 */
-#define CLEAR_HANDLER() this->set_next_hdlr(nullptr);
-
 #define SET_HANDLER(_h) SET_CONTINUATION_HANDLER(this,_h)
 
-#define SET_SAVED_HANDLER(_var) this->set_next_hdlr(_var)
-
-#define STATIC_HANDLER_RECORD(_h, name, filegrp)            \
-     static constexpr auto name =                           \
-                     EventHdlrAssignRec{                   \
-                       (filegrp),                          \
-                       ((#_h)+0),                          \
-                       (__FILE__+0),                       \
-                       __LINE__,                           \
-                       __COUNTER__,                        \
-                      &EventHdlrAssignRec::gen_hdlrcompare<decltype(_h),(_h)>,  \
-                      &EventHdlrAssignRec::gen_hdlr<decltype(_h),(_h)>::fxn       \
-                     };                                    \
-     static_assert(name._assignID < EventHdlrAssignGrp::MAX_ASSIGN_COUNTER, \
-        "cont-targets exceeded file limit")
-
-namespace {
-EventHdlrAssignGrp s_fileAssignGrp;
-}
-
+#define CLEAR_HANDLER()          SET_SAVED_HANDLER(nullptr)
+#define SET_SAVED_HANDLER(_var)  (Continuation::operator=(_var))
 /**
   Sets a Continuation's handler.
 
@@ -351,15 +214,17 @@ EventHdlrAssignGrp s_fileAssignGrp;
 */
 #define SET_CONTINUATION_HANDLER(obj,_h)                     \
    ({                                                        \
-     STATIC_HANDLER_RECORD(_h, kHdlrAssignRec,s_fileAssignGrp); \
-     (obj)->set_next_hdlr(kHdlrAssignRec);                   \
+     EVENT_HANDLER_RECORD(_h, kHdlrAssignRec);              \
+     static_cast<Continuation&>(*obj) = kHdlrAssignRec;      \
    })
 
 
 inline Continuation::Continuation(ProxyMutex *amutex) 
-   : mutex(amutex)
+   : 
+    mutex(amutex)
 {
   // Pick up the control flags from the creating thread
   this->control_flags.set_flags(get_cont_flags().get_flags());
 }
+
 #endif /*_Continuation_h_*/

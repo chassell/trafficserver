@@ -109,6 +109,7 @@ ink_thread_trampoline(void *data)
   return retval;
 }
 
+#undef TSThreadCreate
 /*
  * INKqa12653. Return TSThread or NULL if error
  */
