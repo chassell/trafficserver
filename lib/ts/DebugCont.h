@@ -42,6 +42,7 @@
 #include <memory>
 #include <type_traits>
 #include <cstddef>
+#include <chrono>
 
 struct Continuation;
 struct EventHdlrAssignRec;
@@ -174,14 +175,14 @@ struct EventCallContext
   time_point   _start = steady_clock::now();
 
   EventHdlr_t  _nextHdlrRec = nullptr;
-}
+};
 
 ///////////////////////////////////////////////////////////////////////////////////
 ///
 ///////////////////////////////////////////////////////////////////////////////////
 struct EventCalled
 {
-  EventCalled(EventHdlr_t cb, unsigned event, const EventChain_t &callerChain)
+  EventCalled(EventHdlr_t cb, unsigned event, const EventChain_t &callerChain);
   
   // fill in deltas
   void completed(const EventCallContext &ctxt);
