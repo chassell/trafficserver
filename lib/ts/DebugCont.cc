@@ -100,21 +100,26 @@ void EventHdlrState::push_caller_record(const EventCallContext &ctxt, unsigned e
   _eventChainPtr->push_back( EventCalled{ctxt, _eventChainPtr, event} );
 }
 
+void EventHdlrState::add_stats_leaf(EventCalled &call, const EventCallContext &ctxt)
+{
+  add_stats(call,ctxt);
+
+  if ( call._allocDelta == call._deallocDelta             // no memory change
+             && ! call._assignPoint->_kEqualHdlr_Gen      // marked 
+             && &_eventChainPtr->back() == &call ) 
+  {
+     _eventChainPtr->pop_back();
+  }
+}
+
 void EventHdlrState::add_stats(EventCalled &call, const EventCallContext &ctxt)
 {
-  call.completed(ctxt);
-  auto tot = call._allocDelta - call._deallocDelta;
-
-  if ( ! tot && 
-       &_eventChainPtr->rbegin()[0] == &call &&
-       _eventChainPtr->rbegin()[1]._assignPoint == call._assignPoint ) {
-  }
-  _allocAccounting += tot;
+  call.completed(ctxt, _eventChainPtr);
 }
 
 EventHdlrState::~EventHdlrState()
+   // detaches from shared-ptr!
 {
-  EventCalled::printLog(_eventChainPtr);
 }
 
 EventCalled::EventCalled(const EventCallContext &ctxt, EventChainPtr_t const &nextChain, unsigned event)
@@ -156,16 +161,10 @@ EventCalled::pop_caller_record(const EventCallContext &ctxt)
 
   EventCalled *callerRec = nullptr;
 
-  auto i = curr.end();
+  auto i = curr.end() - 1;
 
-  // leaf call -> no further calls down
-  if ( ! curr.back()._intReturnedChainLen ) 
-  {
-    i = curr.end() - 1;
-    i->_intReturnedChainLen = len;
-  } 
   // caller/call -> return from prev. call
-  else if ( curr.back()._intReturnedChainLen == len ) 
+  if ( curr.back()._intReturnedChainLen == len ) 
   {
     // scan to shallowest just-completed call
     auto rev = std::find_if(curr.rbegin(), curr.rend(), 
@@ -174,7 +173,9 @@ EventCalled::pop_caller_record(const EventCallContext &ctxt)
     // rev-distance from rend() == ind of last non-match
     i = curr.begin() + ( curr.rend() - rev );
   } 
-  else {
+  // non-zero and not current??
+  else if ( curr.back()._intReturnedChainLen ) 
+  {
     Debug("conttrace","pop-call not-found: #%lu: (#%d>>) @%d<<,  ", len-1,
                 curr.back()._extCallerChainLen, 
                 curr.back()._intReturnedChainLen);
@@ -216,8 +217,15 @@ EventCalled::pop_caller_record(const EventCallContext &ctxt)
   Debug("conttrace","pop new-top  #%d[%lu]: %s %s %d [%d]",i->_extCallerChainLen-1, callerChainPtr->size(), ap2._kLabel,ap2._kFile,ap2._kLine, callerRec->_event);
 
   if ( ctxt._state ) {
-    ctxt._state->add_stats(*callerRec,ctxt);
+    if ( ! i->_intReturnedChainLen ) {
+      ctxt._state->add_stats_leaf(*callerRec,ctxt);
+    } else {
+      ctxt._state->add_stats(*callerRec,ctxt);
+    }
   }
+
+  // to be assured...
+  i->_intReturnedChainLen = len;
 
   if ( currPtr.use_count() == 1 ) {
      printLog(currPtr);
@@ -227,7 +235,7 @@ EventCalled::pop_caller_record(const EventCallContext &ctxt)
 }
 
 void
-EventCalled::completed(EventCallContext const &ctxt)
+EventCalled::completed(EventCallContext const &ctxt, const EventChainPtr_t &chain )
 {
   auto duration = std::chrono::steady_clock::now() - ctxt._start;
 

@@ -113,6 +113,8 @@ static constexpr auto kCtorValues = EventHdlrAssignRec{
                                        (__FILE__+0),
                                        __LINE__,
                                     nullptr,
+                                    nullptr,
+                                    nullptr,
                                     nullptr
                                 };
 
@@ -174,7 +176,6 @@ EventCallContext::EventCallContext(EventHdlrState &state, unsigned event)
   state.push_caller_record(*this, event);
 }
 
-
 EventCallContext::~EventCallContext()
 {
   // use back-refs to return the actual caller that's now complete
@@ -184,7 +185,8 @@ EventCallContext::~EventCallContext()
 int
 EventHdlrState::operator()(TSCont ptr, TSEvent event, void *data)
 {
-  return EventHdlrState::operator()(reinterpret_cast<Continuation*>(ptr),static_cast<TSEvent>(event), data);
+  EventCallContext _ctxt(*this,event);
+  return (*_assignPoint->_kWrapFunc_Gen())(ptr,event,data);
 }
 
 int

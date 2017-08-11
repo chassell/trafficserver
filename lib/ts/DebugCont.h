@@ -54,12 +54,20 @@ using EventChainPtr_t = std::shared_ptr<EventChain_t>;
 using EventChainWPtr_t = std::weak_ptr<EventChain_t>;
 using EventHdlr_t = const EventHdlrAssignRec *;
 
-using EventHdlrFxn_t       = int(Continuation *, int event, void *data);
-using EventHdlrFxnPtr_t    = EventHdlrFxn_t *;
 using EventHdlrMethodPtr_t = int (Continuation::*)(int event, void *data);
-using EventHdlrCompare_t    = bool(EventHdlrMethodPtr_t, EventHdlrFxnPtr_t);
-using EventHdlrFxnGen_t    = EventHdlrFxn_t*(void);
+using EventHdlrFxn_t       = int(Continuation *, int event, void *data);
+// using TSEventFuncSig = int(TSCont contp, TSEvent event, void *edata);
+
+using EventHdlrFxnPtr_t    = EventHdlrFxn_t *;
+// using TSEventFunc = = TSEventFuncSig *;
+
+using EventHdlrCompare_t    = bool(EventHdlrMethodPtr_t);
+using EventFuncCompare_t    = bool(TSEventFunc);
+
+using EventHdlrFxnGen_t    = EventHdlrFxnPtr_t(void);
+using TSEventFuncGen_t     = TSEventFunc(void);
 using EventHdlrCompareGen_t = EventHdlrCompare_t *(void);
+using EventFuncCompareGen_t = EventFuncCompare_t *(void);
 
 ///////////////////////////////////////////////////////////////////////////////////
 ///
@@ -68,38 +76,28 @@ struct EventHdlrAssignRec
 {
  public:
   template<typename T_FN, T_FN FXN>
-  struct gen_wrap_hdlr;
+  struct const_cb_callgen;
 
-  // SFINAE check that FXN constant can be converted to HdlrMethodPtr_t
-  template<typename T_FN, T_FN FXN>
-  inline static auto gen_equal_hdlr_test() -> 
-     decltype( reinterpret_cast<EventHdlrMethodPtr_t>(FXN), &std::declval<EventHdlrCompare_t>() )
+  struct const_cb_callgen_base
   {
-    // use first arg only
-    return [](EventHdlrMethodPtr_t method, EventHdlrFxnPtr_t fxn) {
-       return method && reinterpret_cast<EventHdlrMethodPtr_t>(FXN) == method;
-    };
-  }
-
-  // SFINAE check that FXN constant can be converted to HdlrFxnPtr_t
-  template<typename T_FN, T_FN FXN>
-  inline static auto gen_equal_hdlr_test(void) -> 
-     decltype( reinterpret_cast<EventHdlrFxnPtr_t>(FXN), &std::declval<EventHdlrCompare_t>() )
-  {
-    // use latter arg only
-    return [](EventHdlrMethodPtr_t method, EventHdlrFxnPtr_t fxn) {
-       return fxn && reinterpret_cast<EventHdlrFxnPtr_t>(FXN) == fxn;
-    };
-  }
+    static EventHdlrCompare_t *cmphdlr(void)
+      { return [](EventHdlrMethodPtr_t) -> bool { return false; }; }
+    static EventFuncCompare_t *cmpfunc(void)
+      { return [](TSEventFunc) -> bool { return false; }; }
+    static EventHdlrFxn_t *hdlr(void)
+      { return [](Continuation *, int, void *) { return 0; }; }
+    static TSEventFuncSig *func(void)
+      { return [](TSCont, TSEvent, void *) { return 0; }; }
+  };
 
  public:
   using Ptr_t = const EventHdlrAssignRec *;
   using Ref_t = const EventHdlrAssignRec &;
 
   bool operator!=(EventHdlrMethodPtr_t a) const 
-     { return ! _kEqualHdlr_Gen || ! _kEqualHdlr_Gen()(a,nullptr); }
-  bool operator!=(EventHdlrFxnPtr_t b) const 
-     { return ! _kEqualHdlr_Gen || ! _kEqualHdlr_Gen()(nullptr,b); }
+     { return ! _kEqualHdlr_Gen || ! _kEqualHdlr_Gen()(a); }
+  bool operator!=(TSEventFunc b) const 
+     { return ! _kEqualFunc_Gen || ! _kEqualFunc_Gen()(b); }
 
  public:
   const char *const _kLabel;   // at point of assign
@@ -107,8 +105,10 @@ struct EventHdlrAssignRec
   uint32_t    const _kLine:16; // at point of assign
 
   EventHdlrCompareGen_t *const _kEqualHdlr_Gen; // distinct method-pointer (not usable)
-  EventHdlrFxnGen_t     *const _kWrapHdlr_Gen; // ref to custom wrapper function-ptr callable 
+  EventFuncCompareGen_t *const _kEqualFunc_Gen; // distinct method-pointer (not usable)
 
+  EventHdlrFxnGen_t     *const _kWrapHdlr_Gen; // ref to custom wrapper function-ptr callable 
+  TSEventFuncGen_t      *const _kWrapFunc_Gen; // ref to custom wrapper function-ptr callable 
 };
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -135,7 +135,7 @@ class EventHdlrState
   }
 
   bool operator!=(TSEventFunc b) const {
-    return ! _assignPoint || *_assignPoint != reinterpret_cast<EventHdlrFxnPtr_t>(b);
+    return ! _assignPoint || *_assignPoint != reinterpret_cast<TSEventFunc>(b);
   }
 
   EventHdlrState &operator=(nullptr_t) 
@@ -168,12 +168,11 @@ class EventHdlrState
   int operator()(TSCont,TSEvent,void *data);
 
   void add_stats(EventCalled &call, const EventCallContext &ctxt);
+  void add_stats_leaf(EventCalled &call, const EventCallContext &ctxt);
 
 private:
   Ptr_t           _assignPoint = nullptr;
-  Ptr_t           _nextAssignPoint = nullptr;
   EventChainPtr_t _eventChainPtr;         // current stored "path"
-  int64_t        _allocAccounting{};
 };
 
 struct EventCallContext
@@ -192,9 +191,9 @@ struct EventCallContext
   uint64_t             &_allocCounterRef;
   uint64_t             &_deallocCounterRef;
 
-  uint64_t        const _allocStamp; // must init
-  uint64_t        const _deallocStamp; // must init
-  time_point            _start = steady_clock::now();
+  uint64_t        const _allocStamp;
+  uint64_t        const _deallocStamp;
+  time_point      const _start = steady_clock::now();
 
   // on stack (or as a member)
   void *operator new(const std::size_t) = delete; 
@@ -211,7 +210,7 @@ struct EventCalled
   static void printLog(const EventChainPtr_t &chainPtr);
   
   // fill in deltas
-  void completed(const EventCallContext &ctxt);
+  void completed(const EventCallContext &ctxt, const EventChainPtr_t &chain);
 
   // upon ctor
   EventHdlr_t               _assignPoint = nullptr;   // CB dispatched (null if for ctor)
@@ -254,13 +253,15 @@ struct EventCalled
 #define EVENT_HANDLER_RECORD(_h, name) \
      using decay_t = typename std::decay<decltype(_h)>::type; \
      static constexpr auto name =                          \
-                     EventHdlrAssignRec{                   \
+                    EventHdlrAssignRec{                   \
                        ((#_h)+0),                          \
                        (__FILE__+0),                       \
                        __LINE__,                           \
-                      &EventHdlrAssignRec::gen_equal_hdlr_test<decay_t,(_h)>,  \
-                      &EventHdlrAssignRec::gen_wrap_hdlr<decay_t,(_h)>::fxn       \
-                     }
+                      &EventHdlrAssignRec::const_cb_callgen<decay_t,(_h)>::cmphdlr,  \
+                      &EventHdlrAssignRec::const_cb_callgen<decay_t,(_h)>::cmpfunc,  \
+                      &EventHdlrAssignRec::const_cb_callgen<decay_t,(_h)>::hdlr, \
+                      &EventHdlrAssignRec::const_cb_callgen<decay_t,(_h)>::func \
+                    }
 
 // define null as "caller" context... and set up next one
 #define SET_NEXT_HANDLER_RECORD(_h)                   \
@@ -269,9 +270,15 @@ struct EventCalled
 
 // standard Continuation handler signature(s)
 template<class T_OBJ, typename T_ARG, int(T_OBJ::*FXN)(int,T_ARG)>
-struct EventHdlrAssignRec::gen_wrap_hdlr<int(T_OBJ::*)(int,T_ARG),FXN>
+struct EventHdlrAssignRec::const_cb_callgen<int(T_OBJ::*)(int,T_ARG),FXN>
+   : public const_cb_callgen_base
 {
-  static EventHdlrFxn_t *fxn(void)
+  static EventHdlrCompare_t *cmphdlr(void) {
+    return [](EventHdlrMethodPtr_t method) { 
+      return reinterpret_cast<EventHdlrMethodPtr_t>(FXN) == method; 
+    };
+  }
+  static EventHdlrFxn_t *hdlr(void)
   {
     return [](Continuation *self, int event, void *arg) {
        return (static_cast<T_OBJ*>(self)->*FXN)(event, static_cast<T_ARG>(arg));
@@ -309,38 +316,43 @@ struct EventHdlrAssignRec::gen_wrap_hdlr<int(T_OBJ::*)(int,T_ARG),FXN>
 
 // standard TSAPI event handler signature
 template <TSEventFunc FXN>
-struct EventHdlrAssignRec::gen_wrap_hdlr<TSEventFunc,FXN>
+struct EventHdlrAssignRec::const_cb_callgen<TSEventFunc,FXN>
+   : public const_cb_callgen_base
 {
-  static EventHdlrFxn_t *fxn(void)
-  {
-    return [](Continuation *self, int event, void *data) {
-       return (*FXN)(reinterpret_cast<TSCont>(self), static_cast<TSEvent>(event), data);
-     };
+  static EventFuncCompare_t *cmpfunc(void) {
+    return [](TSEventFunc fxn) { return FXN == fxn; };
   }
-};
-
-// standard TSAPI thread init signature
-template<TSThreadFunc FXN>
-struct EventHdlrAssignRec::gen_wrap_hdlr<TSThreadFunc,FXN>
-{
-  static EventHdlrFxn_t *fxn(void)
+  static TSEventFuncSig *func(void)
   {
-    return [](Continuation *self, int event, void *data) {
-      return 0;  // never used
-    };
+    return [](TSCont cont, TSEvent event, void *data) {
+       return (*FXN)(cont,event,data);
+     };
   }
 };
 
 // extra case that showed up
 template <void(*FXN)(TSCont,TSEvent,void *data)>
-struct EventHdlrAssignRec::gen_wrap_hdlr<void(*)(TSCont,TSEvent,void *data),FXN>
+struct EventHdlrAssignRec::const_cb_callgen<void(*)(TSCont,TSEvent,void *data),FXN>
+   : public const_cb_callgen_base
 {
-  static EventHdlrFxn_t *fxn(void)
+  static EventFuncCompare_t *cmpfunc(void) {
+    return [](TSEventFunc fxn) { 
+      return reinterpret_cast<TSEventFunc>(FXN) == fxn; 
+    };
+  }
+  static TSEventFuncSig *func(void)
   {
-    return [](Continuation *self, int event, void *data) {
-       return (*FXN)(reinterpret_cast<TSCont>(self), static_cast<TSEvent>(event), data),0;
+    return [](TSCont cont, TSEvent event, void *data) {
+       (*FXN)(cont,event,data);
+       return 0;
      };
   }
+};
+
+template <TSThreadFunc FXN>
+struct EventHdlrAssignRec::const_cb_callgen<TSThreadFunc,FXN>
+   : public const_cb_callgen_base
+{
 };
 
 #endif
