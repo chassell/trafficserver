@@ -36,144 +36,209 @@
 
 #include <chrono>
 #include <string>
+#include <algorithm>
 
 ///////////////////////////////////////////////
 // Common Interface impl                     //
 ///////////////////////////////////////////////
 
-void EventHdlrAssignGrp::printLog(void *ptr, EventHdlrLogPtr logPtr, EventHdlrChainPtr chainPtr)
+void EventCalled::printLog(EventChainPtr_t const &chainPtr)
 {
-  unsigned len = static_cast<unsigned>(logPtr->size());
+  ptrdiff_t len = chainPtr->size();
 
-  ink_release_assert( len == chainPtr->size() );
-
-  for( unsigned i = 0 ; i < len ; ++i )
+  for( auto &&call : *chainPtr )
   {
-     auto &stats = (*logPtr)[i];
-     auto &id = (*chainPtr)[i];
+    auto i = &call - &*chainPtr->begin(); 
 
-     const char *units = ( stats._delay >= 10000 ? "ms" : "us" ); 
-     float div = ( stats._delay >= 10000 ? 1000.0 : 1.0 ); 
+    const char *units = ( call._delay >= 10000 ? "ms" : "us" ); 
+    float div = ( call._delay >= 10000 ? 1000.0 : 1.0 ); 
 
-     EventHdlrAssignRec::Ptr_t recp = id; // convert
-     if ( ! recp ) {
-       Debug("conttrace","%p:%05u[[ +%9ld -%9ld %5f%s unkn: %d/%d]",
-             ptr, id._event, stats._allocDelta, stats._deallocDelta, stats._delay / div, units, id._assignID, id._assignGrpID);
-       continue;
+    const EventHdlrAssignRec &rec = *call._assignPoint;
+
+    if ( ! call._allocDelta && ! call._deallocDelta ) {
+      continue;
+    }
+
+    const char *e = ( len == 1 ? "  " 
+                  : i == len-1 ? "~~" 
+                        : ! i ? "!!" 
+                              : "##" );
+
+    const char *debug = "conttrace";
+    std::string label = rec._kLabel;
+
+    do {
+     auto colon = label.rfind("::");
+     if ( colon != label.npos ) { 
+       label.erase(colon); // to the end
      }
 
-     if ( ! stats._allocDelta && ! stats._deallocDelta ) {
-        continue;
+     auto amp = label.rfind('&');
+     if ( amp == label.npos ) {
+       break;
      }
 
-     const char *e = ( len == 1 ? "  " 
-                    : i == len-1 ? "~~" 
-                          : ! i ? "!!" 
-                                : "##" );
- 
+     label.erase(0,amp+1); // from the start
+     label.insert(0,"cont_");
+     debug = label.c_str();
+    } while(false);
 
-     const EventHdlrAssignRec &rec = *recp;
-     const char *debug = "conttrace";
-     std::string label = rec._label;
+    if ( len == 1 ) 
+    {
+      Debug(debug,"                 :%05u[ +%9d -%9d ~%5f%s callback %s] [%s:%d]",
+                                     call._event, call._allocDelta, call._deallocDelta, call._delay / div, units, rec._kLabel, rec._kFile, rec._kLine);
+      continue;
+    }
 
-     do {
-       auto colon = label.rfind("::");
-       if ( colon != label.npos ) { 
-         label.erase(colon); // to the end
-       }
-
-       auto amp = label.rfind('&');
-       if ( amp == label.npos ) {
-         break;
-       }
-
-       label.erase(0,amp+1); // from the start
-       label.insert(0,"cont_");
-       debug = label.c_str();
-     } while(false);
-
-
-     if ( len == 1 ) 
-     {
-       Debug(debug,"                 :%05u[ +%9ld -%9ld ~%5f%s callback %s] [%s:%d]",
-                                       id._event, stats._allocDelta, stats._deallocDelta, stats._delay / div, units, rec._label, rec._file, rec._line);
-       continue;
-     }
-
-     Debug(debug,"%s(%u) %p:%05u[ +%9ld -%9ld ~%5f%s callback %s] [%s:%d]",
-             e, i, ptr, id._event, stats._allocDelta, stats._deallocDelta, stats._delay / div, units, rec._label, rec._file, rec._line);
+    Debug(debug,"%s(%ld) %05u[ +%9d -%9d ~%5f%s callback %s] [%s:%d]",
+           e, i, call._event, call._allocDelta, call._deallocDelta, call._delay / div, units, rec._kLabel, rec._kFile, rec._kLine);
   }
 }
 
-void EventHdlrAssignRec::set() const
+void EventHdlrState::push_caller_record(const EventCallContext &ctxt, unsigned event) const
 {
-  // assign to Thread field
+  _eventChainPtr->push_back( EventCalled{ctxt, _eventChainPtr, event} );
 }
 
-int
-EventHdlrState::operator()(TSCont ptr, TSEvent event, void *data)
+void EventHdlrState::add_stats(EventCalled &call, const EventCallContext &ctxt)
 {
-  return EventHdlrState::operator()(reinterpret_cast<Continuation*>(ptr),static_cast<TSEvent>(event), data);
+  call.completed(ctxt);
+  auto tot = call._allocDelta - call._deallocDelta;
+
+  if ( ! tot && 
+       &_eventChainPtr->rbegin()[0] == &call &&
+       _eventChainPtr->rbegin()[1]._assignPoint == call._assignPoint ) {
+  }
+  _allocAccounting += tot;
 }
 
-int
-EventHdlrState::operator()(Continuation *self,int event, void *data)
+EventHdlrState::~EventHdlrState()
 {
-  void *ptr = self;
+  EventCalled::printLog(_eventChainPtr);
+}
 
-  auto logPtr = ( _handlerLogPtr ? : std::make_shared<EventHdlrLog>() );
-  auto chainPtr = ( _handlerChainPtr ? : std::make_shared<EventHdlrChain>() );
-  auto &log = *logPtr;
-  auto &chain = *chainPtr;
-  auto &cbrec = *_handlerRec;
-
-  auto called = std::chrono::steady_clock::now();
-
-  auto alloced = jemallctl::alloc_bytes_count();
-  auto dealloced = jemallctl::dealloc_bytes_count()b;
-
-  auto r = (*cbrec._wrapHdlr_Gen())(self,event,data);
-
-  auto duration = std::chrono::steady_clock::now() - called;
-  float span = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
-
-  EventHdlrLogRec stats{ *jemallctl::thread_allocatedp() - alloced,
-                         *jemallctl::thread_deallocatedp() - dealloced,
-                         span
-                       };
-  
-  EventHdlrID id{
-                  cbrec.id(),
-                  cbrec.grpid(),
-                  static_cast<unsigned>(event)
-               };
-
-  log.push_back(stats);
-  chain.push_back(id);
-
-  // deleted continuation?  call a printer to log it / compile it
-  if ( logPtr.use_count() > 1 ) {
-    return r;
+EventCalled::EventCalled(const EventCallContext &ctxt, EventChainPtr_t const &nextChain, unsigned event)
+   : _assignPoint(ctxt._assignPoint), // callee info
+     _extCallerChain(),               // dflt
+     _event(event),
+     _extCallerChainLen(ctxt._currentCallChain ? ctxt._currentCallChain->size() : 0) // caller info (for backtrack)
+{
+  // no change needed
+  if ( ctxt._currentCallChain == nextChain ) {
+    Debug("conttrace","push-call#%lu: %s %s %d [%d]",nextChain->size(),_assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine, event);
+    return;
   }
 
-  cbrec._assignGrp.printLog(ptr,std::move(logPtr), std::move(chainPtr));
-  return r;
+  // create new refcount-copy
+  auto toswap = nextChain; 
+
+  // [ NOTE: minimizes refcount chks ]
+
+  _extCallerChain.swap(toswap);
+  _extCallerChain.swap(ctxt._currentCallChain);
+
+  Debug("conttrace","push-swap-call[#%lu->#%lu]: %s %s %d [%d]",( _extCallerChain ? _extCallerChain->size() : -1 ),ctxt._currentCallChain->size(),
+                 _assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine, event);
+
+  // this->_currentCallChain == prev toswap
+  //       c._extCallerChain == prev this->_currentCallChain 
+  //                  toswap == prev c._extCallerChain 
 }
 
-EventHdlrState()
-    : _eventChainPtr( std::make_shared<EventHdlrChain>() )
+EventCalled *
+EventCalled::pop_caller_record(const EventCallContext &ctxt)
 {
-  _eventChainPtr->reserve(16); // add some room
-  _eventChainPtr->emplace_back{ 
-  
+  auto currPtr = ctxt._currentCallChain; // save a copy
+  auto &curr = *currPtr;
+  auto len = curr.size();
+
+  ink_assert( currPtr->size() );
+
+  EventCalled *callerRec = nullptr;
+
+  auto i = curr.end();
+
+  // leaf call -> no further calls down
+  if ( ! curr.back()._intReturnedChainLen ) 
+  {
+    i = curr.end() - 1;
+    i->_intReturnedChainLen = len;
+  } 
+  // caller/call -> return from prev. call
+  else if ( curr.back()._intReturnedChainLen == len ) 
+  {
+    // scan to shallowest just-completed call
+    auto rev = std::find_if(curr.rbegin(), curr.rend(), 
+                             [len](EventCalled &c){ return c._intReturnedChainLen != len; });
+    // rev-distance from rend() == ind+1 of first match (or 0 if none)
+    // rev-distance from rend() == ind of last non-match
+    i = curr.begin() + ( curr.rend() - rev );
+  } 
+  else {
+    Debug("conttrace","pop-call not-found: #%lu: (#%d>>) @%d<<,  ", len-1,
+                curr.back()._extCallerChainLen, 
+                curr.back()._intReturnedChainLen);
+    return nullptr; // unclear why final return index is off!
+  }
+
+  ptrdiff_t ith = i - curr.begin();
+
+  // caller was outside all call chains?
+  if ( ! i->_extCallerChainLen ) 
+  {
+    i->_intReturnedChainLen = currPtr->size(); // save return-point call chain length
+
+    // next context is empty
+    ctxt._currentCallChain.reset();
+
+    auto &ap = *i->_assignPoint;
+
+    Debug("conttrace","pop-top #%ld[%lu]: %s %s %d [%d]",ith, curr.size(), ap._kLabel,ap._kFile,ap._kLine, i->_event);
+
+    if ( currPtr.use_count() == 1 ) {
+      printLog(currPtr);
+    }
+
+    return nullptr; // no caller record to examine
+  }
+
+  auto callerChainPtr = ( i->_extCallerChain ? i->_extCallerChain  // chain-external caller made call
+                                             : currPtr );          // chain-internal caller made call
+  callerRec = &(*callerChainPtr)[i->_extCallerChainLen];
+  callerRec->_intReturnedChainLen = callerChainPtr->size(); // save return-point call chain length
+
+  // pop back to earlier context (maybe null)
+  ctxt._currentCallChain = callerChainPtr;
+
+  auto &ap = *i->_assignPoint;
+  auto &ap2 = *callerRec->_assignPoint;
+  Debug("conttrace","pop prev-top #%ld[%lu]: %s %s %d [%d]",ith, curr.size(),  ap._kLabel,ap._kFile,ap._kLine, i->_event);
+  Debug("conttrace","pop new-top  #%d[%lu]: %s %s %d [%d]",i->_extCallerChainLen-1, callerChainPtr->size(), ap2._kLabel,ap2._kFile,ap2._kLine, callerRec->_event);
+
+  if ( ctxt._state ) {
+    ctxt._state->add_stats(*callerRec,ctxt);
+  }
+
+  if ( currPtr.use_count() == 1 ) {
+     printLog(currPtr);
+  }
+
+  return callerRec;
 }
 
-EventCallContext::EventCallContext(EventHdlr_t next)
-   : _nextHdlrRec(next)
+void
+EventCalled::completed(EventCallContext const &ctxt)
 {
+  auto duration = std::chrono::steady_clock::now() - ctxt._start;
+
+  _delay = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
+
+  if ( ! _delay ) {
+    _delay = FLT_MIN;
+  }
+
+  // NOTE: uses this_thread() to get ptrs fast
+  _allocDelta = ctxt._allocCounterRef - ctxt._allocStamp;
+  _deallocDelta = ctxt._deallocCounterRef - ctxt._deallocStamp;
 }
 
-EventCallContext::~EventCallContext()
-{
-
-}

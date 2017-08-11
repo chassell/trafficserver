@@ -53,9 +53,6 @@ Thread::set_specific()
   ink_thread_setspecific(Thread::thread_data_key, this);
 
   tid = ink_thread_self();
-
-  _allocTotalP = &alloc_bytes_count_direct();
-  _deallocTotalP = &dealloc_bytes_count_direct();
 }
 
 TS_INLINE Thread *

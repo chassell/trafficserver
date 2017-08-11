@@ -220,8 +220,7 @@ private:
 
 
 inline Continuation::Continuation(ProxyMutex *amutex) 
-   : 
-    mutex(amutex)
+   : mutex(amutex)
 {
   // Pick up the control flags from the creating thread
   this->control_flags.set_flags(get_cont_flags().get_flags());

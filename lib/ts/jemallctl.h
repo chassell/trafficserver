@@ -92,9 +92,6 @@ extern const SetObjFxn<bool> set_thread_prof_active;
 
 extern const GetObjFxn<bool> thread_prof_active;
 extern const SetObjFxn<bool> set_thread_prof_active;
-
-uint64_t alloc_bytes_count();
-uint64_t dealloc_bytes_count();
 }
 
 #endif // _JEMALLCTL_H

@@ -47,6 +47,7 @@
 struct Continuation;
 struct EventHdlrAssignRec;
 struct EventCalled;
+struct EventCallContext;
 
 using EventChain_t = std::vector<EventCalled>;
 using EventChainPtr_t = std::shared_ptr<EventChain_t>;
@@ -65,19 +66,7 @@ using EventHdlrCompareGen_t = EventHdlrCompare_t *(void);
 ///////////////////////////////////////////////////////////////////////////////////
 struct EventHdlrAssignRec 
 {
-  using Ptr_t = const EventHdlrAssignRec *;
-  using Ref_t = const EventHdlrAssignRec &;
-
-  const char *const _label;   // at point of assign
-  const char *const _file;    // at point of assign
-  uint32_t    const _line:16; // at point of assign
-
-  const EventHdlrCompareGen_t *_equalHdlr_Gen; // distinct method-pointer (not usable)
-  const EventHdlrFxnGen_t     *_wrapHdlr_Gen; // ref to custom wrapper function-ptr callable 
-
-public:
-  void set() const;
-
+ public:
   template<typename T_FN, T_FN FXN>
   struct gen_wrap_hdlr;
 
@@ -103,10 +92,23 @@ public:
     };
   }
 
+ public:
+  using Ptr_t = const EventHdlrAssignRec *;
+  using Ref_t = const EventHdlrAssignRec &;
+
   bool operator!=(EventHdlrMethodPtr_t a) const 
-     { return ! _equalHdlr_Gen || ! _equalHdlr_Gen()(a,nullptr); }
+     { return ! _kEqualHdlr_Gen || ! _kEqualHdlr_Gen()(a,nullptr); }
   bool operator!=(EventHdlrFxnPtr_t b) const 
-     { return ! _equalHdlr_Gen || ! _equalHdlr_Gen()(nullptr,b); }
+     { return ! _kEqualHdlr_Gen || ! _kEqualHdlr_Gen()(nullptr,b); }
+
+ public:
+  const char *const _kLabel;   // at point of assign
+  const char *const _kFile;    // at point of assign
+  uint32_t    const _kLine:16; // at point of assign
+
+  EventHdlrCompareGen_t *const _kEqualHdlr_Gen; // distinct method-pointer (not usable)
+  EventHdlrFxnGen_t     *const _kWrapHdlr_Gen; // ref to custom wrapper function-ptr callable 
+
 };
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -114,30 +116,31 @@ public:
 ///////////////////////////////////////////////////////////////////////////////////
 class EventHdlrState 
 {
+ public:
   using Ptr_t = EventHdlr_t;
   using Ref_t = EventHdlrAssignRec::Ref_t;
 
-  Ptr_t         _handlerRec = nullptr; // (cause to change upon first use)
-  EventChainPtr_t _eventChainPtr;      // current stored "path"
-
-public:
+ public:
   EventHdlrState();
+  ~EventHdlrState();
 
-  int operator()(Continuation *self,int event,void *data);
-  int operator()(TSCont,TSEvent,void *data);
+  operator EventHdlr_t() 
+  {
+    return _assignPoint;
+  }
 
   template <class T_OBJ, typename T_ARG>
   bool operator!=(int(T_OBJ::*a)(int,T_ARG)) const {
-    return ! _handlerRec || *_handlerRec != reinterpret_cast<EventHdlrMethodPtr_t>(a);
+    return ! _assignPoint || *_assignPoint != reinterpret_cast<EventHdlrMethodPtr_t>(a);
   }
 
   bool operator!=(TSEventFunc b) const {
-    return ! _handlerRec || *_handlerRec != reinterpret_cast<EventHdlrFxnPtr_t>(b);
+    return ! _assignPoint || *_assignPoint != reinterpret_cast<EventHdlrFxnPtr_t>(b);
   }
 
   EventHdlrState &operator=(nullptr_t) 
   {
-    _handlerRec = nullptr;
+    _assignPoint = nullptr;
     return *this;
   }
 
@@ -148,16 +151,29 @@ public:
   // class method-pointer full args
   EventHdlrState &operator=(Ptr_t &prev)
   {
-    _handlerRec = prev;
+    _assignPoint = prev;
     return *this;
   }
 
   // class method-pointer full args
   EventHdlrState &operator=(Ref_t cbAssign)
   {
-    _handlerRec = &cbAssign;
+    _assignPoint = &cbAssign;
     return *this;
   }
+
+  void push_caller_record(const EventCallContext &ctxt, unsigned event) const;
+
+  int operator()(Continuation *self,int event,void *data);
+  int operator()(TSCont,TSEvent,void *data);
+
+  void add_stats(EventCalled &call, const EventCallContext &ctxt);
+
+private:
+  Ptr_t           _assignPoint = nullptr;
+  Ptr_t           _nextAssignPoint = nullptr;
+  EventChainPtr_t _eventChainPtr;         // current stored "path"
+  int64_t        _allocAccounting{};
 };
 
 struct EventCallContext
@@ -167,14 +183,21 @@ struct EventCallContext
 
   // explicitly define a "called" record.. and *maybe* a call-context too
   EventCallContext(EventHdlr_t next = nullptr);
+  EventCallContext(EventHdlrState &state, unsigned event);
   ~EventCallContext();
 
-  EventHdlr_t  _calledHdlrRec = nullptr;
-  uint64_t     _allocCounter = jemallctl::alloc_bytes_count();
-  uint64_t     _deallocCounter = jemallctl::dealloc_bytes_count();
-  time_point   _start = steady_clock::now();
+  EventHdlr_t     const _assignPoint;
+  EventHdlrState* const _state = nullptr;
+  EventChainPtr_t      &_currentCallChain;
+  uint64_t             &_allocCounterRef;
+  uint64_t             &_deallocCounterRef;
 
-  EventHdlr_t  _nextHdlrRec = nullptr;
+  uint64_t        const _allocStamp; // must init
+  uint64_t        const _deallocStamp; // must init
+  time_point            _start = steady_clock::now();
+
+  // on stack (or as a member)
+  void *operator new(const std::size_t) = delete; 
 };
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -182,34 +205,37 @@ struct EventCallContext
 ///////////////////////////////////////////////////////////////////////////////////
 struct EventCalled
 {
-  EventCalled(EventHdlr_t cb, unsigned event, const EventChain_t &callerChain);
+  EventCalled(const EventCallContext &ctxt, EventChainPtr_t const &toswap, unsigned event = 0);
+  static EventCalled *pop_caller_record(const EventCallContext &done);
+
+  static void printLog(const EventChainPtr_t &chainPtr);
   
   // fill in deltas
   void completed(const EventCallContext &ctxt);
 
   // upon ctor
-  EventHdlr_t               _assignPoint;         // CB dispatched (null if for ctor)
+  EventHdlr_t               _assignPoint = nullptr;   // CB dispatched (null if for ctor)
 
   // upon ctor
-  EventChainPtr_t           _extCallerChain;      // ext chain for caller (null if internal)
-                                                  // NOTE: use to switch back upon return
+  EventChainPtr_t           _extCallerChain;          // ext chain for caller (null if internal)
+                                                      // NOTE: use to switch back upon return
 
   // upon ctor
-  unsigned int              _event:16;            // specific event-int used on CB
+  uint16_t                  _event = 0;            // specific event-int used on CB
 
   // upon ctor
-  unsigned int              _extCallerChainEnd:8; // extern caller's chain-size upon entry (or local)
+  uint8_t                   _extCallerChainLen = 0; // extern caller's chain-size upon entry (or local)
 
   // upon return
-  unsigned int              _intReturnChainEnd:8; // local chain-size upon final CB return
+  uint8_t                   _intReturnedChainLen = 0; // local chain-size upon final CB return
 
   // upon return
-  size_t                    _allocDelta:32;       // actual delta upon return
+  uint32_t                  _allocDelta = 0;       // actual delta upon return
   // upon return
-  size_t                    _deallocDelta:32;     // actual delta upon return
+  uint32_t                  _deallocDelta = 0;     // actual delta upon return
 
   // upon return
-  float                     _delay;               // total lapsed time
+  float                     _delay = 0;               // total lapsed time [0.0 only if incomplete]
 };
 
 // 

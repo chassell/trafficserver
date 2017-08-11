@@ -154,11 +154,6 @@ public:
   ProxyAllocator ioAllocator;
   ProxyAllocator ioBlockAllocator;
 
-  static inline uint64_t &alloc_bytes_count();
-  static inline uint64_t &dealloc_bytes_count();
-
-  bool swap_call_chains(EventChainPtr_t *toswap); 
-
 private:
   // prevent unauthorized copies (Not implemented)
   Thread(const Thread &);
@@ -190,12 +185,6 @@ public:
   */
   static ink_hrtime get_hrtime_updated();
 
-  static uint64_t &alloc_bytes_count_direct();
-  static uint64_t &dealloc_bytes_count_direct();
-
-  uint64_t *_allocTotalP = nullptr;
-  uint64_t *_deallocTotalP = nullptr;
-
   EventChainPtr_t   _currentCallChain;
 };
 
@@ -212,16 +201,5 @@ Thread::get_hrtime_updated()
 {
   return cur_time = ink_get_hrtime_internal();
 }
-
-inline uint64_t &Thread::alloc_bytes_count() {
-  auto t = this_thread(); 
-  return ( t ? *t->_allocTotalP : alloc_bytes_count_direct() );
-}
-
-inline uint64_t &Thread::dealloc_bytes_count() {
-  auto t = this_thread(); 
-  return ( t ? *t->_deallocTotalP : dealloc_bytes_count_direct() );
-}
-
 
 #endif /*_I_Thread_h*/
