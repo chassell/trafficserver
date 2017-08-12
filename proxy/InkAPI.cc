@@ -918,6 +918,9 @@ FileImpl::fgets(char *buf, int length)
 //
 ////////////////////////////////////////////////////////////////////
 
+LOG_SKIPPABLE_EVENTHDLR(&INKContInternal::handle_event);
+LOG_SKIPPABLE_EVENTHDLR(&INKVConnInternal::handle_event);
+
 INKContInternal::INKContInternal()
   : DummyVConnection(NULL),
     mdata(NULL),

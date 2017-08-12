@@ -33,6 +33,8 @@ ink_hrtime last_transient_accept_error;
 
 extern "C" void fd_reify(struct ev_loop *);
 
+LOG_SKIPPABLE_EVENTHDLR((NetContHandler)&NetHandler::mainNetEvent);
+
 #ifndef INACTIVITY_TIMEOUT
 int update_cop_config(const char *name, RecDataT data_type, RecData data, void *cookie);
 

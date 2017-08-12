@@ -167,8 +167,6 @@ class EventHdlrState
   int operator()(Continuation *self,int event,void *data);
   int operator()(TSCont,TSEvent,void *data);
 
-  void add_stats(EventCalled &call, const EventCallContext &ctxt);
-  void add_stats_leaf(EventCalled &call, const EventCallContext &ctxt);
 
 private:
   Ptr_t           _assignPoint = nullptr;
@@ -207,10 +205,11 @@ struct EventCalled
   EventCalled(const EventCallContext &ctxt, EventChainPtr_t const &toswap, unsigned event = 0);
   static EventCalled *pop_caller_record(const EventCallContext &done);
 
-  static void printLog(const EventChainPtr_t &chainPtr);
+  static void printLog(const EventChainPtr_t &chainPtr, char const *const msg);
   
   // fill in deltas
   void completed(const EventCallContext &ctxt, const EventChainPtr_t &chain);
+  void trim_call(const EventChainPtr_t &chain);
 
   // upon ctor
   EventHdlr_t               _assignPoint = nullptr;   // CB dispatched (null if for ctor)
@@ -286,6 +285,11 @@ struct EventHdlrAssignRec::const_cb_callgen<int(T_OBJ::*)(int,T_ARG),FXN>
   }
 };
 
+#define LOG_SKIPPABLE_EVENTHDLR(_h) \
+  template <>                                                               \
+  EventHdlrCompare_t *EventHdlrAssignRec::const_cb_callgen<decltype(_h),(_h)>::cmphdlr() \
+     { return nullptr; }
+
 #endif // _I_DebugCont_h_
 
 ////////////////////////////////////////////////////////////////////////
@@ -348,6 +352,7 @@ struct EventHdlrAssignRec::const_cb_callgen<void(*)(TSCont,TSEvent,void *data),F
      };
   }
 };
+
 
 template <TSThreadFunc FXN>
 struct EventHdlrAssignRec::const_cb_callgen<TSThreadFunc,FXN>

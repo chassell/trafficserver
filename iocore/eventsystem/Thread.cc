@@ -62,6 +62,7 @@ ink_thread_key
 init_thread_key()
 {
   ink_thread_key_create(&Thread::thread_data_key, key_destructor);
+  ink_thread_setspecific(Thread::thread_data_key, nullptr);
   return Thread::thread_data_key;
 }
 
@@ -108,20 +109,14 @@ Thread::start(const char *name, size_t stacksize, ThreadFunction f, void *a)
   return tid;
 }
 
-static constexpr auto kCtorValues = EventHdlrAssignRec{
-                                       "EventHdlrState::EventHdlrState",
-                                       (__FILE__+0),
-                                       __LINE__,
-                                    nullptr,
-                                    nullptr,
-                                    nullptr,
-                                    nullptr
-                                };
+EVENT_HANDLER_RECORD(&Continuation::handleEvent, kCtorValues);
 
 EventHdlrState::EventHdlrState()
    : _assignPoint( &kCtorValues )
 {
-  auto &currChainPtr = this_thread()->_currentCallChain;
+  EventChainPtr_t dummy;
+  auto *currChainP = ( Thread::thread_data_key && this_thread() ? &this_thread()->_currentCallChain : &dummy );
+  auto &currChainPtr = *currChainP;
   auto chainRefs = currChainPtr.use_count();
 
   // not normal case? clean?
@@ -160,7 +155,7 @@ EventCallContext::EventCallContext(EventHdlr_t assignPoint)
 
   // swap temp chain to current
   chain->push_back( EventCalled{*this, chain} );
-  Debug("conttrace","init-chain: %s %s %d", assignPoint->_kLabel, assignPoint->_kFile, assignPoint->_kLine);
+  Debug("conttrace","init-only-call: %s %s %d", assignPoint->_kLabel, assignPoint->_kFile, assignPoint->_kLine);
 }
 
 EventCallContext::EventCallContext(EventHdlrState &state, unsigned event)
