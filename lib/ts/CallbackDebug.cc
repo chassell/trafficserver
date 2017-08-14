@@ -28,7 +28,7 @@
 
 
 **************************************************************************/
-#include "ts/DebugCont.h"
+#include "ts/CallbackDebug.h"
 
 #include "ts/jemallctl.h"
 #include "ts/ink_assert.h"

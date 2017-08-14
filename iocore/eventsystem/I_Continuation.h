@@ -36,7 +36,7 @@
 #ifndef _I_Continuation_h_
 #define _I_Continuation_h_
 
-#include "ts/DebugCont.h"
+#include "ts/CallbackDebug.h"
 
 #include "ts/ink_platform.h"
 #include "ts/List.h"

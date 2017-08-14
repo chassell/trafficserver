@@ -72,7 +72,7 @@
 
 #include <functional>
 
-#include "ts/DebugCont.h"
+#include "ts/CallbackDebug.h"
 #include "ts/ink_platform.h"
 #include "ts/ink_thread.h"
 

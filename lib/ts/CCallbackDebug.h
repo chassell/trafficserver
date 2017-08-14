@@ -39,41 +39,27 @@
 
 #include "ts/apidefs.h"
 
-#define MAX_ASSIGN_COUNTER   60
-
-typedef struct EventCHdlrAssignGrp EventCHdlrAssignGrp_t;
-
 typedef struct EventCHdlrAssignRec EventCHdlrAssignRec_t;
 typedef const struct EventCHdlrAssignRec *EventCHdlrAssignRecPtr_t;
 
 struct EventCHdlrAssignRec
 {
-  const EventCHdlrAssignGrp_t *_assignGrp; // static-global for compile
-  const char                      *_label;           // at point of assign
-  const char                      *_file;            // at point of assign
-  uint32_t                        _line:20;         // at point of assign
-  uint32_t                        _assignID:8;      // unique for each in compile-object
+  const char                      *_kLabel;           // at point of assign
+  const char                      *_kFile;            // at point of assign
+  uint32_t                        _kLine:20;         // at point of assign
   const TSEventFunc               _callback;
 };
-
-struct EventCHdlrAssignGrp
-{
-  EventCHdlrAssignRecPtr_t _assigns[MAX_ASSIGN_COUNTER];
-  unsigned int          _id;
-};
-
-static EventCHdlrAssignGrp_t s_fileAssignGrp = { { (void*)0 }, 0 };
 
 #define STATIC_C_HANDLER_RECORD(_h, name) \
      static const EventCHdlrAssignRec_t name = \
                      {                        \
-                       &s_fileAssignGrp,      \
                        ((#_h)+0),             \
                        (__FILE__+0),          \
                        __LINE__,              \
-                       __COUNTER__,           \
                        (_h)                   \
                      }
+
+#ifndef __cplusplus
 
 #define TSThreadCreate(func,data)                              \
             ({                                                 \
@@ -99,5 +85,6 @@ static EventCHdlrAssignGrp_t s_fileAssignGrp = { { (void*)0 }, 0 };
                STATIC_C_HANDLER_RECORD((func),kHdlrAssignRec); \
                TSVConnCreate(func,mutexp);                     \
              })
+#endif
 
 #endif

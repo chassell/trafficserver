@@ -37,6 +37,7 @@
 #define _I_DebugCont_h_
 
 #include "ts/apidefs.h"
+#include "ts/CCallbackDebug.h"
 
 #include <vector>
 #include <memory>
@@ -293,7 +294,7 @@ struct EventHdlrAssignRec::const_cb_callgen<int(T_OBJ::*)(int,T_ARG),FXN>
 #endif // _I_DebugCont_h_
 
 ////////////////////////////////////////////////////////////////////////
-#if defined(__TS_API_H__) && ! defined(_I_DebugCont_TSAPI_)
+#if defined(__cplusplus) && defined(__TS_API_H__) && ! defined(_I_DebugCont_TSAPI_)
 #define _I_DebugCont_TSAPI_
 
 #define TSThreadCreate(func,data)                              \
