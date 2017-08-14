@@ -471,6 +471,9 @@ DNSHandler::validate_ip()
     }
   }
 }
+
+LOG_SKIPPABLE_EVENTHDLR(&DNSHandler::mainEvent);
+
 /**
   Initial state of the DNSHandler. Can reinitialize the running DNS
   handler to a new nameserver.

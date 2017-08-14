@@ -80,7 +80,7 @@ template <>
 auto
 SetObjFxn<unsigned,0>::operator()(const unsigned &v) const -> int
 {
-  Debug("memory","setting %s: %u",_name,v); 
+//  Debug("memory","setting %s: %u",_name,v); 
   return ::jemallctl::mallctl_set(ObjBase::_oid, v);
 }
 

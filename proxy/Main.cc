@@ -1609,6 +1609,8 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   Thread *main_thread = new EThread;
   main_thread->set_specific();
 
+  SET_NEXT_FRAME_RECORD(&::main,kEarlyEThread);
+
   // Re-initialize diagsConfig based on records.config configuration
   if (diagsConfig) {
     RecDebugOff();
@@ -1732,6 +1734,8 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   ink_dns_init(makeModuleVersion(HOSTDB_MODULE_MAJOR_VERSION, HOSTDB_MODULE_MINOR_VERSION, PRIVATE_MODULE_HEADER));
   ink_split_dns_init(makeModuleVersion(1, 0, PRIVATE_MODULE_HEADER));
   eventProcessor.start(num_of_net_threads, stacksize);
+
+  SET_NEXT_FRAME_RECORD(&::main,kLateEThread);
 
   int num_remap_threads = 0;
   REC_ReadConfigInteger(num_remap_threads, "proxy.config.remap.num_remap_threads");

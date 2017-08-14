@@ -44,9 +44,9 @@ typedef const struct EventCHdlrAssignRec *EventCHdlrAssignRecPtr_t;
 
 struct EventCHdlrAssignRec
 {
-  const char                      *_kLabel;           // at point of assign
-  const char                      *_kFile;            // at point of assign
-  uint32_t                        _kLine:20;         // at point of assign
+  const char                      *_kLabel;   // at point of assign
+  const char                      *_kFile;    // at point of assign
+  uint32_t                        _kLine;     // at point of assign
   const TSEventFunc               _callback;
 };
 

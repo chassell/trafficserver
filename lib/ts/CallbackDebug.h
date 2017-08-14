@@ -49,10 +49,8 @@ struct Continuation;
 struct EventHdlrAssignRec;
 struct EventCalled;
 struct EventCallContext;
+class EventHdlrState;
 
-using EventChain_t = std::vector<EventCalled>;
-using EventChainPtr_t = std::shared_ptr<EventChain_t>;
-using EventChainWPtr_t = std::weak_ptr<EventChain_t>;
 using EventHdlr_t = const EventHdlrAssignRec *;
 
 using EventHdlrMethodPtr_t = int (Continuation::*)(int event, void *data);
@@ -83,6 +81,8 @@ struct EventHdlrAssignRec
   {
     static EventHdlrCompare_t *cmphdlr(void)
       { return [](EventHdlrMethodPtr_t) -> bool { return false; }; }
+    static EventHdlrCompare_t *cmphdlr_nolog(void)
+      { return nullptr; }
     static EventFuncCompare_t *cmpfunc(void)
       { return [](TSEventFunc) -> bool { return false; }; }
     static EventHdlrFxn_t *hdlr(void)
@@ -103,13 +103,86 @@ struct EventHdlrAssignRec
  public:
   const char *const _kLabel;   // at point of assign
   const char *const _kFile;    // at point of assign
-  uint32_t    const _kLine:16; // at point of assign
+  uint32_t    const _kLine;    // at point of assign
 
   EventHdlrCompareGen_t *const _kEqualHdlr_Gen; // distinct method-pointer (not usable)
   EventFuncCompareGen_t *const _kEqualFunc_Gen; // distinct method-pointer (not usable)
 
   EventHdlrFxnGen_t     *const _kWrapHdlr_Gen; // ref to custom wrapper function-ptr callable 
   TSEventFuncGen_t      *const _kWrapFunc_Gen; // ref to custom wrapper function-ptr callable 
+};
+
+static_assert( offsetof(EventHdlrAssignRec, _kLabel) == offsetof(EventCHdlrAssignRec, _kLabel), "offset layout mismatch");
+static_assert( offsetof(EventHdlrAssignRec, _kFile) == offsetof(EventCHdlrAssignRec, _kFile), "offset layout mismatch");
+static_assert( offsetof(EventHdlrAssignRec, _kLine) == offsetof(EventCHdlrAssignRec, _kLine), "offset layout mismatch");
+
+///////////////////////////////////////////////////////////////////////////////////
+///
+///////////////////////////////////////////////////////////////////////////////////
+struct EventCalled
+{
+  using Chain_t = std::vector<EventCalled>;
+  using ChainPtr_t = std::shared_ptr<Chain_t>;
+
+  EventCalled(const EventCallContext &ctxt, ChainPtr_t const &toswap, int event = 0);
+  static EventCalled *pop_caller_record(const EventCallContext &done);
+
+  static void printLog(Chain_t::const_iterator const &begin, Chain_t::const_iterator const &end, const char *msg);
+  
+  // fill in deltas
+  void completed(const EventCallContext &ctxt, const ChainPtr_t &chain);
+  void trim_call(Chain_t &chain);
+
+  // upon ctor
+  EventHdlr_t               _assignPoint = nullptr;   // CB dispatched (null if for ctor)
+
+  // upon ctor
+  ChainPtr_t                _extCallerChain;          // ext chain for caller (null if internal)
+                                                      // NOTE: use to switch back upon return
+
+  // upon ctor
+  uint16_t                  _event = 0;            // specific event-int used on CB
+
+  // upon ctor
+  uint8_t                   _extCallerChainLen = 0; // extern caller's chain-size upon entry (or local)
+
+  // upon return
+  uint8_t                   _intReturnedChainLen = 0; // local chain-size upon final CB return
+
+  // upon return
+  uint32_t                  _allocDelta = 0;       // actual delta upon return
+  // upon return
+  uint32_t                  _deallocDelta = 0;     // actual delta upon return
+
+  // upon return
+  float                     _delay = 0;               // total lapsed time [0.0 only if incomplete]
+};
+
+///////////////////////////////////////////////////////////////////////////////////
+///
+///////////////////////////////////////////////////////////////////////////////////
+struct EventCallContext
+{
+  using steady_clock = std::chrono::steady_clock;
+  using time_point = steady_clock::time_point;
+
+  // explicitly define a "called" record.. and *maybe* a call-context too
+  explicit EventCallContext(EventHdlr_t next = nullptr);
+  EventCallContext(EventHdlrState &state, int event);
+  ~EventCallContext();
+
+  EventHdlr_t     const _assignPoint;
+  EventHdlrState* const _state = nullptr;
+  EventCalled::ChainPtr_t &_currentCallChain;
+  uint64_t             &_allocCounterRef;
+  uint64_t             &_deallocCounterRef;
+
+  uint64_t        const _allocStamp;
+  uint64_t        const _deallocStamp;
+  time_point      const _start = steady_clock::now();
+
+  // on stack (or as a member)
+  void *operator new(const std::size_t) = delete; 
 };
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -122,7 +195,7 @@ class EventHdlrState
   using Ref_t = EventHdlrAssignRec::Ref_t;
 
  public:
-  EventHdlrState();
+  EventHdlrState(EventHdlr_t assigned = nullptr);
   ~EventHdlrState();
 
   operator EventHdlr_t() 
@@ -163,78 +236,15 @@ class EventHdlrState
     return *this;
   }
 
-  void push_caller_record(const EventCallContext &ctxt, unsigned event) const;
+  void push_caller_record(const EventCallContext &ctxt, int event) const;
 
   int operator()(Continuation *self,int event,void *data);
   int operator()(TSCont,TSEvent,void *data);
 
 
 private:
-  Ptr_t           _assignPoint = nullptr;
-  EventChainPtr_t _eventChainPtr;         // current stored "path"
-};
-
-struct EventCallContext
-{
-  using steady_clock = std::chrono::steady_clock;
-  using time_point = steady_clock::time_point;
-
-  // explicitly define a "called" record.. and *maybe* a call-context too
-  EventCallContext(EventHdlr_t next = nullptr);
-  EventCallContext(EventHdlrState &state, unsigned event);
-  ~EventCallContext();
-
-  EventHdlr_t     const _assignPoint;
-  EventHdlrState* const _state = nullptr;
-  EventChainPtr_t      &_currentCallChain;
-  uint64_t             &_allocCounterRef;
-  uint64_t             &_deallocCounterRef;
-
-  uint64_t        const _allocStamp;
-  uint64_t        const _deallocStamp;
-  time_point      const _start = steady_clock::now();
-
-  // on stack (or as a member)
-  void *operator new(const std::size_t) = delete; 
-};
-
-///////////////////////////////////////////////////////////////////////////////////
-///
-///////////////////////////////////////////////////////////////////////////////////
-struct EventCalled
-{
-  EventCalled(const EventCallContext &ctxt, EventChainPtr_t const &toswap, unsigned event = 0);
-  static EventCalled *pop_caller_record(const EventCallContext &done);
-
-  static void printLog(const EventChainPtr_t &chainPtr, char const *const msg);
-  
-  // fill in deltas
-  void completed(const EventCallContext &ctxt, const EventChainPtr_t &chain);
-  void trim_call(const EventChainPtr_t &chain);
-
-  // upon ctor
-  EventHdlr_t               _assignPoint = nullptr;   // CB dispatched (null if for ctor)
-
-  // upon ctor
-  EventChainPtr_t           _extCallerChain;          // ext chain for caller (null if internal)
-                                                      // NOTE: use to switch back upon return
-
-  // upon ctor
-  uint16_t                  _event = 0;            // specific event-int used on CB
-
-  // upon ctor
-  uint8_t                   _extCallerChainLen = 0; // extern caller's chain-size upon entry (or local)
-
-  // upon return
-  uint8_t                   _intReturnedChainLen = 0; // local chain-size upon final CB return
-
-  // upon return
-  uint32_t                  _allocDelta = 0;       // actual delta upon return
-  // upon return
-  uint32_t                  _deallocDelta = 0;     // actual delta upon return
-
-  // upon return
-  float                     _delay = 0;               // total lapsed time [0.0 only if incomplete]
+  Ptr_t                   _assignPoint = nullptr;
+  EventCalled::ChainPtr_t _eventChainPtr;         // current stored "path"
 };
 
 // 
@@ -263,10 +273,28 @@ struct EventCalled
                       &EventHdlrAssignRec::const_cb_callgen<decay_t,(_h)>::func \
                     }
 
+#define CALL_FRAME_RECORD(_h, name) \
+     static constexpr auto name =                          \
+                    EventHdlrAssignRec{                   \
+                       ((#_h)+0),                          \
+                       (__FILE__+0),                       \
+                       __LINE__,                           \
+                      &EventHdlrAssignRec::const_cb_callgen_base::cmphdlr_nolog,  \
+                      &EventHdlrAssignRec::const_cb_callgen_base::cmpfunc,  \
+                      &EventHdlrAssignRec::const_cb_callgen_base::hdlr, \
+                      &EventHdlrAssignRec::const_cb_callgen_base::func \
+                    }
+
 // define null as "caller" context... and set up next one
 #define SET_NEXT_HANDLER_RECORD(_h)                   \
             EVENT_HANDLER_RECORD(_h, kHdlrAssignRec); \
-            EventCallContext _ctxt(&kHdlrAssignRec);
+            EventCallContext _ctxt_kHdlrAssignRec{&kHdlrAssignRec};
+
+// define null as "caller" context... and set up next one
+#define SET_NEXT_FRAME_RECORD(_h, name)                   \
+            CALL_FRAME_RECORD(_h, name); \
+            EventHdlrState _state_ ## name(& (name)); \
+            EventCallContext _ctxt_ ## name{_state_ ## name, 0}; \
 
 // standard Continuation handler signature(s)
 template<class T_OBJ, typename T_ARG, int(T_OBJ::*FXN)(int,T_ARG)>

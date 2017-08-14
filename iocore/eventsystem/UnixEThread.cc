@@ -134,6 +134,8 @@ EThread::set_event_type(EventType et)
 void
 EThread::process_event(Event *e, int calling_code)
 {
+  SET_NEXT_FRAME_RECORD(&EThread::process_event,kTopCall);
+
   ink_assert((!e->in_the_prot_queue && !e->in_the_priority_queue));
   MUTEX_TRY_LOCK_FOR(lock, e->mutex.m_ptr, this, e->continuation);
   if (!lock.is_locked()) {

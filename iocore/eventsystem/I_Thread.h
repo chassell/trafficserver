@@ -185,7 +185,7 @@ public:
   */
   static ink_hrtime get_hrtime_updated();
 
-  EventChainPtr_t   _currentCallChain = nullptr;
+  EventCalled::ChainPtr_t   _currentCallChain;
 };
 
 extern Thread *this_thread();

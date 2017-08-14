@@ -33,6 +33,7 @@
 #include "ts/jemallctl.h"
 #include "ts/ink_assert.h"
 #include "ts/Diags.h"
+#include "ts/ink_stack_trace.h"
 
 #include <chrono>
 #include <string>
@@ -43,13 +44,14 @@
 // Common Interface impl                     //
 ///////////////////////////////////////////////
 
-void EventCalled::printLog(EventChainPtr_t const &chainPtr, const char *msg)
+void EventCalled::printLog(Chain_t::const_iterator const &begin, Chain_t::const_iterator const &end, const char *msg)
 {
-  ptrdiff_t len = chainPtr->size();
+  ptrdiff_t len = end - begin;
+  ptrdiff_t i = 0;
 
-  for( auto &&call : *chainPtr )
+  for( auto iter = begin ; iter != end ; ++i, ++iter )
   {
-    auto i = &call - &*chainPtr->begin(); 
+    auto &call = *iter;
 
     const char *units = ( call._delay >= 10000 ? "ms" : "us" ); 
     float div = ( call._delay >= 10000 ? 1000.0 : 1.0 ); 
@@ -101,14 +103,15 @@ void EventCalled::printLog(EventChainPtr_t const &chainPtr, const char *msg)
   }
 }
 
-void EventHdlrState::push_caller_record(const EventCallContext &ctxt, unsigned event) const
+void EventHdlrState::push_caller_record(const EventCallContext &ctxt, int event) const
 {
   _eventChainPtr->push_back( EventCalled{ctxt, _eventChainPtr, event} );
 }
 
-void EventCalled::trim_call(const EventChainPtr_t &chain)
+void EventCalled::trim_call(Chain_t &chain)
 {
-  if ( ! _assignPoint || this == &chain->front() ) {
+//  if ( ! _assignPoint || this == &chain.front() ) {
+  if ( ! _assignPoint ) {
     return; // no constructor-calls
   }
 
@@ -116,64 +119,91 @@ void EventCalled::trim_call(const EventChainPtr_t &chain)
     return; // need no memory lost
   }
 
-  auto i = (this - &chain->front());
+  auto i = (this - &chain.front());
 
-  if ( _assignPoint->_kEqualHdlr_Gen() 
-       && (this-1)->_assignPoint != _assignPoint ) {
+  if ( (this-1)->_assignPoint != _assignPoint 
+       && _assignPoint->_kEqualHdlr_Gen() ) {
     return; // need a flag set ... or a direct repeat is here
   }
 
-  if ( _assignPoint->_kEqualHdlr_Gen() ) {
+  if ( ! _assignPoint->_kEqualHdlr_Gen() ) {
  //   Debug("conttrace","trim #%ld %s", i, _assignPoint->_kLabel);
   }
 
-  chain->erase( chain->begin() + i);
+  chain.erase( chain.begin() + i);
 }
 
 EventHdlrState::~EventHdlrState()
    // detaches from shared-ptr!
 {
-  if ( _eventChainPtr && _eventChainPtr->size() ) {
-    Debug("conttrace","~EventHdlrState: destructing valid chain %s", _eventChainPtr->back()._assignPoint->_kLabel);
-    EventCalled::printLog(_eventChainPtr,"state dtor");
-  } else {
-    Debug("conttrace","~EventHdlrState: destructing empty chain");
+  if ( _eventChainPtr.use_count() > 1 ) {
+    return;
+  }
+
+  if ( _eventChainPtr->empty() ) {
+    return;
+  }
+
+  if ( _eventChainPtr->size() > 1 || _eventChainPtr->back()._assignPoint->_kEqualHdlr_Gen() ) {
+    EventCalled::printLog(_eventChainPtr->begin(),_eventChainPtr->end(),"state dtor");
   }
 }
 
-EventCalled::EventCalled(const EventCallContext &ctxt, EventChainPtr_t const &nextChain, unsigned event)
-   : _assignPoint(ctxt._assignPoint), // callee info
+EventCalled::EventCalled(const EventCallContext &ctxt, ChainPtr_t const &calleeChain, int event)
+   : _assignPoint(ctxt._assignPoint), // callee info [if set]
      _extCallerChain(),               // dflt
      _event(event),
-     _extCallerChainLen(ctxt._currentCallChain ? ctxt._currentCallChain->size() : 0) // caller info (for backtrack)
+     _extCallerChainLen() // caller info (for backtrack)
 {
   // no change needed
-  if ( ctxt._currentCallChain == nextChain ) {
-    Debug("conttrace","push-call#%lu: %s %s %d [%d]",nextChain->size(),_assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine, event);
+  if ( ctxt._currentCallChain == calleeChain ) {
+    if ( ! calleeChain->empty() ) {
+      Debug("conttrace","push-call#%lu: %s %s %d [%d]",calleeChain->size(),_assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine, event);
+    }
     return;
   }
 
   // create new refcount-copy
-  auto toswap = nextChain; 
+  auto toswap = calleeChain;
 
   // [ NOTE: minimizes refcount chks ]
 
   _extCallerChain.swap(toswap);
   _extCallerChain.swap(ctxt._currentCallChain);
 
-  if ( _extCallerChain ) {
-    Debug("conttrace","sub-event-call[#%lu->#%lu]: %s %s %d [%d]", _extCallerChain->size(), ctxt._currentCallChain->size(),
-                 _assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine, event);
-  } else {
-//    Debug("conttrace","outside-call[-->#%lu]: %s %s %d [%d]",ctxt._currentCallChain->size(),
-//                 _assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine, event);
+  // this->_currentCallChain --> prev toswap
+  //       c._extCallerChain --> prev this->_currentCallChain 
+  //                  toswap --> prev c._extCallerChain 
+
+  if ( _extCallerChain ) 
+  {
+    _extCallerChainLen = _extCallerChain->size();
+
+    if ( ! _assignPoint->_kEqualHdlr_Gen() ) {
+      return;
+    }
+
+    auto &back = _extCallerChain->back();
+
+    Debug("conttrace","separate-object-push[#%lu->#%lu]: %s %s %d --> %s %s %d [%d]", _extCallerChain->size(), ctxt._currentCallChain->size(),
+             back._assignPoint->_kLabel, back._assignPoint->_kFile, back._assignPoint->_kLine,
+             _assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine, event);
+    return;
+  } 
+
+  if ( ! ctxt._state ) {
+    return;
   }
 
-  // this->_currentCallChain == prev toswap
-  //       c._extCallerChain == prev this->_currentCallChain 
-  //                  toswap == prev c._extCallerChain 
+  ink_stack_trace_dump();
+  Debug("conttrace","starting-push[-->#%lu]: %s %s %d [%d]",ctxt._currentCallChain->size(),
+               _assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine, event);
 }
 
+//////////////////////////////////////////
+// current chain has a record to complete
+//    then change to new change if needed..
+//////////////////////////////////////////
 EventCalled *
 EventCalled::pop_caller_record(const EventCallContext &ctxt)
 {
@@ -207,12 +237,12 @@ EventCalled::pop_caller_record(const EventCallContext &ctxt)
     i = curr.begin() + ( curr.rend() - rev );
   }
 
+  // may delete the entry that completed
   i->completed(ctxt, currPtr);
 
   // non-zero and not current??
   ptrdiff_t ith = i - curr.begin();
-
-  
+  auto &ap = *i->_assignPoint;
 
   // caller was simply from outside all call chains?
   if ( ! i->_extCallerChainLen ) 
@@ -223,45 +253,69 @@ EventCalled::pop_caller_record(const EventCallContext &ctxt)
     ctxt._currentCallChain.reset();
 
     if ( currPtr.use_count() <= 1 ) { // orig and my copy
-      printLog(currPtr,"outside-call-final?");
+      EventCalled::printLog(curr.begin(),curr.end(),"top dtor");
+      currPtr.reset();
+      return nullptr;
+
+    } 
+    
+    i->trim_call(curr); // snip some if needed
+
+    if ( curr.size() <= ith ) {
+      return nullptr; // no caller record to examine
     }
 
-    if ( currPtr->size() > 100 ) {
-       printLog(currPtr,"TOO LONG");
-    }
+    EventCalled::printLog(curr.begin()+ith,curr.end(),"top has completed");
+
+    // returned from *last* entry?
+    Debug("conttrace","top-object #%ld[%lu]: %s %s %d [evt#%05d] (refs=%ld)",ith, curr.size(), 
+         ap._kLabel,ap._kFile,ap._kLine, 
+         i->_event, currPtr.use_count());
 
     return nullptr; // no caller record to examine
   }
 
-  auto callerChainPtr = ( i->_extCallerChain ? i->_extCallerChain  // chain-external caller made call
-                                             : currPtr );          // chain-internal caller made call
-  callerRec = &(*callerChainPtr)[i->_extCallerChainLen-1];
-  callerRec->_intReturnedChainLen = callerChainPtr->size(); // save return-point call chain length
+  {
+    auto callerChainPtr = ( i->_extCallerChain ? i->_extCallerChain  // chain-external caller made call
+                                               : currPtr );          // chain-internal caller made call
+    callerRec = &(*callerChainPtr)[i->_extCallerChainLen-1];
+    callerRec->_intReturnedChainLen = callerChainPtr->size(); // save return-point call chain length
 
-  // pop back to earlier context (maybe null)
-  ctxt._currentCallChain = callerChainPtr;
+    // pop back to earlier context (maybe null)
+    ctxt._currentCallChain.swap(callerChainPtr);
+  }
 
-  auto &ap = *i->_assignPoint;
+  /*
   auto &ap2 = *callerRec->_assignPoint;
-  Debug("conttrace","push-object prev-top #%ld[%lu]: %s %s %d [%d]",ith, curr.size(),  ap._kLabel,ap._kFile,ap._kLine, i->_event);
-  Debug("conttrace","sub-object new-top  #%d[%lu]: %s %s %d [%d]",i->_extCallerChainLen-1, callerChainPtr->size(), ap2._kLabel,ap2._kFile,ap2._kLine, callerRec->_event);
+  Debug("conttrace","pop-object prev-top #%ld[%lu]: %s %s %d [evt#%05d] (refs=%ld)",ith, curr.size(), 
+           ap._kLabel,ap._kFile,ap._kLine, 
+           i->_event, currPtr.use_count());
+  Debug("conttrace","over-object new-top  #%d[%lu]: %s %s %d [evt#%05d] (refs=%ld)",
+           i->_extCallerChainLen-1, ctxt._currentCallChain->size(), 
+           ap2._kLabel,ap2._kFile,ap2._kLine, 
+           callerRec->_event, ctxt._currentCallChain.use_count());
+  */
 
   // To Be assured...
   i->_intReturnedChainLen = len;
 
   if ( currPtr.use_count() <= 1 ) { // orig and my copy
-     printLog(currPtr,"crossover-call-final?");
+     printLog(curr.begin(),curr.end(),"DTOR");
+     currPtr.reset();  // freed
+     return callerRec;
   }
 
-  if ( currPtr->size() > 100 ) {
-     printLog(currPtr,"TOO LONG CROSSOVER");
+  i->trim_call(curr); // snip any boring calls from end...
+  if ( curr.size() <= ith ) {
+    return callerRec;
   }
 
+  EventCalled::printLog(i,curr.end(),"pop");
   return callerRec;
 }
 
 void
-EventCalled::completed(EventCallContext const &ctxt, const EventChainPtr_t &chain )
+EventCalled::completed(EventCallContext const &ctxt, const ChainPtr_t &chain )
 {
   auto duration = std::chrono::steady_clock::now() - ctxt._start;
 
@@ -276,8 +330,5 @@ EventCalled::completed(EventCallContext const &ctxt, const EventChainPtr_t &chai
   _deallocDelta = ctxt._deallocCounterRef - ctxt._deallocStamp;
 
   _intReturnedChainLen = chain->size(); // save return-point call chain length
-
-  // returned from *last* entry?
-  EventCalled::trim_call(chain); // snip some if needed
 }
 

@@ -62,6 +62,8 @@ ink_stack_trace_dump()
     // dump the backtrace to stderr
     backtrace_symbols_fd(stack + 2, btl - 2, STDERR_FILENO);
   }
+
+  alarm(0);
 }
 
 #else /* !TS_HAS_BACKTRACE */

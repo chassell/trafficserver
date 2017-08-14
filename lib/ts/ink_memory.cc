@@ -329,7 +329,7 @@ get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
   auto nsid = get_nodes_id_by_affinity(objtype, affid);
 
   if (!nsid) {
-    Debug("memory", "returned nsid 0");
+//    Debug("memory", "returned nsid 0");
     return 0;
   }
 
@@ -382,7 +382,7 @@ int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid) /
   }
 
   // thread-wide change in place
-  Debug("memory","mem arena used %u",arena);
+//  Debug("memory","mem arena used %u",arena);
   jemallctl::set_thread_arena(arena); // make it active now
   return 0;
 }
