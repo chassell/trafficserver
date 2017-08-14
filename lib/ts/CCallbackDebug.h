@@ -50,6 +50,19 @@ struct EventCHdlrAssignRec
   const TSEventFunc               _callback;
 };
 
+typedef struct tsapi_contdebug *TSContDebug;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+TSContDebug       *cb_init_stack_context(void *, struct EventCHldrAssignRec *);
+void               cb_free_stack_context(TSContDebug);
+
+#ifdef __cplusplus
+}
+#endif
+
 #define STATIC_C_HANDLER_RECORD(_h, name) \
      static const EventCHdlrAssignRec_t name = \
                      {                        \
