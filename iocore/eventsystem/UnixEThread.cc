@@ -134,8 +134,6 @@ EThread::set_event_type(EventType et)
 void
 EThread::process_event(Event *e, int calling_code)
 {
-  SET_NEXT_FRAME_RECORD(&EThread::process_event,kTopCall);
-
   ink_assert((!e->in_the_prot_queue && !e->in_the_priority_queue));
   MUTEX_TRY_LOCK_FOR(lock, e->mutex.m_ptr, this, e->continuation);
   if (!lock.is_locked()) {
@@ -168,6 +166,10 @@ EThread::process_event(Event *e, int calling_code)
   }
 }
 
+#define process_event(a,b) \
+  NEW_CALL_FRAME_RECORD(&EThread::process_event,kTopCall); \
+  process_event((a),(b))
+
 //
 // void  EThread::execute()
 //
@@ -177,7 +179,6 @@ EThread::process_event(Event *e, int calling_code)
 // When its time for the event, try to get the appropriate continuation
 // lock. If successful, call the continuation, otherwise put the event back
 // into the queue.
-//
 
 void
 EThread::execute()
@@ -243,9 +244,9 @@ EThread::execute()
         if (!INK_ATOMICLIST_EMPTY(EventQueueExternal.al))
           EventQueueExternal.dequeue_timed(cur_time, next_time, false);
         while ((e = EventQueueExternal.dequeue_local())) {
-          if (!e->timeout_at)
+          if (!e->timeout_at) {
             process_event(e, e->callback_event);
-          else {
+          } else {
             if (e->cancelled)
               free_event(e);
             else {
@@ -273,8 +274,9 @@ EThread::execute()
           }
         }
         // execute poll events
-        while ((e = NegativeQueue.dequeue()))
+        while ((e = NegativeQueue.dequeue())) {
           process_event(e, EVENT_POLL);
+        }
         if (!INK_ATOMICLIST_EMPTY(EventQueueExternal.al))
           EventQueueExternal.dequeue_timed(cur_time, next_time, false);
       } else { // Means there are no negative events
@@ -296,6 +298,7 @@ EThread::execute()
 
   case DEDICATED: {
     // coverity[lock]
+    NEW_CALL_FRAME_RECORD(&EThread::execute,kTopCall);
     MUTEX_TAKE_LOCK_FOR(oneevent->mutex, this, oneevent->continuation);
     oneevent->continuation->handleEvent(EVENT_IMMEDIATE, oneevent);
     MUTEX_UNTAKE_LOCK(oneevent->mutex, this);

@@ -1609,7 +1609,7 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   Thread *main_thread = new EThread;
   main_thread->set_specific();
 
-  SET_NEXT_FRAME_RECORD(&::main,kEarlyEThread);
+  NEW_CALL_FRAME_RECORD(&::main,kEarlyEThread);
 
   // Re-initialize diagsConfig based on records.config configuration
   if (diagsConfig) {
@@ -1650,7 +1650,11 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   // singleton, which depends on configuration values loaded in this.
   // We want to initialize Machine as early as possible because it
   // has other dependencies. Hopefully not in init_HttpProxyServer().
+  //
+  RESET_CALL_FRAME_RECORD(&HttpConfig::startup,kEarlyEThread);
   HttpConfig::startup();
+  RESET_ORIG_FRAME_RECORD(kEarlyEThread);
+
   /* Set up the machine with the outbound address if that's set,
      or the inbound address if set, otherwise let it default.
   */
@@ -1726,6 +1730,8 @@ main(int /* argc ATS_UNUSED */, const char **argv)
     net_config_poll_timeout = 10; // Default value for all platform.
   }
 
+  RESET_CALL_FRAME_RECORD(&EventProcessor::start,kEarlyEThread);
+
   ink_event_system_init(makeModuleVersion(1, 0, PRIVATE_MODULE_HEADER));
   ink_net_init(makeModuleVersion(1, 0, PRIVATE_MODULE_HEADER));
   ink_aio_init(makeModuleVersion(1, 0, PRIVATE_MODULE_HEADER));
@@ -1735,7 +1741,8 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   ink_split_dns_init(makeModuleVersion(1, 0, PRIVATE_MODULE_HEADER));
   eventProcessor.start(num_of_net_threads, stacksize);
 
-  SET_NEXT_FRAME_RECORD(&::main,kLateEThread);
+  // new EThread was assigned ...
+  NEW_CALL_FRAME_RECORD(&::main,kLateEThread);
 
   int num_remap_threads = 0;
   REC_ReadConfigInteger(num_remap_threads, "proxy.config.remap.num_remap_threads");
@@ -1747,8 +1754,11 @@ main(int /* argc ATS_UNUSED */, const char **argv)
     remapProcessor.setUseSeparateThread();
   }
 
+  RESET_CALL_FRAME_RECORD(&SignalContinuation::SignalContinuation,kLateEThread);
   eventProcessor.schedule_every(new SignalContinuation, HRTIME_MSECOND * 500, ET_CALL);
+  RESET_CALL_FRAME_RECORD(&DiagsLogContinuation::DiagsLogContinuation,kLateEThread);
   eventProcessor.schedule_every(new DiagsLogContinuation, HRTIME_SECOND, ET_TASK);
+
   REC_RegisterConfigUpdateFunc("proxy.config.dump_mem_info_frequency", init_memory_tracker, NULL);
   init_memory_tracker(NULL, RECD_NULL, RecData(), NULL);
 
@@ -1764,13 +1774,20 @@ main(int /* argc ATS_UNUSED */, const char **argv)
         _exit(1); // in error
     }
   } else {
+    RESET_CALL_FRAME_RECORD(&RemapProcessor::start,kLateEThread);
     remapProcessor.start(num_remap_threads, stacksize);
+    RESET_CALL_FRAME_RECORD(&RecProcessStart,kLateEThread);
     RecProcessStart();
+    RESET_CALL_FRAME_RECORD(&initCacheControl,kLateEThread);
     initCacheControl();
+    RESET_CALL_FRAME_RECORD(&initCongestionControl,kLateEThread);
     initCongestionControl();
+    RESET_CALL_FRAME_RECORD(&IpAllow::startup,kLateEThread);
     IpAllow::startup();
+    RESET_CALL_FRAME_RECORD(&ParentConfig::startup,kLateEThread);
     ParentConfig::startup();
 #ifdef SPLIT_DNS
+    RESET_CALL_FRAME_RECORD(&SplitDNSConfig::startup,kLateEThread);
     SplitDNSConfig::startup();
 #endif
 
@@ -1780,6 +1797,7 @@ main(int /* argc ATS_UNUSED */, const char **argv)
 #endif
 
     // Initialize HTTP/2
+    RESET_CALL_FRAME_RECORD(&Http2::init,kLateEThread);
     Http2::init();
 
     // Load HTTP port data. getNumSSLThreads depends on this.
@@ -1790,15 +1808,19 @@ main(int /* argc ATS_UNUSED */, const char **argv)
     if (!accept_mss)
       REC_ReadConfigInteger(accept_mss, "proxy.config.net.sock_mss_in");
 
+    RESET_CALL_FRAME_RECORD(&NetProcessor::start,kLateEThread);
     NetProcessor::accept_mss = accept_mss;
     netProcessor.start(0, stacksize);
 
+    RESET_CALL_FRAME_RECORD(&DNSProcessor::start,kLateEThread);
     dnsProcessor.start(0, stacksize);
     if (hostDBProcessor.start() < 0)
       SignalWarning(MGMT_SIGNAL_SYSTEM_ERROR, "bad hostdb or storage configuration, hostdb disabled");
+    RESET_CALL_FRAME_RECORD(&ClusterProcessor::init,kLateEThread);
     clusterProcessor.init();
 
     // initialize logging (after event and net processor)
+    RESET_CALL_FRAME_RECORD(&Log::init,kLateEThread);
     Log::init(remote_management_flag ? 0 : Log::NO_REMOTE_MANAGEMENT);
 
     // Init plugins as soon as logging is ready.
@@ -1806,11 +1828,16 @@ main(int /* argc ATS_UNUSED */, const char **argv)
 
     SSLConfigParams::init_ssl_ctx_cb  = init_ssl_ctx_callback;
     SSLConfigParams::load_ssl_file_cb = load_ssl_file_callback;
+
+    RESET_CALL_FRAME_RECORD(&SSLNetProcessor::start,kLateEThread);
     sslNetProcessor.start(getNumSSLThreads(), stacksize);
 
+    RESET_CALL_FRAME_RECORD(&ProcessManager::registerPluginCallbacks,kLateEThread);
     pmgmt->registerPluginCallbacks(global_config_cbs);
 
+    RESET_CALL_FRAME_RECORD(&CacheProcessor::afterInitCallbackSet,kLateEThread);
     cacheProcessor.afterInitCallbackSet(&CB_After_Cache_Init);
+    RESET_CALL_FRAME_RECORD(&CacheProcessor::start,kLateEThread);
     cacheProcessor.start();
 
     // UDP net-threads are turned off by default.
@@ -1841,6 +1868,7 @@ main(int /* argc ATS_UNUSED */, const char **argv)
     //   Raft::init();
 
     // Continuation Statistics Dump
+    RESET_CALL_FRAME_RECORD(&ShowStats::ShowStats,kLateEThread);
     if (show_statistics)
       eventProcessor.schedule_every(new ShowStats(), HRTIME_SECONDS(show_statistics), ET_CALL);
 
@@ -1848,8 +1876,10 @@ main(int /* argc ATS_UNUSED */, const char **argv)
     // main server logic initiated here //
     //////////////////////////////////////
 
+    RESET_CALL_FRAME_RECORD(&TransformProcessor::start,kLateEThread);
     transformProcessor.start();
 
+    RESET_CALL_FRAME_RECORD(&init_HttpProxyServer,kLateEThread);
     init_HttpProxyServer(num_accept_threads);
 
     int http_enabled = 1;
@@ -1881,17 +1911,21 @@ main(int /* argc ATS_UNUSED */, const char **argv)
     }
 
     // "Task" processor, possibly with its own set of task threads
+    RESET_CALL_FRAME_RECORD(&TasksProcessor::start,kLateEThread);
     tasksProcessor.start(num_task_threads, stacksize);
 
     int back_door_port = NO_FD;
     REC_ReadConfigInteger(back_door_port, "proxy.config.process_manager.mgmt_port");
     if (back_door_port != NO_FD)
+      RESET_CALL_FRAME_RECORD(&start_HttpProxyServerBackDoor,kLateEThread);
       start_HttpProxyServerBackDoor(back_door_port, num_accept_threads > 0 ? 1 : 0); // One accept thread is enough
 
     if (netProcessor.socks_conf_stuff->accept_enabled) {
+      RESET_CALL_FRAME_RECORD(&start_SocksProxy,kLateEThread);
       start_SocksProxy(netProcessor.socks_conf_stuff->accept_port);
     }
 
+    RESET_CALL_FRAME_RECORD(&ProcessManager::registerMgmtCallback,kLateEThread);
     pmgmt->registerMgmtCallback(MGMT_EVENT_SHUTDOWN, mgmt_restart_shutdown_callback, NULL);
     pmgmt->registerMgmtCallback(MGMT_EVENT_RESTART, mgmt_restart_shutdown_callback, NULL);
 
@@ -1913,6 +1947,7 @@ main(int /* argc ATS_UNUSED */, const char **argv)
     run_RegressionTest();
 #endif
 
+    RESET_CALL_FRAME_RECORD(&run_AutoStop,kLateEThread);
     run_AutoStop();
   }
 
@@ -1922,8 +1957,9 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   }
 #endif
 
+  RESET_LABEL_FRAME_RECORD("this_thread()->execute()",kLateEThread);
   this_thread()->execute();
-  delete main_thread;
+  // delete main_thread; // already was deleted
 }
 
 #if TS_HAS_TESTS

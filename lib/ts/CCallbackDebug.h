@@ -39,25 +39,32 @@
 
 #include "ts/apidefs.h"
 
-typedef struct EventCHdlrAssignRec EventCHdlrAssignRec_t;
-typedef const struct EventCHdlrAssignRec *EventCHdlrAssignRecPtr_t;
+typedef const struct EventCHdlrAssignRec EventCHdlrAssignRec_t, 
+                                        *EventCHdlrAssignRecPtr_t;
+
+typedef const TSEventFunc (*TSEventFuncGen)();
 
 struct EventCHdlrAssignRec
 {
   const char                      *_kLabel;   // at point of assign
   const char                      *_kFile;    // at point of assign
   uint32_t                        _kLine;     // at point of assign
+  const TSEventFuncGen          _cb_pad0;
+  const TSEventFuncGen          _cb_pad1;
+  const TSEventFuncGen          _cb_pad2;
   const TSEventFunc               _callback;
 };
-
-typedef struct tsapi_contdebug *TSContDebug;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-TSContDebug       *cb_init_stack_context(void *, struct EventCHldrAssignRec *);
-void               cb_free_stack_context(TSContDebug);
+typedef struct tsapi_contdebug *TSContDebug;
+
+const TSEventFunc *cb_null_return();
+size_t            cb_sizeof_stack_context();
+TSContDebug       *cb_init_stack_context(void *, EventCHdlrAssignRecPtr_t);
+void              cb_free_stack_context(TSContDebug*);
 
 #ifdef __cplusplus
 }
@@ -69,34 +76,53 @@ void               cb_free_stack_context(TSContDebug);
                        ((#_h)+0),             \
                        (__FILE__+0),          \
                        __LINE__,              \
+                       cb_null_return,        \
+                       cb_null_return,        \
+                       cb_null_return,        \
                        (_h)                   \
                      }
 
+
 #ifndef __cplusplus
 
+#define SET_NEXT_HANDLER_RECORD(_h)                       \
+            STATIC_C_HANDLER_RECORD(_h, kHdlrAssignRec);  \
+            
 #define TSThreadCreate(func,data)                              \
             ({                                                 \
                STATIC_C_HANDLER_RECORD((func),kHdlrAssignRec); \
-               TSThreadCreate(func,data);                      \
+               TSContDebug *ctxtp = cb_init_stack_context(alloca(cb_sizeof_stack_context()), &kHdlrAssignRec); \
+               TSThread t = TSThreadCreate(func,data);         \
+               cb_free_stack_context(ctxtp);                   \
+               t;                                              \
              })
 
 
 #define TSContCreate(func,mutexp)                              \
             ({                                                 \
                STATIC_C_HANDLER_RECORD((func),kHdlrAssignRec); \
-               TSContCreate(func,mutexp);                      \
+               TSContDebug *ctxtp = cb_init_stack_context(alloca(cb_sizeof_stack_context()), &kHdlrAssignRec); \
+               TSCont c = TSContCreate(func,mutexp);           \
+               cb_free_stack_context(ctxtp);                   \
+               c;                                              \
              })
 
 #define TSTransformCreate(func,txnp)                           \
             ({                                                 \
                STATIC_C_HANDLER_RECORD((func),kHdlrAssignRec); \
-               TSTransformCreate(func,txnp);                   \
+               TSContDebug *ctxtp = cb_init_stack_context(alloca(cb_sizeof_stack_context()), &kHdlrAssignRec); \
+               TSVConn r = TSTransformCreate(func,txnp);       \
+               cb_free_stack_context(ctxtp);                   \
+               r;                                              \
              })
 
 #define TSVConnCreate(func,mutexp)                             \
             ({                                                 \
                STATIC_C_HANDLER_RECORD((func),kHdlrAssignRec); \
-               TSVConnCreate(func,mutexp);                     \
+               TSContDebug *ctxtp = cb_init_stack_context(alloca(cb_sizeof_stack_context()), &kHdlrAssignRec); \
+               TSVConn r = TSVConnCreate(func,mutexp);         \
+               cb_free_stack_context(ctxtp);                   \
+               r;                                              \
              })
 #endif
 

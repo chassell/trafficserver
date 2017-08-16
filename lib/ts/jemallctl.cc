@@ -73,15 +73,19 @@ template <typename T_VALUE, size_t N_DIFF>
 auto
 SetObjFxn<T_VALUE, N_DIFF>::operator()(const T_VALUE &v) const -> int
 {
-  return ::jemallctl::mallctl_set(ObjBase::_oid, v);
+  auto r = ::jemallctl::mallctl_set(ObjBase::_oid, v);
+  ink_assert(! r);
+  return r;
 }
 
 template <>
 auto
 SetObjFxn<unsigned,0>::operator()(const unsigned &v) const -> int
 {
-//  Debug("memory","setting %s: %u",_name,v); 
-  return ::jemallctl::mallctl_set(ObjBase::_oid, v);
+  auto r = ::jemallctl::mallctl_set(ObjBase::_oid, v);
+  ink_assert(! r);
+//  Debug("memory","setting %s: %u [r=%d]",_name,v,r); 
+  return r;
 }
 
 int
@@ -133,14 +137,18 @@ objpath(const std::string &path)
 auto
 mallctl_void(const objpath_t &oid) -> int
 {
-  return mallctlbymib(oid.data(), oid.size(), nullptr, nullptr, nullptr, 0);
+  auto r = mallctlbymib(oid.data(), oid.size(), nullptr, nullptr, nullptr, 0);
+  ink_assert(! r);
+  return r;
 }
 
 template <typename T_VALUE>
 auto
 mallctl_set(const objpath_t &oid, const T_VALUE &v) -> int
 {
-  return mallctlbymib(oid.data(), oid.size(), nullptr, nullptr, const_cast<T_VALUE *>(&v), sizeof(v));
+  auto r = mallctlbymib(oid.data(), oid.size(), nullptr, nullptr, const_cast<T_VALUE *>(&v), sizeof(v));
+  ink_assert(! r);
+  return r;
 }
 
 template <typename T_VALUE>

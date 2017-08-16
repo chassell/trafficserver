@@ -9,7 +9,7 @@
   distributed with this work for additional information
   regarding copyright ownership.  The ASF licenses this file
   to you under the Apache License, Version 2.0 (the
-  "License"); you may not use this file except in compliance
+  "License"); you may not use this ile except in compliance
   with the License.  You may obtain a copy of the License at
 
       http://www.apache.org/licenses/LICENSE-2.0
@@ -39,9 +39,22 @@
 #include <string>
 #include <algorithm>
 #include <iostream>
+#include <memory>
+
+namespace {
+const ink_thread_key s_currentCallChainTLS = 
+  []() {
+    ink_thread_key key;
+    ink_thread_key_create(&key, nullptr);
+    ink_thread_setspecific(key, nullptr);
+    return key;
+  }();
+}
+
+
 
 ///////////////////////////////////////////////
-// Common Interface impl                     //
+// common interface impl                     //
 ///////////////////////////////////////////////
 
 void EventCalled::printLog(Chain_t::const_iterator const &begin, Chain_t::const_iterator const &end, const char *msg)
@@ -150,7 +163,7 @@ EventHdlrState::~EventHdlrState()
 }
 
 EventCalled::EventCalled(const EventCallContext &ctxt, ChainPtr_t const &calleeChain, int event)
-   : _assignPoint(ctxt._assignPoint), // callee info [if set]
+   : _assignPoint(ctxt), // callee info [if set]
      _extCallerChain(),               // dflt
      _event(event),
      _extCallerChainLen() // caller info (for backtrack)
@@ -241,7 +254,7 @@ EventCalled::pop_caller_record(const EventCallContext &ctxt)
   i->completed(ctxt, currPtr);
 
   // non-zero and not current??
-  ptrdiff_t ith = i - curr.begin();
+  size_t ith = i - curr.begin();
   auto &ap = *i->_assignPoint;
 
   // caller was simply from outside all call chains?
@@ -262,8 +275,12 @@ EventCalled::pop_caller_record(const EventCallContext &ctxt)
     i->trim_call(curr); // snip some if needed
 
     if ( curr.size() <= ith ) {
-      return nullptr; // no caller record to examine
+      return nullptr; // caller record was trimmed 
     }
+
+    i = curr.begin()+ith; // in case it was deleted
+
+    // size is larger than the index we were at...
 
     EventCalled::printLog(curr.begin()+ith,curr.end(),"top has completed");
 
@@ -314,6 +331,14 @@ EventCalled::pop_caller_record(const EventCallContext &ctxt)
   return callerRec;
 }
 
+EventCallContext::~EventCallContext()
+{
+  // use back-refs to return the actual caller that's now complete
+  EventCalled::pop_caller_record(*this);
+}
+
+const TSEventFunc *cb_null_return() { return nullptr; }
+
 void
 EventCalled::completed(EventCallContext const &ctxt, const ChainPtr_t &chain )
 {
@@ -332,3 +357,8 @@ EventCalled::completed(EventCallContext const &ctxt, const ChainPtr_t &chain )
   _intReturnedChainLen = chain->size(); // save return-point call chain length
 }
 
+void  cb_free_stack_context(TSContDebug *p)
+{
+  auto r = reinterpret_cast<EventCallContext*>(p);
+  r->~EventCallContext();
+}

@@ -30,6 +30,7 @@
 **************************************************************************/
 #include "P_EventSystem.h" // include ahead of I_Thread
 #include "I_Thread.h"
+#include "ts/CallbackDebug.h"
 
 #include "ts/ink_string.h"
 #include "ts/jemallctl.h"
@@ -110,13 +111,29 @@ Thread::start(const char *name, size_t stacksize, ThreadFunction f, void *a)
   return tid;
 }
 
-CALL_FRAME_RECORD(&EventhdlrState::EventHdlrState, kCtorRecord);
+CALL_FRAME_RECORD(&EventHdlrState::EventHdlrState, kCtorRecord);
+
+namespace {
+EventCalled::ChainPtr_t dummyCallChainPtr;
+}
+
+
+EventCalled::ChainPtr_t &get_current_call_chain_ref() 
+{ 
+  if ( ! Thread::thread_data_key || ! this_thread() ) {
+    Debug("conttrace","%p: thread-specific is unset");
+    return dummyCallChainPtr;
+  }
+
+  return this_thread()->_currentCallChain;
+}
+
 
 EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
    : _assignPoint( hdlr ?: &kCtorRecord )
 {
   EventCalled::ChainPtr_t dummy;
-  auto *currChainP = ( Thread::thread_data_key && this_thread() ? &this_thread()->_currentCallChain : &dummy );
+  auto *currChainP = &get_current_call_chain_ref();
   auto &currChainPtr = *currChainP;
   auto chainRefs = currChainPtr.use_count();
 
@@ -131,7 +148,8 @@ EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
     _eventChainPtr = currChainPtr; // (increase refs)
 
     // take assign-callback and leave empty
-    std::swap(_assignPoint,_eventChainPtr->front()._assignPoint); 
+    _assignPoint = _eventChainPtr->front()._assignPoint; 
+
     Debug("conttrace","%p: init-created: %s %s %d",this,_assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine);
     return;
   }
@@ -154,7 +172,7 @@ EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
 /////////////////////////////////////////////////////
 EventCallContext::EventCallContext(EventHdlr_t assignPoint)
    : _assignPoint(assignPoint),
-     _currentCallChain(this_thread()->_currentCallChain),
+     _currentCallChain(get_current_call_chain_ref()),
      _allocCounterRef(*jemallctl::thread_allocatedp()),
      _deallocCounterRef(*jemallctl::thread_deallocatedp()),
      _allocStamp(_allocCounterRef),
@@ -172,9 +190,9 @@ EventCallContext::EventCallContext(EventHdlr_t assignPoint)
 // create new callback-entry on chain associated with HdlrState
 /////////////////////////////////////////////////////////////////
 EventCallContext::EventCallContext(EventHdlrState &state, int event)
-   : _assignPoint(state), // freeze state's assignPoint
+   : _assignPoint(state), // remember state's assignPoint
      _state(&state),
-     _currentCallChain(this_thread()->_currentCallChain),
+     _currentCallChain(get_current_call_chain_ref()),
      _allocCounterRef(*jemallctl::thread_allocatedp()),
      _deallocCounterRef(*jemallctl::thread_deallocatedp()),
      _allocStamp(_allocCounterRef),
@@ -182,12 +200,6 @@ EventCallContext::EventCallContext(EventHdlrState &state, int event)
 {
   // swap hdlrstate's chain to current (if different)
   state.push_caller_record(*this, event);
-}
-
-EventCallContext::~EventCallContext()
-{
-  // use back-refs to return the actual caller that's now complete
-  EventCalled::pop_caller_record(*this);
 }
 
 int
@@ -204,3 +216,10 @@ EventHdlrState::operator()(Continuation *self,int event, void *data)
   return (*_assignPoint->_kWrapHdlr_Gen())(self,event,data);
 }
 
+size_t cb_sizeof_stack_context() { return sizeof(EventCallContext); }
+
+TSContDebug *cb_init_stack_context(void *p, EventCHdlrAssignRecPtr_t recp)
+{
+  auto r = new(p) EventCallContext(reinterpret_cast<EventHdlr_t>(recp));
+  return reinterpret_cast<TSContDebug*>(r);
+}

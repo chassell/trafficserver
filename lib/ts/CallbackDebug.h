@@ -115,6 +115,7 @@ struct EventHdlrAssignRec
 static_assert( offsetof(EventHdlrAssignRec, _kLabel) == offsetof(EventCHdlrAssignRec, _kLabel), "offset layout mismatch");
 static_assert( offsetof(EventHdlrAssignRec, _kFile) == offsetof(EventCHdlrAssignRec, _kFile), "offset layout mismatch");
 static_assert( offsetof(EventHdlrAssignRec, _kLine) == offsetof(EventCHdlrAssignRec, _kLine), "offset layout mismatch");
+static_assert( offsetof(EventHdlrAssignRec, _kWrapFunc_Gen) == offsetof(EventCHdlrAssignRec, _callback), "offset layout mismatch");
 
 ///////////////////////////////////////////////////////////////////////////////////
 ///
@@ -171,7 +172,9 @@ struct EventCallContext
   EventCallContext(EventHdlrState &state, int event);
   ~EventCallContext();
 
-  EventHdlr_t     const _assignPoint;
+  operator EventHdlr_t() const;
+
+  EventHdlr_t     const _assignPoint = nullptr;
   EventHdlrState* const _state = nullptr;
   EventCalled::ChainPtr_t &_currentCallChain;
   uint64_t             &_allocCounterRef;
@@ -181,8 +184,6 @@ struct EventCallContext
   uint64_t        const _deallocStamp;
   time_point      const _start = steady_clock::now();
 
-  // on stack (or as a member)
-  void *operator new(const std::size_t) = delete; 
 };
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -198,7 +199,7 @@ class EventHdlrState
   EventHdlrState(EventHdlr_t assigned = nullptr);
   ~EventHdlrState();
 
-  operator EventHdlr_t() 
+  operator EventHdlr_t() const 
   {
     return _assignPoint;
   }
@@ -210,6 +211,15 @@ class EventHdlrState
 
   bool operator!=(TSEventFunc b) const {
     return ! _assignPoint || *_assignPoint != reinterpret_cast<TSEventFunc>(b);
+  }
+
+  void reset_last_assign(Ref_t cbAssign)
+  {
+    if ( ! _eventChainPtr || _eventChainPtr->empty() ) {
+      return;
+    }
+
+    _eventChainPtr->back()._assignPoint = &cbAssign;
   }
 
   EventHdlrState &operator=(nullptr_t) 
@@ -241,11 +251,16 @@ class EventHdlrState
   int operator()(Continuation *self,int event,void *data);
   int operator()(TSCont,TSEvent,void *data);
 
-
 private:
   Ptr_t                   _assignPoint = nullptr;
   EventCalled::ChainPtr_t _eventChainPtr;         // current stored "path"
 };
+
+inline EventCallContext::operator EventHdlr_t() const {
+  return _state ? _state->operator EventHdlr_t()
+                : _assignPoint;
+}
+
 
 // 
 // DeferredCall::defer(...)      
@@ -273,10 +288,10 @@ private:
                       &EventHdlrAssignRec::const_cb_callgen<decay_t,(_h)>::func \
                     }
 
-#define CALL_FRAME_RECORD(_h, name) \
-     static constexpr auto name =                          \
+#define LABEL_FRAME_RECORD(str, name) \
+     static auto name =                          \
                     EventHdlrAssignRec{                   \
-                       ((#_h)+0),                          \
+                       (str+0),                          \
                        (__FILE__+0),                       \
                        __LINE__,                           \
                       &EventHdlrAssignRec::const_cb_callgen_base::cmphdlr_nolog,  \
@@ -285,16 +300,38 @@ private:
                       &EventHdlrAssignRec::const_cb_callgen_base::func \
                     }
 
+#define CALL_FRAME_RECORD(_h, name) LABEL_FRAME_RECORD(#_h, name)
+
 // define null as "caller" context... and set up next one
 #define SET_NEXT_HANDLER_RECORD(_h)                   \
             EVENT_HANDLER_RECORD(_h, kHdlrAssignRec); \
-            EventCallContext _ctxt_kHdlrAssignRec{&kHdlrAssignRec};
+            EventCallContext _ctxt_kHdlrAssignRec{&kHdlrAssignRec}
 
-// define null as "caller" context... and set up next one
-#define SET_NEXT_FRAME_RECORD(_h, name)                   \
-            CALL_FRAME_RECORD(_h, name); \
-            EventHdlrState _state_ ## name(& (name)); \
-            EventCallContext _ctxt_ ## name{_state_ ## name, 0}; \
+#define NEW_LABEL_FRAME_RECORD(str, name)                   \
+            LABEL_FRAME_RECORD(str, const name); \
+            EventHdlrState _state_ ## name{& (name)}; \
+            EventCallContext _ctxt_ ## name{_state_ ## name, 0}
+
+#define NEW_CALL_FRAME_RECORD(_h, name)                   \
+            CALL_FRAME_RECORD(_h, const name); \
+            EventHdlrState _state_ ## name{& (name)}; \
+            EventCallContext _ctxt_ ## name{_state_ ## name, 0}
+
+#define RESET_ORIG_FRAME_RECORD(name)   \
+            _state_ ## name.reset_last_assign(name)
+
+#define _RESET_LABEL_FRAME_RECORD(str, name)   \
+         {                                    \
+            LABEL_FRAME_RECORD(str, const name);    \
+            _state_ ## name.reset_last_assign(name); \
+         }
+
+#define RESET_LABEL_FRAME_RECORD(str, name)   \
+            _RESET_LABEL_FRAME_RECORD(str, name)
+
+#define RESET_CALL_FRAME_RECORD(_h, name)   \
+            _RESET_LABEL_FRAME_RECORD(#_h, name)
+
 
 // standard Continuation handler signature(s)
 template<class T_OBJ, typename T_ARG, int(T_OBJ::*FXN)(int,T_ARG)>
