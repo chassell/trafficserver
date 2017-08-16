@@ -39,6 +39,8 @@
 
 #include "ts/apidefs.h"
 
+#include <alloca.h>
+
 typedef const struct EventCHdlrAssignRec EventCHdlrAssignRec_t, 
                                         *EventCHdlrAssignRecPtr_t;
 
@@ -49,10 +51,8 @@ struct EventCHdlrAssignRec
   const char                      *_kLabel;   // at point of assign
   const char                      *_kFile;    // at point of assign
   uint32_t                        _kLine;     // at point of assign
-  const TSEventFuncGen          _cb_pad0;
-  const TSEventFuncGen          _cb_pad1;
-  const TSEventFuncGen          _cb_pad2;
-  const TSEventFunc               _callback;
+  const TSEventFunc               _kCallback;
+  const TSEventFuncGen            _pad[4];
 };
 
 #ifdef __cplusplus
@@ -61,7 +61,7 @@ extern "C" {
 
 typedef struct tsapi_contdebug *TSContDebug;
 
-const TSEventFunc *cb_null_return();
+const TSEventFunc cb_null_return();
 size_t            cb_sizeof_stack_context();
 TSContDebug       *cb_init_stack_context(void *, EventCHdlrAssignRecPtr_t);
 void              cb_free_stack_context(TSContDebug*);
@@ -76,10 +76,11 @@ void              cb_free_stack_context(TSContDebug*);
                        ((#_h)+0),             \
                        (__FILE__+0),          \
                        __LINE__,              \
-                       cb_null_return,        \
-                       cb_null_return,        \
-                       cb_null_return,        \
-                       (_h)                   \
+                       (TSEventFunc)(_h),     \
+                       { &cb_null_return,     \
+                         &cb_null_return,     \
+                         &cb_null_return,     \
+                         &cb_null_return  }   \
                      }
 
 

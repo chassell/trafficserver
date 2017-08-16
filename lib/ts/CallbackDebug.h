@@ -44,6 +44,7 @@
 #include <type_traits>
 #include <cstddef>
 #include <chrono>
+#include <cassert>
 
 struct Continuation;
 struct EventHdlrAssignRec;
@@ -105,6 +106,8 @@ struct EventHdlrAssignRec
   const char *const _kFile;    // at point of assign
   uint32_t    const _kLine;    // at point of assign
 
+  TSEventFunc const _kTSEventFunc; // direct callback ptr (from C)
+
   EventHdlrCompareGen_t *const _kEqualHdlr_Gen; // distinct method-pointer (not usable)
   EventFuncCompareGen_t *const _kEqualFunc_Gen; // distinct method-pointer (not usable)
 
@@ -115,7 +118,7 @@ struct EventHdlrAssignRec
 static_assert( offsetof(EventHdlrAssignRec, _kLabel) == offsetof(EventCHdlrAssignRec, _kLabel), "offset layout mismatch");
 static_assert( offsetof(EventHdlrAssignRec, _kFile) == offsetof(EventCHdlrAssignRec, _kFile), "offset layout mismatch");
 static_assert( offsetof(EventHdlrAssignRec, _kLine) == offsetof(EventCHdlrAssignRec, _kLine), "offset layout mismatch");
-static_assert( offsetof(EventHdlrAssignRec, _kWrapFunc_Gen) == offsetof(EventCHdlrAssignRec, _callback), "offset layout mismatch");
+static_assert( offsetof(EventHdlrAssignRec, _kTSEventFunc) == offsetof(EventCHdlrAssignRec, _kCallback), "offset layout mismatch");
 
 ///////////////////////////////////////////////////////////////////////////////////
 ///
@@ -125,13 +128,13 @@ struct EventCalled
   using Chain_t = std::vector<EventCalled>;
   using ChainPtr_t = std::shared_ptr<Chain_t>;
 
-  EventCalled(const EventCallContext &ctxt, ChainPtr_t const &toswap, int event = 0);
-  static EventCalled *pop_caller_record(const EventCallContext &done);
+  EventCalled(EventHdlr_t point, int event = 0);
+  EventCalled();
 
   static void printLog(Chain_t::const_iterator const &begin, Chain_t::const_iterator const &end, const char *msg);
   
   // fill in deltas
-  void completed(const EventCallContext &ctxt, const ChainPtr_t &chain);
+  void completed(EventCallContext const &ctxt, ChainPtr_t const &chain);
   void trim_call(Chain_t &chain);
 
   // upon ctor
@@ -168,14 +171,19 @@ struct EventCallContext
   using time_point = steady_clock::time_point;
 
   // explicitly define a "called" record.. and *maybe* a call-context too
-  explicit EventCallContext(EventHdlr_t next = nullptr);
+  explicit EventCallContext(EventHdlr_t next);
   EventCallContext(EventHdlrState &state, int event);
   ~EventCallContext();
 
   operator EventHdlr_t() const;
 
+  void push_incomplete_call(EventCalled::ChainPtr_t const &calleeChain, int event) const;
+  EventCalled *pop_caller_record();
+
   EventHdlr_t     const _assignPoint = nullptr;
   EventHdlrState* const _state = nullptr;
+
+  EventCalled::ChainPtr_t _dummyChain;
   EventCalled::ChainPtr_t &_currentCallChain;
   uint64_t             &_allocCounterRef;
   uint64_t             &_deallocCounterRef;
@@ -191,16 +199,19 @@ struct EventCallContext
 ///////////////////////////////////////////////////////////////////////////////////
 class EventHdlrState 
 {
+  friend EventCallContext;
+
  public:
   using Ptr_t = EventHdlr_t;
   using Ref_t = EventHdlrAssignRec::Ref_t;
 
  public:
-  EventHdlrState(EventHdlr_t assigned = nullptr);
+  EventHdlrState();
+  explicit EventHdlrState(EventHdlr_t assigned);
+
   ~EventHdlrState();
 
-  operator EventHdlr_t() const 
-  {
+  operator EventHdlr_t() const {
     return _assignPoint;
   }
 
@@ -222,13 +233,12 @@ class EventHdlrState
     _eventChainPtr->back()._assignPoint = &cbAssign;
   }
 
-  EventHdlrState &operator=(nullptr_t) 
-  {
-    _assignPoint = nullptr;
-    return *this;
-  }
+  EventHdlrState &operator=(nullptr_t);
 
-  EventHdlrState &operator=(TSEventFunc f) {
+  EventHdlrState &operator=(TSEventFunc f) 
+  {
+    assert( _assignPoint );
+    assert( ! _assignPoint->_kTSEventFunc || _assignPoint->_kTSEventFunc == f ); // must match 
     return *this;
   }
 
@@ -246,13 +256,11 @@ class EventHdlrState
     return *this;
   }
 
-  void push_caller_record(const EventCallContext &ctxt, int event) const;
-
   int operator()(Continuation *self,int event,void *data);
   int operator()(TSCont,TSEvent,void *data);
 
 private:
-  Ptr_t                   _assignPoint = nullptr;
+  Ptr_t                   _assignPoint;
   EventCalled::ChainPtr_t _eventChainPtr;         // current stored "path"
 };
 
@@ -282,6 +290,7 @@ inline EventCallContext::operator EventHdlr_t() const {
                        ((#_h)+0),                          \
                        (__FILE__+0),                       \
                        __LINE__,                           \
+                       nullptr,                            \
                       &EventHdlrAssignRec::const_cb_callgen<decay_t,(_h)>::cmphdlr,  \
                       &EventHdlrAssignRec::const_cb_callgen<decay_t,(_h)>::cmpfunc,  \
                       &EventHdlrAssignRec::const_cb_callgen<decay_t,(_h)>::hdlr, \
@@ -294,6 +303,7 @@ inline EventCallContext::operator EventHdlr_t() const {
                        (str+0),                          \
                        (__FILE__+0),                       \
                        __LINE__,                           \
+                       nullptr,                            \
                       &EventHdlrAssignRec::const_cb_callgen_base::cmphdlr_nolog,  \
                       &EventHdlrAssignRec::const_cb_callgen_base::cmpfunc,  \
                       &EventHdlrAssignRec::const_cb_callgen_base::hdlr, \
@@ -312,13 +322,40 @@ inline EventCallContext::operator EventHdlr_t() const {
             EventHdlrState _state_ ## name{& (name)}; \
             EventCallContext _ctxt_ ## name{_state_ ## name, 0}
 
+namespace {
+
+inline std::string trim_to_filename(const char *ptr, const char *name)
+{
+  std::string label = ptr;
+  auto slash = label.rfind('/');
+  if ( slash != label.npos ) {
+    label.erase(0,slash+1);
+  }
+  label += "::";
+  label += name;
+  return std::move(label);
+}
+
+
+}
+
+
+#define NEW_PLUGIN_FRAME_RECORD(path, symbol, name)              \
+            auto label = trim_to_filename(path,symbol);          \
+            LABEL_FRAME_RECORD(label.c_str(), const name);       \
+            EventHdlrState _state_ ## name{& (name)};            \
+            EventCallContext _ctxt_ ## name{_state_ ## name, 0}
+
+
 #define NEW_CALL_FRAME_RECORD(_h, name)                   \
             CALL_FRAME_RECORD(_h, const name); \
             EventHdlrState _state_ ## name{& (name)}; \
             EventCallContext _ctxt_ ## name{_state_ ## name, 0}
 
+
 #define RESET_ORIG_FRAME_RECORD(name)   \
             _state_ ## name.reset_last_assign(name)
+
 
 #define _RESET_LABEL_FRAME_RECORD(str, name)   \
          {                                    \

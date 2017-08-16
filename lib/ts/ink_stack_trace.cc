@@ -54,7 +54,7 @@ ink_stack_trace_dump()
   // In certain situations you can get stuck in malloc waiting for a lock
   // that your program held when it segfaulted. We set an alarm so that
   // if this situation happens it will allow traffic_server to exit.
-  alarm(10);
+//  alarm(10);
 
   void *stack[INK_STACK_TRACE_MAX_LEVELS + 1];
   memset(stack, 0, sizeof(stack));
@@ -62,8 +62,6 @@ ink_stack_trace_dump()
     // dump the backtrace to stderr
     backtrace_symbols_fd(stack + 2, btl - 2, STDERR_FILENO);
   }
-
-  alarm(0);
 }
 
 #else /* !TS_HAS_BACKTRACE */

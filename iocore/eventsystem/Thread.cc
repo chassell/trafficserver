@@ -111,79 +111,87 @@ Thread::start(const char *name, size_t stacksize, ThreadFunction f, void *a)
   return tid;
 }
 
+namespace {
+
 CALL_FRAME_RECORD(&EventHdlrState::EventHdlrState, kCtorRecord);
 
-namespace {
-EventCalled::ChainPtr_t dummyCallChainPtr;
-}
-
-
-EventCalled::ChainPtr_t &get_current_call_chain_ref() 
+EventCalled::ChainPtr_t thread_chain()
 { 
   if ( ! Thread::thread_data_key || ! this_thread() ) {
-    Debug("conttrace","%p: thread-specific is unset");
-    return dummyCallChainPtr;
+    Debug("conttrace","thread-specific is unset");
+    return EventCalled::ChainPtr_t();
   }
 
   return this_thread()->_currentCallChain;
 }
 
+EventCalled::ChainPtr_t &thread_chain_ref(EventCalled::ChainPtr_t &dummy) 
+{ 
+  if ( ! Thread::thread_data_key || ! this_thread() ) {
+    Debug("conttrace","thread-specific is unset");
+    return dummy;
+  }
 
-EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
-   : _assignPoint( hdlr ?: &kCtorRecord )
+  return this_thread()->_currentCallChain;
+}
+
+EventCalled::ChainPtr_t new_ctor_chain(const EventCalled::ChainPtr_t &curr)
+{
+  auto chn = std::make_shared<EventCalled::Chain_t>(); // new chain from this one
+  chn->reserve(16); // add some room
+  
+  auto assignPoint = ( curr ? curr->back()._assignPoint : &kCtorRecord );
+  chn->push_back( EventCalled(assignPoint,0) );
+  return std::move(chn);
+}
+
+
+}
+
+EventHdlrState::EventHdlrState()
 {
   EventCalled::ChainPtr_t dummy;
-  auto *currChainP = &get_current_call_chain_ref();
-  auto &currChainPtr = *currChainP;
-  auto chainRefs = currChainPtr.use_count();
+  auto &currChainPtrRef = thread_chain_ref(dummy);
 
-  if ( ! currChainPtr && ! hdlr ) {
+  if ( ! currChainPtrRef ) {
     ink_stack_trace_dump();
   }
 
-  // not normal case? clean?
-  if ( chainRefs == 1 && ! currChainPtr->back()._extCallerChainLen )
-  {
-    // use as init here
-    _eventChainPtr = currChainPtr; // (increase refs)
+  _eventChainPtr = ( currChainPtrRef.use_count() == 1 ? currChainPtrRef
+                                                       : new_ctor_chain(currChainPtrRef) );
 
-    // take assign-callback and leave empty
-    _assignPoint = _eventChainPtr->front()._assignPoint; 
+  // copy in next-callback (or ctor-callback-rec)
+  _assignPoint = _eventChainPtr->back()._assignPoint;
 
-    Debug("conttrace","%p: init-created: %s %s %d",this,_assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine);
-    return;
-  }
+//  if ( _eventChainPtr == currChainPtrRef ) {
+//    Debug("conttrace","%p: init-created: %s %s@%d",this,_assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine);
+//  }
+}
 
-  _eventChainPtr = std::make_shared<EventCalled::Chain_t>(); // new chain from this one
-  _eventChainPtr->reserve(16); // add some room
 
-  // we got an explicit assignPoint .. but no context?
-  if ( ! currChainPtr && hdlr ) {
-    // declare that our new top-context..
-    currChainPtr = _eventChainPtr;
-  } 
-  else {
-//    Debug("conttrace","%p: empty-created",this);
-  }
+//
+// a HdlrState that merely "owns" the top of other calls
+//
+EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
+   : _assignPoint(hdlr)
+{
+  _eventChainPtr = new_ctor_chain(thread_chain());
 }
 
 /////////////////////////////////////////////////////
 // create startup chain for constructors [if any]
 /////////////////////////////////////////////////////
-EventCallContext::EventCallContext(EventHdlr_t assignPoint)
-   : _assignPoint(assignPoint),
-     _currentCallChain(get_current_call_chain_ref()),
+EventCallContext::EventCallContext(EventHdlr_t point)
+   : _assignPoint(point),
+     _currentCallChain(thread_chain_ref(_dummyChain)),
      _allocCounterRef(*jemallctl::thread_allocatedp()),
      _deallocCounterRef(*jemallctl::thread_deallocatedp()),
      _allocStamp(_allocCounterRef),
      _deallocStamp(_deallocCounterRef)
 {
-  auto chain = std::make_shared<EventCalled::Chain_t>(); // new chain from this one
-  chain->reserve(16); // add some room
-
   // swap temp chain to current
-  chain->push_back( EventCalled{*this, chain} );
-  Debug("conttrace","init-only-call: %s %s %d", assignPoint->_kLabel, assignPoint->_kFile, assignPoint->_kLine);
+  push_incomplete_call(new_ctor_chain(_currentCallChain), 0);
+//  Debug("conttrace","init-only-call: %s %s@%d", point->_kLabel, point->_kFile, point->_kLine);
 }
 
 /////////////////////////////////////////////////////////////////
@@ -192,20 +200,25 @@ EventCallContext::EventCallContext(EventHdlr_t assignPoint)
 EventCallContext::EventCallContext(EventHdlrState &state, int event)
    : _assignPoint(state), // remember state's assignPoint
      _state(&state),
-     _currentCallChain(get_current_call_chain_ref()),
+     _currentCallChain(thread_chain_ref(_dummyChain)),
      _allocCounterRef(*jemallctl::thread_allocatedp()),
      _deallocCounterRef(*jemallctl::thread_deallocatedp()),
      _allocStamp(_allocCounterRef),
      _deallocStamp(_deallocCounterRef)
 {
   // swap hdlrstate's chain to current (if different)
-  state.push_caller_record(*this, event);
+  push_incomplete_call(state._eventChainPtr, event);
 }
 
 int
 EventHdlrState::operator()(TSCont ptr, TSEvent event, void *data)
 {
   EventCallContext _ctxt{*this,event};
+  if ( _assignPoint->_kTSEventFunc ) {
+    // direct C call.. 
+    return (*_assignPoint->_kTSEventFunc)(ptr,event,data);
+  }
+  // C++ wrapper ...
   return (*_assignPoint->_kWrapFunc_Gen())(ptr,event,data);
 }
 
@@ -222,4 +235,18 @@ TSContDebug *cb_init_stack_context(void *p, EventCHdlrAssignRecPtr_t recp)
 {
   auto r = new(p) EventCallContext(reinterpret_cast<EventHdlr_t>(recp));
   return reinterpret_cast<TSContDebug*>(r);
+}
+
+EventCalled::EventCalled(EventHdlr_t point, int event)
+   : _assignPoint(point), // constructor-only 
+     _extCallerChain(thread_chain()),  // dflt
+     _event(event),
+     _extCallerChainLen( _extCallerChain ? _extCallerChain->size() : 0 )
+{ 
+}
+
+EventHdlrState &EventHdlrState::operator=(nullptr_t)
+{
+  _assignPoint = &kCtorRecord;
+  return *this;
 }
