@@ -655,7 +655,6 @@ int create_thread_memory_arena_fork(int nsid)
     newArena = jemallctl::do_arenas_extend();
 
     Debug("memory", "extending arena to %lu", newArena);
-    Note("extending arena %u to %lu", g_arenaByNodesID[nsid], newArena);
 
     // store the node-set that this arena is going to partition off
     if (g_nodesByArena.size() < newArena + 1U) {
@@ -664,6 +663,8 @@ int create_thread_memory_arena_fork(int nsid)
 
     g_nodesByArena[newArena] = hwloc_bitmap{kUniqueNodeSets[nsid]}.release();
     g_arenaByNodesID[nsid]   = static_cast<unsigned>(newArena);
+
+    Note("extending arena %u to %lu", g_arenaByNodesID[nsid], newArena);
 
     ink_mutex_release(&s_mutex);
   }

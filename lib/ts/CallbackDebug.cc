@@ -358,6 +358,11 @@ EventCallContext::pop_caller_record()
 
 EventCallContext::~EventCallContext()
 {
+  if ( ! _currentCallChain ) {
+     Debug("conttrace","top level pop without handler-chain");
+     return nullptr;
+  }
+
   // use back-refs to return the actual caller that's now complete
   pop_caller_record();
 }
