@@ -141,24 +141,27 @@ EventCalled::ChainPtr_t new_ctor_chain(const EventCalled::ChainPtr_t &curr)
   chn->reserve(16); // add some room
   
   auto assignPoint = ( curr ? curr->back()._assignPoint : &kCtorRecord );
-  chn->push_back( EventCalled(assignPoint,0) );
+  chn->push_back( EventCalled(*assignPoint,0) );
   return std::move(chn);
 }
 
 
 }
 
-EventHdlrState::EventHdlrState()
+EventHdlrState::EventHdlrState(void *p)
 {
   EventCalled::ChainPtr_t dummy;
   auto &currChainPtrRef = thread_chain_ref(dummy);
+
+  ink_assert( ! p );
 
   if ( ! currChainPtrRef ) {
     ink_stack_trace_dump();
   }
 
-  _eventChainPtr = ( currChainPtrRef.use_count() == 1 ? currChainPtrRef
-                                                       : new_ctor_chain(currChainPtrRef) );
+  _eventChainPtr = ( currChainPtrRef.use_count() == 1 
+                          ? currChainPtrRef
+                          : new_ctor_chain(currChainPtrRef) );
 
   // copy in next-callback (or ctor-callback-rec)
   _assignPoint = _eventChainPtr->back()._assignPoint;
@@ -173,8 +176,10 @@ EventHdlrState::EventHdlrState()
 // a HdlrState that merely "owns" the top of other calls
 //
 EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
-   : _assignPoint(hdlr)
+   : _assignPoint(&hdlr)
 {
+  ink_assert(&hdlr);
+
   _eventChainPtr = new_ctor_chain(thread_chain());
 }
 
@@ -182,7 +187,7 @@ EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
 // create startup chain for constructors [if any]
 /////////////////////////////////////////////////////
 EventCallContext::EventCallContext(EventHdlr_t point)
-   : _assignPoint(point),
+   : _assignPoint(&point),
      _currentCallChain(thread_chain_ref(_dummyChain)),
      _allocCounterRef(*jemallctl::thread_allocatedp()),
      _deallocCounterRef(*jemallctl::thread_deallocatedp()),
@@ -198,7 +203,7 @@ EventCallContext::EventCallContext(EventHdlr_t point)
 // create new callback-entry on chain associated with HdlrState
 /////////////////////////////////////////////////////////////////
 EventCallContext::EventCallContext(EventHdlrState &state, int event)
-   : _assignPoint(state), // remember state's assignPoint
+   : _assignPoint(&state.operator EventHdlr_t()), // remember state's assignPoint
      _state(&state),
      _currentCallChain(thread_chain_ref(_dummyChain)),
      _allocCounterRef(*jemallctl::thread_allocatedp()),
@@ -233,12 +238,12 @@ size_t cb_sizeof_stack_context() { return sizeof(EventCallContext); }
 
 TSContDebug *cb_init_stack_context(void *p, EventCHdlrAssignRecPtr_t recp)
 {
-  auto r = new(p) EventCallContext(reinterpret_cast<EventHdlr_t>(recp));
+  auto r = new(p) EventCallContext(reinterpret_cast<EventHdlr_t>(*recp));
   return reinterpret_cast<TSContDebug*>(r);
 }
 
 EventCalled::EventCalled(EventHdlr_t point, int event)
-   : _assignPoint(point), // constructor-only 
+   : _assignPoint(&point), // constructor-only 
      _extCallerChain(thread_chain()),  // dflt
      _event(event),
      _extCallerChainLen( _extCallerChain ? _extCallerChain->size() : 0 )

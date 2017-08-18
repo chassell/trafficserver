@@ -43,9 +43,8 @@ class INKContInternal : public DummyVConnection
 {
 public:
   INKContInternal();
-  INKContInternal(decltype(nullptr), TSMutex mutexp);
+  INKContInternal(void*, TSMutex mutexp); // only gets NULL
 
-  void init(TSEventFunctor funcp, TSMutex mutexp);
   void init(TSEventFunc funcp, TSMutex mutexp);
   virtual void destroy();
 
@@ -54,7 +53,6 @@ public:
 
 public:
   void *mdata;
-//  TSEventFunctor m_event_func;
   EventHdlrState m_event_func;
   volatile int m_event_count;
   volatile int m_closed;
@@ -68,10 +66,8 @@ class INKVConnInternal : public INKContInternal
 {
 public:
   INKVConnInternal();
-  INKVConnInternal(void*, TSMutex mutexp);
-  INKVConnInternal(TSEventFunctor funcp, TSMutex mutexp);
+  INKVConnInternal(void*, TSMutex mutexp); // only gets NULL
 
-  void init(TSEventFunctor funcp, TSMutex mutexp);
   void init(TSEventFunc funcp, TSMutex mutexp);
   virtual void destroy();
 

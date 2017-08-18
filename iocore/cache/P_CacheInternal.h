@@ -504,15 +504,15 @@ struct CacheVC : public CacheVConnection {
 
 #define PUSH_HANDLER(_x)                                            \
   do {                                                              \
-    ink_assert(handler() != &CacheVC::dead); \
-    save_handler = handler();                                       \
+    ink_assert(handler != &CacheVC::dead); \
+    save_handler = handler;                                       \
     SET_HANDLER(_x);                                                \
   } while (0)
 
 #define POP_HANDLER                                                 \
   do {                                                              \
     SET_SAVED_HANDLER(save_handler);                                      \
-    ink_assert(handler() != &CacheVC::dead); \
+    ink_assert(handler != &CacheVC::dead); \
   } while (0)
 
 struct CacheRemoveCont : public Continuation {
@@ -687,10 +687,10 @@ CacheVC::die()
   } else {
     if (is_io_in_progress()) {
       // preserve current
-      auto hold = handler(); 
+      auto hold = handler; 
       // add the new-pushed handler
       SET_HANDLER(&CacheVC::openReadClose);
-      save_handler = handler();
+      save_handler = handler;
       // restore current handler
       SET_SAVED_HANDLER(hold);
     } else {

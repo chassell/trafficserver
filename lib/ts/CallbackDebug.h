@@ -52,7 +52,8 @@ struct EventCalled;
 struct EventCallContext;
 class EventHdlrState;
 
-using EventHdlr_t = const EventHdlrAssignRec *;
+using EventHdlr_t = const EventHdlrAssignRec &;
+using EventHdlrP_t = const EventHdlrAssignRec *;
 
 using EventHdlrMethodPtr_t = int (Continuation::*)(int event, void *data);
 using EventHdlrFxn_t       = int(Continuation *, int event, void *data);
@@ -94,12 +95,15 @@ struct EventHdlrAssignRec
 
  public:
   using Ptr_t = const EventHdlrAssignRec *;
-  using Ref_t = const EventHdlrAssignRec &;
 
   bool operator!=(EventHdlrMethodPtr_t a) const 
      { return ! _kEqualHdlr_Gen || ! _kEqualHdlr_Gen()(a); }
   bool operator!=(TSEventFunc b) const 
      { return ! _kEqualFunc_Gen || ! _kEqualFunc_Gen()(b); }
+
+  bool no_log() const {
+    return ! _kEqualHdlr_Gen();
+  }
 
  public:
   const char *const _kLabel;   // at point of assign
@@ -129,7 +133,11 @@ struct EventCalled
   using ChainPtr_t = std::shared_ptr<Chain_t>;
 
   EventCalled(EventHdlr_t point, int event = 0);
-  EventCalled();
+  EventCalled(void *p = NULL);
+
+  bool no_log() const {
+    return ! _assignPoint || _assignPoint->no_log();
+  }
 
   static void printLog(Chain_t::const_iterator const &begin, Chain_t::const_iterator const &end, const char *msg);
   
@@ -138,7 +146,7 @@ struct EventCalled
   void trim_call(Chain_t &chain);
 
   // upon ctor
-  EventHdlr_t               _assignPoint = nullptr;   // CB dispatched (null if for ctor)
+  EventHdlrP_t               _assignPoint = nullptr;   // CB dispatched (null if for ctor)
 
   // upon ctor
   ChainPtr_t                _extCallerChain;          // ext chain for caller (null if internal)
@@ -180,7 +188,11 @@ struct EventCallContext
   void push_incomplete_call(EventCalled::ChainPtr_t const &calleeChain, int event) const;
   EventCalled *pop_caller_record();
 
-  EventHdlr_t     const _assignPoint = nullptr;
+  bool no_log() const {
+    return ! _assignPoint || _assignPoint->no_log();
+  }
+
+  EventHdlrP_t     const _assignPoint = nullptr;
   EventHdlrState* const _state = nullptr;
 
   EventCalled::ChainPtr_t _dummyChain;
@@ -202,17 +214,16 @@ class EventHdlrState
   friend EventCallContext;
 
  public:
-  using Ptr_t = EventHdlr_t;
-  using Ref_t = EventHdlrAssignRec::Ref_t;
+  using Ptr_t = EventHdlrP_t;
 
  public:
-  EventHdlrState();
+  explicit EventHdlrState(void *p = NULL); // treat as NULL
   explicit EventHdlrState(EventHdlr_t assigned);
 
   ~EventHdlrState();
 
   operator EventHdlr_t() const {
-    return _assignPoint;
+    return *_assignPoint;
   }
 
   template <class T_OBJ, typename T_ARG>
@@ -224,7 +235,7 @@ class EventHdlrState
     return ! _assignPoint || *_assignPoint != reinterpret_cast<TSEventFunc>(b);
   }
 
-  void reset_last_assign(Ref_t cbAssign)
+  void reset_last_assign(EventHdlr_t cbAssign)
   {
     if ( ! _eventChainPtr || _eventChainPtr->empty() ) {
       return;
@@ -243,14 +254,7 @@ class EventHdlrState
   }
 
   // class method-pointer full args
-  EventHdlrState &operator=(Ptr_t &prev)
-  {
-    _assignPoint = prev;
-    return *this;
-  }
-
-  // class method-pointer full args
-  EventHdlrState &operator=(Ref_t cbAssign)
+  EventHdlrState &operator=(EventHdlr_t cbAssign)
   {
     _assignPoint = &cbAssign;
     return *this;
@@ -260,13 +264,13 @@ class EventHdlrState
   int operator()(TSCont,TSEvent,void *data);
 
 private:
-  Ptr_t                   _assignPoint;
+  EventHdlrP_t            _assignPoint;
   EventCalled::ChainPtr_t _eventChainPtr;         // current stored "path"
 };
 
 inline EventCallContext::operator EventHdlr_t() const {
   return _state ? _state->operator EventHdlr_t()
-                : _assignPoint;
+                : *_assignPoint;
 }
 
 
@@ -315,11 +319,11 @@ inline EventCallContext::operator EventHdlr_t() const {
 // define null as "caller" context... and set up next one
 #define SET_NEXT_HANDLER_RECORD(_h)                   \
             EVENT_HANDLER_RECORD(_h, kHdlrAssignRec); \
-            EventCallContext _ctxt_kHdlrAssignRec{&kHdlrAssignRec}
+            EventCallContext _ctxt_kHdlrAssignRec{kHdlrAssignRec}
 
 #define NEW_LABEL_FRAME_RECORD(str, name)                   \
             LABEL_FRAME_RECORD(str, const name); \
-            EventHdlrState _state_ ## name{& (name)}; \
+            EventHdlrState _state_ ## name{name}; \
             EventCallContext _ctxt_ ## name{_state_ ## name, 0}
 
 namespace {
@@ -343,13 +347,13 @@ inline std::string trim_to_filename(const char *ptr, const char *name)
 #define NEW_PLUGIN_FRAME_RECORD(path, symbol, name)              \
             auto label = trim_to_filename(path,symbol);          \
             LABEL_FRAME_RECORD(label.c_str(), const name);       \
-            EventHdlrState _state_ ## name{& (name)};            \
+            EventHdlrState _state_ ## name{name};            \
             EventCallContext _ctxt_ ## name{_state_ ## name, 0}
 
 
 #define NEW_CALL_FRAME_RECORD(_h, name)                   \
             CALL_FRAME_RECORD(_h, const name); \
-            EventHdlrState _state_ ## name{& (name)}; \
+            EventHdlrState _state_ ## name{name}; \
             EventCallContext _ctxt_ ## name{_state_ ## name, 0}
 
 

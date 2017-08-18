@@ -57,8 +57,15 @@ const ink_thread_key s_currentCallChainTLS =
 // common interface impl                     //
 ///////////////////////////////////////////////
 
-void EventCalled::printLog(Chain_t::const_iterator const &begin, Chain_t::const_iterator const &end, const char *omsg)
+void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const_iterator const &end, const char *omsg)
 {
+  auto begin = obegin;
+
+  // skip constructor/boring callers in print
+  while ( begin != end && begin->no_log() ) {
+    ++begin;
+  }
+
   ptrdiff_t len = end - begin;
   ptrdiff_t i = len-1;
 
@@ -161,14 +168,13 @@ void EventCalled::trim_call(Chain_t &chain)
 
   auto i = (this - &chain.front());
 
-  if ( (this-1)->_assignPoint != _assignPoint 
-       && _assignPoint->_kEqualHdlr_Gen() ) {
+  if ( (this-1)->_assignPoint != _assignPoint && ! no_log() ) {
     return; // need a flag set ... or a direct repeat is here
   }
 
-  if ( ! _assignPoint->_kEqualHdlr_Gen() ) {
- //   Debug("conttrace","trim #%ld %s", i, _assignPoint->_kLabel);
-  }
+//  if ( no_log() ) {
+//   Debug("conttrace","trim #%ld %s", i, _assignPoint->_kLabel);
+//  }
 
   chain.erase( chain.begin() + i);
 }
@@ -185,14 +191,16 @@ EventHdlrState::~EventHdlrState()
     return;
   }
 
-  if ( _eventChainPtr->size() > 1 || _eventChainPtr->back()._assignPoint->_kEqualHdlr_Gen() ) {
-    EventCalled::printLog(_eventChainPtr->begin(),_eventChainPtr->end(),"state DTOR");
+  if ( _eventChainPtr->size() == 1 && _eventChainPtr->back().no_log() ) {
+    return;
   }
+
+  EventCalled::printLog(_eventChainPtr->begin(),_eventChainPtr->end(),"state DTOR");
 }
 
 void EventCallContext::push_incomplete_call(EventCalled::ChainPtr_t const &calleeChain, int event) const
 {
-  calleeChain->push_back( EventCalled(_assignPoint,event) );
+  calleeChain->push_back( EventCalled(*_assignPoint,event) );
 
   // no change needed
   if ( _currentCallChain == calleeChain ) {
@@ -214,7 +222,7 @@ void EventCallContext::push_incomplete_call(EventCalled::ChainPtr_t const &calle
   {
     next._extCallerChainLen = next._extCallerChain->size();
 
-    if ( ! next._assignPoint->_kEqualHdlr_Gen() ) {
+    if ( no_log() ) {
       return;
     }
 
@@ -225,7 +233,7 @@ void EventCallContext::push_incomplete_call(EventCalled::ChainPtr_t const &calle
     return;
   } 
 
-  if ( ! _state || ! next._assignPoint->_kEqualHdlr_Gen() ) {
+  if ( ! _state || no_log() ) {
     return;
   }
 
@@ -234,7 +242,7 @@ void EventCallContext::push_incomplete_call(EventCalled::ChainPtr_t const &calle
 }
 
 EventCalled::EventCalled(EventHdlr_t point, int event)
-   : _assignPoint(point), // changes to assign-point
+   : _assignPoint(&point), // changes to assign-point
      _event(event)
 { }
 
@@ -360,7 +368,7 @@ EventCallContext::~EventCallContext()
 {
   if ( ! _currentCallChain ) {
      Debug("conttrace","top level pop without handler-chain");
-     return nullptr;
+     return;
   }
 
   // use back-refs to return the actual caller that's now complete

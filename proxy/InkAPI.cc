@@ -924,7 +924,7 @@ LOG_SKIPPABLE_EVENTHDLR(&INKVConnInternal::handle_event);
 INKContInternal::INKContInternal()
   : DummyVConnection(NULL),
     mdata(NULL),
-//    m_event_func(NULL),
+    m_event_func(NULL),
     m_event_count(0),
     m_closed(1),
     m_deletable(0),
@@ -933,10 +933,10 @@ INKContInternal::INKContInternal()
 {
 }
 
-INKContInternal::INKContInternal(decltype(nullptr), TSMutex mutexp)
+INKContInternal::INKContInternal(void *, TSMutex mutexp)
   : DummyVConnection((ProxyMutex *)mutexp),
     mdata(NULL),
-//    m_event_func(),
+    m_event_func(NULL),
     m_event_count(0),
     m_closed(1),
     m_deletable(0),
@@ -1031,7 +1031,7 @@ INKVConnInternal::INKVConnInternal() : INKContInternal(), m_read_vio(), m_write_
 }
 
 INKVConnInternal::INKVConnInternal(void*, TSMutex mutexp)
-  : INKContInternal(nullptr, mutexp), m_read_vio(), m_write_vio(), m_output_vc(NULL)
+  : INKContInternal(NULL, mutexp), m_read_vio(), m_write_vio(), m_output_vc(NULL)
 {
   m_closed = 0;
   SET_HANDLER(&INKVConnInternal::handle_event);

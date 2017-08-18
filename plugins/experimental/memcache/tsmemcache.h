@@ -97,7 +97,7 @@ struct MCAccept : public Continuation {
 
 #define TS_PUSH_HANDLER(_h)                      \
   do {                                           \
-    handler_stack[ihandler_stack++] = handler(); \
+    handler_stack[ihandler_stack++] = handler; \
     SET_HANDLER(_h);                             \
   } while (0)
 

@@ -23,13 +23,11 @@
 #ifndef TS_H
 #define TS_H
 
+#include <assert.h>
 #include <limits>
 #include <list>
 #include <memory>
 #include <ts/ts.h>
-
-#undef assert
-#include <assert.h>
 
 #ifdef NDEBUG
 #define CHECK(X) X

@@ -96,12 +96,8 @@ public:
 class Continuation : private force_VFPT_to_top
 {
 public:
-  using Hdlr_t       = EventHdlrAssignRec::Ptr_t;
-  using HdlrRef_t    = EventHdlrAssignRec::Ref_t;
-  using HdlrFtor_t   = std::function<EventHdlrFxn_t>;
-
-/**
-  The current continuation handler function.
+  /**
+    The current continuation handler function.
 
     The current handler should not be set directly. In order to
     change it, first aquire the Continuation's lock and then use
@@ -109,10 +105,10 @@ public:
     issues.
 
   */
-  const EventHdlrState &handler() const { return _handler; }
+  EventHdlrState    handler;
 
 #ifdef DEBUG
-  const char *handler_name = nullptr;
+  const char *handler_name;
 #endif
 
   /**
@@ -156,7 +152,7 @@ public:
   int
   handleEvent(int event = CONTINUATION_EVENT_NONE, void *data = 0)
   {
-    return _handler(this,event,data);
+    return handler(this,event,data);
   }
 
   /**
@@ -167,29 +163,6 @@ public:
 
   */
   Continuation(ProxyMutex *amutex = NULL);
-
-  Continuation &operator=(nullptr_t)
-  {
-    _handler = nullptr;
-    return *this;
-  }
-
-  // class method-pointer full args
-  Continuation &operator=(const EventHdlrState &prev)
-  {
-    _handler = prev;
-    return *this;
-  }
-
-  // class method-pointer full args
-  Continuation &operator=(HdlrRef_t cbAssign)
-  {
-    _handler = cbAssign;
-    return *this;
-  }
-
-private:
-  EventHdlrState    _handler;
 };
 
 /**
@@ -202,7 +175,7 @@ private:
 #define SET_HANDLER(_h) SET_CONTINUATION_HANDLER(this,_h)
 
 #define CLEAR_HANDLER()          SET_SAVED_HANDLER(nullptr)
-#define SET_SAVED_HANDLER(_var)  (Continuation::operator=(_var))
+#define SET_SAVED_HANDLER(_var)  (this->handler.operator=(_var))
 /**
   Sets a Continuation's handler.
 
@@ -215,12 +188,15 @@ private:
 #define SET_CONTINUATION_HANDLER(obj,_h)                     \
    ({                                                        \
      EVENT_HANDLER_RECORD(_h, kHdlrAssignRec);              \
-     static_cast<Continuation&>(*obj) = kHdlrAssignRec;      \
+     static_cast<Continuation&>(*obj).handler = kHdlrAssignRec;      \
    })
 
-
-inline Continuation::Continuation(ProxyMutex *amutex) 
-   : mutex(amutex)
+inline Continuation::Continuation(ProxyMutex *amutex)
+  : handler(NULL),
+#ifdef DEBUG
+    handler_name(NULL),
+#endif
+    mutex(amutex)
 {
   // Pick up the control flags from the creating thread
   this->control_flags.set_flags(get_cont_flags().get_flags());

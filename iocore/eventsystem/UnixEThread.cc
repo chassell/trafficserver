@@ -167,8 +167,10 @@ EThread::process_event(Event *e, int calling_code)
 }
 
 #define process_event(a,b) \
+  {                                                        \
   NEW_CALL_FRAME_RECORD(&EThread::process_event,kTopCall); \
-  process_event((a),(b))
+  process_event((a),(b));                                  \
+  }
 
 //
 // void  EThread::execute()
@@ -179,6 +181,7 @@ EThread::process_event(Event *e, int calling_code)
 // When its time for the event, try to get the appropriate continuation
 // lock. If successful, call the continuation, otherwise put the event back
 // into the queue.
+//
 
 void
 EThread::execute()
@@ -274,9 +277,8 @@ EThread::execute()
           }
         }
         // execute poll events
-        while ((e = NegativeQueue.dequeue())) {
+        while ((e = NegativeQueue.dequeue()))
           process_event(e, EVENT_POLL);
-        }
         if (!INK_ATOMICLIST_EMPTY(EventQueueExternal.al))
           EventQueueExternal.dequeue_timed(cur_time, next_time, false);
       } else { // Means there are no negative events

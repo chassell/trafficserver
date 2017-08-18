@@ -74,7 +74,7 @@ int64_t TSCacheHttpInfoSizeGet(TSCacheHttpInfo infop);
 
 /* Do not edit these apis, used internally */
 tsapi int TSMimeHdrFieldEqual(TSMBuffer bufp, TSMLoc hdr_obj, TSMLoc field1, TSMLoc field2);
-tsapi TSReturnCode TSHttpTxnHookRegisteredFor(TSHttpTxn txnp, TSHttpHookID id, TSEventFuncSig *funcp);
+tsapi TSReturnCode TSHttpTxnHookRegisteredFor(TSHttpTxn txnp, TSHttpHookID id, TSEventFunc funcp);
 
 /* Various HTTP "control" modes */
 typedef enum {
