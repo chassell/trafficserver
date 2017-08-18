@@ -65,6 +65,10 @@ ats_malloc(size_t size)
   if (likely(size > 0)) {
     if (unlikely((ptr = malloc(size)) == NULL)) {
       ink_stack_trace_dump();
+      ink_warning("ats_malloc: couldn't allocate %zu bytes in arena %d", size, 
+                                               jemallctl::thread_arena());
+      ink_warning("ats_malloc: current alloced: %#lx", jemallctl::stats_allocated());
+      ink_warning("ats_malloc: current active: %#lx", jemallctl::stats_cactive()->operator uint64_t());
       ink_fatal("ats_malloc: couldn't allocate %zu bytes", size);
     }
   }

@@ -28,6 +28,7 @@
 #include "ts/ink_memory.h"
 
 #include <vector>
+#include <atomic>
 
 #if !HAVE_LIBJEMALLOC
 struct chunk_hooks_t {
@@ -92,6 +93,10 @@ extern const SetObjFxn<bool> set_thread_prof_active;
 
 extern const GetObjFxn<bool> thread_prof_active;
 extern const SetObjFxn<bool> set_thread_prof_active;
+
+extern const GetObjFxn<uint64_t>           stats_active;
+extern const GetObjFxn<std::atomic_ulong*> stats_cactive;
+extern const GetObjFxn<uint64_t>           stats_allocated;
 }
 
 #endif // _JEMALLCTL_H

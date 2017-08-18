@@ -208,6 +208,7 @@ mallctl_set<chunk_hooks_t>(const objpath_t &baseOid, const chunk_hooks_t &hooks)
 
 template struct GetObjFxn<uint64_t>;
 template struct GetObjFxn<uint64_t*>;
+template struct GetObjFxn<std::atomic_ulong*>;
 template struct GetObjFxn<unsigned>;
 template struct GetObjFxn<bool>;
 template struct GetObjFxn<chunk_hooks_t>;
@@ -243,4 +244,7 @@ const SetObjFxn<bool> set_thread_prof_active{"thread.prof.active"};
 const GetObjFxn<uint64_t*> thread_allocatedp{"thread.allocatedp"};
 const GetObjFxn<uint64_t*> thread_deallocatedp{"thread.deallocatedp"};
 
+const GetObjFxn<std::atomic_ulong*> stats_cactive{"stats.cactive"};
+const GetObjFxn<uint64_t>  stats_active{"stats.active"};
+const GetObjFxn<uint64_t>  stats_allocated{"stats.allocated"};
 } // namespace jemallctl

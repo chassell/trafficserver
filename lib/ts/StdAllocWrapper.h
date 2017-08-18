@@ -38,8 +38,6 @@
 
 #pragma once
 
-#include "ts/jemallctl.h"
-
 #include "ts/ink_queue.h"
 #include "ts/ink_defs.h"
 #include "ts/ink_resource.h"
