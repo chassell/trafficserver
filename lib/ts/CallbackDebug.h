@@ -135,11 +135,9 @@ struct EventCalled
   EventCalled(EventHdlr_t point, int event = 0);
   EventCalled(void *p = NULL);
 
-  bool no_log() const {
-    return ! _assignPoint || _assignPoint->no_log();
-  }
+  bool no_log() const;
 
-  static void printLog(Chain_t::const_iterator const &begin, Chain_t::const_iterator const &end, const char *msg);
+  static void printLog(Chain_t::const_iterator const &begin, Chain_t::const_iterator const &end, const char *msg, EventHdlrState *ptr);
   
   // fill in deltas
   void completed(EventCallContext const &ctxt, ChainPtr_t const &chain);
@@ -316,6 +314,8 @@ inline EventCallContext::operator EventHdlr_t() const {
 
 #define CALL_FRAME_RECORD(_h, name) LABEL_FRAME_RECORD(#_h, name)
 
+const char *cb_alloc_plugin_label(const char *path, const char *symbol);
+
 // define null as "caller" context... and set up next one
 #define SET_NEXT_HANDLER_RECORD(_h)                   \
             EVENT_HANDLER_RECORD(_h, kHdlrAssignRec); \
@@ -326,30 +326,10 @@ inline EventCallContext::operator EventHdlr_t() const {
             EventHdlrState _state_ ## name{name}; \
             EventCallContext _ctxt_ ## name{_state_ ## name, 0}
 
-namespace {
-
-inline std::string trim_to_filename(const char *ptr, const char *name)
-{
-  std::string label = ptr;
-  auto slash = label.rfind('/');
-  if ( slash != label.npos ) {
-    label.erase(0,slash+1);
-  }
-  label += "::";
-  label += name;
-  return std::move(label);
-}
-
-
-}
-
-
-#define NEW_PLUGIN_FRAME_RECORD(path, symbol, name)              \
-            auto label = trim_to_filename(path,symbol);          \
-            LABEL_FRAME_RECORD(label.c_str(), const name);       \
-            EventHdlrState _state_ ## name{name};            \
+#define NEW_PLUGIN_FRAME_RECORD(path, symbol, name)                        \
+            LABEL_FRAME_RECORD(cb_alloc_plugin_label(path,symbol),const name); \
+            EventHdlrState _state_ ## name{name};                          \
             EventCallContext _ctxt_ ## name{_state_ ## name, 0}
-
 
 #define NEW_CALL_FRAME_RECORD(_h, name)                   \
             CALL_FRAME_RECORD(_h, const name); \

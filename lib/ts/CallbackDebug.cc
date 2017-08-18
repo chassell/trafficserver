@@ -40,6 +40,7 @@
 #include <algorithm>
 #include <iostream>
 #include <memory>
+#include <cstring>
 
 namespace {
 const ink_thread_key s_currentCallChainTLS = 
@@ -57,22 +58,44 @@ const ink_thread_key s_currentCallChainTLS =
 // common interface impl                     //
 ///////////////////////////////////////////////
 
-void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const_iterator const &end, const char *omsg)
+bool EventCalled::no_log() const
+{
+  if ( ! _assignPoint ) {
+    return true; // don't log
+  }
+
+  // do log if memory changed
+  if ( _allocDelta || _deallocDelta ) {
+    return false; // DO log
+  }
+
+  // if flagged .. it's not important enough
+  if (  _assignPoint->no_log() ) {
+    return true;
+  }
+
+  // if no important event was delivered..
+  return ( ! _event && ! _delay );
+}
+
+void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const_iterator const &oend, const char *omsg, EventHdlrState *state)
 {
   auto begin = obegin;
+  auto last = oend;
+
+  --last;
 
   // skip constructor/boring callers in print
-  while ( begin != end && begin->no_log() ) {
+  while ( begin != last && begin->no_log() ) {
     ++begin;
   }
 
-  ptrdiff_t len = end - begin;
-  ptrdiff_t i = len-1;
+  ptrdiff_t i = last - begin;
 
   ptrdiff_t memAccount = 0;
   double timeAccount = 0;
 
-  for( auto iter = end-1 ; iter > begin ; --i, --iter )
+  for( auto iter = last ; iter >= begin ; --i, --iter )
   {
     auto &call = *iter;
 
@@ -85,10 +108,10 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
 
     const EventHdlrAssignRec &rec = *call._assignPoint;
 
-//    const char *e = ( len == 1 ? "  " 
-//                  : i == len-1 ? "~~" 
-//                        : ! i ? "!!" 
-//                              : "##" );
+//    const char *e = ( last == begin 1 ? "  " 
+//                      : iter == begin ? "~~" 
+//                                : ! i ? "!!" 
+//                                      : "##" );
 
     const char *debug = "conttrace";
     std::string debugStr = rec._kLabel;
@@ -111,38 +134,57 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
        debug = debugStr.c_str();
     } while(false);
 
-    std::string buff;
+    std::string msgbuff;
+    std::string addonbuff;
     const char *msg = omsg;
+    const char *addon = "";
 
-    if ( call._extCallerChain ) {
-      ink_assert( call._extCallerChainLen <= call._extCallerChain->size() );
-      auto extCaller = (*call._extCallerChain)[call._extCallerChainLen-1]._assignPoint->_kLabel;
-      buff.resize(strlen(msg) + strlen(extCaller) + 10, '\0');
-      snprintf(const_cast<char*>(buff.data()),buff.size(),"<-- %s %s",extCaller,msg);
-      msg = buff.data();
-    }
-
-    std::string callback = rec._kLabel;
-    auto cutoff = callback.rfind('&');
-    if ( cutoff == callback.npos ) {
-      cutoff = callback.rfind(')');
-    }
-    if ( cutoff == callback.npos ) {
-      cutoff = 0;
-    }
-
-    callback.erase(0,cutoff);
-
-    if ( len == 1 ) 
+    if ( call._extCallerChain ) 
     {
-      Debug(debug,"                 :%05u[ mem %9ld time ~%5.1f%s]                %s %s@%d %s",
-               call._event, memDelta, delay / div, units, callback.c_str(), rec._kFile, rec._kLine, msg);
+      auto extCaller = (*call._extCallerChain)[call._extCallerChainLen-1]._assignPoint->_kLabel;
+
+      auto extCallerTrail = strrchr(extCaller,'&');
+      if ( ! extCallerTrail ) {
+         extCallerTrail = strrchr(extCaller,')');
+      }
+      if ( ! extCallerTrail ) {
+        extCallerTrail = extCaller-1;
+      }
+
+      ++extCallerTrail;
+
+      msgbuff.resize(strlen(msg) + strlen(extCallerTrail) + 10, '\0');
+      snprintf(const_cast<char*>(msgbuff.data()),msgbuff.size(),"<-- %s %s",extCallerTrail,msg);
+      msg = msgbuff.data();
+    }
+
+    if ( state ) {
+      addonbuff.resize(16);
+      snprintf(const_cast<char*>(addonbuff.data()),addonbuff.size(),"%p ",state);
+      addonbuff.erase(0,5);
+      addon = addonbuff.data();
+    }
+
+    auto callback = strrchr(rec._kLabel,'&');
+    if ( ! callback ) {
+       callback = strrchr(rec._kLabel,')');
+    }
+    if ( ! callback ) {
+      callback = rec._kLabel-1;
+    }
+
+    ++callback;
+
+    if ( last == begin ) 
+    {
+      Debug(debug,"                 :%05u[ mem %9ld time ~%5.1f%s]                %s %s@%d %s%s",
+               call._event, memDelta, delay / div, units, callback, rec._kFile, rec._kLine, addon, msg);
       return;
     }
 
-    Debug(debug,"  (%ld)             %05u[ mem %9ld (+%9ld) time ~%5.1f%s (%5.1f%s) ] %s %s@%d %s",
+    Debug(debug,"  (%ld)             %05u[ mem %9ld (+%9ld) time ~%5.1f%s (%5.1f%s) ] %s %s@%d %s%s",
            i, call._event, memDelta - memAccount, memAccount, delay / div, units, timeAccount / div, units, 
-           callback.c_str(), rec._kFile, rec._kLine, msg);
+           callback, rec._kFile, rec._kLine, addon, msg);
 
     memAccount = memDelta;
     timeAccount = call._delay;
@@ -169,7 +211,7 @@ void EventCalled::trim_call(Chain_t &chain)
   auto i = (this - &chain.front());
 
   if ( (this-1)->_assignPoint != _assignPoint && ! no_log() ) {
-    return; // need a flag set ... or a direct repeat is here
+    return; // go ahead only if a direct-repeat of a boring call
   }
 
 //  if ( no_log() ) {
@@ -195,50 +237,54 @@ EventHdlrState::~EventHdlrState()
     return;
   }
 
-  EventCalled::printLog(_eventChainPtr->begin(),_eventChainPtr->end(),"state DTOR");
+  EventCalled::printLog(_eventChainPtr->begin(),_eventChainPtr->end(),"state DTOR",this);
 }
 
 void EventCallContext::push_incomplete_call(EventCalled::ChainPtr_t const &calleeChain, int event) const
 {
   calleeChain->push_back( EventCalled(*_assignPoint,event) );
 
-  // no change needed
-  if ( _currentCallChain == calleeChain ) {
+  if ( ! _currentCallChain ) 
+  {
+    _currentCallChain = calleeChain;
 
-    if ( calleeChain->empty() ) {
-      return;
+    if ( _state && ! no_log() ) {
+      Debug("conttrace","starting-push[-->#%lu]: [%05d] %s %s@%d",_currentCallChain->size(),
+                 event, _assignPoint->_kLabel, _assignPoint->_kFile, _assignPoint->_kLine);
     }
 
-    Debug("conttrace","push-call#%lu: %s %s@%d [%d]",calleeChain->size(),_assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine, event);
     return;
   }
+
+  // no change needed
+  if ( _currentCallChain == calleeChain ) 
+  {
+    if ( ! calleeChain->empty() ) {
+      Debug("conttrace","push-call#%lu: %s %s@%d [%d]",calleeChain->size(),_assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine, event);
+    }
+
+    return;
+  }
+
+  // new object-call-chain is needed
 
   auto &next = calleeChain->back();
 
+  // record it for old record
   next._extCallerChain = _currentCallChain;
+  next._extCallerChainLen = _currentCallChain->size();
+
+  // use new chain
   _currentCallChain = calleeChain;
 
-  if ( next._extCallerChain ) 
-  {
-    next._extCallerChainLen = next._extCallerChain->size();
-
-    if ( no_log() ) {
-      return;
-    }
-
+//    if ( no_log() ) {
+//      return;
+//    }
+//
 //    auto &back = next._extCallerChain->back();
 //    Debug("conttrace","separate-object-push[#%lu->#%lu]: [%05d] %s %s@%d --> [%05d] %s %s@%d", _extCallerChainLen, _currentCallChain->size(),
 //             back._event, back._assignPoint->_kLabel, back._assignPoint->_kFile, back._assignPoint->_kLine,
-//             next._event, next._assignPoint->_kLabel, next._assignPoint->_kFile, next._assignPoint->_kLine);
-    return;
-  } 
-
-  if ( ! _state || no_log() ) {
-    return;
-  }
-
-  Debug("conttrace","starting-push[-->#%lu]: [%05d] %s %s@%d",_currentCallChain->size(),
-               next._event, next._assignPoint->_kLabel, next._assignPoint->_kFile, next._assignPoint->_kLine);
+//             event, _assignPoint->_kLabel, _assignPoint->_kFile, _assignPoint->_kLine);
 }
 
 EventCalled::EventCalled(EventHdlr_t point, int event)
@@ -298,7 +344,7 @@ EventCallContext::pop_caller_record()
     _currentCallChain.reset();
 
     if ( currPtr.use_count() <= 1 ) { // orig and my copy
-      EventCalled::printLog(curr.begin(),curr.end(),"top dtor");
+      EventCalled::printLog(curr.begin(),curr.end(),"top dtor",_state);
       currPtr.reset();
       return nullptr;
 
@@ -314,7 +360,7 @@ EventCallContext::pop_caller_record()
 
     // size is larger than the index we were at...
 
-    EventCalled::printLog(curr.begin()+ith,curr.end(),"top has completed");
+    EventCalled::printLog(curr.begin()+ith,curr.end(),"top has completed",_state);
 
     // returned from *last* entry?
     Debug("conttrace","top-object #%ld[%lu]: %s %s %d [evt#%05d] (refs=%ld)",ith, curr.size(), 
@@ -350,7 +396,7 @@ EventCallContext::pop_caller_record()
 
   if ( currPtr.use_count() <= 1 ) // orig and my copy
   { 
-     EventCalled::printLog(curr.begin(),curr.end(),"Chain DTOR");
+     EventCalled::printLog(curr.begin(),curr.end(),"Chain DTOR",_state);
      currPtr.reset();  // freed
      return callerRec;
   }
@@ -360,7 +406,7 @@ EventCallContext::pop_caller_record()
     return callerRec;
   }
 
-  EventCalled::printLog(i,curr.end(),"pop");
+  EventCalled::printLog(i,curr.end(),"pop",_state);
   return callerRec;
 }
 
@@ -409,4 +455,26 @@ void cb_free_stack_context(TSContDebug *p)
 {
   auto r = reinterpret_cast<EventCallContext*>(p);
   r->~EventCallContext();
+}
+
+const char *cb_alloc_plugin_label(const char *path, const char *symbol)
+{
+  auto file = strrchr(path,'/');
+  if ( ! file ) {
+    file = path-1;
+  }
+
+  ++file;
+
+  auto symbolTrail = strrchr(symbol,'&');
+  if ( ! symbolTrail ) {
+     symbolTrail = strrchr(symbol,')');
+  }
+  if ( ! symbolTrail ) {
+    symbolTrail = symbol-1;
+  }
+
+  ++symbolTrail;
+
+  return strdup( ( std::string(file) + "::@" + symbol ).c_str() );
 }

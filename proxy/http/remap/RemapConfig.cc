@@ -727,6 +727,8 @@ remap_load_plugin(const char **argv, int argc, url_mapping *mp, char *errbuf, in
     return -2; /* incorrect input data */
   }
 
+  NEW_PLUGIN_FRAME_RECORD(c,TSREMAP_FUNCNAME_INIT,kTmpPlugin);
+
   if (stat(c, &stat_buf) != 0) {
     const char *plugin_default_path = TSPluginDirGet();
 
@@ -760,8 +762,6 @@ remap_load_plugin(const char **argv, int argc, url_mapping *mp, char *errbuf, in
     Debug("remap_plugin", "New remap plugin info created for \"%s\"", c);
 
     {
-      NEW_PLUGIN_FRAME_RECORD(c,TSREMAP_FUNCNAME_INIT,kTmpPlugin);
-
       uint32_t elevate_access = 0;
       REC_ReadConfigInteger(elevate_access, "proxy.config.plugin.load_elevated");
       ElevateAccess access(elevate_access ? ElevateAccess::FILE_PRIVILEGE : 0);
@@ -861,8 +861,6 @@ remap_load_plugin(const char **argv, int argc, url_mapping *mp, char *errbuf, in
   void *ih         = NULL;
   TSReturnCode res = TS_SUCCESS;
   if (pi->fp_tsremap_new_instance) {
-    NEW_PLUGIN_FRAME_RECORD(c,TSREMAP_FUNCNAME_NEW_INSTANCE,kTmpPlugin);
-
 #if defined(freebsd) || defined(darwin)
     optreset = 1;
 #endif
@@ -874,6 +872,7 @@ remap_load_plugin(const char **argv, int argc, url_mapping *mp, char *errbuf, in
     opterr = 0;
     optarg = NULL;
 
+    NEW_PLUGIN_FRAME_RECORD(c,TSREMAP_FUNCNAME_NEW_INSTANCE,kTmpPlugin);
     res = pi->fp_tsremap_new_instance(parc, parv, &ih, tmpbuf, sizeof(tmpbuf) - 1);
   }
 
