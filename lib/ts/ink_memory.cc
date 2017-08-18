@@ -398,7 +398,7 @@ static void reorder_interleaved(CpuSetVector_t const &supers, CpuSetVector_t &su
 // produce a list of cpusets associated with the object passed
 //
 auto
-get_obj_cpusets(hwloc_obj_type_t objtype, CpuSetVector_t const &supers = CpuSetVector_t{}) -> CpuSetVector_t
+get_obj_cpusets(hwloc_obj_type_t objtype, CpuSetVector_t const &supers = CpuSetVector_t() ) -> CpuSetVector_t
 {
   auto n = hwloc_get_nbobjs_by_type(curr(), objtype);
 
@@ -528,7 +528,7 @@ reorder_interleaved(CpuSetVector_t const &supers, CpuSetVector_t &subs)
 hwloc_const_cpuset_t const kCpusAllowed   = hwloc_topology_get_allowed_cpuset(curr());
 hwloc_const_nodeset_t const kNodesAllowed = hwloc_topology_get_allowed_nodeset(curr());
 
-CpuSetVector_t const kCPUSets = CpuSetVector_t{kCpusAllowed}; // valid base cpuset
+CpuSetVector_t const kCPUSets = CpuSetVector_t({kCpusAllowed}); // valid base cpuset
 
 CpuSetVector_t const kNumaCPUSets = get_obj_cpusets(HWLOC_OBJ_NUMANODE); // cpusets for each memory node
 CpuSetVector_t const kSocketCPUSets =
@@ -558,10 +558,10 @@ get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
 }
 
 // unique nodesets
-NodeSetVector_t const kUniqueNodeSets = {kNodesAllowed};
+NodeSetVector_t const kUniqueNodeSets( {kNodesAllowed} );
 
 // arena indexed map to actual nodeset [pointers]
-NodeSetVector_t g_nodesByArena = {kNodesAllowed}; // lookup with same index as Arena id
+NodeSetVector_t g_nodesByArena( {kNodesAllowed} ); // lookup with same index as Arena id
 
 // lists of indexes into kUniqueNodeSets and
 NodesIDVector_t const kNumaAffNodes   = cpusets_to_nodes_id(kUniqueNodeSets, kNumaCPUSets);
@@ -570,7 +570,7 @@ NodesIDVector_t const kCoreAffNodes   = cpusets_to_nodes_id(kUniqueNodeSets, kCo
 NodesIDVector_t const kProcAffNodes   = cpusets_to_nodes_id(kUniqueNodeSets, kProcCPUSets);
 
 // unique nodeset index mapping to arenas
-ArenaIDVector_t g_arenaByNodesID{ 256UL, 0 }; // lookup with same index as kUniqueNodeSets
+ArenaIDVector_t g_arenaByNodesID(256UL, 0); // lookup with same index as kUniqueNodeSets
 
 unsigned
 get_nodes_id_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
@@ -608,7 +608,7 @@ void reset_thread_memory_by_cpuset() // limit new pages to specific nodes as the
 
   // search for matches to earlier memory-nodesets
   //
-  auto list = cpusets_to_nodes_id(kUniqueNodeSets, CpuSetVector_t{cpuset.get()});
+  auto list = cpusets_to_nodes_id(kUniqueNodeSets, CpuSetVector_t({cpuset.get()}) );
   if (list.empty() || list.front() >= g_arenaByNodesID.size()) 
   {
     int cpu_mask_len = hwloc_bitmap_snprintf(NULL, 0, cpuset) + 1;
