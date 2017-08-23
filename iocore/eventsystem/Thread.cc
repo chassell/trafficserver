@@ -121,7 +121,7 @@ spawn_thread_internal(void *a)
 {
   thread_data_internal *p = (thread_data_internal *)a;
 
-  // jemallctl::set_thread_arena(0); // default init first
+  jemallctl::set_thread_arena(jemallctl::thread_arena()); // default init first
 
   p->me->set_specific();
   ink_set_thread_name(p->name);
@@ -178,8 +178,6 @@ EventHdlrState::EventHdlrState(void *p)
 EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
    : _assignPoint(&hdlr)
 {
-  ink_assert(&hdlr);
-
   _eventChainPtr = new_ctor_chain(thread_chain());
 }
 
@@ -248,13 +246,4 @@ EventCalled::EventCalled(EventHdlr_t point, int event)
      _event(event),
      _extCallerChainLen( _extCallerChain ? _extCallerChain->size() : 0 )
 { 
-}
-
-EventHdlrState &EventHdlrState::operator=(nullptr_t)
-{
-  if ( _assignPoint != &kCtorRecord ) {
-    _assignPoint = &kCtorRecord;
-    Debug("conttrace","erase current assign point: %p",this);
-  }
-  return *this;
 }

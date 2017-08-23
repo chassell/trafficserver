@@ -242,7 +242,7 @@ class EventHdlrState
     _eventChainPtr->back()._assignPoint = &cbAssign;
   }
 
-  EventHdlrState &operator=(nullptr_t);
+  EventHdlrState &operator=(nullptr_t) = delete;
 
   EventHdlrState &operator=(TSEventFunc f) 
   {
