@@ -121,7 +121,9 @@ spawn_thread_internal(void *a)
 {
   thread_data_internal *p = (thread_data_internal *)a;
 
-  jemallctl::set_thread_arena(jemallctl::thread_arena()); // default init first
+  auto arena = jemallctl::thread_arena(); // default init first
+  jemallctl::set_thread_arena(0); // default init first
+//  jemallctl::set_thread_arena(arena); // special init if different
 
   p->me->set_specific();
   ink_set_thread_name(p->name);

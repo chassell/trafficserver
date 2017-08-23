@@ -136,7 +136,7 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
 //                                : ! i ? "!!" 
 //                                      : "##" );
 
-    const char *debug = "conttrace";
+    const char *debug = "conttrace           ";
     std::string debugStr = rec._kLabel;
 
     do {
