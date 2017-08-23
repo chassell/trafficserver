@@ -187,7 +187,8 @@ ats_alloc_hugepage_stack(size_t stacksize)
     munmap(nextpg, static_cast<char *>(nxtchunk) - static_cast<char *>(nextpg));
   }
 
-  void *alignedMapping = mmap(startpg, opsize, PROT_READ | PROT_WRITE, (MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED | MAP_GROWSDOWN), -1, 0);
+//  void *alignedMapping = mmap(startpg, opsize, PROT_READ | PROT_WRITE, (MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED | MAP_GROWSDOWN), -1, 0);
+  void *alignedMapping = mmap(startpg, opsize, PROT_READ | PROT_WRITE, (MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED), -1, 0);
   madvise(startpg, opsize, MADV_HUGEPAGE);
   return alignedMapping;
 }

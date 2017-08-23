@@ -137,7 +137,7 @@ struct EventCalled
 
   bool no_log() const;
 
-  static void printLog(Chain_t::const_iterator const &begin, Chain_t::const_iterator const &end, const char *msg, EventHdlrState *ptr);
+  static void printLog(Chain_t::const_iterator const &begin, Chain_t::const_iterator const &end, const char *msg, const void *ptr);
   
   // fill in deltas
   void completed(EventCallContext const &ctxt, ChainPtr_t const &chain);

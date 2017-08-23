@@ -97,6 +97,9 @@ extern const SetObjFxn<bool> set_thread_prof_active;
 extern const GetObjFxn<uint64_t>           stats_active;
 extern const GetObjFxn<std::atomic_ulong*> stats_cactive;
 extern const GetObjFxn<uint64_t>           stats_allocated;
+
+extern const GetObjFxn<bool *>   arenas_initialized;
+extern const GetObjFxn<unsigned> arenas_narenas;
 }
 
 #endif // _JEMALLCTL_H

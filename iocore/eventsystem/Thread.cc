@@ -46,7 +46,44 @@ ProxyMutex *global_mutex                          = NULL;
 ink_hrtime Thread::cur_time                       = 0;
 inkcoreapi ink_thread_key Thread::thread_data_key = init_thread_key();
 
-Thread::Thread()
+namespace {
+
+CALL_FRAME_RECORD(&Thread::Thread, kCtorRecord);
+
+EventCalled::ChainPtr_t thread_chain()
+{ 
+  if ( ! Thread::thread_data_key || ! this_thread() ) {
+    Debug("conttrace","thread-specific is unset");
+    return EventCalled::ChainPtr_t();
+  }
+
+  return this_thread()->_currentCallChain;
+}
+
+EventCalled::ChainPtr_t &thread_chain_ref(EventCalled::ChainPtr_t &dummy) 
+{ 
+  if ( ! Thread::thread_data_key || ! this_thread() ) {
+    Debug("conttrace","thread-specific is unset");
+    return dummy;
+  }
+
+  return this_thread()->_currentCallChain;
+}
+
+EventCalled::ChainPtr_t new_ctor_chain(const EventCalled::ChainPtr_t &curr)
+{
+  auto chn = std::make_shared<EventCalled::Chain_t>(); // new chain from this one
+  chn->reserve(16); // add some room
+  
+  auto assignPoint = ( curr ? curr->back()._assignPoint : &kCtorRecord );
+  chn->push_back( EventCalled(*assignPoint,0) );
+  return std::move(chn);
+}
+
+}
+
+Thread::Thread() :
+  _currentCallChain(new_ctor_chain(EventCalled::ChainPtr_t{}))
 {
   mutex     = new_ProxyMutex();
   mutex_ptr = mutex;
@@ -84,7 +121,7 @@ spawn_thread_internal(void *a)
 {
   thread_data_internal *p = (thread_data_internal *)a;
 
-  jemallctl::set_thread_arena(0); // default init first
+  // jemallctl::set_thread_arena(0); // default init first
 
   p->me->set_specific();
   ink_set_thread_name(p->name);
@@ -109,43 +146,6 @@ Thread::start(const char *name, size_t stacksize, ThreadFunction f, void *a)
   tid = ink_thread_create(spawn_thread_internal, (void *)p, 0, stacksize);
 
   return tid;
-}
-
-namespace {
-
-CALL_FRAME_RECORD(&EventHdlrState::EventHdlrState, kCtorRecord);
-
-EventCalled::ChainPtr_t thread_chain()
-{ 
-  if ( ! Thread::thread_data_key || ! this_thread() ) {
-    Debug("conttrace","thread-specific is unset");
-    return EventCalled::ChainPtr_t();
-  }
-
-  return this_thread()->_currentCallChain;
-}
-
-EventCalled::ChainPtr_t &thread_chain_ref(EventCalled::ChainPtr_t &dummy) 
-{ 
-  if ( ! Thread::thread_data_key || ! this_thread() ) {
-    Debug("conttrace","thread-specific is unset");
-    return dummy;
-  }
-
-  return this_thread()->_currentCallChain;
-}
-
-EventCalled::ChainPtr_t new_ctor_chain(const EventCalled::ChainPtr_t &curr)
-{
-  auto chn = std::make_shared<EventCalled::Chain_t>(); // new chain from this one
-  chn->reserve(16); // add some room
-  
-  auto assignPoint = ( curr ? curr->back()._assignPoint : &kCtorRecord );
-  chn->push_back( EventCalled(*assignPoint,0) );
-  return std::move(chn);
-}
-
-
 }
 
 EventHdlrState::EventHdlrState(void *p)
@@ -252,6 +252,9 @@ EventCalled::EventCalled(EventHdlr_t point, int event)
 
 EventHdlrState &EventHdlrState::operator=(nullptr_t)
 {
-  _assignPoint = &kCtorRecord;
+  if ( _assignPoint != &kCtorRecord ) {
+    _assignPoint = &kCtorRecord;
+    Debug("conttrace","erase current assign point: %p",this);
+  }
   return *this;
 }

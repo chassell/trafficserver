@@ -48,6 +48,29 @@
 #include <cstring>
 #include <string>
 
+#if !TS_USE_HWLOC
+using CpuSetVector_t = std::vector<void *>;
+#else
+using CpuSetVector_t  = std::vector<hwloc_const_cpuset_t>;
+using NodeSetVector_t = std::vector<hwloc_const_nodeset_t>;
+using NodesIDVector_t = std::vector<unsigned>;
+using ArenaIDVector_t = std::vector<unsigned>;
+
+////////////////////////////////// namespace numa
+namespace numa
+{
+extern hwloc_const_cpuset_t const kCpusAllowed;
+extern NodeSetVector_t const kUniqueNodeSets;
+extern NodeSetVector_t g_nodesByArena;
+extern ArenaIDVector_t g_arenaByNodesID;
+
+hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+NodesIDVector_t::value_type get_nodes_id_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+}
+
+numa::hwloc_bitmap s_nodeset;
+numa::hwloc_bitmap s_cpuset;
+
 void *
 ats_malloc(size_t size)
 {
@@ -63,12 +86,14 @@ ats_malloc(size_t size)
   // Useful for tracing bad mallocs
   // ink_stack_trace_dump();
   if (likely(size > 0)) {
-    if (unlikely((ptr = malloc(size)) == NULL)) {
-      ink_stack_trace_dump();
-      ink_warning("ats_malloc: couldn't allocate %zu bytes in arena %d", size, 
-                                               jemallctl::thread_arena());
+    if (unlikely((ptr = malloc(size)) == NULL)) 
+    {
+      auto arena = jemallctl::thread_arena();
+      ink_warning("ats_malloc: couldn't allocate %zu bytes in arena %d", size, arena);
       ink_warning("ats_malloc: current alloced: %#lx", jemallctl::stats_allocated());
       ink_warning("ats_malloc: current active: %#lx", jemallctl::stats_cactive()->operator uint64_t());
+
+      ink_stack_trace_dump();
       ink_fatal("ats_malloc: couldn't allocate %zu bytes", size);
     }
   }
@@ -296,11 +321,13 @@ ats_alloc_stack(size_t stacksize)
 {
   if (!ats_hugepage_enabled()) {
     // get memory that grows down and is not populated until needed
-    return mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE, -1, 0);
+//    return mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE, -1, 0);
+    return mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
   }
 
   //    [but prefer hugepage alignment and request if possible]
-  auto p = mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, (MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE), -1, 0);
+//  auto p = mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, (MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE), -1, 0);
+  auto p = mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, (MAP_ANONYMOUS | MAP_PRIVATE), -1, 0);
   if (stacksize == aligned_spacing(stacksize, ats_hugepage_size())) {
     madvise(p, stacksize, MADV_HUGEPAGE); // opt in
   }
@@ -308,24 +335,8 @@ ats_alloc_stack(size_t stacksize)
   return p;
 }
 
-#if !TS_USE_HWLOC
-using CpuSetVector_t = std::vector<void *>;
-#else
-using CpuSetVector_t  = std::vector<hwloc_const_cpuset_t>;
-using NodeSetVector_t = std::vector<hwloc_const_nodeset_t>;
-using NodesIDVector_t = std::vector<unsigned>;
-using ArenaIDVector_t = std::vector<unsigned>;
-
-////////////////////////////////// namespace numa
-namespace numa
+namespace numa 
 {
-extern hwloc_const_cpuset_t const kCpusAllowed;
-extern NodeSetVector_t const kUniqueNodeSets;
-extern NodeSetVector_t g_nodesByArena;
-extern ArenaIDVector_t g_arenaByNodesID;
-
-hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
-NodesIDVector_t::value_type get_nodes_id_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
 
 ArenaIDVector_t::value_type
 get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
@@ -360,6 +371,32 @@ is_same_thread_memory_affinity(hwloc_obj_type_t objtype, unsigned affid)
   return get_arena_by_affinity(objtype, affid) == jemallctl::thread_arena();
 }
 
+void reset_thread_memory_by_nsid(unsigned nsid)
+{
+  auto nodes = kUniqueNodeSets[nsid];
+
+  // reset limited nodes to use
+  auto first = hwloc_bitmap_next(nodes, -1);
+  auto second = hwloc_bitmap_next(nodes, first);
+  auto r = 0;
+
+  if ( ! nsid || first < 0 ) {
+    // no preference
+    r = hwloc_set_membind_nodeset(curr(), nodes, HWLOC_MEMBIND_DEFAULT, HWLOC_MEMBIND_THREAD);
+  } else if ( second < 0 ) {
+    // restricted to one node?
+    r = hwloc_set_membind_nodeset(curr(), nodes, HWLOC_MEMBIND_BIND, HWLOC_MEMBIND_THREAD);
+  } else {
+    // restricted in greater than one node?
+    r = hwloc_set_membind_nodeset(curr(), nodes, HWLOC_MEMBIND_INTERLEAVE, HWLOC_MEMBIND_THREAD);
+  }
+
+  ink_assert( ! r );
+
+  // assign arena that matches
+  jemallctl::set_thread_arena(g_arenaByNodesID[nsid]);
+}
+
 int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid) // limit new pages to specific nodes
 {
   // keep using old arena for a moment...
@@ -371,29 +408,25 @@ int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid) /
     return -1;
   }
 
-  auto nodes = g_nodesByArena[arena];
+  auto nsid = 0;
 
-  if (!nodes || hwloc_bitmap_iszero(nodes)) {
-    Warning("nodes are null or empty %u",arena);
-    return -1;
+  // non-zero is not a wildcard
+  if ( arena ) 
+  {
+    auto nsid = g_arenaByNodesID.rend() - std::find(g_arenaByNodesID.rbegin(), g_arenaByNodesID.rend(), arena);
+    // leave nsid as zero ... or decrement to correct index
+    nsid && --nsid;
   }
 
-  // only get new pages from this nodeset ... (all if arena == 0)
-  auto r = hwloc_set_membind_nodeset(curr(), nodes, HWLOC_MEMBIND_INTERLEAVE, HWLOC_MEMBIND_THREAD);
-  if (r) {
-    Warning("mem binding failed %u",arena);
-    return -1;
-  }
-
-  // thread-wide change in place
-//  Debug("memory","mem arena used %u",arena);
-  jemallctl::set_thread_arena(arena); // make it active now
+  reset_thread_memory_by_nsid(nsid);
   return 0;
 }
 
 int assign_thread_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid) // limit usable cpus to specific cpuset
 {
-  return hwloc_set_cpubind(curr(), get_cpuset_by_affinity(objtype, affid), HWLOC_CPUBIND_STRICT);
+  auto r = hwloc_set_cpubind(curr(), get_cpuset_by_affinity(objtype, affid), HWLOC_CPUBIND_STRICT);
+  assert( ! r );
+  return r;
 }
 
 static void reorder_interleaved(CpuSetVector_t const &supers, CpuSetVector_t &subs);
@@ -624,11 +657,8 @@ void reset_thread_memory_by_cpuset() // limit new pages to specific nodes as the
     return;
   }
 
-  Debug("memory", "peforming reset to %u:",list.front());
-  // reset limited nodes to use
-  hwloc_set_membind_nodeset(curr(), kUniqueNodeSets[list.front()], HWLOC_MEMBIND_INTERLEAVE, HWLOC_MEMBIND_THREAD);
-  // assign arena that matches
-  jemallctl::set_thread_arena(g_arenaByNodesID[list.front()]);
+  Debug("memory", "peforming reset to nsid=%u arena=%u:",list.front(), g_arenaByNodesID[list.front()]);
+  reset_thread_memory_by_nsid(list.front());
 }
 
 int create_thread_memory_arena_fork(int nsid)
@@ -658,7 +688,19 @@ int create_thread_memory_arena_fork(int nsid)
 
     newArena = jemallctl::do_arenas_extend();
 
-    Debug("memory", "extending arena to %lu", newArena);
+    {
+      bool const *const arenasActive = jemallctl::arenas_initialized();
+
+      Debug("memory", "extending arena to %lu", newArena);
+
+      for ( auto i = 0LU ; i <= newArena ; ++i ) {
+	 if ( arenasActive[i] ) {
+	    continue;
+         }
+         Debug("memory", "arena requires init: %lu", i);
+         jemallctl::set_thread_arena(i); // make it active and initialized if it wasn't!
+      }
+    }
 
     // store the node-set that this arena is going to partition off
     if (g_nodesByArena.size() < newArena + 1U) {
@@ -669,6 +711,7 @@ int create_thread_memory_arena_fork(int nsid)
     g_arenaByNodesID[nsid]   = static_cast<unsigned>(newArena);
 
     Note("extending arena %u to %lu", g_arenaByNodesID[nsid], newArena);
+    Debug("memory","extending arena %u to %lu", g_arenaByNodesID[nsid], newArena);
 
     ink_mutex_release(&s_mutex);
   }

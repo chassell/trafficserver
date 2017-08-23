@@ -78,15 +78,22 @@ bool EventCalled::no_log() const
   return ( ! _event && ! _delay );
 }
 
-void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const_iterator const &oend, const char *omsg, EventHdlrState *state)
+void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const_iterator const &oend, const char *omsg, const void *ptr)
 {
   auto begin = obegin;
   auto last = oend;
+
+  ptrdiff_t memTotal = 0;
+  float delayTotal = 0;
 
   --last;
 
   // skip constructor/boring callers in print
   while ( begin != last && begin->no_log() ) {
+    memTotal += begin->_allocDelta;
+    memTotal -= begin->_deallocDelta;
+    delayTotal += begin->_delay;
+
     ++begin;
   }
 
@@ -94,6 +101,16 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
 
   ptrdiff_t memAccount = 0;
   double timeAccount = 0;
+
+  std::string addonbuff;
+  const char *addon = "";
+
+  if ( ptr ) {
+    addonbuff.resize(16);
+    snprintf(const_cast<char*>(addonbuff.data()),addonbuff.size(),"%p ",ptr);
+    addonbuff.erase(0,5);
+    addon = addonbuff.data();
+  }
 
   for( auto iter = last ; iter >= begin ; --i, --iter )
   {
@@ -105,6 +122,12 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
     float delay = call._delay - timeAccount;
     const char *units = ( delay >= 10000 ? "ms" : "us" ); 
     float div = ( delay >= 10000 ? 1000.0 : 1.0 ); 
+
+    if ( iter->_extCallerChain ) 
+    {
+      memTotal += memDelta;
+      delayTotal += delay;
+    }
 
     const EventHdlrAssignRec &rec = *call._assignPoint;
 
@@ -135,9 +158,7 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
     } while(false);
 
     std::string msgbuff;
-    std::string addonbuff;
     const char *msg = omsg;
-    const char *addon = "";
 
     if ( call._extCallerChain ) 
     {
@@ -158,13 +179,6 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
       msg = msgbuff.data();
     }
 
-    if ( state ) {
-      addonbuff.resize(16);
-      snprintf(const_cast<char*>(addonbuff.data()),addonbuff.size(),"%p ",state);
-      addonbuff.erase(0,5);
-      addon = addonbuff.data();
-    }
-
     auto callback = strrchr(rec._kLabel,'&');
     if ( ! callback ) {
        callback = strrchr(rec._kLabel,')');
@@ -182,9 +196,15 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
       return;
     }
 
-    Debug(debug,"  (%ld)             %05u[ mem %9ld (+%9ld) time ~%5.1f%s (%5.1f%s) ] %s %s@%d %s%s",
+    if ( ! memAccount ) {
+	Debug(debug,"              (%ld):%05u[ mem %9ld time ~%5.1f%s (%5.1f%s) ] %s %s@%d %s%s",
+           i, call._event, memDelta, delay / div, units, timeAccount / div, units, 
+           callback, rec._kFile, rec._kLine, addon, msg);
+    } else {
+	Debug(debug,"              (%ld):%05u[ mem %9ld (+%9ld) time ~%5.1f%s (%5.1f%s) ] %s %s@%d %s%s",
            i, call._event, memDelta - memAccount, memAccount, delay / div, units, timeAccount / div, units, 
            callback, rec._kFile, rec._kLine, addon, msg);
+    }
 
     memAccount = memDelta;
     timeAccount = call._delay;
@@ -195,6 +215,12 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
       timeAccount = 0;
     }
   }
+
+  const char *units = ( delayTotal >= 10000 ? "ms" : "us" ); 
+  float div = ( delayTotal >= 10000 ? 1000.0 : 1.0 ); 
+
+  Debug("conttrace","                 :____[ mem %9ld time ~%5.1f%s]                         %s%s",
+	   memTotal, delayTotal / div, units, addon, omsg);
 }
 
 void EventCalled::trim_call(Chain_t &chain)
@@ -237,7 +263,7 @@ EventHdlrState::~EventHdlrState()
     return;
   }
 
-  EventCalled::printLog(_eventChainPtr->begin(),_eventChainPtr->end(),"state DTOR",this);
+  EventCalled::printLog(_eventChainPtr->begin(),_eventChainPtr->end()," [State DTOR]",this);
 }
 
 void EventCallContext::push_incomplete_call(EventCalled::ChainPtr_t const &calleeChain, int event) const
@@ -344,7 +370,7 @@ EventCallContext::pop_caller_record()
     _currentCallChain.reset();
 
     if ( currPtr.use_count() <= 1 ) { // orig and my copy
-      EventCalled::printLog(curr.begin(),curr.end(),"top dtor",_state);
+      EventCalled::printLog(curr.begin(),curr.end()," [top DTOR]",_state);
       currPtr.reset();
       return nullptr;
 
@@ -396,8 +422,8 @@ EventCallContext::pop_caller_record()
 
   if ( currPtr.use_count() <= 1 ) // orig and my copy
   { 
-     EventCalled::printLog(curr.begin(),curr.end(),"Chain DTOR",_state);
-     currPtr.reset();  // freed
+     EventCalled::printLog(curr.begin(),curr.end()," [Chain DTOR]",_state);
+     currPtr.reset();  // fred
      return callerRec;
   }
 

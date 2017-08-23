@@ -44,6 +44,9 @@
 
 #include <string>
 
+#include <sys/syscall.h>   /* For SYS_xxx definitions */
+
+
 namespace jemallctl
 {
 // internal read/write functions
@@ -82,9 +85,15 @@ template <>
 auto
 SetObjFxn<unsigned,0>::operator()(const unsigned &v) const -> int
 {
+  auto ov = ::jemallctl::mallctl_get<unsigned>(ObjBase::_oid);
+  if ( ov == v ) {
+     return 0;
+  }
+
   auto r = ::jemallctl::mallctl_set(ObjBase::_oid, v);
   ink_assert(! r);
-//  Debug("memory","setting %s: %u [r=%d]",_name,v,r); 
+  ink_assert( v == ::jemallctl::mallctl_get<unsigned>(ObjBase::_oid) );
+  Debug("memory","confirmed tid=%ld %s: %u->%u",syscall(__NR_gettid),_name,ov,v); 
   return r;
 }
 
@@ -127,7 +136,8 @@ objpath(const std::string &path)
 
   oid.resize(10); // longer than any oid target// *explicitly resize*
   size_t len = oid.size();
-  mallctlnametomib(path.c_str(), oid.data(), &len);
+  auto r = mallctlnametomib(path.c_str(), oid.data(), &len);
+  ink_assert(! r);
   oid.resize(len);
   return std::move(oid);
 }
@@ -157,7 +167,8 @@ mallctl_get(const objpath_t &oid) -> T_VALUE
 {
   T_VALUE v{}; // init to zero if a pod type
   size_t len = sizeof(v);
-  mallctlbymib(oid.data(), oid.size(), &v, &len, nullptr, 0);
+  auto r = mallctlbymib(oid.data(), oid.size(), &v, &len, nullptr, 0);
+  ink_assert(! r);
   return std::move(v);
 }
 
@@ -167,7 +178,8 @@ mallctl_get<std::string>(const objpath_t &oid) -> std::string
 {
   char buff[256]; // adequate for paths and most things
   size_t len = sizeof(buff);
-  mallctlbymib(oid.data(), oid.size(), &buff, &len, nullptr, 0);
+  auto r = mallctlbymib(oid.data(), oid.size(), &buff, &len, nullptr, 0);
+  ink_assert(! r);
   std::string v(&buff[0], len); // copy out
   return std::move(v);
 }
@@ -176,8 +188,27 @@ template <>
 auto
 mallctl_set<std::string>(const objpath_t &oid, const std::string &v) -> int
 {
-  return mallctlbymib(oid.data(), oid.size(), nullptr, nullptr, const_cast<char *>(v.c_str()), v.size());
+  auto r = mallctlbymib(oid.data(), oid.size(), nullptr, nullptr, const_cast<char *>(v.c_str()), v.size());
+  ink_assert(! r);
+  return 0;
 }
+
+namespace {
+std::vector<char> s_bools(256,0);
+}
+
+template <>
+auto
+mallctl_get<bool*>(const objpath_t &oid) -> bool*
+{
+  size_t len = arenas_narenas() * sizeof(s_bools[0]);
+  ink_assert( len < s_bools.size() );
+  auto v = s_bools.data();
+  auto r = mallctlbymib(oid.data(), oid.size(), v, &len, nullptr, 0);
+  ink_assert(! r);
+  return std::move(reinterpret_cast<bool*>(v));
+}
+
 
 template <>
 auto
@@ -188,7 +219,8 @@ mallctl_get<chunk_hooks_t>(const objpath_t &baseOid) -> chunk_hooks_t
 
   chunk_hooks_t v;
   size_t len = sizeof(v);
-  mallctlbymib(oid.data(), oid.size(), &v, &len, nullptr, 0);
+  auto r = mallctlbymib(oid.data(), oid.size(), &v, &len, nullptr, 0);
+  ink_assert(! r);
   return std::move(v);
 }
 
@@ -202,7 +234,9 @@ mallctl_set<chunk_hooks_t>(const objpath_t &baseOid, const chunk_hooks_t &hooks)
   auto nhooks = chunk_hooks_t{(hooks.alloc ?: ohooks.alloc),       (hooks.dalloc ?: ohooks.dalloc), (hooks.commit ?: ohooks.commit),
                               (hooks.decommit ?: ohooks.decommit), (hooks.purge ?: ohooks.purge),   (hooks.split ?: ohooks.split),
                               (hooks.merge ?: ohooks.merge)};
-  return mallctlbymib(oid.data(), oid.size(), nullptr, nullptr, const_cast<chunk_hooks_t *>(&nhooks), sizeof(nhooks));
+  auto r = mallctlbymib(oid.data(), oid.size(), nullptr, nullptr, const_cast<chunk_hooks_t *>(&nhooks), sizeof(nhooks));
+  ink_assert(! r);
+  return 0;
 }
 #endif
 
@@ -211,6 +245,7 @@ template struct GetObjFxn<uint64_t*>;
 template struct GetObjFxn<std::atomic_ulong*>;
 template struct GetObjFxn<unsigned>;
 template struct GetObjFxn<bool>;
+template struct GetObjFxn<bool*>;
 template struct GetObjFxn<chunk_hooks_t>;
 
 template struct SetObjFxn<uint64_t>;
@@ -247,4 +282,6 @@ const GetObjFxn<uint64_t*> thread_deallocatedp{"thread.deallocatedp"};
 const GetObjFxn<std::atomic_ulong*> stats_cactive{"stats.cactive"};
 const GetObjFxn<uint64_t>  stats_active{"stats.active"};
 const GetObjFxn<uint64_t>  stats_allocated{"stats.allocated"};
+const GetObjFxn<bool *>  arenas_initialized{"arenas.initialized"};
+const GetObjFxn<unsigned>  arenas_narenas{"arenas.narenas"};
 } // namespace jemallctl
