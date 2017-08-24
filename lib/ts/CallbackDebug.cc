@@ -29,12 +29,14 @@
 
 **************************************************************************/
 #include "ts/CallbackDebug.h"
+#include "ts/CCallbackDebug.h"
 
 #include "ts/jemallctl.h"
 #include "ts/ink_assert.h"
 #include "ts/Diags.h"
 #include "ts/ink_stack_trace.h"
 
+#include <sstream>
 #include <chrono>
 #include <string>
 #include <algorithm>
@@ -42,19 +44,36 @@
 #include <memory>
 #include <cstring>
 
-namespace {
-const ink_thread_key s_currentCallChainTLS = 
-  []() {
-    ink_thread_key key;
-    ink_thread_key_create(&key, nullptr);
-    ink_thread_setspecific(key, nullptr);
-    return key;
-  }();
-}
+static_assert( offsetof(EventHdlrAssignRec, _kLabel) == offsetof(EventCHdlrAssignRec, _kLabel), "offset layout mismatch");
+static_assert( offsetof(EventHdlrAssignRec, _kFile) == offsetof(EventCHdlrAssignRec, _kFile), "offset layout mismatch");
+static_assert( offsetof(EventHdlrAssignRec, _kLine) == offsetof(EventCHdlrAssignRec, _kLine), "offset layout mismatch");
+static_assert( offsetof(EventHdlrAssignRec, _kTSEventFunc) == offsetof(EventCHdlrAssignRec, _kCallback), "offset layout mismatch");
 
 ///////////////////////////////////////////////
 // common interface impl                     //
 ///////////////////////////////////////////////
+
+bool EventCalled::no_log_adj() const
+{
+  if ( ! _hdlrAssign ) {
+    return true; // don't log
+  }
+
+  auto &calledEvt = called();
+
+  // do log if memory actually was increased/decreased 
+  if ( _allocDelta - calledEvt._allocDelta != _deallocDelta - calledEvt._deallocDelta ) {
+    return false; // DO log
+  }
+
+  // if flagged .. it's not important enough
+  if ( _hdlrAssign->no_log() ) {
+    return true;
+  }
+
+  // if no important event was delivered..
+  return ! _event;
+}
 
 bool EventCalled::no_log() const
 {
@@ -62,42 +81,58 @@ bool EventCalled::no_log() const
     return true; // don't log
   }
 
-  // do log if memory changed
-  if ( _allocDelta || _deallocDelta ) {
-    return false; // DO log
-  }
-
   // if flagged .. it's not important enough
-  if (  _hdlrAssign->no_log() ) {
+  if ( _hdlrAssign->no_log() ) {
     return true;
   }
 
   // if no important event was delivered..
-  return ( ! _event && ! _delay );
+  return ! _event;
 }
 
 
 
-void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const_iterator const &oend, const char *omsg, const void *ptr)
+void EventCalled::printLog(std::ostream &out, Chain_t::const_iterator const &obegin, Chain_t::const_iterator const &oend, const char *omsg, const void *ptr)
 {
   auto begin = obegin;
-  auto last = oend;
 
   ptrdiff_t memTotal = 0;
   float delayTotal = 0;
 
-  --last;
+  auto nolog = ( begin + 1 < oend ? begin->no_log_adj() : begin->no_log() );
+
+  const EventHdlrAssignRec &beginrec = *begin->_hdlrAssign;
+  Debug("conttrace           ","log-start attempt[-->#%lu]: nolog?=%d [%05d] %s %s@%d",begin - obegin, 
+                       nolog, begin->_event,  beginrec._kLabel, beginrec._kFile, beginrec._kLine);
 
   // skip constructor/boring callers in print
-  while ( begin != last && begin->no_log() ) {
+  while ( begin != oend && nolog ) 
+  {
+    const EventHdlrAssignRec &rec = *begin->_hdlrAssign;
+    Debug("conttrace           ","skipping attempt[-->#%lu]: [%05d] %s %s@%d",begin - obegin, 
+             begin->_event,  rec._kLabel, rec._kFile, rec._kLine);
     memTotal += begin->_allocDelta;
     memTotal -= begin->_deallocDelta;
     delayTotal += begin->_delay;
 
     ++begin;
+    nolog = ( begin + 1 < oend ? begin->no_log_adj() : begin->no_log() );
   }
 
+  auto last = oend;
+  --last;
+
   ptrdiff_t i = last - begin;
+
+  // start from below entry
+  if ( last->_calledChainLen ) {
+    printLog(out,last->called_iterator(), last->_calledChain->end(), omsg, ptr);
+  }
+
+  // not even one entry?
+  if ( i < 0 ) {
+    return;
+  }
 
   ptrdiff_t memAccount = 0;
   double timeAccount = 0;
@@ -112,11 +147,12 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
     addon = addonbuff.data();
   }
 
-  for( auto iter = last ; iter >= begin ; --i, --iter )
+  char buff[256];
+  auto iter = last;
+
+  for( ; iter >= begin ; --i, --iter )
   {
     auto &call = *iter;
-    auto callingChain = call._callingChain.lock();
-
     ptrdiff_t memDelta = call._allocDelta;
     memDelta -= call._deallocDelta;
 
@@ -124,7 +160,7 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
     const char *units = ( delay >= 10000 ? "ms" : "us" ); 
     float div = ( delay >= 10000 ? 1000.0 : 1.0 ); 
 
-    if ( callingChain ) 
+    if ( call._callingChainLen ) 
     {
       memTotal += memDelta;
       delayTotal += delay;
@@ -158,26 +194,40 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
        debug = debugStr.c_str();
     } while(false);
 
-    std::string msgbuff;
-    const char *msg = omsg;
+    std::string callinout;
 
-    if ( callingChain ) 
+    if ( call._callingChainLen ) 
     {
-      auto extCaller = call.calling()._hdlrAssign->_kLabel;
+      auto extCalling = call.calling()._hdlrAssign->_kLabel;
 
-      auto extCallerTrail = strrchr(extCaller,'&');
-      if ( ! extCallerTrail ) {
-         extCallerTrail = strrchr(extCaller,')');
+      auto extCallingTrail = strrchr(extCalling,'&');
+      if ( ! extCallingTrail ) {
+         extCallingTrail = strrchr(extCalling,')');
       }
-      if ( ! extCallerTrail ) {
-        extCallerTrail = extCaller-1;
+      if ( ! extCallingTrail ) {
+        extCallingTrail = extCalling-1;
       }
 
-      ++extCallerTrail;
+      ++extCallingTrail;
 
-      msgbuff.resize(strlen(msg) + strlen(extCallerTrail) + 10, '\0');
-      snprintf(const_cast<char*>(msgbuff.data()),msgbuff.size(),"<-- %s %s",extCallerTrail,msg);
-      msg = msgbuff.data();
+      callinout += std::string() + "<-- " + extCallingTrail + " ";
+    }
+
+    if ( call._calledChainLen ) 
+    {
+      auto extCalled = call.called()._hdlrAssign->_kLabel;
+
+      auto extCalledTrail = strrchr(extCalled,'&');
+      if ( ! extCalledTrail ) {
+         extCalledTrail = strrchr(extCalled,')');
+      }
+      if ( ! extCalledTrail ) {
+        extCalledTrail = extCalled-1;
+      }
+
+      ++extCalledTrail;
+
+      callinout += std::string() + "--> " + extCalledTrail + " ";
     }
 
     auto callback = strrchr(rec._kLabel,'&');
@@ -189,39 +239,64 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
     }
 
     ++callback;
+    out << std::endl << "(" << debug << ")";
 
     if ( last == begin ) 
     {
-      Debug(debug,"                 :%05u[ mem %9ld time ~%5.1f%s]                %s %s@%d %s%s",
-               call._event, memDelta, delay / div, units, callback, rec._kFile, rec._kLine, addon, msg);
+      snprintf(buff,sizeof(buff),"                 :%5s[ mem %9ld time ~%5.1f%s]                %s %s@%d %s%s%s",
+               ( call._event ? std::to_string(call._event).c_str() : "" ), 
+               memDelta, delay / div, units, callback, rec._kFile, rec._kLine, addon, callinout.c_str(), omsg);
+      out << buff;
       return;
     }
 
     if ( ! memAccount ) {
-	Debug(debug,"              (%ld):%05u[ mem %9ld time ~%5.1f%s (%5.1f%s) ] %s %s@%d %s%s",
-           i, call._event, memDelta, delay / div, units, timeAccount / div, units, 
-           callback, rec._kFile, rec._kLine, addon, msg);
+      snprintf(buff,sizeof(buff),"              (%ld):%5s[ mem %9ld time ~%5.1f%s (%5.1f%s) ] %s %s@%d %s%s%s", i, 
+           ( call._event ? std::to_string(call._event).c_str() : "" ), 
+           memDelta, delay / div, units, timeAccount / div, units, 
+           callback, rec._kFile, rec._kLine, addon, callinout.c_str(), omsg );
     } else {
-	Debug(debug,"              (%ld):%05u[ mem %9ld (+%9ld) time ~%5.1f%s (%5.1f%s) ] %s %s@%d %s%s",
-           i, call._event, memDelta - memAccount, memAccount, delay / div, units, timeAccount / div, units, 
-           callback, rec._kFile, rec._kLine, addon, msg);
+      snprintf(buff,sizeof(buff),"              (%ld):%5s[ mem %9ld (+%9ld) time ~%5.1f%s (%5.1f%s) ] %s %s@%d %s%s%s", i,
+           ( call._event ? std::to_string(call._event).c_str() : "" ), 
+           memDelta - memAccount, memAccount, delay / div, units, timeAccount / div, units, 
+           callback, rec._kFile, rec._kLine, addon, callinout.c_str(), omsg );
     }
+
+    out << buff;
 
     memAccount = memDelta;
     timeAccount = call._delay;
 
     // account not add if called from other chain ...
-    if ( callingChain ) {
+    if ( call._callingChainLen ) {
       memAccount = 0;
       timeAccount = 0;
     }
   }
 
+  for( ; iter >= obegin ; --i, --iter )
+  {
+    auto &call = *iter;
+    const EventHdlrAssignRec &rec = *call._hdlrAssign;
+    ptrdiff_t memDelta = call._allocDelta;
+    memDelta -= call._deallocDelta;
+    float delay = call._delay - timeAccount;
+    const char *units = ( delay >= 10000 ? "ms" : "us" ); 
+    float div = ( delay >= 10000 ? 1000.0 : 1.0 ); 
+
+    snprintf(buff,sizeof(buff),"              (%ld):%5s[ mem %9ld (+%9ld) time ~%5.1f%s (%5.1f%s) ] %s %s@%d %s%s", i,
+         ( call._event ? std::to_string(call._event).c_str() : "" ), 
+         memDelta - memAccount, memAccount, delay / div, units, timeAccount / div, units, 
+         rec._kLabel, rec._kFile, rec._kLine, addon, " --- ignored -- " );
+    out << buff;
+  }
+
   const char *units = ( delayTotal >= 10000 ? "ms" : "us" ); 
   float div = ( delayTotal >= 10000 ? 1000.0 : 1.0 ); 
 
-  Debug("conttrace","                 :____[ mem %9ld time ~%5.1f%s]                         %s%s",
+  snprintf(buff,sizeof(buff),"\n(conttrace           )                 :_____[ mem %9ld time ~%5.1f%s]                         %s%s",
 	   memTotal, delayTotal / div, units, addon, omsg);
+  out << buff;
 }
 
 void EventCalled::trim_call(Chain_t &chain)
@@ -256,10 +331,10 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event) const
     _chain.push_back( EventCalled(rec,event) );
 
     if ( ! rec.no_log() && ! _waiting ) {
-      Debug("conttrace","starting-push[-->#%lu]: [%05d] %s %s@%d",_chain.size(),
+      Debug("conttrace           ","starting-push[-->#%lu]: [%05d] %s %s@%d",_chain.size(),
                  event, rec._kLabel, rec._kFile, rec._kLine);
     } else if ( _waiting ) {
-      Debug("conttrace","push-call#%lu: %s %s@%d [%d]",_chain.size(),rec._kLabel,rec._kFile,rec._kLine, event);
+      Debug("conttrace           ","push-call#%lu: %s %s@%d [%d]",_chain.size(),rec._kLabel,rec._kFile,rec._kLine, event);
     }
     return;
   }
@@ -306,10 +381,9 @@ EventCallContext::EventCallContext(EventHdlrState &state, int event)
      _chain(*state._chainPtr),
      _chainInd(state._chainPtr->size())
 {
-
-  if ( ! _waiting ) {
-    ink_stack_trace_dump();
-  }
+//  if ( ! _waiting ) {
+//    ink_stack_trace_dump();
+//  }
 
   // create entry using current rec
   push_incomplete_call(static_cast<EventHdlr_t>(state), event);
@@ -325,15 +399,30 @@ void EventCallContext::set_ctor_initial_callback(EventHdlr_t rec)
   st_currentCtxt->_dfltAssignPoint = &rec;
 }
 
+CALL_FRAME_RECORD(null::null, kHdlrAssignEmpty);
+CALL_FRAME_RECORD(nodflt::nodflt, kHdlrAssignNoDflt);
+
+namespace {
+EventHdlr_t current_default_assign_point()
+{
+  if ( ! EventCallContext::st_currentCtxt ) {
+    return kHdlrAssignEmpty;
+  }
+  if ( ! EventCallContext::st_currentCtxt->_dfltAssignPoint ) 
+  {
+    return kHdlrAssignNoDflt;
+  }
+
+  return *EventCallContext::st_currentCtxt->_dfltAssignPoint;
+}
+}
+
 EventHdlrState::EventHdlrState(void *p)
-   : _chainPtr( std::make_shared<EventCalled::Chain_t>() ),
+   : _assignPoint(&(current_default_assign_point())),      // must be set before scopeContext ctor
+     _chainPtr( std::make_shared<EventCalled::Chain_t>() ),
      _scopeContext( new EventCallContext(*this,0) )
 {
-  if ( EventCallContext::st_currentCtxt && EventCallContext::st_currentCtxt->_dfltAssignPoint ) 
-  {
-    _assignPoint = EventCallContext::st_currentCtxt->_dfltAssignPoint;
-  }
-  Debug("conttrace","%p: init-created: %s %s@%d",this,_assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine);
+  Debug("conttrace           ","%p: init-created: %s %s@%d",this,_assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine);
 }
 
 //
@@ -361,7 +450,9 @@ EventHdlrState::~EventHdlrState()
     return;
   }
 
-  EventCalled::printLog(_chainPtr->begin(),_chainPtr->end()," [State DTOR]",this);
+  std::ostringstream oss;
+  EventCalled::printLog(oss, _chainPtr->begin(), _chainPtr->end(), " [State DTOR]",this);
+  DebugSpecific(true,"conntrace","%s",oss.str().c_str());
 }
 
 void EventCallContext::reset_top_frame()
@@ -409,34 +500,30 @@ void EventCallContext::pop_caller_record()
   EventCalled &call = static_cast<EventCalled&>(*this);
   unsigned ind = &call - &_chain.front();
   auto &rec = *call._hdlrAssign;
+  std::ostringstream oss;
 
   if ( _chainPtr.use_count() <= 1 ) 
   {
-    EventCalled::printLog(_chain.begin(),_chain.end()," [pop DTOR]",_state);
+    EventCalled::printLog(oss,_chain.begin(),_chain.end()," [pop DTOR]",_state);
+    DebugSpecific(true,"conntrace","%s",oss.str().c_str());
     return;
   } 
 
   call.trim_call(_chain); // snip some if possible
     
   // caller was simply from outside all call chains?
-  if ( ind < _chain.size() ) 
-  {
-    auto msg = ( call._callingChainLen ? "pop" : "top has completed" );
-    EventCalled::printLog(_chain.begin()+ind,_chain.end(),msg,_state);
+  if ( ind >= _chain.size() ) {
+    return;
   }
 
   if ( ! call._callingChainLen ) {
     // returned from *last* entry?
-    Debug("conttrace","top-object #%u[%lu]: %s %s %d [evt#%05d] (refs=%ld)",ind, _chain.size(), 
+    Debug("conttrace","%p: top-object #%u/%lu: %s %s@%d [evt#%05d] (refs=%ld)",_state, ind, _chain.size(), 
          rec._kLabel,rec._kFile,rec._kLine, 
          call._event, _chainPtr.use_count());
+    EventCalled::printLog(oss,_chain.begin()+ind,_chain.end(),"[trace]",_state);
+    DebugSpecific(true,"conntrace","%s",oss.str().c_str());
   }
-
-  if ( ind < _chain.size() ) {
-    EventCalled::printLog(_chain.begin()+ind,_chain.end(),"pop",_state);
-    return;
-  }
-
 }
 
 EventCallContext::~EventCallContext()
@@ -466,20 +553,6 @@ EventCalled::completed(EventCallContext const &ctxt)
   _deallocDelta += deallocTot;
 }
 
-const TSEventFunc cb_null_return() { return nullptr; }
-
-TSContDebug *cb_init_stack_context(void *p, EventCHdlrAssignRecPtr_t recp)
-{
-  auto r = new(p) EventHdlrState(reinterpret_cast<EventHdlr_t>(*recp));
-  return reinterpret_cast<TSContDebug*>(r);
-}
-
-void cb_free_stack_context(TSContDebug *p)
-{
-  auto r = reinterpret_cast<EventHdlrState*>(p);
-  r->~EventHdlrState();
-}
-
 const char *cb_alloc_plugin_label(const char *path, const char *symbol)
 {
   auto file = strrchr(path,'/');
@@ -502,4 +575,12 @@ const char *cb_alloc_plugin_label(const char *path, const char *symbol)
   return strdup( ( std::string(file) + "::@" + symbol ).c_str() );
 }
 
+extern "C" {
+const TSEventFunc cb_null_return() { return nullptr; }
 
+void cb_set_ctor_initial_callback(EventCHdlrAssignRecPtr_t crec)
+{
+  EventCallContext::set_ctor_initial_callback(reinterpret_cast<EventHdlr_t>(*crec));
+}
+
+}

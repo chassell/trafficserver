@@ -34,8 +34,8 @@
 
  */
 
-#ifndef _I_DebugCCont_h_
-#define _I_DebugCCont_h_
+#ifndef _CCallbackDebug_h_
+#define _CCallbackDebug_h_
 
 #include "ts/apidefs.h"
 
@@ -55,18 +55,16 @@ struct EventCHdlrAssignRec
   TSEventFuncGen            const _pad[4];
 };
 
-#ifdef __cplusplus
+#if defined(__cplusplus)
 extern "C" {
 #endif
 
 typedef struct tsapi_contdebug *TSContDebug;
 
 const TSEventFunc cb_null_return();
-size_t            cb_sizeof_stack_context();
-TSContDebug       *cb_init_stack_context(void *, EventCHdlrAssignRecPtr_t);
-void              cb_free_stack_context(TSContDebug*);
+void              cb_set_ctor_initial_callback(EventCHdlrAssignRecPtr_t crec);
 
-#ifdef __cplusplus
+#if defined(__cplusplus)
 }
 #endif
 
@@ -91,39 +89,30 @@ void              cb_free_stack_context(TSContDebug*);
             
 #define TSThreadCreate(_fxn,data)                              \
             ({                                                 \
-               STATIC_C_HANDLER_RECORD(_fxn,kHdlrAssignRec); \
-               TSContDebug *ctxtp = cb_init_stack_context(alloca(cb_sizeof_stack_context()), &kHdlrAssignRec); \
-               TSThread t = TSThreadCreate((_fxn),data);         \
-               cb_free_stack_context(ctxtp);                   \
-               t;                                              \
+               STATIC_C_HANDLER_RECORD(_fxn,kHdlrAssignRec);   \
+               cb_set_ctor_initial_callback(&kHdlrAssignRec);  \
+               TSThreadCreate((_fxn),data);                    \
              })
-
 
 #define TSContCreate(_fxn,mutexp)                              \
             ({                                                 \
-               STATIC_C_HANDLER_RECORD(_fxn,kHdlrAssignRec); \
-               TSContDebug *ctxtp = cb_init_stack_context(alloca(cb_sizeof_stack_context()), &kHdlrAssignRec); \
-               TSCont c = TSContCreate(_fxn,mutexp);           \
-               cb_free_stack_context(ctxtp);                   \
-               c;                                              \
+               STATIC_C_HANDLER_RECORD(_fxn,kHdlrAssignRec);   \
+               cb_set_ctor_initial_callback(&kHdlrAssignRec);  \
+               TSContCreate(_fxn,mutexp);                      \
              })
 
 #define TSTransformCreate(_fxn,txnp)                           \
             ({                                                 \
-               STATIC_C_HANDLER_RECORD(_fxn,kHdlrAssignRec); \
-               TSContDebug *ctxtp = cb_init_stack_context(alloca(cb_sizeof_stack_context()), &kHdlrAssignRec); \
-               TSVConn r = TSTransformCreate(_fxn,txnp);       \
-               cb_free_stack_context(ctxtp);                   \
-               r;                                              \
+               STATIC_C_HANDLER_RECORD(_fxn,kHdlrAssignRec);   \
+               cb_set_ctor_initial_callback(&kHdlrAssignRec);  \
+               TSTransformCreate(_fxn,txnp);                   \
              })
 
 #define TSVConnCreate(_fxn,mutexp)                             \
             ({                                                 \
-               STATIC_C_HANDLER_RECORD(_fxn,kHdlrAssignRec); \
-               TSContDebug *ctxtp = cb_init_stack_context(alloca(cb_sizeof_stack_context()), &kHdlrAssignRec); \
-               TSVConn r = TSVConnCreate(_fxn,mutexp);         \
-               cb_free_stack_context(ctxtp);                   \
-               r;                                              \
+               STATIC_C_HANDLER_RECORD(_fxn,kHdlrAssignRec);   \
+               cb_set_ctor_initial_callback(&kHdlrAssignRec);  \
+               TSVConnCreate(_fxn,mutexp);                     \
              })
 #endif
 

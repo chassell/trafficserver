@@ -37,7 +37,9 @@
 #define _I_DebugCont_h_
 
 #include "ts/apidefs.h"
+#if ! defined(__cplusplus) 
 #include "ts/CCallbackDebug.h"
+#endif
 
 #include <vector>
 #include <memory>
@@ -123,13 +125,6 @@ struct EventHdlrAssignRec
   TSEventFuncGen_t      *const _kWrapFunc_Gen; // ref to custom wrapper function-ptr callable 
 };
 
-static_assert( offsetof(EventHdlrAssignRec, _kLabel) == offsetof(EventCHdlrAssignRec, _kLabel), "offset layout mismatch");
-static_assert( offsetof(EventHdlrAssignRec, _kFile) == offsetof(EventCHdlrAssignRec, _kFile), "offset layout mismatch");
-static_assert( offsetof(EventHdlrAssignRec, _kLine) == offsetof(EventCHdlrAssignRec, _kLine), "offset layout mismatch");
-static_assert( offsetof(EventHdlrAssignRec, _kTSEventFunc) == offsetof(EventCHdlrAssignRec, _kCallback), "offset layout mismatch");
-
-
-
 ///////////////////////////////////////////////////////////////////////////////////
 /// Call record to a specific assign-point's handler
 ///////////////////////////////////////////////////////////////////////////////////
@@ -150,17 +145,32 @@ struct EventCalled
   EventCalled(void *p = NULL);
 
   bool no_log() const;
+  bool no_log_adj() const;
   bool waiting() const { return _delay != 0.0; }
 
-  static void printLog(Chain_t::const_iterator const &begin, Chain_t::const_iterator const &end, const char *msg, const void *ptr);
+  static void printLog(std::ostream &out, Chain_t::const_iterator const &begin, Chain_t::const_iterator const &end, const char *msg, const void *ptr);
   
   // fill in deltas
   void completed(EventCallContext const &ctxt);
   void trim_call(Chain_t &chain);
 
-  EventCalled &calling() { return (*_callingChain.lock())[_callingChainLen-1]; }
-  EventCalled &called() { return (*_calledChain)[_calledChainLen-1]; }
-  const EventCalled &calling() const { return (*_callingChain.lock())[_callingChainLen-1]; }
+  Chain_t::iterator calling_iterator() const
+  { 
+    assert( _callingChainLen && ! _callingChain.expired() ); 
+    return _callingChain.lock()->begin() + _callingChainLen-1; 
+  }
+  Chain_t::iterator called_iterator() const
+  {
+    assert( _calledChainLen && _calledChain ); 
+    return _calledChain->begin() + _calledChainLen-1; 
+  }
+
+  const EventCalled &called() const { 
+    return ( _calledChainLen ? *called_iterator() : this[1] );  
+  }
+  const EventCalled &calling() const {
+    return ( _calledChainLen ? *called_iterator() : this[-1] );  
+  }
 
   // upon ctor
   EventHdlrP_t        const _hdlrAssign = nullptr;   // full callback info 

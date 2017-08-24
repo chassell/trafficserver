@@ -22,7 +22,8 @@ TS_PLUGIN_LDFLAGS = \
   -module \
   -shared \
   -avoid-version \
-  -export-symbols-regex '^(TSRemapInit|TSRemapDone|TSRemapDoRemap|TSRemapNewInstance|TSRemapDeleteInstance|TSRemapOSResponse|TSPluginInit)$$'
+  -export-symbols-regex '^(TSRemapInit|TSRemapDone|TSRemapDoRemap|TSRemapNewInstance|TSRemapDeleteInstance|TSRemapOSResponse|TSPluginInit)$$' \
+  $(LDADD) 
 
 TS_PLUGIN_CPPFLAGS = \
   -I$(top_builddir)/proxy/api \
