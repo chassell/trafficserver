@@ -52,15 +52,13 @@ const ink_thread_key s_currentCallChainTLS =
   }();
 }
 
-
-
 ///////////////////////////////////////////////
 // common interface impl                     //
 ///////////////////////////////////////////////
 
 bool EventCalled::no_log() const
 {
-  if ( ! _assignPoint ) {
+  if ( ! _hdlrAssign ) {
     return true; // don't log
   }
 
@@ -70,13 +68,15 @@ bool EventCalled::no_log() const
   }
 
   // if flagged .. it's not important enough
-  if (  _assignPoint->no_log() ) {
+  if (  _hdlrAssign->no_log() ) {
     return true;
   }
 
   // if no important event was delivered..
   return ( ! _event && ! _delay );
 }
+
+
 
 void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const_iterator const &oend, const char *omsg, const void *ptr)
 {
@@ -115,6 +115,7 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
   for( auto iter = last ; iter >= begin ; --i, --iter )
   {
     auto &call = *iter;
+    auto callingChain = call._callingChain.lock();
 
     ptrdiff_t memDelta = call._allocDelta;
     memDelta -= call._deallocDelta;
@@ -123,13 +124,13 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
     const char *units = ( delay >= 10000 ? "ms" : "us" ); 
     float div = ( delay >= 10000 ? 1000.0 : 1.0 ); 
 
-    if ( iter->_extCallerChain ) 
+    if ( callingChain ) 
     {
       memTotal += memDelta;
       delayTotal += delay;
     }
 
-    const EventHdlrAssignRec &rec = *call._assignPoint;
+    const EventHdlrAssignRec &rec = *call._hdlrAssign;
 
 //    const char *e = ( last == begin 1 ? "  " 
 //                      : iter == begin ? "~~" 
@@ -160,9 +161,9 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
     std::string msgbuff;
     const char *msg = omsg;
 
-    if ( call._extCallerChain ) 
+    if ( callingChain ) 
     {
-      auto extCaller = (*call._extCallerChain)[call._extCallerChainLen-1]._assignPoint->_kLabel;
+      auto extCaller = call.calling()._hdlrAssign->_kLabel;
 
       auto extCallerTrail = strrchr(extCaller,'&');
       if ( ! extCallerTrail ) {
@@ -210,7 +211,7 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
     timeAccount = call._delay;
 
     // account not add if called from other chain ...
-    if ( call._extCallerChain ) {
+    if ( callingChain ) {
       memAccount = 0;
       timeAccount = 0;
     }
@@ -226,7 +227,7 @@ void EventCalled::printLog(Chain_t::const_iterator const &obegin, Chain_t::const
 void EventCalled::trim_call(Chain_t &chain)
 {
 //  if ( ! _assignPoint || this == &chain.front() ) {
-  if ( ! _assignPoint ) {
+  if ( ! _hdlrAssign ) {
     return; // no constructor-calls
   }
 
@@ -234,9 +235,9 @@ void EventCalled::trim_call(Chain_t &chain)
     return; // need no memory lost
   }
 
-  auto i = (this - &chain.front());
+//  auto i = this - &chain.front();
 
-  if ( (this-1)->_assignPoint != _assignPoint && ! no_log() ) {
+  if ( (this-1)->_hdlrAssign != _hdlrAssign && ! no_log() ) {
     return; // go ahead only if a direct-repeat of a boring call
   }
 
@@ -244,207 +245,206 @@ void EventCalled::trim_call(Chain_t &chain)
 //   Debug("conttrace","trim #%ld %s", i, _assignPoint->_kLabel);
 //  }
 
-  chain.erase( chain.begin() + i);
+//  chain.erase( chain.begin() + i );
 }
 
 
-EventHdlrState::~EventHdlrState()
-   // detaches from shared-ptr!
+void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event) const
 {
-  if ( _eventChainPtr.use_count() > 1 ) {
-    return;
-  }
-
-  if ( _eventChainPtr->empty() ) {
-    return;
-  }
-
-  if ( _eventChainPtr->size() == 1 && _eventChainPtr->back().no_log() ) {
-    return;
-  }
-
-  EventCalled::printLog(_eventChainPtr->begin(),_eventChainPtr->end()," [State DTOR]",this);
-}
-
-void EventCallContext::push_incomplete_call(EventCalled::ChainPtr_t const &calleeChain, int event) const
-{
-  calleeChain->push_back( EventCalled(*_assignPoint,event) );
-
-  if ( ! _currentCallChain ) 
+  if ( ! _waiting || _waiting == this ) 
   {
-    _currentCallChain = calleeChain;
+    _chain.push_back( EventCalled(rec,event) );
 
-    if ( _state && ! no_log() ) {
-      Debug("conttrace","starting-push[-->#%lu]: [%05d] %s %s@%d",_currentCallChain->size(),
-                 event, _assignPoint->_kLabel, _assignPoint->_kFile, _assignPoint->_kLine);
+    if ( ! rec.no_log() && ! _waiting ) {
+      Debug("conttrace","starting-push[-->#%lu]: [%05d] %s %s@%d",_chain.size(),
+                 event, rec._kLabel, rec._kFile, rec._kLine);
+    } else if ( _waiting ) {
+      Debug("conttrace","push-call#%lu: %s %s@%d [%d]",_chain.size(),rec._kLabel,rec._kFile,rec._kLine, event);
     }
-
     return;
   }
 
-  // no change needed
-  if ( _currentCallChain == calleeChain ) 
-  {
-    if ( ! calleeChain->empty() ) {
-      Debug("conttrace","push-call#%lu: %s %s@%d [%d]",calleeChain->size(),_assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine, event);
-    }
+  // push record for called frame
+  _chain.push_back( EventCalled(*_waiting,rec,event) );
+  // push record for calling frame
+  _waiting->_chain.push_back( EventCalled(*this) );
 
-    return;
-  }
-
-  // new object-call-chain is needed
-
-  auto &next = calleeChain->back();
-
-  // record it for old record
-  next._extCallerChain = _currentCallChain;
-  next._extCallerChainLen = _currentCallChain->size();
-
-  // use new chain
-  _currentCallChain = calleeChain;
-
-//    if ( no_log() ) {
+//    if ( rec.no_log() ) {
 //      return;
 //    }
 //
-//    auto &back = next._extCallerChain->back();
-//    Debug("conttrace","separate-object-push[#%lu->#%lu]: [%05d] %s %s@%d --> [%05d] %s %s@%d", _extCallerChainLen, _currentCallChain->size(),
+//    auto &back = next._callingChain->back();
+//    Debug("conttrace","separate-object-push[#%lu->#%lu]: [%05d] %s %s@%d --> [%05d] %s %s@%d", _callingChainLen, _currentCallChain->size(),
 //             back._event, back._assignPoint->_kLabel, back._assignPoint->_kFile, back._assignPoint->_kLine,
 //             event, _assignPoint->_kLabel, _assignPoint->_kFile, _assignPoint->_kLine);
 }
 
-EventCalled::EventCalled(EventHdlr_t point, int event)
-   : _assignPoint(&point), // changes to assign-point
+EventCalled::EventCalled(EventHdlr_t assign, int event)
+   : _hdlrAssign(&assign),
      _event(event)
 { }
+
+
+EventCalled::EventCalled(EventCallContext &octxt, EventHdlr_t assign, int event)
+   : _hdlrAssign(&assign),
+     _callingChain( octxt._chainPtr ),
+     _event(event),
+     _callingChainLen( octxt._chain.size() )
+{ }
+
+EventCalled::EventCalled(EventCallContext &ctxt)
+   : _calledChain( ctxt._chainPtr ),
+     _calledChainLen( ctxt._chain.size() )
+{ }
+
+/////////////////////////////////////////////////////////////////
+// create new callback-entry on chain associated with HdlrState
+/////////////////////////////////////////////////////////////////
+EventCallContext::EventCallContext(EventHdlrState &state, int event)
+   : _state(&state),
+     _chainPtr(state._chainPtr),
+     _chain(*state._chainPtr),
+     _chainInd(state._chainPtr->size())
+{
+
+  if ( ! _waiting ) {
+    ink_stack_trace_dump();
+  }
+
+  // create entry using current rec
+  push_incomplete_call(static_cast<EventHdlr_t>(state), event);
+}
+
+thread_local EventCallContext *EventCallContext::st_currentCtxt = nullptr;
+thread_local uint64_t         &EventCallContext::st_allocCounterRef = *jemallctl::thread_allocatedp();
+thread_local uint64_t         &EventCallContext::st_deallocCounterRef = *jemallctl::thread_deallocatedp();
+
+void EventCallContext::set_ctor_initial_callback(EventHdlr_t rec)
+{
+  ink_assert( st_currentCtxt );
+  st_currentCtxt->_dfltAssignPoint = &rec;
+}
+
+EventHdlrState::EventHdlrState(void *p)
+   : _chainPtr( std::make_shared<EventCalled::Chain_t>() ),
+     _scopeContext( new EventCallContext(*this,0) )
+{
+  if ( EventCallContext::st_currentCtxt && EventCallContext::st_currentCtxt->_dfltAssignPoint ) 
+  {
+    _assignPoint = EventCallContext::st_currentCtxt->_dfltAssignPoint;
+  }
+  Debug("conttrace","%p: init-created: %s %s@%d",this,_assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine);
+}
+
+//
+// a HdlrState that merely "owns" the top of other calls
+//
+EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
+   : _assignPoint(&hdlr),
+     _chainPtr( std::make_shared<EventCalled::Chain_t>() ),
+     _scopeContext( new EventCallContext(*this,0) ) // add ctor on to stack!
+{
+}
+
+EventHdlrState::~EventHdlrState()
+   // detaches from shared-ptr!
+{
+  if ( _chainPtr.use_count() > 1 ) {
+    return;
+  }
+
+  if ( _chainPtr->empty() ) {
+    return;
+  }
+
+  if ( _chainPtr->size() == 1 && _chainPtr->back().no_log() ) {
+    return;
+  }
+
+  EventCalled::printLog(_chainPtr->begin(),_chainPtr->end()," [State DTOR]",this);
+}
+
+void EventHdlrState::reset_top_frame(EventHdlr_t rec)
+{
+  EventCallContext::st_currentCtxt = _scopeContext.get();
+  XXX return from call (if one matches) and then insert new one
+  *this = rec;
+}
+
+
+int
+EventHdlrState::operator()(TSCont ptr, TSEvent event, void *data)
+{
+  EventCallContext _ctxt{*this,event};
+  EventCallContext::st_currentCtxt = &_ctxt; // reset upon dtor
+
+  if ( _assignPoint->_kTSEventFunc ) {
+    // direct C call.. 
+    return (*_assignPoint->_kTSEventFunc)(ptr,event,data);
+  } 
+
+  // C++ wrapper ...
+  return (*_assignPoint->_kWrapFunc_Gen())(ptr,event,data);
+}
+
+int
+EventHdlrState::operator()(Continuation *self,int event, void *data)
+{
+  EventCallContext _ctxt{*this,event};
+  EventCallContext::st_currentCtxt = &_ctxt; // reset upon dtor
+
+  return (*_assignPoint->_kWrapHdlr_Gen())(self,event,data);
+}
 
 //////////////////////////////////////////
 // current chain has a record to complete
 //    then change to new change if needed..
 //////////////////////////////////////////
-EventCalled *
-EventCallContext::pop_caller_record()
+void EventCallContext::pop_caller_record()
 {
-  auto currPtr = _currentCallChain; // save a copy
-  auto &curr = *currPtr;
-  auto len = curr.size();
+  ink_assert( _chain.size() );
 
-  ink_assert( currPtr->size() );
+  EventCalled &call = static_cast<EventCalled&>(*this);
+  unsigned ind = &call - &_chain.front();
+  auto &rec = *call._hdlrAssign;
 
-  EventCalled *callerRec = nullptr;
+  call.completed(*this, _chainPtr);
 
-  auto i = curr.end() - 1;
-  auto lastReturnLen = i->_intReturnedChainLen;
-
-  if ( lastReturnLen && lastReturnLen < len ) 
+  if ( _chainPtr.use_count() <= 1 ) 
   {
-    Debug("conttrace","pop-call not found: #%lu: (#%d>>) @%d<<,  ", len-1,
-                curr.back()._extCallerChainLen, 
-                curr.back()._intReturnedChainLen);
-    return nullptr;                                           //// RETURN (confused)
-  }
+    EventCalled::printLog(_chain.begin(),_chain.end()," [pop DTOR]",_state);
+    return;
+  } 
 
-  // caller/call -> return from prev. call
-  if ( lastReturnLen == len )
-  {
-    // scan to shallowest just-completed call
-    auto rev = std::find_if(curr.rbegin(), curr.rend(), 
-                             [len](EventCalled &c){ return c._intReturnedChainLen != len; });
-    // rev-distance from rend() == ind+1 of first match (or 0 if none)
-    // rev-distance from rend() == ind of last non-match
-    i = curr.begin() + ( curr.rend() - rev );
-  }
-
-  i->completed(*this, currPtr);
-
-  // non-zero and not current??
-  size_t ith = i - curr.begin();
-  auto &ap = *i->_assignPoint;
-
-  // caller was simply from outside all call chains?
-  if ( ! i->_extCallerChainLen ) 
-  {
-    i->_intReturnedChainLen = currPtr->size(); // save return-point call chain length
-
-    // next context is empty
-    _currentCallChain.reset();
-
-    if ( currPtr.use_count() <= 1 ) { // orig and my copy
-      EventCalled::printLog(curr.begin(),curr.end()," [top DTOR]",_state);
-      currPtr.reset();
-      return nullptr;
-
-    } 
+  call.trim_call(_chain); // snip some if possible
     
-    i->trim_call(curr); // snip some if needed
-
-    if ( curr.size() <= ith ) {
-      return nullptr; // caller record was trimmed 
-    }
-
-    i = curr.begin()+ith; // in case it was deleted
-
-    // size is larger than the index we were at...
-
-    EventCalled::printLog(curr.begin()+ith,curr.end(),"top has completed",_state);
-
-    // returned from *last* entry?
-    Debug("conttrace","top-object #%ld[%lu]: %s %s %d [evt#%05d] (refs=%ld)",ith, curr.size(), 
-         ap._kLabel,ap._kFile,ap._kLine, 
-         i->_event, currPtr.use_count());
-
-    return nullptr; // no caller record to examine
-  }
-
+  // caller was simply from outside all call chains?
+  if ( ind < _chain.size() ) 
   {
-    auto callerChainPtr = ( i->_extCallerChain ? i->_extCallerChain  // chain-external caller made call
-                                               : currPtr );          // chain-internal caller made call
-    callerRec = &(*callerChainPtr)[i->_extCallerChainLen-1];
-    callerRec->_intReturnedChainLen = callerChainPtr->size(); // save return-point call chain length
-
-    // pop back to earlier context (maybe null)
-    _currentCallChain.swap(callerChainPtr);
+    auto msg = ( call._callingChainLen ? "pop" : "top has completed" );
+    EventCalled::printLog(_chain.begin()+ind,_chain.end(),msg,_state);
   }
 
-  /*
-  auto &ap2 = *callerRec->_assignPoint;
-  Debug("conttrace","pop-object prev-top #%ld[%lu]: %s %s %d [evt#%05d] (refs=%ld)",ith, curr.size(), 
-           ap._kLabel,ap._kFile,ap._kLine, 
-           i->_event, currPtr.use_count());
-  Debug("conttrace","over-object new-top  #%d[%lu]: %s %s %d [evt#%05d] (refs=%ld)",
-           i->_extCallerChainLen-1, _currentCallChain->size(), 
-           ap2._kLabel,ap2._kFile,ap2._kLine, 
-           callerRec->_event, _currentCallChain.use_count());
-  */
-
-  // To Be assured...
-  i->_intReturnedChainLen = len;
-
-  if ( currPtr.use_count() <= 1 ) // orig and my copy
-  { 
-     EventCalled::printLog(curr.begin(),curr.end()," [Chain DTOR]",_state);
-     currPtr.reset();  // fred
-     return callerRec;
+  if ( ! call._callingChainLen ) {
+    // returned from *last* entry?
+    Debug("conttrace","top-object #%u[%lu]: %s %s %d [evt#%05d] (refs=%ld)",ind, _chain.size(), 
+         rec._kLabel,rec._kFile,rec._kLine, 
+         call._event, _chainPtr.use_count());
   }
 
-  i->trim_call(curr); // snip any boring calls from end...
-  if ( curr.size() <= ith ) {
-    return callerRec;
+  if ( ind < _chain.size() ) {
+    EventCalled::printLog(_chain.begin()+ind,_chain.end(),"pop",_state);
+    return;
   }
 
-  EventCalled::printLog(i,curr.end(),"pop",_state);
-  return callerRec;
 }
 
 EventCallContext::~EventCallContext()
 {
-  if ( ! _currentCallChain ) {
-     Debug("conttrace","top level pop without handler-chain");
-     return;
-  }
-
-  // use back-refs to return the actual caller that's now complete
   pop_caller_record();
+  if ( st_currentCtxt == this ) {
+    st_currentCtxt = _waiting; // don't leave a pointer behind
+  }
 }
 
 void
@@ -458,21 +458,11 @@ EventCalled::completed(EventCallContext const &ctxt, ChainPtr_t const &chain)
     _delay = FLT_MIN;
   }
 
-  auto allocTot = ctxt._allocCounterRef - ctxt._allocStamp;
-  auto deallocTot = ctxt._deallocCounterRef - ctxt._deallocStamp;
+  auto allocTot = EventCallContext::st_allocCounterRef - ctxt._allocStamp;
+  auto deallocTot = EventCallContext::st_deallocCounterRef - ctxt._deallocStamp;
 
-  // NOTE: uses this_thread() to get ptrs fast
   _allocDelta += allocTot;
   _deallocDelta += deallocTot;
-
-  if ( _extCallerChain ) 
-  {
-    auto &callerRec = (*_extCallerChain)[_extCallerChainLen-1];
-    callerRec._allocDelta -= allocTot;
-    callerRec._deallocDelta -= deallocTot;
-  }
-
-  _intReturnedChainLen = chain->size(); // save return-point call chain length
 }
 
 const TSEventFunc cb_null_return() { return nullptr; }
@@ -504,3 +494,5 @@ const char *cb_alloc_plugin_label(const char *path, const char *symbol)
 
   return strdup( ( std::string(file) + "::@" + symbol ).c_str() );
 }
+
+

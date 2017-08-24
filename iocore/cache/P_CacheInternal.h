@@ -442,7 +442,7 @@ struct CacheVC : public CacheVConnection {
   Dir *last_collision;
   Event *trigger;
   CacheKey *read_key;
-  ContinuationHandler save_handler;
+  EventHdlrP_t save_handler;
   uint32_t pin_in_cache;
   ink_hrtime start_time;
   int base_stat;
@@ -511,7 +511,7 @@ struct CacheVC : public CacheVConnection {
 
 #define POP_HANDLER                                                 \
   do {                                                              \
-    SET_SAVED_HANDLER(save_handler);                                      \
+    SET_SAVED_HANDLER(*save_handler);                                      \
     ink_assert(handler != &CacheVC::dead); \
   } while (0)
 
@@ -687,7 +687,7 @@ CacheVC::die()
   } else {
     if (is_io_in_progress()) {
       // preserve current
-      auto hold = handler; 
+      EventHdlr_t hold = handler; 
       // add the new-pushed handler
       SET_HANDLER(&CacheVC::openReadClose);
       save_handler = handler;
