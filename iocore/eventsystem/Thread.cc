@@ -30,11 +30,10 @@
 **************************************************************************/
 #include "P_EventSystem.h" // include ahead of I_Thread
 #include "I_Thread.h"
-#include "ts/CallbackDebug.h"
 
 #include "ts/ink_string.h"
+#include "ts/ink_memory.h"
 #include "ts/jemallctl.h"
-#include "ts/ink_stack_trace.h"
 
 ///////////////////////////////////////////////
 // Common Interface impl                     //
@@ -64,7 +63,6 @@ ink_thread_key
 init_thread_key()
 {
   ink_thread_key_create(&Thread::thread_data_key, key_destructor);
-  ink_thread_setspecific(Thread::thread_data_key, nullptr);
   return Thread::thread_data_key;
 }
 
@@ -87,6 +85,7 @@ spawn_thread_internal(void *a)
 //  auto arena = jemallctl::thread_arena(); // default init first
   jemallctl::set_thread_arena(0); // default init first
 //  jemallctl::set_thread_arena(arena); // special init if different
+//
 
   p->me->set_specific();
   ink_set_thread_name(p->name);
@@ -112,4 +111,3 @@ Thread::start(const char *name, size_t stacksize, ThreadFunction f, void *a)
 
   return tid;
 }
-

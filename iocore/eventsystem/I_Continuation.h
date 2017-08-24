@@ -105,7 +105,7 @@ public:
     issues.
 
   */
-  EventHdlrState    handler;
+  ContinuationHandler handler;
 
 #ifdef DEBUG
   const char *handler_name;
@@ -174,7 +174,6 @@ public:
 */
 #define SET_HANDLER(_h) SET_CONTINUATION_HANDLER(this,_h)
 
-#define CLEAR_HANDLER()          SET_SAVED_HANDLER(nullptr)
 #define SET_SAVED_HANDLER(_var)  (this->handler.operator=(_var))
 /**
   Sets a Continuation's handler.
@@ -188,7 +187,7 @@ public:
 #define SET_CONTINUATION_HANDLER(obj,_h)                     \
    ({                                                        \
      EVENT_HANDLER_RECORD(_h, kHdlrAssignRec);              \
-     static_cast<Continuation&>(*obj).handler = kHdlrAssignRec;      \
+     static_cast<ContinuationHandler&>(obj->handler) = kHdlrAssignRec;      \
    })
 
 inline Continuation::Continuation(ProxyMutex *amutex)

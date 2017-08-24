@@ -364,13 +364,15 @@ EventHdlrState::~EventHdlrState()
   EventCalled::printLog(_chainPtr->begin(),_chainPtr->end()," [State DTOR]",this);
 }
 
-void EventHdlrState::reset_top_frame(EventHdlr_t rec)
+void EventCallContext::reset_top_frame()
 {
-  EventCallContext::st_currentCtxt = _scopeContext.get();
-  XXX return from call (if one matches) and then insert new one
-  *this = rec;
-}
+  if ( EventCallContext::st_currentCtxt == this ) {
+    completed(); // complete old one...
+  }
+  push_incomplete_call(*_state,0);
 
+  EventCallContext::st_currentCtxt = this;
+}
 
 int
 EventHdlrState::operator()(TSCont ptr, TSEvent event, void *data)
@@ -408,8 +410,6 @@ void EventCallContext::pop_caller_record()
   unsigned ind = &call - &_chain.front();
   auto &rec = *call._hdlrAssign;
 
-  call.completed(*this, _chainPtr);
-
   if ( _chainPtr.use_count() <= 1 ) 
   {
     EventCalled::printLog(_chain.begin(),_chain.end()," [pop DTOR]",_state);
@@ -441,6 +441,7 @@ void EventCallContext::pop_caller_record()
 
 EventCallContext::~EventCallContext()
 {
+  completed();
   pop_caller_record();
   if ( st_currentCtxt == this ) {
     st_currentCtxt = _waiting; // don't leave a pointer behind
@@ -448,7 +449,7 @@ EventCallContext::~EventCallContext()
 }
 
 void
-EventCalled::completed(EventCallContext const &ctxt, ChainPtr_t const &chain)
+EventCalled::completed(EventCallContext const &ctxt)
 {
   auto duration = std::chrono::steady_clock::now() - ctxt._start;
 
@@ -467,10 +468,16 @@ EventCalled::completed(EventCallContext const &ctxt, ChainPtr_t const &chain)
 
 const TSEventFunc cb_null_return() { return nullptr; }
 
+TSContDebug *cb_init_stack_context(void *p, EventCHdlrAssignRecPtr_t recp)
+{
+  auto r = new(p) EventHdlrState(reinterpret_cast<EventHdlr_t>(*recp));
+  return reinterpret_cast<TSContDebug*>(r);
+}
+
 void cb_free_stack_context(TSContDebug *p)
 {
-  auto r = reinterpret_cast<EventCallContext*>(p);
-  r->~EventCallContext();
+  auto r = reinterpret_cast<EventHdlrState*>(p);
+  r->~EventHdlrState();
 }
 
 const char *cb_alloc_plugin_label(const char *path, const char *symbol)

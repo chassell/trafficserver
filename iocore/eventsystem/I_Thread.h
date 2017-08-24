@@ -116,7 +116,7 @@ public:
     processors and you should not modify it directly.
 
   */
-  ink_thread tid = 0;
+  ink_thread tid;
 
   /**
     Thread lock to ensure atomic operations. The thread lock available
@@ -124,7 +124,7 @@ public:
     regions. Do not modify this member directly.
 
   */
-  ProxyMutex *mutex = nullptr;
+  ProxyMutex *mutex;
 
   // PRIVATE
   void set_specific();
@@ -184,8 +184,6 @@ public:
       @note This also updates the cached time.
   */
   static ink_hrtime get_hrtime_updated();
-
-  EventCalled::ChainPtr_t   _currentCallChain;
 };
 
 extern Thread *this_thread();

@@ -155,7 +155,7 @@ struct EventCalled
   static void printLog(Chain_t::const_iterator const &begin, Chain_t::const_iterator const &end, const char *msg, const void *ptr);
   
   // fill in deltas
-  void completed(EventCallContext const &ctxt, ChainPtr_t const &chain);
+  void completed(EventCallContext const &ctxt);
   void trim_call(Chain_t &chain);
 
   EventCalled &calling() { return (*_callingChain.lock())[_callingChainLen-1]; }
@@ -202,6 +202,8 @@ struct EventCallContext
   operator EventCalled       &()       { return _chain[_chainInd]; };
   operator EventCalled const &() const { return _chain[_chainInd]; };
 
+  void reset_top_frame();
+  void completed() { operator EventCalled &().completed(*this); }
  public:
   static void set_ctor_initial_callback(EventHdlr_t hdlr);
 
@@ -249,7 +251,7 @@ class EventHdlrState
   ~EventHdlrState();
 
  public:
-  void reset_top_frame(EventHdlr_t ctxt);
+  void reset_top_frame() { _scopeContext->reset_top_frame(); }
 
   int operator()(Continuation *self,int event,void *data);
   int operator()(TSCont,TSEvent,void *data);
@@ -361,26 +363,27 @@ const char *cb_alloc_plugin_label(const char *path, const char *symbol);
 #define NEW_LABEL_FRAME_RECORD(str, name)          \
             LABEL_FRAME_RECORD(str, const name);   \
             EventHdlrState _state_ ## name{name};  \
-            _state_ ## name.reset_top_frame(name)
+            _state_ ## name.reset_top_frame()
 
 #define NEW_PLUGIN_FRAME_RECORD(path, symbol, name)                            \
             LABEL_FRAME_RECORD(cb_alloc_plugin_label(path,symbol),const name); \
             EventHdlrState _state_ ## name{name};                              \
-            _state_ ## name.reset_top_frame(name)
+            _state_ ## name.reset_top_frame()
 
 #define NEW_CALL_FRAME_RECORD(_h, name)                \
             CALL_FRAME_RECORD(_h, const name);         \
             EventHdlrState _state_ ## name{name};      \
-            _state_ ## name.reset_top_frame(name)
+            _state_ ## name.reset_top_frame()
 
 #define RESET_ORIG_FRAME_RECORD(name)   \
-            _state_ ## name.reset_top_frame(name);  \
+          _state_ ## name = name;                 \
+          _state_ ## name.reset_top_frame();  \
 
 
-#define _RESET_LABEL_FRAME_RECORD(str, name)   \
-         {                                    \
-            LABEL_FRAME_RECORD(str, const name);    \
-            _state_ ## name.reset_top_frame(name); \
+#define _RESET_LABEL_FRAME_RECORD(str, name)       \
+         {                                         \
+            LABEL_FRAME_RECORD(str, const name);   \
+            RESET_ORIG_FRAME_RECORD(name);         \
          }
 
 #define RESET_LABEL_FRAME_RECORD(str, name)   \
