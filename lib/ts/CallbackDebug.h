@@ -110,6 +110,10 @@ struct EventHdlrAssignRec
   bool no_log() const {
     return ! _kEqualHdlr_Gen();
   }
+  bool frame_rec() const {
+    return _kEqualHdlr_Gen == EventHdlrAssignRec::const_cb_callgen_base::cmphdlr_nolog;
+  }
+
 
  public:
   const char *const _kLabel;   // at point of assign
@@ -130,50 +134,44 @@ struct EventHdlrAssignRec
 ///////////////////////////////////////////////////////////////////////////////////
 struct EventCalled
 {
-  using Chain_t = std::vector<EventCalled>;
-  using ChainPtr_t = std::shared_ptr<Chain_t>;
-  using ChainWPtr_t = std::weak_ptr<Chain_t>;
+  struct Chain : public std::vector<EventCalled>
+  {
+     ~Chain();
+  };
+
+  using ChainPtr_t = std::shared_ptr<Chain>;
+  using ChainWPtr_t = std::weak_ptr<Chain>;
 
   // same chain 
   EventCalled(EventHdlr_t assign, int event);
 
   // create record of calling-in with event
-  EventCalled(EventCallContext &ctxt, EventHdlr_t assign, int event);
+  EventCalled(const EventCallContext &ctxt, EventHdlr_t assign, int event);
 
   // create record of calling-out (no event)
-  EventCalled(EventCallContext &ctxt);
+  EventCalled(const EventCalled &prev, const EventCallContext &ctxt);
   EventCalled(void *p = NULL);
 
   bool no_log() const;
   bool no_log_adj() const;
+  bool frame_rec() const { return _hdlrAssign->frame_rec(); }
   bool waiting() const { return _delay != 0.0; }
 
-  static void printLog(std::ostream &out, Chain_t::const_iterator const &begin, Chain_t::const_iterator const &end, const char *msg, const void *ptr);
+  static int printLog(std::ostream &out, Chain::const_iterator const &begin, Chain::const_iterator const &end, const char *msg, const void *ptr);
   
   // fill in deltas
   void completed(EventCallContext const &ctxt);
-  void trim_call(Chain_t &chain);
+  bool trim_call() const;
 
-  Chain_t::iterator calling_iterator() const
-  { 
-    assert( _callingChainLen && ! _callingChain.expired() ); 
-    return _callingChain.lock()->begin() + _callingChainLen-1; 
-  }
-  Chain_t::iterator called_iterator() const
-  {
-    assert( _calledChainLen && _calledChain ); 
-    return _calledChain->begin() + _calledChainLen-1; 
-  }
+  static bool trim_call(Chain &chain); 
 
-  const EventCalled &called() const { 
-    return ( _calledChainLen ? *called_iterator() : this[1] );  
-  }
-  const EventCalled &calling() const {
-    return ( _calledChainLen ? *called_iterator() : this[-1] );  
-  }
+  Chain::iterator calling_iterator() const;
+  Chain::iterator called_iterator() const;
+  const EventCalled &called() const;
+  const EventCalled &calling() const;
 
   // upon ctor
-  EventHdlrP_t        const _hdlrAssign = nullptr;   // full callback info 
+  EventHdlrP_t        const _hdlrAssign;   // full callback info 
 
   // upon ctor
   ChainWPtr_t         const _callingChain;        // chain held by caller's context (from context)
@@ -205,14 +203,14 @@ struct EventCallContext
  public:
   // HdlrState can record this event occurring
   EventCallContext(const EventCallContext &ctxt) = delete;
-  EventCallContext(EventHdlrState &state, int event);
+  EventCallContext(const EventHdlrState &state, EventCallContext *octxtp, const EventCalled::ChainPtr_t &chain, int event);
   ~EventCallContext();
 
   // report handler that this context has in place
   operator EventCalled       &()       { return _chain[_chainInd]; };
   operator EventCalled const &() const { return _chain[_chainInd]; };
 
-  void reset_top_frame();
+  void reset_top_frame(EventHdlr_t hdlr);
   void completed() { operator EventCalled &().completed(*this); }
  public:
   static void set_ctor_initial_callback(EventHdlr_t hdlr);
@@ -227,18 +225,18 @@ struct EventCallContext
   static thread_local uint64_t                &st_deallocCounterRef;
 
  public:
-  EventHdlrState          *const _state = nullptr;
+  const void              *const _statep = nullptr;
   EventCallContext        *const _waiting = st_currentCtxt;
 
   EventHdlrP_t                   _dfltAssignPoint = nullptr;
 
-  EventCalled::ChainPtr_t const _chainPtr;
-  EventCalled::Chain_t         &_chain;
+  EventCalled::ChainPtr_t const _chainPtr; // fixed upon creation
+  EventCalled::Chain         &_chain;
   unsigned                const _chainInd; // note: iterators can be invalidated
 
-  uint64_t                const _allocStamp = st_allocCounterRef;
-  uint64_t                const _deallocStamp = st_deallocCounterRef;
-  time_point              const _start = steady_clock::now();
+  uint64_t                const _allocStamp = 0; // reset when ctor is done
+  uint64_t                const _deallocStamp = 0; // reset when ctor is done
+  time_point              const _start;
 };
 
 
@@ -261,7 +259,7 @@ class EventHdlrState
   ~EventHdlrState();
 
  public:
-  void reset_top_frame() { _scopeContext->reset_top_frame(); }
+  void reset_top_frame();
 
   int operator()(Continuation *self,int event,void *data);
   int operator()(TSCont,TSEvent,void *data);
@@ -269,6 +267,7 @@ class EventHdlrState
  public:
   operator EventHdlr_t() const { return *_assignPoint; }
   operator EventHdlrP_t() const { return _assignPoint; }
+  operator EventCalled::ChainPtr_t() const { return _scopeContext->_chainPtr; }
 
   // allow comparisons with EventHdlrs
   template <class T_OBJ, typename T_ARG>
@@ -307,10 +306,8 @@ class EventHdlrState
   }
 
 private:
-  EventHdlrP_t            _assignPoint = nullptr;  // latest callback assigned for use
-  EventCalled::ChainPtr_t _chainPtr;        // record of calls
-
-  EventCallContext::UPtr_t _scopeContext; // call-record after full alloc
+  EventHdlrP_t                  _assignPoint = nullptr;  // latest callback assigned for use
+  EventCallContext::UPtr_t      _scopeContext; // call-record after full alloc
 };
 
 inline void EventHdlrState::operator=(TSEventFunc f) 

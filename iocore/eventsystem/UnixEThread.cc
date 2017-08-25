@@ -166,11 +166,13 @@ EThread::process_event(Event *e, int calling_code)
   }
 }
 
-#define process_event(a,b) \
+/*
+define process_event(a,b) \
   {                                                        \
   NEW_CALL_FRAME_RECORD(&EThread::process_event,kTopCall); \
   process_event((a),(b));                                  \
   }
+*/
 
 //
 // void  EThread::execute()
@@ -188,6 +190,7 @@ EThread::execute()
 {
   switch (tt) {
   case REGULAR: {
+    NEW_CALL_FRAME_RECORD(&EThread::REGULAR,kTopCall);
     Event *e;
     Que(Event, link) NegativeQueue;
     ink_hrtime next_time = 0;
@@ -300,7 +303,7 @@ EThread::execute()
 
   case DEDICATED: {
     // coverity[lock]
-    NEW_CALL_FRAME_RECORD(&EThread::execute,kTopCall);
+    NEW_CALL_FRAME_RECORD(&EThread::DEDICATED,kTopCall);
     MUTEX_TAKE_LOCK_FOR(oneevent->mutex, this, oneevent->continuation);
     oneevent->continuation->handleEvent(EVENT_IMMEDIATE, oneevent);
     MUTEX_UNTAKE_LOCK(oneevent->mutex, this);
