@@ -190,7 +190,6 @@ EThread::execute()
 {
   switch (tt) {
   case REGULAR: {
-    NEW_CALL_FRAME_RECORD(&EThread::REGULAR,kTopCall);
     Event *e;
     Que(Event, link) NegativeQueue;
     ink_hrtime next_time = 0;
@@ -200,6 +199,7 @@ EThread::execute()
       if (unlikely(shutdown_event_system == true)) {
         return;
       }
+      NEW_CALL_FRAME_RECORD(&EThread::REGULAR,kTopCall);
       // execute all the available external events that have
       // already been dequeued
       cur_time = Thread::get_hrtime_updated();
