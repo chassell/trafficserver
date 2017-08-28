@@ -103,6 +103,24 @@ GetObjFxn<void, 0>::operator()(void) const
   return ::jemallctl::mallctl_void(ObjBase::_oid);
 }
 
+int 
+SetObjFxn<bool,0>::operator()(void) const
+{
+  auto v = false;
+  auto r = ::jemallctl::mallctl_set(ObjBase::_oid, v);
+  ink_assert(! r);
+  return r;
+}
+
+int 
+SetObjFxn<bool,1>::operator()(void) const
+{
+  auto v = true;
+  auto r = ::jemallctl::mallctl_set(ObjBase::_oid, v);
+  ink_assert(! r);
+  return r;
+}
+
 #if !HAVE_LIBJEMALLOC
 objpath_t
 objpath(const std::string &path)
@@ -176,11 +194,12 @@ template <>
 auto
 mallctl_get<std::string>(const objpath_t &oid) -> std::string
 {
-  char buff[256]; // adequate for paths and most things
-  size_t len = sizeof(buff);
-  auto r = mallctlbymib(oid.data(), oid.size(), &buff, &len, nullptr, 0);
-  ink_assert(! r);
-  std::string v(&buff[0], len); // copy out
+//  char buff[256]; // adequate for paths and most things
+  const char *cstr = nullptr;
+  size_t len = sizeof(cstr);
+  auto r = mallctlbymib(oid.data(), oid.size(), &cstr, &len, nullptr, 0);
+  ink_assert(! r && cstr );
+  std::string v(cstr); // copy out
   return std::move(v);
 }
 
@@ -188,7 +207,11 @@ template <>
 auto
 mallctl_set<std::string>(const objpath_t &oid, const std::string &v) -> int
 {
-  auto r = mallctlbymib(oid.data(), oid.size(), nullptr, nullptr, const_cast<char *>(v.c_str()), v.size());
+  const char *cstr = v.c_str();
+  size_t len = sizeof(cstr);
+  auto r = mallctlbymib(oid.data(), oid.size(), 
+                        nullptr, nullptr, 
+                        &cstr, len); // ptr-to-c-string-ptr
   ink_assert(! r);
   return 0;
 }
@@ -247,11 +270,13 @@ template struct GetObjFxn<unsigned>;
 template struct GetObjFxn<bool>;
 template struct GetObjFxn<bool*>;
 template struct GetObjFxn<chunk_hooks_t>;
+template struct GetObjFxn<std::string>;
 
 template struct SetObjFxn<uint64_t>;
 template struct SetObjFxn<unsigned>;
 template struct SetObjFxn<bool>;
 template struct SetObjFxn<chunk_hooks_t>;
+template struct SetObjFxn<std::string>;
 
 const GetObjFxn<chunk_hooks_t> thread_arena_hooks{"arena.0.chunk_hooks"};
 const SetObjFxn<chunk_hooks_t> set_thread_arena_hooks{"arena.0.chunk_hooks"};
@@ -273,8 +298,14 @@ const GetObjFxn<std::string> config_malloc_conf{"config.malloc_conf"};
 const GetObjFxn<std::string> thread_prof_name{"thread.prof.name"};
 const SetObjFxn<std::string> set_thread_prof_name{"thread.prof.name"};
 
+// for profiling only
+const GetObjFxn<bool> prof_active{"prof.active"};
+const EnableObjFxn    enable_prof_active{"prof.active"};
+const DisableObjFxn   disable_prof_active{"prof.active"};
+
 const GetObjFxn<bool> thread_prof_active{"thread.prof.active"};
-const SetObjFxn<bool> set_thread_prof_active{"thread.prof.active"};
+const EnableObjFxn    enable_thread_prof_active{"thread.prof.active"};
+const DisableObjFxn   disable_thread_prof_active{"thread.prof.active"};
 
 const GetObjFxn<uint64_t*> thread_allocatedp{"thread.allocatedp"};
 const GetObjFxn<uint64_t*> thread_deallocatedp{"thread.deallocatedp"};

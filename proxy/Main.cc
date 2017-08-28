@@ -30,6 +30,8 @@
 
  ****************************************************************************/
 
+#include "ts/jemallctl.h"
+
 #include "ts/ink_platform.h"
 #include "ts/ink_sys_control.h"
 #include "ts/ink_args.h"
@@ -37,6 +39,7 @@
 #include "ts/ink_stack_trace.h"
 #include "ts/ink_syslog.h"
 #include "ts/hugepages.h"
+#include "ts/ink_memory.h"
 
 #include <syslog.h>
 #include <algorithm>
@@ -1485,6 +1488,25 @@ main(int /* argc ATS_UNUSED */, const char **argv)
 #endif
 
   numa::reset_thread_memory_by_cpuset();
+  // enable as a whoel...
+  
+  {
+    jemallctl::GetObjFxn<bool>  cfg_prof{"config.prof"};
+    jemallctl::GetObjFxn<bool>  opt_prof{"opt.prof"};
+    jemallctl::GetObjFxn<bool>  opt_prof_active{"opt.prof_active"};
+    jemallctl::GetObjFxn<bool>  prof_active{"prof.active"};
+
+    jemallctl::EnableObjFxn     enable_prof_active{"prof.active"};
+    jemallctl::DisableObjFxn    disable_prof_thread_active_init{"prof.thread_active_init"};
+    jemallctl::EnableObjFxn     enable_prof_thread_active_init{"prof.thread_active_init"};
+
+    if ( cfg_prof() && opt_prof() ) 
+    {
+      jemallctl::disable_thread_prof_active(); // not yet ...
+      enable_prof_active();                    // but do start activity
+      assert( cfg_prof() && prof_active() );
+    }
+  }
 
   pcre_malloc = ats_malloc;
   pcre_free   = ats_free;

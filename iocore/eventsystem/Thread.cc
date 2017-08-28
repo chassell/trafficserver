@@ -84,8 +84,7 @@ spawn_thread_internal(void *a)
 
 //  auto arena = jemallctl::thread_arena(); // default init first
   jemallctl::set_thread_arena(0); // default init first
-//  jemallctl::set_thread_arena(arena); // special init if different
-//
+//  jemallctl::disable_thread_prof_active();
 
   p->me->set_specific();
   ink_set_thread_name(p->name);

@@ -52,7 +52,7 @@ static_assert( offsetof(EventHdlrAssignRec, _kTSEventFunc) == offsetof(EventCHdl
 #define TRACE_DEBUG_FLAG  "debug_conttrace"
 #define TRACE_FLAG  "conttrace"
 #define TRACE_FLAG_FIXED  "conttrace           "
-#define TRACE_SNPRINTF_PREFIX  "\n{%#012lx} "
+#define TRACE_SNPRINTF_PREFIX  "{%#012lx} "
 #define TRACE_SNPRINTF_DATA  ink_thread_self(),
 
 ///////////////////////////////////////////////
@@ -79,7 +79,7 @@ const EventCalled &EventCalled::calling() const
 }
 
 
-bool EventCalled::no_log_adj() const
+bool EventCalled::is_no_log_adj() const
 {
   if ( ! _hdlrAssign ) {
     return true; // don't log
@@ -99,7 +99,7 @@ bool EventCalled::no_log_adj() const
   }
 
   // if flagged .. it's not important enough
-  if ( _hdlrAssign->no_log() ) {
+  if ( _hdlrAssign->is_no_log() ) {
     return true;
   }
 
@@ -107,14 +107,14 @@ bool EventCalled::no_log_adj() const
   return ! _event;
 }
 
-bool EventCalled::no_log() const
+bool EventCalled::is_no_log() const
 {
   if ( ! _hdlrAssign ) {
     return true; // don't log
   }
 
   // if flagged .. it's not important enough
-  if ( _hdlrAssign->no_log() ) {
+  if ( _hdlrAssign->is_no_log() ) {
     return true;
   }
 
@@ -138,20 +138,20 @@ int EventCalled::printLog(std::ostream &out, Chain::const_iterator const &obegin
 /*
   const EventHdlrAssignRec &beginrec = *begin->_hdlrAssign;
   Debug(TRACE_DEBUG_FLAG,"log-start attempt[-->#%lu]: nolog?=%d%d [%05d] %s %s@%d",begin - obegin, 
-                       ( begin + 1 < oend ? begin->no_log_adj() : begin->no_log() ), 
-                       begin->no_log(), 
+                       ( begin + 1 < oend ? begin->is_no_log_adj() : begin->is_no_log() ), 
+                       begin->is_no_log(), 
                        begin->_event,  beginrec._kLabel, beginrec._kFile, beginrec._kLine);
 */
 
   // skip constructor/boring callers in print
   while ( begin != oend ) 
   {
-    if ( ! begin->no_log() ) {
+    if ( ! begin->is_no_log() ) {
       break;
     }
 
     // check if no memory
-    if ( begin + 1 != oend && ! begin->no_log_adj() ) {
+    if ( begin + 1 != oend && ! begin->is_no_log_adj() ) {
       break;
     }
 
@@ -299,7 +299,7 @@ int EventCalled::printLog(std::ostream &out, Chain::const_iterator const &obegin
     }
 
     ++callback;
-    out << std::endl << "(" << debug << ")";
+    out << std::endl << "(" << debug << ") ";
 
     if ( last == begin ) 
     {
@@ -332,7 +332,7 @@ int EventCalled::printLog(std::ostream &out, Chain::const_iterator const &obegin
 
     // account not add if called from other chain ...
     if ( call._callingChainLen ) {
-      Debug(TRACE_DEBUG_FLAG,"zeroing next[-->#%lu]",i);
+      Debug(TRACE_DEBUG_FLAG,"no adjustment needed[-->#%lu]",i);
       memAccount = 0;
       timeAccount = 0;
     }
@@ -344,6 +344,8 @@ int EventCalled::printLog(std::ostream &out, Chain::const_iterator const &obegin
 
   const char *units = ( delayTotal >= 10000 ? "ms" : "us" ); 
   float div = ( delayTotal >= 10000 ? 1000.0 : 1.0 ); 
+
+  out << std::endl << "(" << TRACE_DEBUG_FLAG << ")     ";
 
   snprintf(buff,sizeof(buff),
            TRACE_SNPRINTF_PREFIX "            (n=%ld):_____[ mem %9ld time ~%5.1f%s]                         %s%s\n ----",
@@ -363,7 +365,7 @@ bool EventCalled::trim_call() const
     return false; // need no memory lost
   }
 
-  if ( (this-1)->_hdlrAssign != _hdlrAssign && ! no_log() ) {
+  if ( (this-1)->_hdlrAssign != _hdlrAssign && ! is_no_log() ) {
     return false; // go ahead only if a direct-repeat of a boring call
   }
 
@@ -385,14 +387,14 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event) const
   {
     _chain.push_back( EventCalled(rec,event) );
 
-    if ( ! rec.no_log() && ! _waiting ) {
+    if ( ! rec.is_no_log() && ! _waiting ) {
       Debug(TRACE_DEBUG_FLAG,"starting-push[-->#%lu]: [%05d] %s %s@%d",_chain.size(),
                  event, rec._kLabel, rec._kFile, rec._kLine);
     } else if ( _waiting ) {
       Debug(TRACE_DEBUG_FLAG,"push-call#%lu: %s %s@%d [%d]",_chain.size(),rec._kLabel,rec._kFile,rec._kLine, event);
     }
 
-    auto &self = static_cast<const EventCalled&>(*this);
+    auto &self = active_event();
     ink_release_assert( &self == &_chain.back() );
     return;
   }
@@ -406,7 +408,7 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event) const
   // push record for called frame
   _chain.push_back( EventCalled(*_waiting,rec,event) );
 
-  auto &self = static_cast<const EventCalled&>(*this);
+  auto &self = active_event();
   auto &calling = _waiting->_chain.back();
 
   ink_release_assert( &self == &_chain.back() );
@@ -415,7 +417,7 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event) const
   ink_release_assert( &calling.called() == &self );
   ink_release_assert( &calling == &self.calling() );
 
-//    if ( rec.no_log() ) {
+//    if ( rec.is_no_log() ) {
 //      return;
 //    }
 //
@@ -487,8 +489,8 @@ EventCallContext::EventCallContext(const EventHdlrState &state, EventCallContext
   }
 
   // last point of stamps
-  const_cast<uint64_t &>(_allocStamp) = st_allocCounterRef;
-  const_cast<uint64_t &>(_deallocStamp) = st_deallocCounterRef;
+  const_cast<ptrdiff_t &>(_allocStamp) = st_allocCounterRef;
+  const_cast<ptrdiff_t &>(_deallocStamp) = st_deallocCounterRef;
   const_cast<time_point &>(_start) = steady_clock::now();
 }
 
@@ -543,17 +545,73 @@ EventHdlrState::~EventHdlrState()
 
 void EventHdlrState::reset_top_frame() 
 { 
-  auto octxt = std::move(_scopeContext);
-  octxt->completed(); // end old context now..
+  void *p = _scopeContext.get(); // store copy of old
 
-  // replace with new time/memory
-  _scopeContext.reset( new EventCallContext(*this, octxt->_waiting, octxt->_chainPtr, 0) ); 
+  _scopeContext->completed();  // end all prev. memory activity
 
-  if ( ! EventCallContext::st_currentCtxt || EventCallContext::st_currentCtxt == octxt.get() ) {
+  auto waiting = _scopeContext->_waiting;
+  auto chainPtr = _scopeContext->_chainPtr;
+  _scopeContext = nullptr; // prevent overlap alloc-dealloc
+
+  // alloc and then record stamps (upon ctor).. with no dealloc
+  _scopeContext.reset( new EventCallContext(*this, waiting, chainPtr, 0) ); 
+
+  if ( ! EventCallContext::st_currentCtxt || EventCallContext::st_currentCtxt == p ) {
     EventCallContext::st_currentCtxt = _scopeContext.get();
   }
 
   // dtor of context
+}
+
+bool enter_new_state(EventHdlr_t nhdlr)
+{
+  bool origProfState = jemallctl::thread_prof_active();
+
+  // from non-frame to frame-rec -> turn off
+  if ( origProfState && nhdlr.is_frame_rec() ) {
+    jemallctl::disable_thread_prof_active(); 
+  } 
+  // from frame to non-frame-rec -> turn on
+  else if ( ! origProfState && ! nhdlr.is_frame_rec() )
+  {
+    jemallctl::enable_thread_prof_active();
+
+    const char *debug = TRACE_FLAG_FIXED;
+    std::string debugStr = nhdlr._kLabel;
+
+    do {
+       auto colon = debugStr.rfind("::");
+       if ( colon != debugStr.npos ) { 
+         debugStr.erase(colon); // to the end
+       }
+
+       auto amp = debugStr.rfind('&');
+       if ( amp == debugStr.npos ) {
+         break;
+       }
+
+       debugStr.erase(0,amp+1); // from the start
+       debugStr.insert(0,"cont_");
+       debug = debugStr.c_str();
+    } while(false);
+
+    jemallctl::set_thread_prof_name(debug);
+  }
+
+  return origProfState;
+}
+
+void reset_old_state(bool origProfState, const std::string &origProfName) 
+{
+  if ( ! origProfName.empty() ) {
+    jemallctl::set_thread_prof_name(origProfName);
+  }
+
+  if ( origProfState && ! jemallctl::thread_prof_active() ) {
+     jemallctl::enable_thread_prof_active();
+  } else if ( ! origProfState && jemallctl::thread_prof_active() ) {
+     jemallctl::disable_thread_prof_active();
+  }
 }
 
 int
@@ -561,24 +619,37 @@ EventHdlrState::operator()(TSCont ptr, TSEvent event, void *data)
 {
   auto upctxt = EventCallContext::st_currentCtxt;
   if ( upctxt == _scopeContext.get() ) {
-    upctxt = _scopeContext->_waiting;
+    upctxt = _scopeContext->_waiting; // replace with ctxt above
   }
 
   // don't hold in old calls as we create a new one
   auto &chain = _scopeContext->_chain;
   while ( EventCalled::trim_call(chain) ) 
     { chain.pop_back(); }
+  ////////// set context for memory check
+
+  auto profState = enter_new_state(*_assignPoint);
+  auto profName = ( profState ? jemallctl::thread_prof_name() : "" );
 
   EventCallContext _ctxt{*this, upctxt, _scopeContext->_chainPtr, event};
   EventCallContext::st_currentCtxt = &_ctxt; // reset upon dtor
 
+  int r = 0;
+
+  ////////// perform call
+
   if ( _assignPoint->_kTSEventFunc ) {
     // direct C call.. 
-    return (*_assignPoint->_kTSEventFunc)(ptr,event,data);
-  } 
+    r = (*_assignPoint->_kTSEventFunc)(ptr,event,data);
+  } else {
+    // C++ wrapper ...
+    r = (*_assignPoint->_kWrapFunc_Gen())(ptr,event,data);
+  }
 
-  // C++ wrapper ...
-  return (*_assignPoint->_kWrapFunc_Gen())(ptr,event,data);
+  reset_old_state(profState, profName);
+
+  ////////// restore
+  return r;
 }
 
 int
@@ -594,10 +665,16 @@ EventHdlrState::operator()(Continuation *self,int event, void *data)
   while ( EventCalled::trim_call(chain) ) 
     { chain.pop_back(); }
 
+  auto profState = enter_new_state(*_assignPoint);
+  auto profName = ( profState ? jemallctl::thread_prof_name() : "" );
+
   EventCallContext _ctxt{*this, upctxt, _scopeContext->_chainPtr, event};
   EventCallContext::st_currentCtxt = &_ctxt; // reset upon dtor
 
-  return (*_assignPoint->_kWrapHdlr_Gen())(self,event,data);
+  auto r = (*_assignPoint->_kWrapHdlr_Gen())(self,event,data);
+  reset_old_state(profState, profName);
+
+  return r;
 }
 
 //////////////////////////////////////////
@@ -608,7 +685,7 @@ void EventCallContext::pop_caller_record()
 {
   ink_release_assert( _chain.size() );
 
-  EventCalled &call = static_cast<EventCalled&>(*this);
+  EventCalled &call = active_event();
   unsigned ind = &call - &_chain.front();
   auto &rec = *call._hdlrAssign;
   std::ostringstream oss;
@@ -618,14 +695,14 @@ void EventCallContext::pop_caller_record()
     return;
   }
 
-  if ( ! call._callingChainLen || call.calling().frame_rec() )
+  if ( ! call._callingChainLen || call.calling().is_frame_rec() )
   {
     // returned from *last* entry?
     char buff[256];
     EventCalled::printLog(oss,_chain.begin()+ind,_chain.end(),"[trace]",_statep);
     if ( ! oss.str().empty() ) {
       snprintf(buff,sizeof(buff),
-           TRACE_SNPRINTF_PREFIX " %p: top-object #%u/%lu: %s %s@%d [evt#%05d] (refs=%ld)",
+           "\n" TRACE_SNPRINTF_PREFIX " %p: top-object #%u/%lu: %s %s@%d [evt#%05d] (refs=%ld)",
            TRACE_SNPRINTF_DATA _statep, ind, _chain.size(), rec._kLabel,rec._kFile,rec._kLine, 
            call._event, _chainPtr.use_count());
       oss << buff;
@@ -656,13 +733,15 @@ EventCalled::completed(EventCallContext const &ctxt)
     _delay = FLT_MIN;
   }
 
-  auto allocTot = EventCallContext::st_allocCounterRef - ctxt._allocStamp;
-  auto deallocTot = EventCallContext::st_deallocCounterRef - ctxt._deallocStamp;
+  auto allocTot = ptrdiff_t() + EventCallContext::st_allocCounterRef - ctxt._allocStamp;
+  auto deallocTot = ptrdiff_t() + EventCallContext::st_deallocCounterRef - ctxt._deallocStamp;
+
+  auto waiting = _allocDelta - _deallocDelta;
 
   _allocDelta += allocTot;
   _deallocDelta += deallocTot;
 
-  Debug(TRACE_DEBUG_FLAG,"called complete @#%d: %s %s@%d", ctxt._chainInd, _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine);
+  Debug(TRACE_DEBUG_FLAG,"complete [%+ld + %+d -> %+d] @#%d: %s %s@%d", allocTot - deallocTot, waiting, _allocDelta - _deallocDelta, ctxt._chainInd, _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine);
 }
 
 const char *cb_alloc_plugin_label(const char *path, const char *symbol)
