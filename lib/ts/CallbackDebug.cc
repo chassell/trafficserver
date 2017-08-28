@@ -345,7 +345,7 @@ int EventCalled::printLog(std::ostream &out, Chain::const_iterator const &obegin
   const char *units = ( delayTotal >= 10000 ? "ms" : "us" ); 
   float div = ( delayTotal >= 10000 ? 1000.0 : 1.0 ); 
 
-  out << std::endl << "(" << TRACE_DEBUG_FLAG << ")     ";
+  out << std::endl << "(" << TRACE_DEBUG_FLAG << ")      ";
 
   snprintf(buff,sizeof(buff),
            TRACE_SNPRINTF_PREFIX "            (n=%ld):_____[ mem %9ld time ~%5.1f%s]                         %s%s\n ----",
@@ -383,37 +383,38 @@ bool EventCalled::trim_call(EventCalled::Chain &chain)
 
 void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event) const
 {
+  auto &chain = *_chainPtr;
   if ( ! _waiting || _waiting == this ) 
   {
-    _chain.push_back( EventCalled(rec,event) );
+    chain.push_back( EventCalled(rec,event) );
 
     if ( ! rec.is_no_log() && ! _waiting ) {
-      Debug(TRACE_DEBUG_FLAG,"starting-push[-->#%lu]: [%05d] %s %s@%d",_chain.size(),
+      Debug(TRACE_DEBUG_FLAG,"starting-push[-->#%lu]: [%05d] %s %s@%d",chain.size(),
                  event, rec._kLabel, rec._kFile, rec._kLine);
     } else if ( _waiting ) {
-      Debug(TRACE_DEBUG_FLAG,"push-call#%lu: %s %s@%d [%d]",_chain.size(),rec._kLabel,rec._kFile,rec._kLine, event);
+      Debug(TRACE_DEBUG_FLAG,"push-call#%lu: %s %s@%d [%d]",chain.size(),rec._kLabel,rec._kFile,rec._kLine, event);
     }
 
     auto &self = active_event();
-    ink_release_assert( &self == &_chain.back() );
+    ink_release_assert( &self == &chain.back() );
     return;
   }
 
   // don't hold in old calls...
-  while ( EventCalled::trim_call(_waiting->_chain) ) 
-    { _waiting->_chain.pop_back(); }
+  while ( EventCalled::trim_call(*_waiting->_chainPtr) ) 
+    { _waiting->_chainPtr->pop_back(); }
 
   // push record for calling frame
-  _waiting->_chain.push_back( EventCalled(_waiting->_chain.back(), *this) );
+  _waiting->_chainPtr->push_back( EventCalled(_waiting->_chainPtr->back(), *this) );
   // push record for called frame
-  _chain.push_back( EventCalled(*_waiting,rec,event) );
+  _chainPtr->push_back( EventCalled(*_waiting,rec,event) );
 
   auto &self = active_event();
-  auto &calling = _waiting->_chain.back();
+  auto &calling = _waiting->_chainPtr->back();
 
-  ink_release_assert( &self == &_chain.back() );
-  ink_release_assert( self._callingChainLen == _waiting->_chain.size() );
-  ink_release_assert( calling._calledChainLen == _chain.size() );
+  ink_release_assert( &self == &_chainPtr->back() );
+  ink_release_assert( self._callingChainLen == _waiting->_chainPtr->size() );
+  ink_release_assert( calling._calledChainLen == _chainPtr->size() );
   ink_release_assert( &calling.called() == &self );
   ink_release_assert( &calling == &self.calling() );
 
@@ -439,10 +440,10 @@ EventCalled::EventCalled(const EventCallContext &octxt, EventHdlr_t assign, int 
    : _hdlrAssign(&assign),
      _callingChain( octxt._chainPtr ),
      _event(event),
-     _callingChainLen( octxt._chain.size() )
+     _callingChainLen( octxt._chainPtr->size() )
 { 
   ink_release_assert(_hdlrAssign);
-  Debug(TRACE_DEBUG_FLAG,"called into #%ld: %s %s@%d", octxt._chain.size(), assign._kLabel, assign._kFile, assign._kLine);
+  Debug(TRACE_DEBUG_FLAG,"called into #%ld: %s %s@%d", octxt._chainPtr->size(), assign._kLabel, assign._kFile, assign._kLine);
 
 }
 
@@ -450,17 +451,17 @@ EventCalled::EventCalled(const EventCallContext &octxt, EventHdlr_t assign, int 
 EventCalled::EventCalled(const EventCalled &prev, const EventCallContext &nctxt)
    : _hdlrAssign( prev._hdlrAssign ), // don't leave null!
      _calledChain( nctxt._chainPtr ),
-     _calledChainLen( nctxt._chain.size()+1 ) // include new record not inserted yet!
+     _calledChainLen( nctxt._chainPtr->size()+1 ) // include new record not inserted yet!
 { 
   ink_release_assert(_hdlrAssign);
-  Debug(TRACE_DEBUG_FLAG,"calling from #%ld: %s %s@%d", nctxt._chain.size(), prev._hdlrAssign->_kLabel, prev._hdlrAssign->_kFile, prev._hdlrAssign->_kLine);
+  Debug(TRACE_DEBUG_FLAG,"calling from #%ld: %s %s@%d", nctxt._chainPtr->size(), prev._hdlrAssign->_kLabel, prev._hdlrAssign->_kFile, prev._hdlrAssign->_kLine);
 }
 
 EventCalled::Chain::~Chain()
 {
   std::ostringstream oss;
-  EventCalled::printLog(oss,begin(),begin()+1," [chain FIRST]",nullptr);
-  EventCalled::printLog(oss,begin()+1,end()," [chain DTOR]",nullptr);
+  EventCalled::printLog(oss,begin(),begin()+1," [chain FIRST]",this);
+  EventCalled::printLog(oss,begin()+1,end()," [chain DTOR]",this);
   oss.str().empty() || ({ DebugSpecific(true,TRACE_FLAG,"pop-dtor %s",oss.str().c_str()); true; });
 }
 
@@ -471,7 +472,7 @@ EventCallContext::EventCallContext(const EventHdlrState &state, EventCallContext
    : _statep(&state), // void* only
      _waiting(octxtp),
      _chainPtr(chain), // shared ownership (if state destructs)
-     _chain(*chain),
+//     _chain(*chain),
      _chainInd(chain->size()) // one minus new size
 {
 //  if ( ! _waiting ) {
@@ -481,9 +482,9 @@ EventCallContext::EventCallContext(const EventHdlrState &state, EventCallContext
   // create entry using current rec
   push_incomplete_call(static_cast<EventHdlr_t>(state), event);
 
-  if ( _chain.size() > 100 ) {
+  if ( _chainPtr->size() > 100 ) {
     std::ostringstream oss;
-    EventCalled::printLog(oss,_chain.begin(),_chain.end()," [reset-too-long]",_statep);
+    EventCalled::printLog(oss,_chainPtr->begin(),_chainPtr->end()," [reset-too-long]",_chainPtr.get());
     DebugSpecific(true,TRACE_FLAG,"chain-big: %s",oss.str().c_str());
     ink_fatal("too long!");
   }
@@ -623,7 +624,7 @@ EventHdlrState::operator()(TSCont ptr, TSEvent event, void *data)
   }
 
   // don't hold in old calls as we create a new one
-  auto &chain = _scopeContext->_chain;
+  auto &chain = *_scopeContext->_chainPtr;
   while ( EventCalled::trim_call(chain) ) 
     { chain.pop_back(); }
   ////////// set context for memory check
@@ -661,7 +662,7 @@ EventHdlrState::operator()(Continuation *self,int event, void *data)
   }
 
   // don't hold in old calls as we create a new one
-  auto &chain = _scopeContext->_chain;
+  auto &chain = *_scopeContext->_chainPtr;
   while ( EventCalled::trim_call(chain) ) 
     { chain.pop_back(); }
 
@@ -683,15 +684,15 @@ EventHdlrState::operator()(Continuation *self,int event, void *data)
 //////////////////////////////////////////
 void EventCallContext::pop_caller_record()
 {
-  ink_release_assert( _chain.size() );
+  ink_release_assert( _chainPtr->size() );
 
   EventCalled &call = active_event();
-  unsigned ind = &call - &_chain.front();
+  unsigned ind = &call - &_chainPtr->front();
   auto &rec = *call._hdlrAssign;
   std::ostringstream oss;
 
   // caller was simply from outside all call chains?
-  if ( ind >= _chain.size() ) {
+  if ( ind >= _chainPtr->size() ) {
     return;
   }
 
@@ -699,11 +700,11 @@ void EventCallContext::pop_caller_record()
   {
     // returned from *last* entry?
     char buff[256];
-    EventCalled::printLog(oss,_chain.begin()+ind,_chain.end(),"[trace]",_statep);
+    EventCalled::printLog(oss,_chainPtr->begin()+ind,_chainPtr->end(),"[trace]",_statep);
     if ( ! oss.str().empty() ) {
       snprintf(buff,sizeof(buff),
            "\n" TRACE_SNPRINTF_PREFIX " %p: top-object #%u/%lu: %s %s@%d [evt#%05d] (refs=%ld)",
-           TRACE_SNPRINTF_DATA _statep, ind, _chain.size(), rec._kLabel,rec._kFile,rec._kLine, 
+           TRACE_SNPRINTF_DATA _statep, ind, _chainPtr->size(), rec._kLabel,rec._kFile,rec._kLine, 
            call._event, _chainPtr.use_count());
       oss << buff;
     }

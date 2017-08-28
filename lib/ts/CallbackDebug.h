@@ -207,8 +207,8 @@ struct EventCallContext
   ~EventCallContext();
 
   // report handler that this context has in place
-  EventCalled       &active_event()       { return _chain[_chainInd]; };
-  EventCalled const &active_event() const { return _chain[_chainInd]; };
+  EventCalled       &active_event()       { return _chainPtr->operator[](_chainInd); };
+  EventCalled const &active_event() const { return _chainPtr->operator[](_chainInd); };
 
   void reset_top_frame(EventHdlr_t hdlr);
   void completed() { active_event().completed(*this); }
@@ -231,7 +231,7 @@ struct EventCallContext
   EventHdlrP_t                   _dfltAssignPoint = nullptr;
 
   EventCalled::ChainPtr_t const _chainPtr; // fixed upon creation
-  EventCalled::Chain         &_chain;
+//  EventCalled::Chain         &_chain;
   unsigned                const _chainInd; // note: iterators can be invalidated
 
   ptrdiff_t               const _allocStamp = 0; // reset when ctor is done
