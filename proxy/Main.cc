@@ -1491,6 +1491,17 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   // enable as a whoel...
   
   {
+    // appears to need this for MALLOC_CONF= environment var
+
+    // prof:true,
+    //	prof_active:false,
+    //	prof_prefix:jeprof.out,
+    //	prof_leak:true,
+    //	lg_prof_sample:0,
+    //	narenas:1,
+    //	prof_final:true,
+    //	prof_accum:true
+
     jemallctl::GetObjFxn<bool>  cfg_prof{"config.prof"};
     jemallctl::GetObjFxn<bool>  opt_prof{"opt.prof"};
     jemallctl::GetObjFxn<bool>  opt_prof_active{"opt.prof_active"};
