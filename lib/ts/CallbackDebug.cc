@@ -77,6 +77,11 @@ const EventCalled &EventCalled::calling() const
 {
   return ( _callingChainLen ? *calling_iterator() : this[-1] );  
 }
+EventCalled &EventCalled::calling()
+{
+  return ( _callingChainLen ? *calling_iterator() : this[-1] );  
+}
+
 
 
 bool EventCalled::is_no_log_adj() const
@@ -409,29 +414,24 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event) const
   // push record for called frame
   _chainPtr->push_back( EventCalled(*_waiting,rec,event) );
 
-  auto &self = active_event();
+  auto &self = _chainPtr->back();
   auto &calling = _waiting->_chainPtr->back();
 
-  ink_release_assert( &self == &_chainPtr->back() );
-  ink_release_assert( self._callingChainLen == _waiting->_chainPtr->size() );
-  ink_release_assert( calling._calledChainLen == _chainPtr->size() );
+  const_cast<uint8_t&>(self._callingChainLen) = _waiting->_chainPtr->size();
+  const_cast<uint8_t&>(calling._calledChainLen) = _chainPtr->size();
+
+  ink_release_assert( &self == &active_event() );
+//  ink_release_assert( self._callingChainLen == _waiting->_chainPtr->size() );
+//  ink_release_assert( calling._calledChainLen == _chainPtr->size() );
   ink_release_assert( &calling.called() == &self );
   ink_release_assert( &calling == &self.calling() );
-
-//    if ( rec.is_no_log() ) {
-//      return;
-//    }
-//
-//    auto &back = next._callingChain->back();
-//    Debug(TRACE_DEBUG_FLAG,"separate-object-push[#%lu->#%lu]: [%05d] %s %s@%d --> [%05d] %s %s@%d", _callingChainLen, _currentCallChain->size(),
-//             back._event, back._assignPoint->_kLabel, back._assignPoint->_kFile, back._assignPoint->_kLine,
-//             event, _assignPoint->_kLabel, _assignPoint->_kFile, _assignPoint->_kLine);
 }
 
 EventCalled::EventCalled(EventHdlr_t assign, int event)
    : _hdlrAssign(&assign),
      _event(event)
-{ 
+{
+  // default values
   ink_release_assert(_hdlrAssign);
 }
 
@@ -440,7 +440,7 @@ EventCalled::EventCalled(const EventCallContext &octxt, EventHdlr_t assign, int 
    : _hdlrAssign(&assign),
      _callingChain( octxt._chainPtr ),
      _event(event),
-     _callingChainLen( octxt._chainPtr->size() )
+     _callingChainLen( octxt._chainPtr->size() ) // change for new record!
 { 
   ink_release_assert(_hdlrAssign);
   Debug(TRACE_DEBUG_FLAG,"called into #%ld: %s %s@%d", octxt._chainPtr->size(), assign._kLabel, assign._kFile, assign._kLine);
@@ -451,7 +451,8 @@ EventCalled::EventCalled(const EventCallContext &octxt, EventHdlr_t assign, int 
 EventCalled::EventCalled(const EventCalled &prev, const EventCallContext &nctxt)
    : _hdlrAssign( prev._hdlrAssign ), // don't leave null!
      _calledChain( nctxt._chainPtr ),
-     _calledChainLen( nctxt._chainPtr->size()+1 ) // include new record not inserted yet!
+     // event is zero
+     _calledChainLen( nctxt._chainPtr->size() ) // change for new record 
 { 
   ink_release_assert(_hdlrAssign);
   Debug(TRACE_DEBUG_FLAG,"calling from #%ld: %s %s@%d", nctxt._chainPtr->size(), prev._hdlrAssign->_kLabel, prev._hdlrAssign->_kFile, prev._hdlrAssign->_kLine);
@@ -472,15 +473,14 @@ EventCallContext::EventCallContext(const EventHdlrState &state, EventCallContext
    : _statep(&state), // void* only
      _waiting(octxtp),
      _chainPtr(chain), // shared ownership (if state destructs)
-//     _chain(*chain),
      _chainInd(chain->size()) // one minus new size
 {
-//  if ( ! _waiting ) {
-//    ink_stack_trace_dump();
-//  }
+  // new chain may be empty!
 
   // create entry using current rec
   push_incomplete_call(static_cast<EventHdlr_t>(state), event);
+
+  ink_release_assert(chain->size()); // now non-zero
 
   if ( _chainPtr->size() > 100 ) {
     std::ostringstream oss;
@@ -736,6 +736,12 @@ EventCalled::completed(EventCallContext const &ctxt)
 
   auto allocTot = ptrdiff_t() + EventCallContext::st_allocCounterRef - ctxt._allocStamp;
   auto deallocTot = ptrdiff_t() + EventCallContext::st_deallocCounterRef - ctxt._deallocStamp;
+
+  if ( _callingChainLen && ! _callingChain.expired() )  
+  {
+    calling()._allocDelta -= allocTot; // to adjust correctly across chains
+    calling()._deallocDelta -= deallocTot; // to adjust correctly across chains
+  }
 
   auto waiting = _allocDelta - _deallocDelta;
 

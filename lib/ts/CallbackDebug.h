@@ -169,6 +169,7 @@ struct EventCalled
   Chain::iterator called_iterator() const;
   const EventCalled &called() const;
   const EventCalled &calling() const;
+  EventCalled &calling();
 
   // upon ctor
   EventHdlrP_t        const _hdlrAssign;   // full callback info 
