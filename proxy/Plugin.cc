@@ -133,11 +133,10 @@ plugin_load(int argc, char *argv[], bool validateOnly)
 #endif
     opterr = 0;
     optarg = NULL;
-    {
-      std::string label = std::string() + argv[0] + "::PluginInit";
-      NEW_LABEL_FRAME_RECORD(label.c_str(),kTmpPlugin);
-      init(argc, argv);
-    }
+
+    NEW_PLUGIN_FRAME_RECORD(argv[0],"TSPluginInit",kTmpPlugin);
+
+    init(argc, argv);
   } // done elevating access
 
   if (plugin_reg_current->plugin_registered) {

@@ -41,6 +41,7 @@
 #include "ts/CCallbackDebug.h"
 #endif
 
+#include <atomic>
 #include <vector>
 #include <memory>
 #include <type_traits>
@@ -51,6 +52,7 @@
 struct Continuation;
 struct EventHdlrAssignRec;
 struct EventCalled;
+struct EventChain;
 struct EventCallContext;
 class EventHdlrState;
 
@@ -113,7 +115,10 @@ struct EventHdlrAssignRec
   bool is_frame_rec() const {
     return _kEqualHdlr_Gen == EventHdlrAssignRec::const_cb_callgen_base::cmphdlr_nolog;
   }
-
+  bool is_plugin_rec() const {
+    return _kEqualHdlr_Gen == EventHdlrAssignRec::const_cb_callgen_base::cmphdlr
+           && _kEqualFunc_Gen == EventHdlrAssignRec::const_cb_callgen_base::cmpfunc;
+  }
 
  public:
   const char *const _kLabel;   // at point of assign
@@ -134,42 +139,37 @@ struct EventHdlrAssignRec
 ///////////////////////////////////////////////////////////////////////////////////
 struct EventCalled
 {
-  struct Chain : public std::vector<EventCalled>
-  {
-     ~Chain();
-  };
-
-  using ChainPtr_t = std::shared_ptr<Chain>;
-  using ChainWPtr_t = std::weak_ptr<Chain>;
+  using ChainIter_t = std::vector<EventCalled>::iterator;
+  using ChainPtr_t = std::shared_ptr<EventChain>;
+  using ChainWPtr_t = std::weak_ptr<EventChain>;
 
   // same chain 
-  EventCalled(EventHdlr_t assign, int event);
+  EventCalled(unsigned i, EventHdlr_t assign, int event);
 
   // create record of calling-in with event
-  EventCalled(const EventCallContext &ctxt, EventHdlr_t assign, int event);
+  EventCalled(unsigned i, const EventCallContext &ctxt, EventHdlr_t assign, int event);
 
   // create record of calling-out (no event)
-  EventCalled(const EventCalled &prev, const EventCallContext &ctxt);
-  EventCalled(void *p = NULL);
+  EventCalled(unsigned i, const EventCalled &prev, const EventCallContext &ctxt);
 
   bool is_no_log() const;
-  bool is_no_log_adj() const;
   bool is_frame_rec() const { return _hdlrAssign->is_frame_rec(); }
   bool waiting() const { return _delay != 0.0; }
 
-  static int printLog(std::ostream &out, Chain::const_iterator const &begin, Chain::const_iterator const &end, const char *msg, const void *ptr);
-  
   // fill in deltas
   void completed(EventCallContext const &ctxt);
   bool trim_call() const;
 
-  static bool trim_call(Chain &chain); 
+  static bool trim_call(EventChain &chain); 
 
-  Chain::iterator calling_iterator() const;
-  Chain::iterator called_iterator() const;
+  ChainIter_t calling_iterator() const;
+  ChainIter_t called_iterator() const;
   const EventCalled &called() const;
   const EventCalled &calling() const;
   EventCalled &calling();
+
+  bool has_calling() const { return ! _callingChain.expired() && _callingChainLen; }
+  bool has_called() const { return ! _calledChain && _calledChainLen; }
 
   // upon ctor
   EventHdlrP_t        const _hdlrAssign;   // full callback info 
@@ -179,14 +179,29 @@ struct EventCalled
   ChainPtr_t          const _calledChain;         // chain for the next recorded called object
 
   // upon call
+  uint16_t            const _i; // extern caller's chain-size upon entry (or local)
   uint16_t            const _event = 0;            // specific event-int used on CB
-  uint8_t             const _callingChainLen = 0; // extern caller's chain-size upon entry (or local)
-  uint8_t             const _calledChainLen = 0; // local chain-size upon final CB return
+  uint16_t            const _callingChainLen = 0; // extern caller's chain-size upon entry (or local)
+  uint16_t            const _calledChainLen = 0; // local chain-size upon final CB return
 
   // upon completion
   int32_t                  _allocDelta = 0;       // actual delta upon return
   int32_t                  _deallocDelta = 0;     // actual delta upon return
   float                    _delay = 0;            // total lapsed time [0.0 only if incomplete]
+};
+
+struct EventChain : public std::vector<EventCalled>
+{
+   unsigned id() const { return _id; }
+
+   static std::atomic_uint s_ident;
+   int64_t _allocTotal = 0ULL;
+   int64_t _deallocTotal = 0ULL;
+   uint32_t _id = s_ident++;
+
+   ~EventChain();
+
+   int printLog(std::ostringstream &out, unsigned ibegin, unsigned iend, const char *msg);
 };
 
 
@@ -207,6 +222,8 @@ struct EventCallContext
   EventCallContext(const EventHdlrState &state, EventCallContext *octxtp, const EventCalled::ChainPtr_t &chain, int event);
   ~EventCallContext();
 
+  unsigned id() const { return _chainPtr->id(); }
+
   // report handler that this context has in place
   EventCalled       &active_event()       { return _chainPtr->operator[](_chainInd); };
   EventCalled const &active_event() const { return _chainPtr->operator[](_chainInd); };
@@ -218,7 +235,6 @@ struct EventCallContext
 
  private:
   void push_incomplete_call(EventHdlr_t rec, int event) const;
-  void pop_caller_record();
 
  public:
   static thread_local EventCallContext        *st_currentCtxt;
@@ -232,7 +248,6 @@ struct EventCallContext
   EventHdlrP_t                   _dfltAssignPoint = nullptr;
 
   EventCalled::ChainPtr_t const _chainPtr; // fixed upon creation
-//  EventCalled::Chain         &_chain;
   unsigned                const _chainInd; // note: iterators can be invalidated
 
   ptrdiff_t               const _allocStamp = 0; // reset when ctor is done
@@ -269,6 +284,8 @@ class EventHdlrState
   operator EventHdlr_t() const { return *_assignPoint; }
   operator EventHdlrP_t() const { return _assignPoint; }
   operator EventCalled::ChainPtr_t() const { return _scopeContext->_chainPtr; }
+
+  unsigned id() const { return _scopeContext->id(); }
 
   // allow comparisons with EventHdlrs
   template <class T_OBJ, typename T_ARG>
@@ -357,6 +374,18 @@ inline void EventHdlrState::operator=(TSEventFunc f)
                       &EventHdlrAssignRec::const_cb_callgen_base::func \
                     }
 
+#define PLUGIN_FRAME_RECORD(str, name) \
+     auto name = new EventHdlrAssignRec{                   \
+                       (str+0),                            \
+                       (__FILE__+0),                       \
+                       __LINE__,                           \
+                       nullptr,                            \
+                      &EventHdlrAssignRec::const_cb_callgen_base::cmphdlr,  \
+                      &EventHdlrAssignRec::const_cb_callgen_base::cmpfunc,  \
+                      &EventHdlrAssignRec::const_cb_callgen_base::hdlr, \
+                      &EventHdlrAssignRec::const_cb_callgen_base::func \
+                    }
+
 #define CALL_FRAME_RECORD(_h, name) LABEL_FRAME_RECORD(#_h, name)
 
 const char *cb_alloc_plugin_label(const char *path, const char *symbol);
@@ -374,7 +403,7 @@ const char *cb_alloc_plugin_label(const char *path, const char *symbol);
             _state_ ## name.reset_top_frame()
 
 #define NEW_PLUGIN_FRAME_RECORD(path, symbol, name)                            \
-            LABEL_FRAME_RECORD(cb_alloc_plugin_label(path,symbol),const name); \
+            PLUGIN_FRAME_RECORD(cb_alloc_plugin_label(path,symbol),const name); \
             EventHdlrState _state_ ## name{name};                              \
             _state_ ## name.reset_top_frame()
 
