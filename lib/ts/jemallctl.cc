@@ -292,7 +292,7 @@ const GetObjFxn<unsigned> thread_arena{"thread.arena"};     // unsigned rw
 const SetObjFxn<unsigned> set_thread_arena{"thread.arena"}; // unsigned rw
 const DoObjFxn do_thread_tcache_flush{"thread.tcache.flush"};
 
-const GetObjFxn<bool> config_thp{"config.thp"};
+// const GetObjFxn<bool> config_thp{"config.thp"};
 const GetObjFxn<std::string> config_malloc_conf{"config.malloc_conf"};
 
 const GetObjFxn<std::string> thread_prof_name{"thread.prof.name"};

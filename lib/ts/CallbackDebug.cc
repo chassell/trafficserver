@@ -411,6 +411,8 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
       ink_release_assert( ochain.trim_back() ); 
     }
 
+    _waiting->_chainInd = ochain.size();
+
     // push called-record for previous chain
     ochain.push_back( EventCalled(ochain.size(), ochain.back(), *this) );
     // push calling-record for this chain
@@ -487,7 +489,7 @@ EventCalled::EventCalled(unsigned i, const EventCalled &prev, const EventCallCon
 
 bool EventChain::trim_back()
 {
-  if ( ! ink_mutex_try_acquire(&_owner) ) {
+  if ( ! ink_mutex_try_acquire(&_owner) || empty() ) {
     return false;
   }
 
@@ -516,20 +518,25 @@ bool EventCalled::trim_back()
   if ( has_called() ) {
     const_cast<ChainWPtr_t&>(called()._callingChain).reset();
   }
+
   if ( ! has_calling() ) {
     // base case --> no calling refs left
     return true;
   }
 
-  if ( _callingChain.lock()->size() != _callingChainLen ) {
+  auto &callingRec = calling();
+  auto &callingChain = *_callingChain.lock();
+
+  if ( callingChain.size() != _callingChainLen ) {
     // base case --> cannot pop self
     return false;
   }
 
   const_cast<ChainWPtr_t&>(_callingChain).reset();
-  const_cast<ChainPtr_t&>(calling()._calledChain).reset(); 
-  const_cast<uint16_t&>(calling()._calledChainLen) = 0; 
-  _callingChain.lock()->trim_back(); // recurse up-only
+  const_cast<ChainPtr_t&>(callingRec._calledChain).reset(); 
+  const_cast<uint16_t&>(callingRec._calledChainLen) = 0; 
+
+  callingChain.trim_back(); // recurse up-only
 
   // base case --> no calling refs left
   return true;
@@ -767,8 +774,8 @@ void reset_old_state(bool origProfState, const std::string &origProfName)
 int
 EventHdlrState::operator()(TSCont ptr, TSEvent event, void *data)
 {
-  auto profState = enter_new_state(*_assignPoint);
-  auto profName = ( profState ? jemallctl::thread_prof_name() : "" );
+//  auto profState = enter_new_state(*_assignPoint);
+//  auto profName = ( profState ? jemallctl::thread_prof_name() : "" );
 
   EventCallContext _ctxt(*this, _scopeContext->_chainPtr, event);
   EventCallContext::st_currentCtxt = &_ctxt; // reset upon dtor
@@ -785,7 +792,7 @@ EventHdlrState::operator()(TSCont ptr, TSEvent event, void *data)
     r = (*_assignPoint->_kWrapFunc_Gen())(ptr,event,data);
   }
 
-  reset_old_state(profState, profName);
+//  reset_old_state(profState, profName);
 
   ////////// restore
   return r;
@@ -794,14 +801,14 @@ EventHdlrState::operator()(TSCont ptr, TSEvent event, void *data)
 int
 EventHdlrState::operator()(Continuation *self,int event, void *data)
 {
-  auto profState = enter_new_state(*_assignPoint);
-  auto profName = ( profState ? jemallctl::thread_prof_name() : "" );
+//  auto profState = enter_new_state(*_assignPoint);
+//  auto profName = ( profState ? jemallctl::thread_prof_name() : "" );
 
   EventCallContext _ctxt{*this, _scopeContext->_chainPtr, event};
   EventCallContext::st_currentCtxt = &_ctxt; // reset upon dtor
 
   auto r = (*_assignPoint->_kWrapHdlr_Gen())(self,event,data);
-  reset_old_state(profState, profName);
+//  reset_old_state(profState, profName);
 
   return r;
 }
@@ -880,17 +887,17 @@ EventCalled::completed(EventCallContext const &ctxt)
        _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine);
 
     std::ostringstream oss;
-    // break from *last* entry?
-    char buff[256];
-    snprintf(buff,sizeof(buff),
-         "\n" TRACE_SNPRINTF_PREFIX " (C#%06x) @#%d[%lu] top-object: %s %s@%d [evt#%05d] (refs=%ld)",
-         TRACE_SNPRINTF_DATA chain.id(), _i, chain.size(), _hdlrAssign->_kLabel,_hdlrAssign->_kFile,_hdlrAssign->_kLine, 
-         _event, ctxt._chainPtr.use_count());
-    oss << buff;
-
     chain.printLog(oss,_i,~0U,"[trace]");
 
     if ( ! oss.str().empty() ) {
+      // break from *last* entry?
+      char buff[256];
+      snprintf(buff,sizeof(buff),
+           "\n" TRACE_SNPRINTF_PREFIX " (C#%06x) @#%d[%lu] top-object: %s %s@%d [evt#%05d] (refs=%ld)",
+           TRACE_SNPRINTF_DATA chain.id(), _i, chain.size(), _hdlrAssign->_kLabel,_hdlrAssign->_kFile,_hdlrAssign->_kLine, 
+           _event, ctxt._chainPtr.use_count());
+      oss << buff;
+
       DebugSpecific(true,TRACE_FLAG,"trace-out %s",oss.str().c_str());
     }
 

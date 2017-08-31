@@ -1514,8 +1514,8 @@ main(int /* argc ATS_UNUSED */, const char **argv)
     if ( cfg_prof() && opt_prof() ) 
     {
       jemallctl::disable_thread_prof_active(); // not yet ...
-      enable_prof_active();                    // but do start activity
-      assert( cfg_prof() && prof_active() );
+//      enable_prof_active();                    // but do start activity
+//      assert( cfg_prof() && prof_active() );
     }
   }
 
