@@ -1849,6 +1849,7 @@ main(int /* argc ATS_UNUSED */, const char **argv)
     dnsProcessor.start(0, stacksize);
     if (hostDBProcessor.start() < 0)
       SignalWarning(MGMT_SIGNAL_SYSTEM_ERROR, "bad hostdb or storage configuration, hostdb disabled");
+
     RESET_CALL_FRAME_RECORD(&ClusterProcessor::init,kLateEThread);
     clusterProcessor.init();
 

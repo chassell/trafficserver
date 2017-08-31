@@ -185,8 +185,8 @@ struct EventCalled
   uint16_t            const _calledChainLen = 0; // local chain-size upon final CB return
 
   // upon completion
-  int32_t                  _allocDelta = 0;       // actual delta upon return
-  int32_t                  _deallocDelta = 0;     // actual delta upon return
+  int64_t                  _allocDelta = 0;       // actual delta upon return
+  int64_t                  _deallocDelta = 0;     // actual delta upon return
   float                    _delay = 0;            // total lapsed time [0.0 only if incomplete]
 };
 
@@ -258,8 +258,8 @@ struct EventCallContext
   EventCalled::ChainPtr_t       _chainPtr; // fixed upon creation
   unsigned                      _chainInd = ~0U; // because iterators can be invalidated
 
-  uint64_t                const _allocStamp = 0; // reset when ctor is done
-  uint64_t                const _deallocStamp = 0; // reset when ctor is done
+  uint64_t                const _allocStamp = ~0ULL; // reset when ctor is done
+  uint64_t                const _deallocStamp = ~0ULL; // reset when ctor is done
   time_point              const _start;
 };
 

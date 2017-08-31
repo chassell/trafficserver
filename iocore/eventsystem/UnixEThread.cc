@@ -174,7 +174,7 @@ EThread::process_event(Event *e, int calling_code)
 
 #define process_event(a,b) \
   {                                                        \
-  RESET_EVENT_FRAME_RECORD("EThread::process_event",a->continuation->handler); \
+  RESET_EVENT_FRAME_RECORD("EThread::process_event",_state_kTopCall); \
   process_event((a),(b));                                  \
   }
 
