@@ -550,6 +550,9 @@ main_plugin(TSCont cont, TSEvent event, void *edata)
           if (lookup_count == 1) {
             free_request_info(state->req_info);
             TSfree(state);
+          } else {
+            TSError("[%s] No love?: probable leak", PLUGIN_NAME);
+            TSDebug(PLUGIN_NAME,"Could not No love?: probable leak");
           }
           TSHttpTxnReenable(txn, TS_EVENT_HTTP_CONTINUE);
         }
@@ -560,6 +563,9 @@ main_plugin(TSCont cont, TSEvent event, void *edata)
         if (lookup_count == 1) {
           free_request_info(state->req_info);
           TSfree(state);
+        } else {
+          TSError("[%s] Not Stale!: probable leak", PLUGIN_NAME);
+          TSDebug(PLUGIN_NAME,"Could not Not Stale!: probable leak");
         }
         TSHttpTxnReenable(txn, TS_EVENT_HTTP_CONTINUE);
       }
@@ -568,6 +574,9 @@ main_plugin(TSCont cont, TSEvent event, void *edata)
       if (lookup_count == 1) {
         free_request_info(state->req_info);
         TSfree(state);
+      } else {
+        TSError("[%s] Could not get CacheLookupStatus: probable leak", PLUGIN_NAME);
+        TSDebug(PLUGIN_NAME,"Could not get CacheLookupStatus: probable leak");
       }
       TSHttpTxnReenable(txn, TS_EVENT_HTTP_CONTINUE);
     }

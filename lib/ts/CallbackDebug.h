@@ -40,6 +40,7 @@
 #if ! defined(__cplusplus) 
 #include "ts/CCallbackDebug.h"
 #endif
+#include "ts/ink_mutex.h"
 
 #include <atomic>
 #include <vector>
@@ -158,9 +159,8 @@ struct EventCalled
 
   // fill in deltas
   void completed(EventCallContext const &ctxt);
-  bool trim_call() const;
-
-  static bool trim_call(EventChain &chain); 
+  bool trim_check() const;
+  bool trim_back();
 
   ChainIter_t calling_iterator() const;
   ChainIter_t called_iterator() const;
@@ -195,11 +195,17 @@ struct EventChain : public std::vector<EventCalled>
    unsigned id() const { return _id; }
 
    static std::atomic_uint s_ident;
+
+   ink_mutex _owner = PTHREAD_MUTEX_INITIALIZER; // created for start
    int64_t _allocTotal = 0ULL;
    int64_t _deallocTotal = 0ULL;
    uint32_t _id = s_ident++;
 
+   EventChain();
    ~EventChain();
+
+  bool trim_check();
+  bool trim_back(); 
 
    int printLog(std::ostringstream &out, unsigned ibegin, unsigned iend, const char *msg);
 };
@@ -218,8 +224,10 @@ struct EventCallContext
 
  public:
   // HdlrState can record this event occurring
+  EventCallContext() = delete;
   EventCallContext(const EventCallContext &ctxt) = delete;
-  EventCallContext(const EventHdlrState &state, EventCallContext *octxtp, const EventCalled::ChainPtr_t &chain, int event);
+
+  EventCallContext(const EventHdlrState &state, const EventCalled::ChainPtr_t &chain=EventCalled::ChainPtr_t(), int event=0);
   ~EventCallContext();
 
   unsigned id() const { return _chainPtr->id(); }
@@ -234,7 +242,7 @@ struct EventCallContext
   static void set_ctor_initial_callback(EventHdlr_t hdlr);
 
  private:
-  void push_incomplete_call(EventHdlr_t rec, int event) const;
+  void push_incomplete_call(EventHdlr_t rec, int event);
 
  public:
   static thread_local EventCallContext        *st_currentCtxt;
@@ -247,11 +255,11 @@ struct EventCallContext
 
   EventHdlrP_t                   _dfltAssignPoint = nullptr;
 
-  EventCalled::ChainPtr_t const _chainPtr; // fixed upon creation
-  unsigned                const _chainInd; // note: iterators can be invalidated
+  EventCalled::ChainPtr_t       _chainPtr; // fixed upon creation
+  unsigned                      _chainInd = ~0U; // because iterators can be invalidated
 
-  ptrdiff_t               const _allocStamp = 0; // reset when ctor is done
-  ptrdiff_t               const _deallocStamp = 0; // reset when ctor is done
+  uint64_t                const _allocStamp = 0; // reset when ctor is done
+  uint64_t                const _deallocStamp = 0; // reset when ctor is done
   time_point              const _start;
 };
 
@@ -265,12 +273,14 @@ class EventHdlrState
   friend EventCallContext;
 
  public:
-  // default initializer (ptr ignored)
-  explicit EventHdlrState(void *p = NULL); // treat as NULL
+  EventHdlrState(const EventHdlrState &state) = delete;
+  // default initializer to catch earliest allocation stamps
+  explicit EventHdlrState(void *p = NULL, 
+                          uint64_t allocStamp = EventCallContext::st_allocCounterRef,
+                          uint64_t deallocStamp = EventCallContext::st_deallocCounterRef);
 
   // init with a handler-rec
   explicit EventHdlrState(EventHdlr_t assigned);
-  EventHdlrState(const EventHdlrState &state) = delete;
 
   ~EventHdlrState();
 
@@ -414,7 +424,7 @@ const char *cb_alloc_plugin_label(const char *path, const char *symbol);
 
 #define RESET_ORIG_FRAME_RECORD(name)   \
           _state_ ## name = name;                 \
-          _state_ ## name.reset_top_frame();  \
+          _state_ ## name.reset_top_frame()
 
 
 #define _RESET_LABEL_FRAME_RECORD(str, name)       \
@@ -428,6 +438,16 @@ const char *cb_alloc_plugin_label(const char *path, const char *symbol);
 
 #define RESET_CALL_FRAME_RECORD(_h, name)   \
             _RESET_LABEL_FRAME_RECORD(#_h, name)
+
+#define _RESET_EVENT_FRAME_RECORD(str, objref)  \
+         {                                                   \
+            LABEL_FRAME_RECORD(str, const kHdlrAssignRec);   \
+            (objref) = kHdlrAssignRec;                            \
+            (objref).reset_top_frame();                           \
+         }
+
+#define RESET_EVENT_FRAME_RECORD(str, objref)   \
+          _RESET_EVENT_FRAME_RECORD(str, objref)
 
 
 // standard Continuation handler signature(s)

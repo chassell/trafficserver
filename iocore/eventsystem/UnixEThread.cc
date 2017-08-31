@@ -131,6 +131,12 @@ EThread::set_event_type(EventType et)
   event_types |= (1 << (int)et);
 }
 
+#define free_event(e) \
+  ({                                                                \
+  RESET_EVENT_FRAME_RECORD("free_event",e->continuation->handler); \
+  free_event(e);                                                   \
+  })
+
 void
 EThread::process_event(Event *e, int calling_code)
 {
@@ -166,13 +172,11 @@ EThread::process_event(Event *e, int calling_code)
   }
 }
 
-/*
-define process_event(a,b) \
+#define process_event(a,b) \
   {                                                        \
-  NEW_CALL_FRAME_RECORD(&EThread::process_event,kTopCall); \
+  RESET_EVENT_FRAME_RECORD("EThread::process_event",a->continuation->handler); \
   process_event((a),(b));                                  \
   }
-*/
 
 //
 // void  EThread::execute()

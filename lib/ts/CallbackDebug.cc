@@ -128,7 +128,7 @@ int EventChain::printLog(std::ostringstream &out, unsigned ibegin, unsigned iend
     }
 
     const EventHdlrAssignRec &rec = *begin->_hdlrAssign;
-    Debug(TRACE_DEBUG_FLAG,"(C#%06x) skipping attempt[%u...#%u]: [%05d] %s %s@%d",id(), obegin->_i, begin->_i, 
+    Debug(TRACE_DEBUG_FLAG,"(C#%06x) log skipping [%u...#%u]: [%05d] %s %s@%d",id(), obegin->_i, begin->_i, 
              begin->_event,  
              rec._kLabel, rec._kFile, rec._kLine);
 
@@ -327,16 +327,33 @@ int EventChain::printLog(std::ostringstream &out, unsigned ibegin, unsigned iend
   return n;
 }
 
-bool EventCalled::trim_call() const
+bool EventCalled::trim_check() const
 {
-  if ( ! _hdlrAssign ) {
-    return false; // no constructor-calls
+  // NOTE: back record of chain only
+
+  if ( ! _hdlrAssign || ! _delay ) {
+    return false; // nothing active!
   }
 
-  // go ahead only if a direct-repeat of a boring call
-  if ( (this-1)->_hdlrAssign == _hdlrAssign 
-       && (this-1)->_allocDelta == _allocDelta 
-       && (this-1)->_deallocDelta == _deallocDelta ) {
+  // can simply detach from down-calls ...
+  // must pop higher calls 
+
+  // recurse up to see if we can trim all these out
+  //   TODO: could go nuts and recurse down parent chains!
+  if ( has_calling() && ! calling().trim_check() ) {
+    return false;
+  }
+  if ( has_calling() && _callingChain.lock()->size() != _callingChainLen ) {
+    return false;
+  }
+
+  // go ahead only if a direct-repeat of a boring record
+  if ( _i && _hdlrAssign->is_no_log() 
+         && (this-1)->_hdlrAssign == _hdlrAssign
+         && (this-1)->_allocDelta == _allocDelta 
+         && (this-1)->_deallocDelta == _deallocDelta ) 
+  {
+    // simple overkill for logging
     return true; 
   }
 
@@ -349,64 +366,90 @@ bool EventCalled::trim_call() const
   return true;
 }
 
-bool EventCalled::trim_call(EventChain &chain) 
+bool EventChain::trim_check()
 {
-  if ( chain.size() <= 1 ) {
+  if ( size() <= 1 ) {
+    return false;
+  }
+  if ( size() > 100 ) {
+    Debug(TRACE_DEBUG_FLAG,"(C#%06x) must trim #%ld %s", id(), size()-1, back()._hdlrAssign->_kLabel);
+  }
+
+  if ( ! back().trim_check() ) 
+  {
     return false;
   }
 
-  if ( chain.size() > 100 && ! chain.back().trim_call() ) {
-    Debug(TRACE_DEBUG_FLAG,"(C#%06x) cannot trim #%ld %s", chain.id(), chain.size()-1, chain.back()._hdlrAssign->_kLabel);
-    return false;
-  }
-
-  if ( ! chain.back().trim_call() ) {
-    return false;
-  }
-
-  Debug(TRACE_DEBUG_FLAG,"(C#%06x) trim #%ld %s", chain.id(), chain.size()-1, chain.back()._hdlrAssign->_kLabel);
   return true;
 }
 
-void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event) const
+void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
 {
   auto &chain = *_chainPtr;
-  if ( ! _waiting || _waiting == this ) 
-  {
-    chain.push_back( EventCalled(chain.size(), rec,event) );
 
-    if ( ! rec.is_no_log() && ! _waiting ) {
-      Debug(TRACE_DEBUG_FLAG,"starting-push[-->#%lu]: [%05d] %s %s@%d",chain.size(),
-                 event, rec._kLabel, rec._kFile, rec._kLine);
-    } else if ( _waiting ) {
-      Debug(TRACE_DEBUG_FLAG,"push-call#%lu: %s %s@%d [%d]",chain.size(),rec._kLabel,rec._kFile,rec._kLine, event);
+  if ( _waiting ) {
+    // earlier context from prev. chain is done (if unfinished)
+    _waiting->completed();
+  }
+
+  // clear up any old calls on the new chain...
+  while ( chain.trim_check() ) { 
+    ink_release_assert( chain.trim_back() ); 
+  }
+
+  // index will be fixed now...
+  _chainInd = chain.size();
+
+  if ( _waiting && _waiting->_chainPtr != _chainPtr 
+                && ink_mutex_try_acquire(&_waiting->_chainPtr->_owner) )
+  {
+    // multi-chain calling was done
+    auto &ochain = *_waiting->_chainPtr;
+
+    // trim calls if there's nothing remarkable...
+    while ( ochain.trim_check() ) { 
+      ink_release_assert( ochain.trim_back() ); 
     }
 
-    auto &self = active_event();
-    ink_release_assert( &self == &chain.back() );
+    // push called-record for previous chain
+    ochain.push_back( EventCalled(ochain.size(), ochain.back(), *this) );
+    // push calling-record for this chain
+    chain.push_back( EventCalled(chain.size(), *_waiting, rec, event) );
+
+    auto &self = chain.back();
+    auto &calling = ochain.back();
+
+    const_cast<uint16_t&>(self._callingChainLen) = ochain.size();
+    const_cast<uint16_t&>(calling._calledChainLen) = chain.size();
+
+    ink_release_assert( &self == &active_event() );
+    ink_release_assert( &calling.called() == &self );
+    ink_release_assert( &calling == &self.calling() );
+
+    ink_mutex_release(&ochain._owner);
+
+    // re-stamp new memory use along with current context
+    const_cast<time_point &>(_waiting->_start) = steady_clock::now();
+    const_cast<uint64_t &>(_waiting->_allocStamp) = st_allocCounterRef;
+    const_cast<uint64_t &>(_waiting->_deallocStamp) = st_deallocCounterRef;
+
+    // NOTE: context resets memory counters when done w/ctor
     return;
   }
 
-  auto &ochain = *_waiting->_chainPtr;
+  // treat as self-based call
+  chain.push_back( EventCalled(chain.size(), rec,event) );
 
-  // don't hold in old calls...
-  while ( EventCalled::trim_call(ochain) ) 
-    { ochain.pop_back(); }
+  if ( ! rec.is_no_log() && ! _waiting ) {
+    Debug(TRACE_DEBUG_FLAG,"starting-push[-->#%lu]: [%05d] %s %s@%d",chain.size(),
+               event, rec._kLabel, rec._kFile, rec._kLine);
+  } else if ( _waiting ) {
+    Debug(TRACE_DEBUG_FLAG,"push-call#%lu: %s %s@%d [%d]",chain.size(),rec._kLabel,rec._kFile,rec._kLine, event);
+  }
 
-  // push record for calling frame
-  ochain.push_back( EventCalled(ochain.size(), ochain.back(), *this) );
-  // push record for called frame
-  chain.push_back( EventCalled(chain.size(), *_waiting, rec, event) );
-
-  auto &self = chain.back();
-  auto &calling = ochain.back();
-
-  const_cast<uint16_t&>(self._callingChainLen) = ochain.size();
-  const_cast<uint16_t&>(calling._calledChainLen) = chain.size();
-
-  ink_release_assert( &self == &active_event() );
-  ink_release_assert( &calling.called() == &self );
-  ink_release_assert( &calling == &self.calling() );
+  auto &self = active_event();
+  ink_release_assert( &self == &chain.back() );
+  // NOTE: context resets memory counters when done w/ctor
 }
 
 EventCalled::EventCalled(unsigned i, EventHdlr_t assign, int event)
@@ -425,10 +468,9 @@ EventCalled::EventCalled(unsigned i, const EventCallContext &octxt, EventHdlr_t 
      _i(i),
      _event(event),
      _callingChainLen( octxt._chainPtr->size() ) // should be correct (but update it)
-{ 
+{
   ink_release_assert(_hdlrAssign);
   Debug(TRACE_DEBUG_FLAG,"@#%d called into (C#%06x) #%d: %s %s@%d", _i, octxt.id(), _callingChainLen-1, assign._kLabel, assign._kFile, assign._kLine);
-
 }
 
 // for caller-only
@@ -443,33 +485,107 @@ EventCalled::EventCalled(unsigned i, const EventCalled &prev, const EventCallCon
   Debug(TRACE_DEBUG_FLAG,"@#%d calling from (C#%06x) #%d: %s %s@%d", _i, nctxt.id(), _calledChainLen-1, prev._hdlrAssign->_kLabel, prev._hdlrAssign->_kFile, prev._hdlrAssign->_kLine);
 }
 
+bool EventChain::trim_back()
+{
+  if ( ! ink_mutex_try_acquire(&_owner) ) {
+    return false;
+  }
+
+  if ( back().has_called() ) {
+    const EventHdlrAssignRec &calledRec = *back().called()._hdlrAssign;
+    Debug(TRACE_DEBUG_FLAG,"(C#%06x) trim downcall #%lu [%05d] %s %s@%d", id(), size()-1, back()._event, calledRec._kLabel, calledRec._kFile, calledRec._kLine);
+  }
+
+  const EventHdlrAssignRec &rec = *back()._hdlrAssign;
+
+  if ( ! back().trim_back() ) {
+    Debug(TRACE_DEBUG_FLAG,"(C#%06x) failed to trim local #%lu [%05d] %s %s@%d", id(), size()-1, back()._event, rec._kLabel, rec._kFile, rec._kLine);
+    return false; // no pop allowed
+  }
+
+  Debug(TRACE_DEBUG_FLAG,"(C#%06x) trim local #%lu [%05d] %s %s@%d", id(), size()-1, back()._event, rec._kLabel, rec._kFile, rec._kLine);
+  pop_back();
+
+  ink_mutex_release(&_owner);
+  return true; // popped
+}
+
+bool EventCalled::trim_back()
+{
+  // need to expire back-link?
+  if ( has_called() ) {
+    const_cast<ChainWPtr_t&>(called()._callingChain).reset();
+  }
+  if ( ! has_calling() ) {
+    // base case --> no calling refs left
+    return true;
+  }
+
+  if ( _callingChain.lock()->size() != _callingChainLen ) {
+    // base case --> cannot pop self
+    return false;
+  }
+
+  const_cast<ChainWPtr_t&>(_callingChain).reset();
+  const_cast<ChainPtr_t&>(calling()._calledChain).reset(); 
+  const_cast<uint16_t&>(calling()._calledChainLen) = 0; 
+  _callingChain.lock()->trim_back(); // recurse up-only
+
+  // base case --> no calling refs left
+  return true;
+}
+
+EventChain::EventChain()
+{
+  reserve(10);
+  pthread_mutexattr_t attr;
+  pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+  pthread_mutex_init(&_owner, &attr);
+}
+
 EventChain::~EventChain()
 {
   std::ostringstream oss;
   printLog(oss,0,~0U," [chain DTOR]");
   oss.str().empty() || ({ DebugSpecific(true,TRACE_FLAG,"pop-dtor %s",oss.str().c_str()); true; });
-  if ( front()._hdlrAssign->is_plugin_rec() ) {
-    Debug(TRACE_DEBUG_FLAG,"deleting assign-rec %s %s@%d", front()._hdlrAssign->_kLabel, front()._hdlrAssign->_kFile, front()._hdlrAssign->_kLine);
-    delete front()._hdlrAssign->_kLabel;
-    delete front()._hdlrAssign;
+
+  if ( ! front()._hdlrAssign->is_plugin_rec() ) {
+    return;
   }
+
+  Debug(TRACE_DEBUG_FLAG,"deleting assign-rec %s %s@%d", front()._hdlrAssign->_kLabel, front()._hdlrAssign->_kFile, front()._hdlrAssign->_kLine);
+  delete front()._hdlrAssign->_kLabel;
+  delete front()._hdlrAssign;
 }
 
 /////////////////////////////////////////////////////////////////
 // create new callback-entry on chain associated with HdlrState
 /////////////////////////////////////////////////////////////////
-EventCallContext::EventCallContext(const EventHdlrState &state, EventCallContext *octxtp, const EventCalled::ChainPtr_t &chain, int event)
-   : _statep(&state), // void* only
-     _waiting(octxtp),
-     _chainPtr(chain), // shared ownership (if state destructs)
-     _chainInd(chain->size()) // one minus new size
+EventCallContext::EventCallContext(const EventHdlrState &state, const EventCalled::ChainPtr_t &chain, int event)
+   : _chainPtr(chain)
 {
-  // new chain may be empty!
+  EventHdlr_t hdlr = state; // extract current state
+
+  if ( ! _chainPtr ) 
+  {
+    _chainPtr = std::make_shared<EventChain>();
+    ink_mutex_try_acquire(&_chainPtr->_owner);
+  }
+  else if ( ! ink_mutex_try_acquire(&_chainPtr->_owner) ) 
+  {
+    auto &ochain = *_chainPtr;
+    Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%lu: event-thread-restart [tot:%ld] %s %s@%d",
+       ochain.id(), ochain.size()-1, ochain._allocTotal - ochain._deallocTotal,
+       hdlr._kLabel, hdlr._kFile, hdlr._kLine);
+
+    _chainPtr = std::make_shared<EventChain>();
+    ink_mutex_try_acquire(&_chainPtr->_owner);
+  }
 
   // create entry using current rec
   push_incomplete_call(static_cast<EventHdlr_t>(state), event);
 
-  ink_release_assert(chain->size()); // now non-zero
+  ink_release_assert(_chainPtr->size()); // now non-zero
 
   if ( _chainPtr->size() > 100 ) {
     std::ostringstream oss;
@@ -478,10 +594,22 @@ EventCallContext::EventCallContext(const EventHdlrState &state, EventCallContext
     ink_fatal("too long!");
   }
 
-  // last point of stamps
-  const_cast<ptrdiff_t &>(_allocStamp) = st_allocCounterRef;
-  const_cast<ptrdiff_t &>(_deallocStamp) = st_deallocCounterRef;
+  // nearest point of new memory use 
   const_cast<time_point &>(_start) = steady_clock::now();
+  const_cast<uint64_t &>(_allocStamp) = st_allocCounterRef;
+  const_cast<uint64_t &>(_deallocStamp) = st_deallocCounterRef;
+}
+
+EventCallContext::~EventCallContext()
+{
+  completed(); // completes record 
+
+  if ( st_currentCtxt == this ) {
+    st_currentCtxt = _waiting; // don't leave a pointer behind
+  }
+
+  // balance but allow no problems if *not* owned
+  pthread_mutex_unlock(&_chainPtr->_owner);
 }
 
 thread_local EventCallContext *EventCallContext::st_currentCtxt = nullptr;
@@ -512,11 +640,25 @@ EventHdlr_t current_default_assign_point()
 }
 }
 
-EventHdlrState::EventHdlrState(void *p)
+EventHdlrState::EventHdlrState(void *p, uint64_t allocStamp, uint64_t deallocStamp)
    : _assignPoint(&(current_default_assign_point())),      // must be set before scopeContext ctor
-     _scopeContext( new EventCallContext(*this, EventCallContext::st_currentCtxt, std::make_shared<EventChain>(), 0) )
+     _scopeContext( new EventCallContext(*this) )
 {
   Debug(TRACE_FLAG_FIXED,"(C#%06x) init-created: %s %s@%d",id(),_assignPoint->_kLabel,_assignPoint->_kFile,_assignPoint->_kLine);
+
+  auto a = _scopeContext->EventCallContext::st_allocCounterRef - _scopeContext->_allocStamp;
+  auto b = _scopeContext->EventCallContext::st_deallocCounterRef - _scopeContext->_deallocStamp;
+
+  if ( a || b ) {
+    DebugSpecific(true,TRACE_FLAG," ctor-end-diffs: %+ld / %+ld",a,b);
+  }
+
+  auto c = _scopeContext->EventCallContext::st_allocCounterRef - allocStamp;
+  auto d = _scopeContext->EventCallContext::st_deallocCounterRef - deallocStamp;
+
+  if ( c || d ) {
+    DebugSpecific(true,TRACE_FLAG," pre-post-ctor-total-diffs: %+ld / %+ld",c,d);
+  }
 }
 
 //
@@ -524,34 +666,51 @@ EventHdlrState::EventHdlrState(void *p)
 //
 EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
    : _assignPoint(&hdlr),
-     _scopeContext( new EventCallContext(*this, EventCallContext::st_currentCtxt, std::make_shared<EventChain>(),0) ) // add ctor on to stack!
+     _scopeContext( new EventCallContext(*this) ) // add ctor on to stack!
 {
+  auto a = _scopeContext->EventCallContext::st_allocCounterRef - _scopeContext->_allocStamp;
+  auto b = _scopeContext->EventCallContext::st_deallocCounterRef - _scopeContext->_deallocStamp;
+
+  if ( a || b ) {
+    DebugSpecific(true,TRACE_FLAG," ctor2-end-diffs: %+ld / %+ld",a,b);
+  }
 }
 
 EventHdlrState::~EventHdlrState()
    // detaches from shared-ptr!
 {
+  _scopeContext->completed(); // completes record 
+
+  auto a = _scopeContext->EventCallContext::st_allocCounterRef - _scopeContext->_allocStamp - _scopeContext->active_event()._allocDelta;
+  auto b = _scopeContext->EventCallContext::st_deallocCounterRef - _scopeContext->_deallocStamp - _scopeContext->active_event()._allocDelta;
+
+  if ( a || b ) {
+    DebugSpecific(true,TRACE_FLAG," dtor-diffs: %+ld / %+ld",a,b);
+  }
 }
 
 void EventHdlrState::reset_top_frame() 
-{ 
-  void *p = _scopeContext.get(); // store copy of old
-
-  auto waiting = _scopeContext->_waiting;
-  auto chainPtr = _scopeContext->_chainPtr;
+{
+  _scopeContext->completed(); // completes record 
+  
+  auto ochainPtr = _scopeContext->_chainPtr; // save chain (if usable)
 
   // call destructor (and complete return of callback too)
   _scopeContext = nullptr; // prevent overlap alloc-dealloc
 
   //////////////////////////////////////////////////////////
   // alloc and then record stamps (upon ctor).. with no dealloc
-  _scopeContext.reset( new EventCallContext(*this, waiting, chainPtr, 0) ); 
+  _scopeContext.reset( new EventCallContext(*this, ochainPtr) ); 
 
-  if ( ! EventCallContext::st_currentCtxt || EventCallContext::st_currentCtxt == p ) {
-    EventCallContext::st_currentCtxt = _scopeContext.get();
-  }
+  EventCallContext::st_currentCtxt = _scopeContext.get();
 
   // dtor of context
+  auto a = _scopeContext->EventCallContext::st_allocCounterRef - _scopeContext->_allocStamp;
+  auto b = _scopeContext->EventCallContext::st_deallocCounterRef - _scopeContext->_deallocStamp;
+
+  if ( a || b ) {
+    DebugSpecific(true,TRACE_FLAG," reset-diffs: %+ld / %+ld",a,b);
+  }
 }
 
 bool enter_new_state(EventHdlr_t nhdlr)
@@ -608,21 +767,10 @@ void reset_old_state(bool origProfState, const std::string &origProfName)
 int
 EventHdlrState::operator()(TSCont ptr, TSEvent event, void *data)
 {
-  auto upctxt = EventCallContext::st_currentCtxt;
-  if ( upctxt == _scopeContext.get() ) {
-    upctxt = _scopeContext->_waiting; // replace with ctxt above
-  }
-
-  // don't hold in old calls as we create a new one
-  auto &chain = *_scopeContext->_chainPtr;
-  while ( EventCalled::trim_call(chain) ) 
-    { chain.pop_back(); }
-  ////////// set context for memory check
-
   auto profState = enter_new_state(*_assignPoint);
   auto profName = ( profState ? jemallctl::thread_prof_name() : "" );
 
-  EventCallContext _ctxt{*this, upctxt, _scopeContext->_chainPtr, event};
+  EventCallContext _ctxt(*this, _scopeContext->_chainPtr, event);
   EventCallContext::st_currentCtxt = &_ctxt; // reset upon dtor
 
   int r = 0;
@@ -646,20 +794,10 @@ EventHdlrState::operator()(TSCont ptr, TSEvent event, void *data)
 int
 EventHdlrState::operator()(Continuation *self,int event, void *data)
 {
-  auto upctxt = EventCallContext::st_currentCtxt;
-  if ( upctxt == _scopeContext.get() ) {
-    upctxt = _scopeContext->_waiting;
-  }
-
-  // don't hold in old calls as we create a new one
-  auto &chain = *_scopeContext->_chainPtr;
-  while ( EventCalled::trim_call(chain) ) 
-    { chain.pop_back(); }
-
   auto profState = enter_new_state(*_assignPoint);
   auto profName = ( profState ? jemallctl::thread_prof_name() : "" );
 
-  EventCallContext _ctxt{*this, upctxt, _scopeContext->_chainPtr, event};
+  EventCallContext _ctxt{*this, _scopeContext->_chainPtr, event};
   EventCallContext::st_currentCtxt = &_ctxt; // reset upon dtor
 
   auto r = (*_assignPoint->_kWrapHdlr_Gen())(self,event,data);
@@ -668,19 +806,22 @@ EventHdlrState::operator()(Continuation *self,int event, void *data)
   return r;
 }
 
-EventCallContext::~EventCallContext()
-{
-  completed(); // completes the current record...
-
-  if ( st_currentCtxt == this ) {
-    st_currentCtxt = _waiting; // don't leave a pointer behind
-  }
-}
-
 void
 EventCalled::completed(EventCallContext const &ctxt)
 {
+  auto &mutex = ctxt._chainPtr->_owner;
+  if ( ! ink_mutex_try_acquire(&mutex) ) {
+    return;
+  }
+
+  if ( _delay ) {
+    ink_mutex_release(&mutex); // no need to hold it
+    return; // don't attempt release
+  }
+
   auto duration = std::chrono::steady_clock::now() - ctxt._start;
+  auto allocTot = int64_t() + EventCallContext::st_allocCounterRef - ctxt._allocStamp;
+  auto deallocTot = int64_t() + EventCallContext::st_deallocCounterRef - ctxt._deallocStamp;
 
   ink_release_assert( ! _delay );
 
@@ -690,10 +831,7 @@ EventCalled::completed(EventCallContext const &ctxt)
     _delay = FLT_MIN;
   }
 
-  auto allocTot = ptrdiff_t() + EventCallContext::st_allocCounterRef - ctxt._allocStamp;
-  auto deallocTot = ptrdiff_t() + EventCallContext::st_deallocCounterRef - ctxt._deallocStamp;
   auto waiting = _allocDelta - _deallocDelta;
-
   auto callingInd = 0;
 
   // look for a calling record
@@ -718,43 +856,48 @@ EventCalled::completed(EventCallContext const &ctxt)
   chain._allocTotal += _allocDelta;
   chain._deallocTotal += _deallocDelta;
 
-  if ( has_calling() && ! calling().is_frame_rec() ) {
-    Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%d (=>@#%d): event-complete [%+ld (adj:%+d) -> %+d] [tot:%ld] %s %s@%d",
+  do {
+
+    if ( has_calling() && ! calling().is_frame_rec() ) {
+      Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%d (=>@#%d): event-complete [%+ld (adj:%+d) -> %+d] [tot:%ld] %s %s@%d",
+         ctxt.id(), _i, callingInd, allocTot - deallocTot, waiting, _allocDelta - _deallocDelta, 
+         chain._allocTotal - chain._deallocTotal,
+         _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine);
+      break; // wait on the printlog
+    }
+
+    if ( has_calling() && is_frame_rec() ) {
+      Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%d (=>@#%d): frame-complete [%+ld (adj:%+d) -> %+d] [tot:%ld] %s %s@%d",
+         ctxt.id(), _i, callingInd, allocTot - deallocTot, waiting, _allocDelta - _deallocDelta, 
+         chain._allocTotal - chain._deallocTotal,
+         _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine);
+      break;
+    }
+
+    Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%d (=>@#%d): top-complete [%+ld (adj:%+d) -> %+d] [tot:%ld] %s %s@%d",
        ctxt.id(), _i, callingInd, allocTot - deallocTot, waiting, _allocDelta - _deallocDelta, 
        chain._allocTotal - chain._deallocTotal,
        _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine);
-    return; // wait on the printlog
-  }
 
-  if ( has_calling() && is_frame_rec() ) {
-    Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%d (=>@#%d): frame-complete [%+ld (adj:%+d) -> %+d] [tot:%ld] %s %s@%d",
-       ctxt.id(), _i, callingInd, allocTot - deallocTot, waiting, _allocDelta - _deallocDelta, 
-       chain._allocTotal - chain._deallocTotal,
-       _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine);
-    return;
-  }
+    std::ostringstream oss;
+    // break from *last* entry?
+    char buff[256];
+    snprintf(buff,sizeof(buff),
+         "\n" TRACE_SNPRINTF_PREFIX " (C#%06x) @#%d[%lu] top-object: %s %s@%d [evt#%05d] (refs=%ld)",
+         TRACE_SNPRINTF_DATA chain.id(), _i, chain.size(), _hdlrAssign->_kLabel,_hdlrAssign->_kFile,_hdlrAssign->_kLine, 
+         _event, ctxt._chainPtr.use_count());
+    oss << buff;
 
-  Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%d (=>@#%d): top-complete [%+ld (adj:%+d) -> %+d] [tot:%ld] %s %s@%d",
-     ctxt.id(), _i, callingInd, allocTot - deallocTot, waiting, _allocDelta - _deallocDelta, 
-     chain._allocTotal - chain._deallocTotal,
-     _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine);
+    chain.printLog(oss,_i,~0U,"[trace]");
 
-  std::ostringstream oss;
-  // returned from *last* entry?
-  chain.printLog(oss,_i,~0U,"[trace]");
+    if ( ! oss.str().empty() ) {
+      DebugSpecific(true,TRACE_FLAG,"trace-out %s",oss.str().c_str());
+    }
 
-  if ( oss.str().empty() ) {
-    return;
-  }
+  } while(false);
 
-  char buff[256];
-  snprintf(buff,sizeof(buff),
-       "\n" TRACE_SNPRINTF_PREFIX " (C#%06x) @#%d[%lu] top-object: %s %s@%d [evt#%05d] (refs=%ld)",
-       TRACE_SNPRINTF_DATA chain.id(), _i, chain.size(), _hdlrAssign->_kLabel,_hdlrAssign->_kFile,_hdlrAssign->_kLine, 
-       _event, ctxt._chainPtr.use_count());
-  oss << buff;
-
-  DebugSpecific(true,TRACE_FLAG,"trace-out %s",oss.str().c_str());
+  // on single shot, release chain's lock too
+  ink_mutex_release(&mutex);
 }
 
 const char *cb_alloc_plugin_label(const char *path, const char *symbol)
