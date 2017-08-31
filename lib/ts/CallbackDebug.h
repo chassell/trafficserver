@@ -237,7 +237,7 @@ struct EventCallContext
   EventCalled const &active_event() const { return _chainPtr->operator[](_chainInd); };
 
   void reset_top_frame(EventHdlr_t hdlr);
-  void completed() { active_event().completed(*this); }
+  void completed();
  public:
   static void set_ctor_initial_callback(EventHdlr_t hdlr);
 

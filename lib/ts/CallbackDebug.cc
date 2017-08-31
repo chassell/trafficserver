@@ -813,16 +813,28 @@ EventHdlrState::operator()(Continuation *self,int event, void *data)
   return r;
 }
 
-void
-EventCalled::completed(EventCallContext const &ctxt)
-{
-  auto &mutex = ctxt._chainPtr->_owner;
+void EventCallContext::completed() 
+{ 
+  auto &mutex = _chainPtr->_owner;
   if ( ! ink_mutex_try_acquire(&mutex) ) {
     return;
   }
 
+  active_event().completed(*this); 
+
+  if ( _waiting ) {
+    const_cast<time_point &>(_waiting->_start) = _start;
+    const_cast<uint64_t &>(_waiting->_allocStamp) = _allocStamp;
+    const_cast<uint64_t &>(_waiting->_deallocStamp) = _deallocStamp;
+  }
+
+  ink_mutex_release(&mutex); // no need to hold it
+}
+
+void
+EventCalled::completed(EventCallContext const &ctxt)
+{
   if ( _delay ) {
-    ink_mutex_release(&mutex); // no need to hold it
     return; // don't attempt release
   }
 
@@ -904,7 +916,6 @@ EventCalled::completed(EventCallContext const &ctxt)
   } while(false);
 
   // on single shot, release chain's lock too
-  ink_mutex_release(&mutex);
 }
 
 const char *cb_alloc_plugin_label(const char *path, const char *symbol)
