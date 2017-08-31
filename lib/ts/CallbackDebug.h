@@ -233,8 +233,8 @@ struct EventCallContext
   unsigned id() const { return _chainPtr->id(); }
 
   // report handler that this context has in place
-  EventCalled       &active_event()       { return _chainPtr->operator[](_chainInd); };
-  EventCalled const &active_event() const { return _chainPtr->operator[](_chainInd); };
+  EventCalled       &active_event()       { return _chainPtr->operator[](std::min(_chainInd+0UL,_chainPtr->size()-1)); };
+  EventCalled const &active_event() const { return _chainPtr->operator[](std::min(_chainInd+0UL,_chainPtr->size()-1)); };
 
   void reset_top_frame(EventHdlr_t hdlr);
   void completed();

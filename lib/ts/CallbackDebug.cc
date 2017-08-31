@@ -386,31 +386,32 @@ bool EventChain::trim_check()
 void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
 {
   auto &chain = *_chainPtr;
+  _chainInd = chain.size();
 
   // clear up any old calls on the new chain...
   while ( chain.trim_check() ) { 
     ink_release_assert( chain.trim_back() ); 
+    _chainInd = chain.size();
   }
-
-  // index will be fixed now...
-  _chainInd = chain.size();
 
   if ( _waiting && _waiting->_chainPtr != _chainPtr 
                 && ink_mutex_try_acquire(&_waiting->_chainPtr->_owner) )
   {
     // multi-chain calling was done
     auto &ochain = *_waiting->_chainPtr;
+    _waiting->_chainInd = ochain.size();
 
     // trim calls if there's nothing remarkable...
     while ( ochain.trim_check() ) { 
       ink_release_assert( ochain.trim_back() ); 
+      _waiting->_chainInd = ochain.size();
     }
 
     auto jump = _allocStamp - _waiting->_allocStamp;
     jump -= _deallocStamp - _waiting->_deallocStamp;
 
     // reset the chain-ind and the start point for everything
-    _waiting->_chainInd = ochain.size();
+
     const_cast<time_point &>(_waiting->_start) = _start;
     const_cast<uint64_t &>(_waiting->_allocStamp) = _allocStamp;
     const_cast<uint64_t &>(_waiting->_deallocStamp) = _deallocStamp;
@@ -819,13 +820,16 @@ EventHdlrState::operator()(Continuation *self,int event, void *data)
 }
 
 void EventCallContext::completed() 
-{ 
+{
   auto &mutex = _chainPtr->_owner;
   if ( ! ink_mutex_try_acquire(&mutex) ) {
     return;
   }
 
-  active_event().completed(*this);  // complete this record (and adjust caller record)
+  auto &active = active_event();
+  // fix currently endpoint if needed
+  _chainInd = active._i;
+  active.completed(*this);  // complete this record (and adjust caller record)
 
   ink_mutex_release(&mutex); // balance from start
 }
@@ -836,6 +840,8 @@ EventCalled::completed(EventCallContext const &ctxt)
   if ( _delay ) {
     return; // don't attempt release
   }
+
+  auto &chain = *ctxt._chainPtr;
 
   auto duration = std::chrono::steady_clock::now() - ctxt._start;
   auto allocTot = int64_t() + EventCallContext::st_allocCounterRef - ctxt._allocStamp;
@@ -849,7 +855,6 @@ EventCalled::completed(EventCallContext const &ctxt)
     _delay = FLT_MIN;
   }
 
-  auto &chain = *ctxt._chainPtr;
   auto prevDiff = _allocDelta - _deallocDelta;
   auto callingInd = 0;
   auto callingID = chain.id();
@@ -902,8 +907,8 @@ EventCalled::completed(EventCallContext const &ctxt)
 
     Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%d (<==(C#%06x) @#%d): %s complete [post:%+ld pre:%+ld -> %+ld] [chain:%ld] %s %s@%d",
        ctxt.id(), _i, calledID, _calledChainLen-1, title, 
-       allocTot - deallocTot, prevDiff, 
-       _allocDelta - _deallocDelta, chain._allocTotal - chain._deallocTotal,
+       allocTot - deallocTot, prevDiff, _allocDelta - _deallocDelta, 
+       chain._allocTotal - chain._deallocTotal,
        _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine);
 
     std::ostringstream oss;
