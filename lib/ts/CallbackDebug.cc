@@ -387,11 +387,6 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
 {
   auto &chain = *_chainPtr;
 
-  if ( _waiting ) {
-    // earlier context from prev. chain is done (if unfinished)
-    _waiting->completed();
-  }
-
   // clear up any old calls on the new chain...
   while ( chain.trim_check() ) { 
     ink_release_assert( chain.trim_back() ); 
@@ -429,11 +424,6 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
     ink_release_assert( &calling == &self.calling() );
 
     ink_mutex_release(&ochain._owner);
-
-    // re-stamp new memory use along with current context
-    const_cast<time_point &>(_waiting->_start) = steady_clock::now();
-    const_cast<uint64_t &>(_waiting->_allocStamp) = st_allocCounterRef;
-    const_cast<uint64_t &>(_waiting->_deallocStamp) = st_deallocCounterRef;
 
     // NOTE: context resets memory counters when done w/ctor
     return;
@@ -571,6 +561,11 @@ EventChain::~EventChain()
 EventCallContext::EventCallContext(const EventHdlrState &state, const EventCalled::ChainPtr_t &chain, int event)
    : _chainPtr(chain)
 {
+  if ( _waiting ) {
+    // earlier context from prev. chain is done (if unfinished)
+    _waiting->completed();
+  }
+
   EventHdlr_t hdlr = state; // extract current state
 
   if ( ! _chainPtr ) 
@@ -822,7 +817,7 @@ void EventCallContext::completed()
 
   active_event().completed(*this); 
 
-  if ( _waiting ) {
+  if ( _waiting && _chainInd ) {
     const_cast<time_point &>(_waiting->_start) = _start;
     const_cast<uint64_t &>(_waiting->_allocStamp) = _allocStamp;
     const_cast<uint64_t &>(_waiting->_deallocStamp) = _deallocStamp;
