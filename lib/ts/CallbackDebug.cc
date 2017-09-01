@@ -334,8 +334,8 @@ bool EventCalled::trim_check() const
 {
   // NOTE: back record of chain only
 
-  if ( ! _hdlrAssign || ! _delay ) {
-    return false; // nothing active!
+  if ( ! _hdlrAssign || ! _delay || ! _i ) {
+    return false; // nothing active and leave ctor recs!
   }
 
   // can simply detach from down-calls ...
@@ -374,9 +374,9 @@ bool EventChain::trim_check()
   if ( size() <= 1 ) {
     return false;
   }
-  if ( size() > 100 ) {
-    Debug(TRACE_DEBUG_FLAG,"(C#%06x) must trim #%ld %s", id(), size()-1, back()._hdlrAssign->_kLabel);
-  }
+//  if ( size() > 1000 ) {
+//    Debug(TRACE_DEBUG_FLAG,"(C#%06x) must trim #%ld %s", id(), size()-1, back()._hdlrAssign->_kLabel);
+//  }
 
   if ( ! back().trim_check() ) 
   {
@@ -463,24 +463,26 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
   // ctor first-records (no backref)
   // untracked-top records (no earlier frame)
   // unowned-call records (other chain is lost)
+  auto recp = &rec;
 
+  // not a real call?  then just mark it from its origins
   if ( _waiting && &rec == &kHdlrAssignNoDflt ) {
-    chain.push_back( EventCalled(_chainInd, *_waiting->active_event()._hdlrAssign, event) );
-  } else {
-    chain.push_back( EventCalled(_chainInd, rec, event) );
-  }
+    recp = _waiting->active_event()._hdlrAssign;
+  } 
+
+  chain.push_back( EventCalled(_chainInd, *recp, event) );
 
   ink_release_assert( _chainInd == chain.size()-1 ); 
 
   if ( _waiting ) {
     Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%u <=== @#%u in-chain-push [%05d] %s %s@%d",chain.id(), 
-                _chainInd, _chainInd-1, event, rec._kLabel,rec._kFile,rec._kLine);
+                _chainInd, _chainInd-1, event, recp->_kLabel,recp->_kFile,recp->_kLine);
   } else if ( ! rec.is_no_log() ) {
     Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%u <=== event-push [%05d] %s %s@%d",chain.id(), _chainInd,
-               event, rec._kLabel, rec._kFile, rec._kLine);
+               event, recp->_kLabel,recp->_kFile,recp->_kLine);
   } else {
     Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%u <=== frame-push [%05d] %s %s@%d",chain.id(), _chainInd,
-               event, rec._kLabel,rec._kFile,rec._kLine);
+               event, recp->_kLabel,recp->_kFile,recp->_kLine);
   }
 
   auto &self = active_event();
@@ -506,7 +508,7 @@ EventCalled::EventCalled(unsigned i, const EventCallContext &octxt, EventHdlr_t 
      _callingChainLen( octxt._chainPtr->size() ) // should be correct (but update it)
 {
   ink_release_assert(_hdlrAssign);
-  Debug(TRACE_DEBUG_FLAG,"@#%d called from <==(C#%06x) @#%d-1: at handler %s %s@%d", _i, octxt.id(), _callingChainLen, assign._kLabel, assign._kFile, assign._kLine);
+  Debug(TRACE_DEBUG_FLAG,"@#%d called from <==(C#%06x) @#%d-1: using new %s %s@%d", _i, octxt.id(), _callingChainLen, assign._kLabel, assign._kFile, assign._kLine);
 }
 
 // for caller-only
@@ -518,7 +520,7 @@ EventCalled::EventCalled(unsigned i, const EventCalled &prev, const EventCallCon
      _calledChainLen( nctxt._chainPtr->size() ) // should be correct (but update it)
 { 
   ink_release_assert(_hdlrAssign);
-  Debug(TRACE_DEBUG_FLAG,"@#%d calling into ==>(C#%06x) #%d-1: with handler %s %s@%d", _i, nctxt.id(), _calledChainLen, prev._hdlrAssign->_kLabel, prev._hdlrAssign->_kFile, prev._hdlrAssign->_kLine);
+  Debug(TRACE_DEBUG_FLAG,"@#%d calling into ==>(C#%06x) #%d-1: under prev %s %s@%d", _i, nctxt.id(), _calledChainLen, prev._hdlrAssign->_kLabel, prev._hdlrAssign->_kFile, prev._hdlrAssign->_kLine);
 }
 
 bool EventChain::trim_back()
@@ -661,7 +663,7 @@ EventCallContext::EventCallContext(const EventHdlrState &state, const EventCalle
   active_event()._allocDelta -= st_allocCounterRef - _allocStamp;
   active_event()._deallocDelta -= st_deallocCounterRef - _deallocStamp;
 
-  if ( _chainPtr->size() > 500 ) {
+  if ( _chainPtr->size() > 5000 ) {
     std::ostringstream oss;
     _chainPtr->printLog(oss,0,~0U," [reset-too-long]");
     DebugSpecific(true,TRACE_FLAG,"chain-big: %s",oss.str().c_str());
@@ -706,7 +708,7 @@ EventHdlr_t current_default_assign_point()
 }
 
 EventHdlrState::EventHdlrState(void *p, uint64_t allocStamp, uint64_t deallocStamp)
-   : _assignPoint(&(current_default_assign_point())),      // must be set before scopeContext ctor
+   : _assignPoint(&kHdlrAssignNoDflt),      // must be set before scopeContext ctor
      _scopeContext( new EventCallContext(*this) )
 {
   // get the earliest point before construction
@@ -714,6 +716,9 @@ EventHdlrState::EventHdlrState(void *p, uint64_t allocStamp, uint64_t deallocSta
   const_cast<uint64_t &>(_scopeContext->_deallocStamp) = deallocStamp;
 
   _scopeContext->completed(); // mark as done and release chain
+
+  // now change to actual setting for next call 
+  *this = current_default_assign_point();
 }
 
 //
@@ -939,7 +944,7 @@ EventCalled::completed(EventCallContext const &ctxt)
       title = "post-return-event";
     }
 
-    Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%d (<==(C#%06x) @#%d): %s complete [post:%+ld pre:%+ld -> %+ld] [chain:%ld] %s %s@%d",
+    Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%d (<==>(C#%06x) @#%d): %s complete [post:%+ld pre:%+ld -> %+ld] [chain:%ld] %s %s@%d",
        ctxt.id(), _i, calledID, _calledChainLen-1, title, 
        allocTot - deallocTot, prevDiff, _allocDelta - _deallocDelta, 
        chain._allocTotal - chain._deallocTotal,
@@ -951,6 +956,7 @@ EventCalled::completed(EventCallContext const &ctxt)
     if ( ! oss.str().empty() ) 
     {
       // break from *last* entry?
+      /*
       char buff[256];
       snprintf(buff,sizeof(buff),
            "\n" TRACE_SNPRINTF_PREFIX " (C#%06x) @#%d[%lu] top-object: %s %s@%d [evt#%05d] (refs=%ld)",
@@ -958,6 +964,7 @@ EventCalled::completed(EventCallContext const &ctxt)
            _event, ctxt._chainPtr.use_count());
       oss << buff;
 
+      */
       DebugSpecific(true,TRACE_FLAG,"trace-out %s",oss.str().c_str());
     }
 
@@ -966,7 +973,7 @@ EventCalled::completed(EventCallContext const &ctxt)
 
   } while(false);
 
-  Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%d (==>(C#%06x) @#%d): %s complete [post:%+ld pre:%+ld -> %+ld] [chain:%ld] %s %s@%d",
+  Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%d (<==>(C#%06x) @#%d): %s complete [post:%+ld pre:%+ld -> %+ld] [chain:%ld] %s %s@%d",
      ctxt.id(), _i, callingID, callingInd, title,
      allocTot - deallocTot, prevDiff, 
      _allocDelta - _deallocDelta, chain._allocTotal - chain._deallocTotal,

@@ -169,7 +169,7 @@ struct EventCalled
   EventCalled &calling();
 
   bool has_calling() const { return ! _callingChain.expired() && _callingChainLen; }
-  bool has_called() const { return ! _calledChain && _calledChainLen; }
+  bool has_called() const { return _calledChain && _calledChainLen; }
 
   // upon ctor
   EventHdlrP_t        const _hdlrAssign;   // full callback info 
@@ -372,9 +372,8 @@ inline void EventHdlrState::operator=(TSEventFunc f)
                     }
 
 #define LABEL_FRAME_RECORD(str, name) \
-     static auto name =                          \
-                    EventHdlrAssignRec{                   \
-                       (str+0),                          \
+     static auto name = EventHdlrAssignRec{                \
+                       (str+0),                            \
                        (__FILE__+0),                       \
                        __LINE__,                           \
                        nullptr,                            \
@@ -384,9 +383,9 @@ inline void EventHdlrState::operator=(TSEventFunc f)
                       &EventHdlrAssignRec::const_cb_callgen_base::func \
                     }
 
-#define PLUGIN_FRAME_RECORD(str, name) \
-     auto name = new EventHdlrAssignRec{                   \
-                       (str+0),                            \
+#define PLUGIN_FRAME_RECORD(path,symbol,name) \
+     auto &name = *new EventHdlrAssignRec{                 \
+                       cb_alloc_plugin_label(path,symbol), \
                        (__FILE__+0),                       \
                        __LINE__,                           \
                        nullptr,                            \
@@ -412,9 +411,9 @@ const char *cb_alloc_plugin_label(const char *path, const char *symbol);
             EventHdlrState _state_ ## name{name};  \
             _state_ ## name.reset_top_frame()
 
-#define NEW_PLUGIN_FRAME_RECORD(path, symbol, name)                            \
-            PLUGIN_FRAME_RECORD(cb_alloc_plugin_label(path,symbol),const name); \
-            EventHdlrState _state_ ## name{name};                              \
+#define NEW_PLUGIN_FRAME_RECORD(path, symbol, name)   \
+            PLUGIN_FRAME_RECORD(path,symbol,name);    \
+            EventHdlrState _state_ ## name{name};     \
             _state_ ## name.reset_top_frame()
 
 #define NEW_CALL_FRAME_RECORD(_h, name)                \

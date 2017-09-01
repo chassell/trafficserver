@@ -131,11 +131,14 @@ EThread::set_event_type(EventType et)
   event_types |= (1 << (int)et);
 }
 
-#define free_event(e) \
-  ({                                                                \
-  RESET_EVENT_FRAME_RECORD("free_event",e->continuation->handler); \
-  free_event(e);                                                   \
+/*
+ define free_event(e) \
+  ({                                           \
+  auto &hdlr = e->continuation->handler;       \
+  free_event(e);                               \
+  RESET_EVENT_FRAME_RECORD("free_event",hdlr); \
   })
+*/
 
 void
 EThread::process_event(Event *e, int calling_code)
@@ -194,6 +197,8 @@ EThread::execute()
 {
   switch (tt) {
   case REGULAR: {
+    NEW_CALL_FRAME_RECORD(&EThread::REGULAR,kTopCall);
+
     Event *e;
     Que(Event, link) NegativeQueue;
     ink_hrtime next_time = 0;
@@ -203,8 +208,6 @@ EThread::execute()
       if (unlikely(shutdown_event_system == true)) {
         return;
       }
-
-      NEW_CALL_FRAME_RECORD(&EThread::REGULAR,kTopCall);
 
       // execute all the available external events that have
       // already been dequeued
