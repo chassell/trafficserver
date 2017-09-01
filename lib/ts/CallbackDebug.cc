@@ -660,8 +660,8 @@ EventCallContext::EventCallContext(const EventHdlrState &state, const EventCalle
   ink_release_assert(_chainPtr->size()); // now non-zero
 
   // disclude any init bytes above 
-  active_event()._allocDelta -= st_allocCounterRef - _allocStamp;
-  active_event()._deallocDelta -= st_deallocCounterRef - _deallocStamp;
+//  active_event()._allocDelta -= st_allocCounterRef - _allocStamp;
+////  active_event()._deallocDelta -= st_deallocCounterRef - _deallocStamp;
 
   if ( _chainPtr->size() > 5000 ) {
     std::ostringstream oss;
@@ -847,12 +847,18 @@ EventHdlrState::operator()(Continuation *self,int event, void *data)
 //  auto profState = enter_new_state(*_assignPoint);
 //  auto profName = ( profState ? jemallctl::thread_prof_name() : "" );
 
-  EventCallContext _ctxt{*this, _scopeContext->_chainPtr, event};
-  EventCallContext::st_currentCtxt = &_ctxt; // reset upon dtor
+  auto r = 0;
 
-  _scopeContext->_chainPtr = _ctxt._chainPtr; // detach if thread-unsafe!
+  {
 
-  auto r = (*_assignPoint->_kWrapHdlr_Gen())(self,event,data);
+  EventCallContext ctxt{*this, _scopeContext->_chainPtr, event};
+  EventCallContext::st_currentCtxt = &ctxt; // reset upon dtor
+
+  _scopeContext->_chainPtr = ctxt._chainPtr; // detach if thread-unsafe!
+
+  r = (*_assignPoint->_kWrapHdlr_Gen())(self,event,data);
+  }
+
 //  reset_old_state(profState, profName);
 
   return r;

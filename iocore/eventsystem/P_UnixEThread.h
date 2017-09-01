@@ -170,4 +170,13 @@ EThread::free_event(Event *e)
   EVENT_FREE(e, eventAllocator, this);
 }
 
+#define free_event(e) \
+  ({                                             \
+  auto prev = EventCallContext::st_currentCtxt;  \
+  RESET_EVENT_FRAME_RECORD("free_event",e->continuation->handler); \
+  free_event(e);                                 \
+  EventCallContext::st_currentCtxt->completed(); \
+  EventCallContext::st_currentCtxt = prev;       \
+  })
+
 #endif /*_EThread_h_*/

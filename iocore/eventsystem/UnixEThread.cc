@@ -131,15 +131,6 @@ EThread::set_event_type(EventType et)
   event_types |= (1 << (int)et);
 }
 
-/*
- define free_event(e) \
-  ({                                           \
-  auto &hdlr = e->continuation->handler;       \
-  free_event(e);                               \
-  RESET_EVENT_FRAME_RECORD("free_event",hdlr); \
-  })
-*/
-
 void
 EThread::process_event(Event *e, int calling_code)
 {
