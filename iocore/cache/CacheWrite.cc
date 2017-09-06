@@ -184,9 +184,9 @@ CacheVC::handleWrite(int event, Event * /* e ATS_UNUSED */)
 
   set_agg_write_in_progress();
   POP_HANDLER;
-  agg_len = vol->round_to_approx_size(write_len + header_len + frag_len + sizeofDoc);
+  agg_len = vol->round_to_approx_size(write_len + header_len + frag_len + sizeof(Doc));
   vol->agg_todo_size += agg_len;
-  bool agg_error = (agg_len > AGG_SIZE || header_len + sizeofDoc > MAX_FRAG_SIZE ||
+  bool agg_error = (agg_len > AGG_SIZE || header_len + sizeof(Doc) > MAX_FRAG_SIZE ||
                     (!f.readers && (vol->agg_todo_size > cache_config_agg_write_backlog + AGG_SIZE) && write_len));
 #ifdef CACHE_AGG_FAIL_RATE
   agg_error = agg_error || ((uint32_t)mutex->thread_holding->generator.random() < (uint32_t)(UINT_MAX * CACHE_AGG_FAIL_RATE));
@@ -719,8 +719,8 @@ agg_copy(char *p, CacheVC *vc)
     Doc *doc                   = (Doc *)p;
     IOBufferBlock *res_alt_blk = 0;
 
-    uint32_t len = vc->write_len + vc->header_len + vc->frag_len + sizeofDoc;
-    ink_assert(vc->frag_type != CACHE_FRAG_TYPE_HTTP || len != sizeofDoc);
+    uint32_t len = vc->write_len + vc->header_len + vc->frag_len + sizeof(Doc);
+    ink_assert(vc->frag_type != CACHE_FRAG_TYPE_HTTP || len != sizeof(Doc));
     ink_assert(vol->round_to_approx_size(len) == vc->agg_len);
     // update copy of directory entry for this document
     dir_set_approx_size(&vc->dir, vc->agg_len);
@@ -768,7 +768,7 @@ agg_copy(char *p, CacheVC *vc)
     if (vc->f.rewrite_resident_alt) {
       ink_assert(vc->f.use_first_key);
       Doc *res_doc   = (Doc *)vc->first_buf->data();
-      res_alt_blk    = new_IOBufferBlock(vc->first_buf, res_doc->data_len(), sizeofDoc + res_doc->hlen);
+      res_alt_blk    = new_IOBufferBlock(vc->first_buf, res_doc->data_len(), sizeof(Doc) + res_doc->hlen);
       doc->key       = res_doc->key;
       doc->total_len = res_doc->data_len();
     }
@@ -1265,7 +1265,7 @@ CacheVC::openWriteClose(int event, Event *e)
       return openWriteCloseDir(event, e);
 #endif
     }
-    if (length && (fragment || length > MAX_FRAG_SIZE)) {
+    if (length && (fragment || length > static_cast<int>(MAX_FRAG_SIZE))) {
       SET_HANDLER(&CacheVC::openWriteCloseDataDone);
       write_len = length;
       if (write_len > MAX_FRAG_SIZE)
@@ -1327,7 +1327,7 @@ CacheVC::openWriteWriteDone(int event, Event *e)
 static inline int
 target_fragment_size()
 {
-  return cache_config_target_fragment_size - sizeofDoc;
+  return cache_config_target_fragment_size - sizeof(Doc);
 }
 
 int
@@ -1359,7 +1359,7 @@ Lagain:
     avail -= (towrite - ntodo);
     towrite = ntodo;
   }
-  if (towrite > MAX_FRAG_SIZE) {
+  if (towrite > static_cast<int>(MAX_FRAG_SIZE)) {
     avail -= (towrite - MAX_FRAG_SIZE);
     towrite = MAX_FRAG_SIZE;
   }
