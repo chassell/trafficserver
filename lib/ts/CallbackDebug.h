@@ -199,9 +199,12 @@ struct EventChain : public std::vector<EventCalled>
    ink_mutex _owner = PTHREAD_MUTEX_INITIALIZER; // created for start
    int64_t _allocTotal = 0ULL;
    int64_t _deallocTotal = 0ULL;
-   uint32_t _id = s_ident++;
+
+   const uint32_t _id = s_ident++;
+   const uint32_t _oid = 0;
 
    EventChain();
+   EventChain(uint32_t oid);
    ~EventChain();
 
   bool trim_check();
@@ -250,7 +253,6 @@ struct EventCallContext
   static thread_local uint64_t                &st_deallocCounterRef;
 
  public:
-  const void              *const _statep = nullptr;
   EventCallContext        *const _waiting = st_currentCtxt;
 
   EventHdlrP_t                   _dfltAssignPoint = nullptr;
@@ -285,7 +287,12 @@ class EventHdlrState
   ~EventHdlrState();
 
  public:
-  void reset_top_frame();
+  void reset_top_frame() 
+  {
+    ( EventCallContext::st_currentCtxt 
+       ? EventCallContext::st_currentCtxt->reset_top_frame(*_assignPoint)
+       : _scopeContext->reset_top_frame(*_assignPoint) );
+  }
 
   int operator()(Continuation *self,int event,void *data);
   int operator()(TSCont,TSEvent,void *data);
@@ -409,17 +416,17 @@ const char *cb_alloc_plugin_label(const char *path, const char *symbol);
 #define NEW_LABEL_FRAME_RECORD(str, name)          \
             LABEL_FRAME_RECORD(str, const name);   \
             EventHdlrState _state_ ## name{name};  \
-            _state_ ## name.reset_top_frame()
+            EventCallContext _ctxt_ ## name{_state_ ## name, _state_ ## name, 0}
 
 #define NEW_PLUGIN_FRAME_RECORD(path, symbol, name)   \
             PLUGIN_FRAME_RECORD(path,symbol,name);    \
             EventHdlrState _state_ ## name{name};     \
-            _state_ ## name.reset_top_frame()
+            EventCallContext _ctxt_ ## name{_state_ ## name, _state_ ## name, 0}
 
 #define NEW_CALL_FRAME_RECORD(_h, name)                \
             CALL_FRAME_RECORD(_h, const name);         \
             EventHdlrState _state_ ## name{name};      \
-            _state_ ## name.reset_top_frame()
+            EventCallContext _ctxt_ ## name{_state_ ## name, _state_ ## name, 0}
 
 #define RESET_ORIG_FRAME_RECORD(name)   \
           _state_ ## name = name;                 \
