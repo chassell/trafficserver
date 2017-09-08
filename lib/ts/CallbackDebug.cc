@@ -424,9 +424,9 @@ int EventChain::printLog(std::ostringstream &out, unsigned ibegin, unsigned iend
     {
       out << std::endl << "(" << debug << ") ";
       snprintf(buff,sizeof(buff),
-               TRACE_SNPRINTF_PREFIX "   (C#%06x)     CREATED   [ mem %9ld ] <---- (C#%06x) thread-jump     [under %s %s@%d %s] [%s]",
+               TRACE_SNPRINTF_PREFIX "   (C#%06x)     CREATED   [ mem %9ld ] <---- (C#%06x) thread-jump                 under %s %s@%d %s",
                TRACE_SNPRINTF_DATA id(), memDelta, oid(),
-               callback.c_str(), rec._kFile, rec._kLine, callinout.c_str(), omsg);
+               callback.c_str(), rec._kFile, rec._kLine, callinout.c_str());
       out << buff;
       continue;
     }
@@ -435,9 +435,9 @@ int EventChain::printLog(std::ostringstream &out, unsigned ibegin, unsigned iend
     {
       out << std::endl << "(" << debug << ") ";
       snprintf(buff,sizeof(buff),
-               TRACE_SNPRINTF_PREFIX "   (C#%06x)     CREATED   [ mem %9ld ]                                 [under  %s %s@%d %s] [%s]",
+               TRACE_SNPRINTF_PREFIX "   (C#%06x)     CREATED   [ mem %9ld ]                             under %s %s@%d %s",
                TRACE_SNPRINTF_DATA id(), memDelta,
-               callback.c_str(), rec._kFile, rec._kLine, callinout.c_str(), omsg);
+               callback.c_str(), rec._kFile, rec._kLine, callinout.c_str());
 
       out << buff;
       continue;
@@ -865,7 +865,6 @@ EventCallContext::EventCallContext(const EventHdlr_t &hdlr, const EventCalled::C
   push_incomplete_call(hdlr, event);
 
   if ( ! chainPtr ) {
-    completed("cxt.ctor"); // mark as done and release chain
     st_currentCtxt = _waiting; // reset because no real call has started yet
     const_cast<EventCallContext*&>(_waiting) = nullptr; // do *not* use ctor-origin after now
   }
@@ -922,6 +921,8 @@ EventHdlrState::EventHdlrState(void *p, uint64_t allocStamp, uint64_t deallocSta
   const_cast<uint64_t &>(_scopeContext._allocStamp) = allocStamp;
   const_cast<uint64_t &>(_scopeContext._deallocStamp) = deallocStamp;
 
+  _scopeContext.completed("cxt.ctor"); // mark as done and release chain
+
   // now change to actual setting for next call 
   *this = current_default_assign_point();
 
@@ -936,6 +937,8 @@ EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
    : _assignPoint(&hdlr),
      _scopeContext(*this) // add ctor on to stack!
 {
+  _scopeContext.completed("cxt.ctor"); // mark as done and release chain
+
   current_default_assign_point(); // clear if thread-global was set
 }
 

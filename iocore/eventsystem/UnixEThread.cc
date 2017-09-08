@@ -200,7 +200,7 @@ EThread::execute()
       while ((e = EventQueueExternal.dequeue_local())) 
       {
         EventCalled::ChainPtr_t chain = e->continuation->handler;
-        CREATE_EVENT_FRAME_RECORD("[execute.dequeue]", chain);
+        CREATE_EVENT_FRAME_RECORD("[ext_dequeue_local]", chain);
 
         if (e->cancelled)
           free_event(e);
@@ -227,7 +227,11 @@ EThread::execute()
         done_one = false;
         // execute all the eligible internal events
         EventQueue.check_ready(cur_time, this);
-        while ((e = EventQueue.dequeue_ready(cur_time))) {
+        while ((e = EventQueue.dequeue_ready(cur_time))) 
+        {
+          EventCalled::ChainPtr_t chain = e->continuation->handler;
+          CREATE_EVENT_FRAME_RECORD("[dequeue_ready]", chain);
+
           ink_assert(e);
           ink_assert(e->timeout_at > 0);
           if (e->cancelled)
@@ -247,7 +251,11 @@ EThread::execute()
         // do a cond_timedwait.
         if (!INK_ATOMICLIST_EMPTY(EventQueueExternal.al))
           EventQueueExternal.dequeue_timed(cur_time, next_time, false);
-        while ((e = EventQueueExternal.dequeue_local())) {
+        while ((e = EventQueueExternal.dequeue_local())) 
+        {
+          EventCalled::ChainPtr_t chain = e->continuation->handler;
+          CREATE_EVENT_FRAME_RECORD("[ext_dequeue_timed]", chain);
+
           if (!e->timeout_at)
             process_event(e, e->callback_event);
           else {
@@ -278,8 +286,11 @@ EThread::execute()
           }
         }
         // execute poll events
-        while ((e = NegativeQueue.dequeue()))
+        while ((e = NegativeQueue.dequeue())) {
+          EventCalled::ChainPtr_t chain = e->continuation->handler;
+          CREATE_EVENT_FRAME_RECORD("[neg_dequeue]", chain);
           process_event(e, EVENT_POLL);
+        }
         if (!INK_ATOMICLIST_EMPTY(EventQueueExternal.al))
           EventQueueExternal.dequeue_timed(cur_time, next_time, false);
       } else { // Means there are no negative events
@@ -305,7 +316,7 @@ EThread::execute()
     MUTEX_TAKE_LOCK_FOR(oneevent->mutex, this, oneevent->continuation);
 
     EventCalled::ChainPtr_t chain = oneevent->continuation->handler;
-    CREATE_EVENT_FRAME_RECORD("execute.dequeue", chain);
+    CREATE_EVENT_FRAME_RECORD("execute.DEDICATED", chain);
     oneevent->continuation->handleEvent(EVENT_IMMEDIATE, oneevent);
     MUTEX_UNTAKE_LOCK(oneevent->mutex, this);
     free_event(oneevent);
