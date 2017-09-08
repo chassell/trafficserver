@@ -500,17 +500,6 @@ bool EventCalled::trim_check() const
     return false;
   }
 
-/*
-  if ( _i && _hdlrAssign->is_no_log() 
-         && (this-1)->_hdlrAssign == _hdlrAssign
-         && (this-1)->_allocDelta == _allocDelta 
-         && (this-1)->_deallocDelta == _deallocDelta ) 
-  {
-    // simple overkill for logging
-    return true; 
-  }
-*/
-
   // not boring ... but memory was spent: trim
   if ( _allocDelta != _deallocDelta ) {
     return false; // need no memory lost
@@ -525,12 +514,14 @@ bool EventChain::trim_check()
   if ( size() <= 1 ) {
     return false;
   }
-//  if ( size() > 1000 ) {
-//    Debug(TRACE_DEBUG_FLAG,"(C#%06x) must trim #%ld %s", id(), size()-1, back()._hdlrAssign->_kLabel);
 //  }
 
   if ( ! back().trim_check() ) 
   {
+    if ( size() > 1000 && back().has_calling() ) {
+      Debug(TRACE_DEBUG_FLAG,"(C#%06x) must trim #%ld %s <--- %s", id(), size()-1, back()._hdlrAssign->_kLabel,
+                                                                           back().calling()._hdlrAssign->_kLabel);
+    }
     return false;
   }
 
@@ -543,6 +534,8 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
 
   auto &chain = *_chainPtr;
   _chainInd = chain.size();
+
+  completed(); // just in case!?
 
   // clear up any old calls on the new chain...
   while ( chain.trim_check() ) { 
@@ -561,6 +554,9 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
     // multi-chain calling was done
     auto &ochain = *_waiting->_chainPtr;
     _waiting->_chainInd = ochain.size();
+
+    // make certain was trimmed
+    _waiting->completed(); // just in case!?
 
     // trim calls if there's nothing remarkable...
     while ( ochain.trim_check() ) { 
