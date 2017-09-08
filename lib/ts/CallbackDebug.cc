@@ -380,8 +380,6 @@ int EventChain::printLog(std::ostringstream &out, unsigned ibegin, unsigned iend
     return 0;
   }
 
-  double timeAccount = 0;
-
   char buff[256];
   auto iter = latest;
 
@@ -401,7 +399,7 @@ int EventChain::printLog(std::ostringstream &out, unsigned ibegin, unsigned iend
       continue; // skip incomplete entries                                             /// CONTINUE 
     }
 
-    float delay = call._delay - timeAccount;
+    float delay = call._delay;
     const char *units = ( delay >= 10000 ? "ms" : "us" ); 
     float div = ( delay >= 10000 ? 1000.0 : 1.0 ); 
 
@@ -464,8 +462,6 @@ int EventChain::printLog(std::ostringstream &out, unsigned ibegin, unsigned iend
     if ( call._callingChainLen && iter != begin && iter != latest  ) {
       out << std::endl << "<----";
     }
-
-    timeAccount = call._delay;
   }
 
   if ( ! logTotal || n == 1 ) {
