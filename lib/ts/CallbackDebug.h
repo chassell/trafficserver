@@ -153,6 +153,7 @@ struct EventCalled
   // create record of calling-out (no event)
   EventCalled(unsigned i, const EventCalled &prev, const EventCallContext &ctxt);
 
+  bool is_no_log_mem() const;
   bool is_no_log() const;
   bool is_frame_rec() const { return _hdlrAssign->is_frame_rec(); }
   bool waiting() const { return _delay != 0.0; }
@@ -193,6 +194,7 @@ struct EventCalled
 struct EventChain : public std::vector<EventCalled>
 {
    unsigned id() const { return _id; }
+   unsigned oid() const { return _oid; }
 
    static std::atomic_uint s_ident;
 
@@ -230,10 +232,11 @@ struct EventCallContext
   EventCallContext() = delete;
   EventCallContext(const EventCallContext &ctxt) = delete;
 
-  EventCallContext(const EventHdlrState &state, const EventCalled::ChainPtr_t &chain=EventCalled::ChainPtr_t(), int event=0);
+  EventCallContext(EventHdlr_t hdlr, const EventCalled::ChainPtr_t &chain=EventCalled::ChainPtr_t(), int event=0);
   ~EventCallContext();
 
   unsigned id() const { return _chainPtr->id(); }
+  unsigned oid() const { return _chainPtr->oid(); }
 
   // report handler that this context has in place
   EventCalled       &active_event()       { return _chainPtr->operator[](std::min(_chainInd+0UL,_chainPtr->size()-1)); };
@@ -291,7 +294,7 @@ class EventHdlrState
   {
     ( EventCallContext::st_currentCtxt 
        ? EventCallContext::st_currentCtxt->reset_top_frame(*_assignPoint)
-       : _scopeContext->reset_top_frame(*_assignPoint) );
+       : _scopeContext.reset_top_frame(*_assignPoint) );
   }
 
   int operator()(Continuation *self,int event,void *data);
@@ -300,9 +303,10 @@ class EventHdlrState
  public:
   operator EventHdlr_t() const { return *_assignPoint; }
   operator EventHdlrP_t() const { return _assignPoint; }
-  operator EventCalled::ChainPtr_t() const { return _scopeContext->_chainPtr; }
+  operator const EventCalled::ChainPtr_t&() const { return _scopeContext._chainPtr; }
 
-  unsigned id() const { return _scopeContext->id(); }
+  unsigned id() const { return _scopeContext.id(); }
+  unsigned oid() const { return _scopeContext.oid(); }
 
   // allow comparisons with EventHdlrs
   template <class T_OBJ, typename T_ARG>
@@ -341,8 +345,8 @@ class EventHdlrState
   }
 
 private:
-  EventHdlrP_t                  _assignPoint = nullptr;  // latest callback assigned for use
-  EventCallContext::UPtr_t      _scopeContext; // call-record after full alloc
+  EventHdlrP_t     _assignPoint = nullptr;  // latest callback assigned for use
+  EventCallContext _scopeContext; // call-record after full alloc
 };
 
 inline void EventHdlrState::operator=(TSEventFunc f) 
@@ -416,17 +420,17 @@ const char *cb_alloc_plugin_label(const char *path, const char *symbol);
 #define NEW_LABEL_FRAME_RECORD(str, name)          \
             LABEL_FRAME_RECORD(str, const name);   \
             EventHdlrState _state_ ## name{name};  \
-            EventCallContext _ctxt_ ## name{_state_ ## name, _state_ ## name, 0}
+            EventCallContext _ctxt_ ## name{name, _state_ ## name, 0}
 
 #define NEW_PLUGIN_FRAME_RECORD(path, symbol, name)   \
             PLUGIN_FRAME_RECORD(path,symbol,name);    \
             EventHdlrState _state_ ## name{name};     \
-            EventCallContext _ctxt_ ## name{_state_ ## name, _state_ ## name, 0}
+            EventCallContext _ctxt_ ## name{name, _state_ ## name, 0}
 
 #define NEW_CALL_FRAME_RECORD(_h, name)                \
             CALL_FRAME_RECORD(_h, const name);         \
             EventHdlrState _state_ ## name{name};      \
-            EventCallContext _ctxt_ ## name{_state_ ## name, _state_ ## name, 0}
+            EventCallContext _ctxt_ ## name{name, _state_ ## name, 0}
 
 #define RESET_ORIG_FRAME_RECORD(name)   \
           _state_ ## name = name;                 \
@@ -445,16 +449,12 @@ const char *cb_alloc_plugin_label(const char *path, const char *symbol);
 #define RESET_CALL_FRAME_RECORD(_h, name)   \
             _RESET_LABEL_FRAME_RECORD(#_h, name)
 
-#define _RESET_EVENT_FRAME_RECORD(str, objref)  \
-         {                                                   \
-            LABEL_FRAME_RECORD(str, const kHdlrAssignRec);   \
-            (objref) = kHdlrAssignRec;                            \
-            (objref).reset_top_frame();                           \
-         }
-
-#define RESET_EVENT_FRAME_RECORD(str, objref)   \
-          _RESET_EVENT_FRAME_RECORD(str, objref)
-
+#define WRAP_EVENT_FRAME_RECORD(str, chain, cmd)  \
+         ({                                                    \
+            LABEL_FRAME_RECORD(str, const kHdlrAssignRec);    \
+            EventCallContext ctxt(kHdlrAssignRec, (chain), 0);\
+            { cmd; }                                          \
+         })
 
 // standard Continuation handler signature(s)
 template<class T_OBJ, typename T_ARG, int(T_OBJ::*FXN)(int,T_ARG)>
@@ -474,13 +474,70 @@ struct EventHdlrAssignRec::const_cb_callgen<int(T_OBJ::*)(int,T_ARG),FXN>
   }
 };
 
+int
+inline EventHdlrState::operator()(TSCont ptr, TSEvent event, void *data)
+{
+//  auto profState = enter_new_state(*_assignPoint);
+//  auto profName = ( profState ? jemallctl::thread_prof_name() : "" );
+
+  EventCallContext _ctxt{*this, _scopeContext._chainPtr, event};
+  EventCallContext::st_currentCtxt = &_ctxt; // reset upon dtor
+
+  _scopeContext._chainPtr = _ctxt._chainPtr; // detach if thread-unsafe!
+
+  int r = 0;
+
+  ////////// perform call
+
+  if ( _assignPoint->_kTSEventFunc ) {
+    // direct C call.. 
+    r = (*_assignPoint->_kTSEventFunc)(ptr,event,data);
+  } else {
+    // C++ wrapper ...
+    r = (*_assignPoint->_kWrapFunc_Gen())(ptr,event,data);
+  }
+
+//  reset_old_state(profState, profName);
+
+  ////////// restore
+  return r;
+}
+
+int
+inline EventHdlrState::operator()(Continuation *self,int event, void *data)
+{
+//  auto profState = enter_new_state(*_assignPoint);
+//  auto profName = ( profState ? jemallctl::thread_prof_name() : "" );
+
+  auto r = 0;
+
+  {
+
+  EventCallContext ctxt{*this, _scopeContext._chainPtr, event};
+  EventCallContext::st_currentCtxt = &ctxt; // reset upon dtor
+
+  _scopeContext._chainPtr = ctxt._chainPtr; // detach if thread-unsafe!
+
+  r = (*_assignPoint->_kWrapHdlr_Gen())(self,event,data);
+  }
+
+//  reset_old_state(profState, profName);
+
+  return r;
+}
+
+
 #define LOG_SKIPPABLE_EVENTHDLR(_h) \
   template <>                                                               \
   EventHdlrCompare_t *EventHdlrAssignRec::const_cb_callgen<decltype(_h),(_h)>::cmphdlr() \
      { return nullptr; }
 
 #endif // _I_DebugCont_h_
+////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
 
+////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////
 #if defined(__cplusplus) && defined(__TS_API_H__) && ! defined(_I_DebugCont_TSAPI_)
 #define _I_DebugCont_TSAPI_
