@@ -1488,8 +1488,10 @@ main(int /* argc ATS_UNUSED */, const char **argv)
 #endif
 
   numa::reset_thread_memory_by_cpuset();
-  // enable as a whoel...
+  // enable as a whole...
   
+  NEW_CALL_FRAME_RECORD(&::main,kEarlyEThread);
+
   {
     // appears to need this for MALLOC_CONF= environment var
 
@@ -1641,8 +1643,6 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   // start_HttpProxyServer is called from main thread
   Thread *main_thread = new EThread;
   main_thread->set_specific();
-
-  NEW_CALL_FRAME_RECORD(&::main,kEarlyEThread);
 
   // Re-initialize diagsConfig based on records.config configuration
   if (diagsConfig) {

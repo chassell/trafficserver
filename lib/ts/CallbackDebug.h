@@ -232,7 +232,7 @@ struct EventCallContext
   EventCallContext() = delete;
   EventCallContext(const EventCallContext &ctxt) = delete;
 
-  EventCallContext(EventHdlr_t hdlr, const EventCalled::ChainPtr_t &chain=EventCalled::ChainPtr_t(), int event=0);
+  explicit EventCallContext(EventHdlr_t hdlr, const EventCalled::ChainPtr_t &chain=EventCalled::ChainPtr_t(), int event=0);
   ~EventCallContext();
 
   unsigned id() const { return _chainPtr->id(); }
@@ -252,13 +252,12 @@ struct EventCallContext
 
  public:
   static thread_local EventCallContext        *st_currentCtxt;
+  static thread_local EventHdlrP_t            st_dfltAssignPoint;
   static thread_local uint64_t                &st_allocCounterRef;
   static thread_local uint64_t                &st_deallocCounterRef;
 
  public:
   EventCallContext        *const _waiting = st_currentCtxt;
-
-  EventHdlrP_t                   _dfltAssignPoint = nullptr;
 
   EventCalled::ChainPtr_t       _chainPtr; // fixed upon creation
   unsigned                      _chainInd = ~0U; // because iterators can be invalidated
@@ -449,10 +448,13 @@ const char *cb_alloc_plugin_label(const char *path, const char *symbol);
 #define RESET_CALL_FRAME_RECORD(_h, name)   \
             _RESET_LABEL_FRAME_RECORD(#_h, name)
 
+#define CREATE_EVENT_FRAME_RECORD(str, chain)  \
+         LABEL_FRAME_RECORD(str, const kHdlrAssignRec);    \
+         EventCallContext ctxt(kHdlrAssignRec, (chain), 0)
+
 #define WRAP_EVENT_FRAME_RECORD(str, chain, cmd)  \
          ({                                                    \
-            LABEL_FRAME_RECORD(str, const kHdlrAssignRec);    \
-            EventCallContext ctxt(kHdlrAssignRec, (chain), 0);\
+            CREATE_EVENT_FRAME_RECORD(str, chain);            \
             { cmd; }                                          \
          })
 

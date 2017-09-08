@@ -170,7 +170,4 @@ EThread::free_event(Event *e)
   EVENT_FREE(e, eventAllocator, this);
 }
 
-#define FREE_EVENT_WITH_CHAIN(chain,e)  WRAP_EVENT_FRAME_RECORD("free_event", static_cast<const EventCalled::ChainPtr_t&>(chain), free_event(e))
-#define FREE_EVENT(e)             WRAP_EVENT_FRAME_RECORD("free_event", e->continuation->handler, free_event(e))
-
 #endif /*_EThread_h_*/

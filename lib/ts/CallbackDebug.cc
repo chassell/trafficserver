@@ -519,8 +519,12 @@ bool EventChain::trim_check()
   if ( ! back().trim_check() ) 
   {
     if ( size() > 1000 && back().has_calling() ) {
-      Debug(TRACE_DEBUG_FLAG,"(C#%06x) must trim #%ld %s <--- %s", id(), size()-1, back()._hdlrAssign->_kLabel,
-                                                                           back().calling()._hdlrAssign->_kLabel);
+      auto &ending = back();
+      auto &calling = back().calling();
+      auto &cchain = *back()._callingChain.lock();
+      auto &cchainBack = cchain.back();
+      Debug(TRACE_DEBUG_FLAG,"(C#%06x) must trim #%ld %s <--- %s (?%d)", id(), size()-1, ending._hdlrAssign->_kLabel,
+                                                                           calling._hdlrAssign->_kLabel, &cchainBack == &calling );
     }
     return false;
   }
@@ -548,12 +552,27 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
 
   ink_release_assert( _chainInd == chain.size() ); 
 
+  if ( _chainPtr->size() > 5000 ) {
+    std::ostringstream oss;
+    _chainPtr->printLog(oss,0,~0U,"reset-too-long");
+    DebugSpecific(true,TRACE_FLAG,"chain-big: %s",oss.str().c_str());
+    ink_fatal("too long!");
+  }
+
   // only with *real* handoff-calls    
   // only with non-ctors where memory is tracked
   // only where both are owned in stack
-  if ( _waiting && _chainInd && _waiting->_chainPtr != _chainPtr 
-                && ink_mutex_try_acquire(&_waiting->_chainPtr->_owner) )
+  if ( _chainInd && _waiting 
+                 && _waiting->_chainPtr != _chainPtr 
+                 && ink_mutex_try_acquire(&_waiting->_chainPtr->_owner) )
   {
+    if ( _waiting->_chainPtr->size() > 5000 ) {
+      std::ostringstream oss;
+      _waiting->_chainPtr->printLog(oss,0,~0U,"reset-too-long");
+      DebugSpecific(true,TRACE_FLAG,"chain-big: %s",oss.str().c_str());
+      ink_fatal("too long!");
+    }
+
     // multi-chain calling was done
     auto &ochain = *_waiting->_chainPtr;
 
@@ -783,23 +802,26 @@ EventChain::EventChain(uint32_t oid)
 EventChain::~EventChain()
 {
   std::ostringstream oss;
-  printLog(oss,0,~0U," [chain DTOR]");
+  printLog(oss,0,~0U,"chain.dtor");
   oss.str().empty() || ({ DebugSpecific(true,TRACE_FLAG,"pop-dtor %s",oss.str().c_str()); true; });
 
-  if ( ! front()._hdlrAssign->is_plugin_rec() ) {
-    return;
+  if ( front()._hdlrAssign->is_plugin_rec() ) {
+    Debug(TRACE_DEBUG_FLAG,"deleting assign-rec %s %s@%d", front()._hdlrAssign->_kLabel, front()._hdlrAssign->_kFile, front()._hdlrAssign->_kLine);
+    delete front()._hdlrAssign->_kLabel;
+    delete front()._hdlrAssign;
   }
 
-  Debug(TRACE_DEBUG_FLAG,"deleting assign-rec %s %s@%d", front()._hdlrAssign->_kLabel, front()._hdlrAssign->_kFile, front()._hdlrAssign->_kLine);
-  delete front()._hdlrAssign->_kLabel;
-  delete front()._hdlrAssign;
+  while ( ! pthread_mutex_unlock(&_owner) ) {
+    Warning("Leftover locks at chain dtor");
+  }
+  pthread_mutex_destroy(&_owner);
 }
 
 /////////////////////////////////////////////////////////////////
 // create new callback-entry on chain associated with HdlrState
 /////////////////////////////////////////////////////////////////
 EventCallContext::EventCallContext(const EventHdlr_t &hdlr, const EventCalled::ChainPtr_t &chainPtr, int event)
-   : _chainPtr(chainPtr)
+   : _chainPtr(chainPtr) // _waiting(
 {
   st_currentCtxt = this; // push down one immediately..
 
@@ -814,13 +836,12 @@ EventCallContext::EventCallContext(const EventHdlr_t &hdlr, const EventCalled::C
   if ( chainPtr && ! ink_mutex_try_acquire(&_chainPtr->_owner) )
   {
     auto &ochain = *_chainPtr;
+    auto nchainPtr = std::make_shared<EventChain>(ochain.id()); // NOTE: chain adds into alloc tally
     Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%lu --> (C#%06x): event-thread-restart [tot:%ld] %s %s@%d",
-       ochain.id(), ochain.size()-1, _chainPtr->id(), ochain._allocTotal - ochain._deallocTotal,
+       ochain.id(), ochain.size()-1, nchainPtr->id(), ochain._allocTotal - ochain._deallocTotal,
        hdlr._kLabel, hdlr._kFile, hdlr._kLine);
-
+    _chainPtr = nchainPtr;
     // ctor acquires lock until completed() is called
-    _chainPtr = std::make_shared<EventChain>(ochain.id()); // NOTE: chain adds into alloc tally
-
   } 
   else if ( ! chainPtr && _waiting ) 
   {
@@ -843,75 +864,55 @@ EventCallContext::EventCallContext(const EventHdlr_t &hdlr, const EventCalled::C
   // create entry using current rec
   push_incomplete_call(hdlr, event);
 
+  if ( ! chainPtr ) {
+    completed("cxt.ctor"); // mark as done and release chain
+    st_currentCtxt = _waiting; // reset because no real call has started yet
+    const_cast<EventCallContext*&>(_waiting) = nullptr; // do *not* use ctor-origin after now
+  }
+
   ink_release_assert(_chainPtr->size()); // now non-zero
 
   // disclude any init bytes above 
 //  active_event()._allocDelta -= st_allocCounterRef - _allocStamp;
 ////  active_event()._deallocDelta -= st_deallocCounterRef - _deallocStamp;
-
-  if ( _chainPtr->size() > 5000 ) {
-    std::ostringstream oss;
-    _chainPtr->printLog(oss,0,~0U," [reset-too-long]");
-    DebugSpecific(true,TRACE_FLAG,"chain-big: %s",oss.str().c_str());
-    ink_fatal("too long!");
-  }
 }
 
 EventCallContext::~EventCallContext()
 {
-  auto &active = active_event();
-  // fix currently endpoint if needed
-  _chainInd = active._i;
-  active.completed(*this,"ctxt.dtor");  // complete this record (and adjust caller record)
-
-  _chainPtr.reset();
+  completed(nullptr);
 
   if ( st_currentCtxt == this ) {
-    st_currentCtxt = _waiting; // don't leave a this pointer behind
+    st_currentCtxt = _waiting;
   }
+
   if ( st_currentCtxt == this ) {
-    Warning("Loop in stack-context chain");
-    st_currentCtxt = nullptr; // don't leave a this pointer behind
+    Warning("No replacement ctor upon destruction");
+    st_currentCtxt = nullptr;
   }
-
-  // can't reset accounting for next?
-  if ( ! _waiting || ! _waiting->_chainPtr || ! ink_mutex_try_acquire(&_waiting->_chainPtr->_owner) ) {
-    return;
-  }
-
-  auto &upper = *_waiting;
-
-  // pass accounting officially to upper context
-  const_cast<time_point &>(upper._start) = std::chrono::steady_clock::now();
-  const_cast<uint64_t &>(upper._allocStamp) = st_allocCounterRef;
-  const_cast<uint64_t &>(upper._deallocStamp) = st_deallocCounterRef;
-  ink_mutex_release(&upper._chainPtr->_owner); // balance
 }
 
 thread_local EventCallContext *EventCallContext::st_currentCtxt = nullptr;
+thread_local EventHdlrP_t     EventCallContext::st_dfltAssignPoint = nullptr;
 thread_local uint64_t         &EventCallContext::st_allocCounterRef = *jemallctl::thread_allocatedp();
 thread_local uint64_t         &EventCallContext::st_deallocCounterRef = *jemallctl::thread_deallocatedp();
 
-void EventCallContext::set_ctor_initial_callback(EventHdlr_t rec)
-{
-  ink_release_assert( st_currentCtxt );
-  st_currentCtxt->_dfltAssignPoint = &rec;
+void EventCallContext::set_ctor_initial_callback(EventHdlr_t rec) {
+  st_dfltAssignPoint = &rec;
 }
 
 namespace {
 EventHdlr_t current_default_assign_point()
 {
-  if ( ! EventCallContext::st_currentCtxt ) {
+  if ( ! EventCallContext::st_currentCtxt && ! EventCallContext::st_dfltAssignPoint ) {
     return kHdlrAssignEmpty;
   }
-  if ( ! EventCallContext::st_currentCtxt->_dfltAssignPoint ) 
-  {
-    return kHdlrAssignNoDflt;
-  }
 
-  return *EventCallContext::st_currentCtxt->_dfltAssignPoint;
+  auto rec = EventCallContext::st_dfltAssignPoint;
+  EventCallContext::st_dfltAssignPoint = nullptr; // use once
+
+  return ( rec ? *rec : kHdlrAssignNoDflt );
 }
-}
+} // anon namespace
 
 EventHdlrState::EventHdlrState(void *p, uint64_t allocStamp, uint64_t deallocStamp)
    : _assignPoint(&kHdlrAssignNoDflt),      // must be set before scopeContext ctor
@@ -921,12 +922,11 @@ EventHdlrState::EventHdlrState(void *p, uint64_t allocStamp, uint64_t deallocSta
   const_cast<uint64_t &>(_scopeContext._allocStamp) = allocStamp;
   const_cast<uint64_t &>(_scopeContext._deallocStamp) = deallocStamp;
 
-  _scopeContext.completed("hdlr.ctor1"); // mark as done and release chain
-  EventCallContext::st_currentCtxt = _scopeContext._waiting; // reset because no real call has started
-
   // now change to actual setting for next call 
   *this = current_default_assign_point();
 
+  // must return an error...
+  ink_release_assert( pthread_mutex_unlock(&_scopeContext._chainPtr->_owner) );
 }
 
 //
@@ -936,17 +936,12 @@ EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
    : _assignPoint(&hdlr),
      _scopeContext(*this) // add ctor on to stack!
 {
-  _scopeContext.completed("hdlr.ctor2"); // mark as done and release chain
-  EventCallContext::st_currentCtxt = _scopeContext._waiting; // reset because no real call has started
+  current_default_assign_point(); // clear if thread-global was set
 }
 
 EventHdlrState::~EventHdlrState()
    // detaches from shared-ptr!
 {
-  _scopeContext.completed("hdlr.dtor"); // mark as done [early on] and release chain (if not already)
-  if ( EventCallContext::st_currentCtxt == &_scopeContext ) {
-    EventCallContext::st_currentCtxt = _scopeContext._waiting; // reset because no real call has ended
-  }
 }
 
 void EventCallContext::reset_top_frame(EventHdlr_t hdlr) 
@@ -957,21 +952,21 @@ void EventCallContext::reset_top_frame(EventHdlr_t hdlr)
 
   EventCallContext::st_currentCtxt = this; // must reset top here
 
+  // lock for the next pushed entry (push_incomplete_call)
   if ( ink_mutex_try_acquire(&_chainPtr->_owner) ) 
   {
     Debug(TRACE_DEBUG_FLAG,"(C#%06x) resetting %s %s@%d",
        id(), hdlr._kLabel, hdlr._kFile, hdlr._kLine );
 
     completed("reset"); // mark and release one lock 
-
-    // keep lock from this fxn
   } else {
+    auto nchainPtr = std::make_shared<EventChain>(ochain.id()); // NOTE: chain adds into alloc tally
     Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%lu --> (C#%06x): event-thread-restart [tot:%ld] %s %s@%d",
-       ochain.id(), ochain.size()-1, _chainPtr->id(), ochain._allocTotal - ochain._deallocTotal,
+       ochain.id(), ochain.size()-1, nchainPtr->id(), ochain._allocTotal - ochain._deallocTotal,
        hdlr._kLabel, hdlr._kFile, hdlr._kLine);
 
-    // ctor acquires lock until completed()
-    _chainPtr = std::make_shared<EventChain>(ochain.id()); // NOTE: chain adds into alloc tally
+    // keep lock for the next pushed entry (push_incomplete_call)
+    _chainPtr = nchainPtr; // NOTE: chain adds into alloc tally
   }
 
   // create entry using current rec (and reset storage stamp)
@@ -1033,37 +1028,47 @@ void reset_old_state(bool origProfState, const std::string &origProfName)
   }
 }
 
-void EventCallContext::completed(const char *msg) 
+void EventCallContext::completed(const char *omsg) 
 {
   auto &mutex = _chainPtr->_owner;
   if ( ! ink_mutex_try_acquire(&mutex) ) {
     return;
   }
 
+  auto msg = ( omsg ? : "ctxt.dtor" );
+
   auto &active = active_event();
   // fix currently endpoint if needed
   _chainInd = active._i;
   active.completed(*this,msg);  // complete this record (and adjust caller record)
 
+  ink_mutex_release(&_chainPtr->_owner); // balance from top
+
+  if ( ! omsg ) {
+    _chainPtr.reset(); // remove from storage account
+  }
+
   // can't reset accounting for next?
-  if ( ! _waiting || ! _waiting->_chainPtr || ! ink_mutex_try_acquire(&_waiting->_chainPtr->_owner) ) {
+  if ( ! _waiting || ! _waiting->_chainPtr ) {
     return;
   }
 
-  auto &upper = *_waiting;
+  if ( ink_mutex_try_acquire(&_waiting->_chainPtr->_owner) ) {
+    auto &upper = *_waiting;
 
-  // pass accounting officially to upper context
-  const_cast<time_point &>(upper._start) = std::chrono::steady_clock::now();
-  const_cast<uint64_t &>(upper._allocStamp) = st_allocCounterRef;
-  const_cast<uint64_t &>(upper._deallocStamp) = st_deallocCounterRef;
-  ink_mutex_release(&upper._chainPtr->_owner); // balance
+    // pass accounting officially to upper context
+    const_cast<time_point &>(upper._start) = std::chrono::steady_clock::now();
+    const_cast<uint64_t &>(upper._allocStamp) = st_allocCounterRef;
+    const_cast<uint64_t &>(upper._deallocStamp) = st_deallocCounterRef;
+    ink_mutex_release(&upper._chainPtr->_owner); // balance
+  }
 }
 
 void
 EventCalled::completed(EventCallContext const &ctxt, const char *msg)
 {
   if ( _delay ) {
-    return; // don't attempt release
+    return; // don't attempt release (can't be locked either)
   }
 
   auto &chain = *ctxt._chainPtr;
@@ -1082,8 +1087,8 @@ EventCalled::completed(EventCallContext const &ctxt, const char *msg)
 
   auto prevDiff = _allocDelta - _deallocDelta;
   auto callingInd = 0;
-  auto callingID = chain.id();
-  auto calledID = chain.id();
+  auto callingID = 0;
+  auto calledID = 0;
 
   if ( has_calling() ) {
     callingID = _callingChain.lock()->id();

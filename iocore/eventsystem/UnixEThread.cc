@@ -134,8 +134,6 @@ EThread::set_event_type(EventType et)
 void
 EThread::process_event(Event *e, int calling_code)
 {
-  EventCalled::ChainPtr_t chain = e->continuation->handler;
-
   ink_assert((!e->in_the_prot_queue && !e->in_the_priority_queue));
   MUTEX_TRY_LOCK_FOR(lock, e->mutex.m_ptr, this, e->continuation);
   if (!lock.is_locked()) {
@@ -143,7 +141,7 @@ EThread::process_event(Event *e, int calling_code)
     EventQueueExternal.enqueue_local(e);
   } else {
     if (e->cancelled) {
-      FREE_EVENT(e);
+      free_event(e);
       return;
     }
     Continuation *c_temp = e->continuation;
@@ -164,17 +162,9 @@ EThread::process_event(Event *e, int calling_code)
         EventQueueExternal.enqueue_local(e);
       }
     } else if (!e->in_the_prot_queue && !e->in_the_priority_queue)
-      FREE_EVENT_WITH_CHAIN(chain,e);
+      free_event(e);
   }
 }
-
-#define process_event(a,b) \
-  {                                                        \
-  RESET_CALL_FRAME_RECORD(EThread::process_event,kTopCall); \
-  process_event((a),(b));                                  \
-  }
-
-// define process_event(a,b) WRAP_EVENT_FRAME_RECORD("EThread::process_event", _state_kTopCall, process_event((a),(b)) )
 
 //
 // void  EThread::execute()
@@ -207,9 +197,13 @@ EThread::execute()
       // execute all the available external events that have
       // already been dequeued
       cur_time = Thread::get_hrtime_updated();
-      while ((e = EventQueueExternal.dequeue_local())) {
+      while ((e = EventQueueExternal.dequeue_local())) 
+      {
+        EventCalled::ChainPtr_t chain = e->continuation->handler;
+        CREATE_EVENT_FRAME_RECORD("[execute.dequeue]", chain);
+
         if (e->cancelled)
-          FREE_EVENT(e);
+          free_event(e);
         else if (!e->timeout_at) { // IMMEDIATE
           ink_assert(e->period == 0);
           process_event(e, e->callback_event);
@@ -237,7 +231,7 @@ EThread::execute()
           ink_assert(e);
           ink_assert(e->timeout_at > 0);
           if (e->cancelled)
-            FREE_EVENT(e);
+            free_event(e);
           else {
             done_one = true;
             process_event(e, e->callback_event);
@@ -254,11 +248,11 @@ EThread::execute()
         if (!INK_ATOMICLIST_EMPTY(EventQueueExternal.al))
           EventQueueExternal.dequeue_timed(cur_time, next_time, false);
         while ((e = EventQueueExternal.dequeue_local())) {
-          if (!e->timeout_at) {
+          if (!e->timeout_at)
             process_event(e, e->callback_event);
-          } else {
+          else {
             if (e->cancelled)
-              FREE_EVENT(e);
+              free_event(e);
             else {
               // If its a negative event, it must be a result of
               // a negative event, which has been turned into a
@@ -309,10 +303,12 @@ EThread::execute()
     // coverity[lock]
     NEW_CALL_FRAME_RECORD(&EThread::DEDICATED,kTopCall);
     MUTEX_TAKE_LOCK_FOR(oneevent->mutex, this, oneevent->continuation);
+
     EventCalled::ChainPtr_t chain = oneevent->continuation->handler;
+    CREATE_EVENT_FRAME_RECORD("execute.dequeue", chain);
     oneevent->continuation->handleEvent(EVENT_IMMEDIATE, oneevent);
     MUTEX_UNTAKE_LOCK(oneevent->mutex, this);
-    FREE_EVENT_WITH_CHAIN(chain,oneevent);
+    free_event(oneevent);
     break;
   }
 
