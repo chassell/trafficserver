@@ -447,7 +447,7 @@ int EventChain::printLog(std::ostringstream &out, unsigned ibegin, unsigned iend
     event_str(eventbuff,call._event);
 
     snprintf(buff,sizeof(buff),
-         TRACE_SNPRINTF_PREFIX "   (C#%06x) @#%2d:[ mem %9ld (tot %+9ld) time ~%5.1f%s ] %9s %s %s@%d %s%s", 
+         TRACE_SNPRINTF_PREFIX "   (C#%06x) @#%2d:[ mem %9ld (tot %+9ld) time ~%5.1f%s ] %10s %s %s@%d %s%s", 
          TRACE_SNPRINTF_DATA id(), call._i, 
          memDelta, chainTotal, delay / div, units,
          eventbuff.c_str(), callback.c_str(), rec._kFile, rec._kLine, callinout.c_str(), omsg );
@@ -474,8 +474,8 @@ int EventChain::printLog(std::ostringstream &out, unsigned ibegin, unsigned iend
   out << std::endl << "(" << TRACE_DEBUG_FLAG << ")      ";
 
   snprintf(buff,sizeof(buff),
-           TRACE_SNPRINTF_PREFIX "   (C#%06x) [%2lu]:[ sub %9ld ~~ tot %+9ld time ~%5.1f%s] %9s                        %s",
-           TRACE_SNPRINTF_DATA id(), size(), logTotal, chainTotal, delayTotal / div, units, "_________", omsg);
+           TRACE_SNPRINTF_PREFIX "   (C#%06x) [%2lu]:[ sub %9ld ~~ tot %+9ld time ~%5.1f%s] %10s                        %s",
+           TRACE_SNPRINTF_DATA id(), size(), logTotal, chainTotal, delayTotal / div, units, "__________", omsg);
   out << buff;
   return n;
 }
