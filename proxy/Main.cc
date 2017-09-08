@@ -1991,7 +1991,7 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   }
 #endif
 
-  RESET_LABEL_FRAME_RECORD("this_thread()->execute()",kLateEThread);
+  RESET_LABEL_FRAME_RECORD("main.EThread::execute",kLateEThread);
   this_thread()->execute();
   // delete main_thread; // already was deleted
 }

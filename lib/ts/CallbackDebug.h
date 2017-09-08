@@ -159,7 +159,7 @@ struct EventCalled
   bool waiting() const { return _delay != 0.0; }
 
   // fill in deltas
-  void completed(EventCallContext const &ctxt);
+  void completed(EventCallContext const &ctxt, const char *msg);
   bool trim_check() const;
   bool trim_back();
 
@@ -243,7 +243,7 @@ struct EventCallContext
   EventCalled const &active_event() const { return _chainPtr->operator[](std::min(_chainInd+0UL,_chainPtr->size()-1)); };
 
   void reset_top_frame(EventHdlr_t hdlr);
-  void completed();
+  void completed(const char *msg);
  public:
   static void set_ctor_initial_callback(EventHdlr_t hdlr);
 
