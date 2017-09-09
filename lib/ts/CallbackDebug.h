@@ -161,7 +161,7 @@ struct EventCalled
   // fill in deltas
   void completed(EventCallContext const &ctxt, const char *msg);
   bool trim_check() const;
-  bool trim_back();
+  bool trim_back_prep();
 
   ChainIter_t calling_iterator() const;
   ChainIter_t called_iterator() const;
@@ -553,7 +553,8 @@ inline EventHdlrState::operator()(Continuation *self,int event, void *data)
 #define TSContCreate(func,mutexp)                              \
             ({                                                 \
                SET_NEXT_HANDLER_RECORD(func);                  \
-               TSContCreate(reinterpret_cast<TSEventFunc>(func),mutexp);                      \
+               TSContCreate(reinterpret_cast<TSEventFunc>(func),mutexp);     \
+               ink_release_assert( ! EventCallContext::st_dfltAssignPoint ); \
              })
 #define TSTransformCreate(func,txnp)                           \
             ({                                                 \

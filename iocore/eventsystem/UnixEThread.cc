@@ -182,7 +182,7 @@ EThread::execute()
 {
   switch (tt) {
   case REGULAR: {
-    NEW_CALL_FRAME_RECORD(&EThread::REGULAR,kTopCall);
+    NEW_CALL_FRAME_RECORD(&EThread::REGULAR_TOP,kTopCall);
 
     Event *e;
     Que(Event, link) NegativeQueue;
@@ -190,6 +190,7 @@ EThread::execute()
 
     // give priority to immediate events
     for (;;) {
+      RESET_CALL_FRAME_RECORD(&EThread::REGULAR,kTopCall);
       if (unlikely(shutdown_event_system == true)) {
         return;
       }

@@ -104,6 +104,7 @@ std::atomic_uint EventChain::s_ident{1};
 CALL_FRAME_RECORD(null::null, kHdlrAssignEmpty);
 CALL_FRAME_RECORD(nodflt::nodflt, kHdlrAssignNoDflt);
 
+EventHdlrP_t const known_hdlr_value = &kHdlrAssignNoDflt;
 
 namespace {
 
@@ -255,10 +256,10 @@ void event_str(std::string &eventbuff, unsigned event)
     }
 
     eventbuff = i->second;
-    if ( event % 100 ) {
+    if ( event != i->first ) {
       auto blank = eventbuff.size();
       eventbuff.append("          ");
-      snprintf(&eventbuff.front()+blank,eventbuff.size()-blank,".%02d",event % 100);
+      snprintf(&eventbuff.front()+blank,eventbuff.size()-blank,".%02d",event - i->first);
     } 
 }
 
@@ -542,13 +543,17 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
     completed("push"); // just in case!?
   }
 
-  _chainInd = chain.size();
+  // logs should show it is not accurate
+  _chainInd = -1;
 
   // clear up any old calls on the new chain...
+  //   NOTE: may trim *lower* chains
   while ( chain.trim_check() ) { 
     ink_release_assert( chain.trim_back() ); 
-    _chainInd = chain.size();
   }
+
+  // reset in case
+  _chainInd = chain.size();
 
   ink_release_assert( _chainInd == chain.size() ); 
 
@@ -579,12 +584,21 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
     // make certain was trimmed
     _waiting->completed("upush"); // just in case!?
 
-    _waiting->_chainInd = ochain.size();
+    // logs should show it's in flux
+    _chainInd = -1;
+    _waiting->_chainInd = -1;
+
     // trim calls if there's nothing remarkable...
+    //   NOTE: may trim *local* chain
     while ( ochain.trim_check() ) { 
       ink_release_assert( ochain.trim_back() ); 
-      _waiting->_chainInd = ochain.size();
     }
+
+    // set correctly
+    _chainInd = chain.size();
+    _waiting->_chainInd = ochain.size();
+
+    // prepared with the *last* element 
 
     auto jump = st_allocCounterRef - _waiting->_allocStamp;
     jump -= st_deallocCounterRef - _waiting->_deallocStamp;
@@ -592,12 +606,6 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
     if ( _waiting->active_event()._delay ) {
       jump = 0; // stamp is not valid now
     }
-
-    // reset the chain-ind and the start point for everything
-    // must reset these ... (ctor values are strange)
-    const_cast<time_point &>(_start) = std::chrono::steady_clock::now();
-    const_cast<uint64_t &>(_allocStamp) = st_allocCounterRef;
-    const_cast<uint64_t &>(_deallocStamp) = st_deallocCounterRef;
 
     // push called-record for previous chain
     ochain.push_back( EventCalled(_waiting->_chainInd, ochain.back(), *this) );
@@ -628,6 +636,12 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
        ochain._allocTotal - ochain._deallocTotal,
        chain._allocTotal - chain._deallocTotal,
        rec._kLabel, rec._kFile, rec._kLine);
+
+    // reset the chain-ind and the start point for everything
+    // must reset these ... (ctor values are strange)
+    const_cast<time_point &>(_start) = std::chrono::steady_clock::now();
+    const_cast<uint64_t &>(_allocStamp) = st_allocCounterRef;
+    const_cast<uint64_t &>(_deallocStamp) = st_deallocCounterRef;
 
     // NOTE: context resets memory counters when done w/ctor
     return;
@@ -730,7 +744,7 @@ bool EventChain::trim_back()
 
   const EventHdlrAssignRec &rec = *back()._hdlrAssign;
 
-  if ( ! back().trim_back() ) {
+  if ( ! back().trim_back_prep() ) {
     Debug(TRACE_DEBUG_FLAG,"(C#%06x) failed to trim local #%lu [%05d] %s %s@%d", id(), size()-1, back()._event, rec._kLabel, rec._kFile, rec._kLine);
     return false; // no pop allowed
   }
@@ -741,10 +755,17 @@ bool EventChain::trim_back()
   return true; // popped
 }
 
-bool EventCalled::trim_back()
+bool EventCalled::trim_back_prep()
 {
-  if ( has_called() ) {
+  if ( has_called() ) 
+  {
+    auto &cchain = *_calledChain;
     const_cast<ChainWPtr_t&>(called()._callingChain).reset();
+
+    // that last lower one is feasible?
+    if ( cchain.size() == _calledChainLen ) {
+      cchain.trim_back(); // try to trim *now*
+    }
   }
 
   if ( ! has_calling() ) {
@@ -902,19 +923,26 @@ void EventCallContext::set_ctor_initial_callback(EventHdlr_t rec) {
 namespace {
 EventHdlr_t current_default_assign_point()
 {
-  if ( ! EventCallContext::st_currentCtxt && ! EventCallContext::st_dfltAssignPoint ) {
-    return kHdlrAssignEmpty;
-  }
+//  if ( ! EventCallContext::st_currentCtxt 
+//       && ! EventCallContext::st_dfltAssignPoint ) {
+//    return kHdlrAssignEmpty;
+//  }
 
   auto rec = EventCallContext::st_dfltAssignPoint;
   EventCallContext::st_dfltAssignPoint = nullptr; // use once
+
+  if ( rec == &kHdlrAssignNoDflt ) {
+    Debug(TRACE_DEBUG_FLAG," returning default assign point");
+    EventCallContext::st_dfltAssignPoint = rec; // detect a failed change
+    rec = nullptr;
+  }
 
   return ( rec ? *rec : kHdlrAssignNoDflt );
 }
 } // anon namespace
 
 EventHdlrState::EventHdlrState(void *p, uint64_t allocStamp, uint64_t deallocStamp)
-   : _assignPoint(&kHdlrAssignNoDflt),      // must be set before scopeContext ctor
+   : _assignPoint(&kHdlrAssignEmpty),      // must be set before scopeContext ctor
      _scopeContext(*this)
 {
   // get the earliest point before construction started
@@ -939,7 +967,10 @@ EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
 {
   _scopeContext.completed("cxt.ctor"); // mark as done and release chain
 
-  current_default_assign_point(); // clear if thread-global was set
+  auto chk = &current_default_assign_point();
+
+  ink_release_assert( chk == &kHdlrAssignNoDflt || chk == &kHdlrAssignEmpty ); // clear if thread-global was set
+  ink_release_assert( _assignPoint != &kHdlrAssignNoDflt ); // clear if thread-global was set
 }
 
 EventHdlrState::~EventHdlrState()
