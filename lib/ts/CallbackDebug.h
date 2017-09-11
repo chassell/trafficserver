@@ -56,10 +56,9 @@ struct EventHdlrAssignRec;
 struct EventCalled;
 struct EventChain;
 struct EventCallContext;
-class EventHdlrState;
 
-using EventHdlr_t = const EventHdlrAssignRec &;
-using EventHdlrP_t = const EventHdlrAssignRec *;
+using EventHdlrBase_t = const EventHdlrAssignBase &;
+using EventHdlrBaseP_t = const EventHdlrAssignBase *;
 
 using EventHdlrMethodPtr_t = int (Continuation::*)(int event, void *data);
 using EventHdlrFxn_t       = int(Continuation *, int event, void *data);
@@ -79,12 +78,9 @@ using EventFuncCompareGen_t = EventFuncCompare_t *(void);
 ///////////////////////////////////////////////////////////////////////////////////
 ///
 ///////////////////////////////////////////////////////////////////////////////////
-struct EventHdlrAssignRec 
+struct EventHdlrAssignBase
 {
  public:
-  template<typename T_FN, T_FN FXN>
-  struct const_cb_callgen;
-
   struct const_cb_callgen_base
   {
     static EventHdlrCompare_t *cmphdlr(void)
@@ -102,20 +98,8 @@ struct EventHdlrAssignRec
  public:
   using Ptr_t = const EventHdlrAssignRec *;
 
-  bool operator!=(EventHdlrMethodPtr_t a) const 
-     { return ! _kEqualHdlr_Gen || ! _kEqualHdlr_Gen()(a); }
-  bool operator!=(TSEventFunc b) const 
-     { return ! _kEqualFunc_Gen || ! _kEqualFunc_Gen()(b); }
-  bool operator==(EventHdlrMethodPtr_t a) const 
-     { return _kEqualHdlr_Gen && _kEqualHdlr_Gen()(a); }
-  bool operator==(TSEventFunc b) const 
-     { return _kEqualFunc_Gen && _kEqualFunc_Gen()(b); }
-
   bool is_no_log() const {
-    return ! _kEqualHdlr_Gen();
-  }
-  bool is_frame_rec() const {
-    return _kEqualHdlr_Gen == EventHdlrAssignRec::const_cb_callgen_base::cmphdlr_nolog;
+    return _kLabel[0] == '#';
   }
   bool is_plugin_rec() const {
     return _kEqualHdlr_Gen == EventHdlrAssignRec::const_cb_callgen_base::cmphdlr
@@ -126,14 +110,47 @@ struct EventHdlrAssignRec
   const char *const _kLabel;   // at point of assign
   const char *const _kFile;    // at point of assign
   uint32_t    const _kLine;    // at point of assign
+};
 
-  TSEventFunc const _kTSEventFunc; // direct callback ptr (from C)
+struct EventHdlrAssign : public EventHdlrAssignBase
+{
+  template<typename T_FN, T_FN FXN>
+  struct const_cb_callgen;
+
+  bool is_frame_rec() const {
+    return _kEqualHdlr_Gen == EventHdlrAssignRec::const_cb_callgen_base::cmphdlr_nolog;
+  }
+
+  bool operator!=(EventHdlrMethodPtr_t a) const 
+     { return ! _kEqualHdlr_Gen || ! _kEqualHdlr_Gen()(a); }
+  bool operator==(EventHdlrMethodPtr_t a) const 
+     { return _kEqualHdlr_Gen && _kEqualHdlr_Gen()(a); }
 
   EventHdlrCompareGen_t *const _kEqualHdlr_Gen; // distinct method-pointer (not usable)
-  EventFuncCompareGen_t *const _kEqualFunc_Gen; // distinct method-pointer (not usable)
-
   EventHdlrFxnGen_t     *const _kWrapHdlr_Gen; // ref to custom wrapper function-ptr callable 
+};
+
+
+struct TSEventHdlrAssign : public EventHdlrAssignBase
+{
+  template<typename T_FN, T_FN FXN>
+  struct const_cb_callgen;
+
+  bool operator!=(TSEventFunc b) const 
+     { return ! _kEqualFunc_Gen || ! _kEqualFunc_Gen()(b); }
+  bool operator==(TSEventFunc b) const 
+     { return _kEqualFunc_Gen && _kEqualFunc_Gen()(b); }
+
+  EventFuncCompareGen_t *const _kEqualFunc_Gen; // distinct method-pointer (not usable)
   TSEventFuncGen_t      *const _kWrapFunc_Gen; // ref to custom wrapper function-ptr callable 
+};
+
+struct TSEventCHdlrAssign : public EventHdlrAssignBase
+{
+  template<typename T_FN, T_FN FXN>
+  struct const_cb_callgen;
+
+  TSEventFunc const _kTSEventFunc; // direct callback ptr (from C)
 };
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -146,10 +163,10 @@ struct EventCalled
   using ChainWPtr_t = std::weak_ptr<EventChain>;
 
   // same chain 
-  EventCalled(unsigned i, EventHdlr_t assign, int event);
+  EventCalled(unsigned i, EventHdlrBase assign, int event);
 
   // create record of calling-in with event
-  EventCalled(unsigned i, const EventCallContext &ctxt, EventHdlr_t assign, int event);
+  EventCalled(unsigned i, const EventCallContext &ctxt, EventHdlrBase_t assign, int event);
 
   // create record of calling-out (no event)
   EventCalled(unsigned i, const EventCalled &prev, const EventCallContext &ctxt);
@@ -174,7 +191,7 @@ struct EventCalled
   bool has_called() const { return _calledChain && _calledChainLen; }
 
   // upon ctor
-  EventHdlrP_t        const _hdlrAssign;   // full callback info 
+  EventHdlrBaseP_t    const _hdlrAssign;   // full callback info 
 
   // upon ctor
   ChainWPtr_t         const _callingChain;        // chain held by caller's context (from context)
@@ -229,11 +246,10 @@ struct EventCallContext
   using time_point = steady_clock::time_point;
 
  public:
-  // HdlrState can record this event occurring
   EventCallContext() = delete;
   EventCallContext(const EventCallContext &ctxt) = delete;
 
-  explicit EventCallContext(EventHdlr_t hdlr, const EventCalled::ChainPtr_t &chain=EventCalled::ChainPtr_t(), int event=0);
+  explicit EventCallContext(EventHdlrBase_t hdlr, const EventCalled::ChainPtr_t &chain=EventCalled::ChainPtr_t(), int event=0);
   ~EventCallContext();
 
   unsigned id() const { return _chainPtr->id(); }
@@ -243,18 +259,18 @@ struct EventCallContext
   EventCalled       &active_event()       { return _chainPtr->operator[](std::min(_chainInd+0UL,_chainPtr->size()-1)); };
   EventCalled const &active_event() const { return _chainPtr->operator[](std::min(_chainInd+0UL,_chainPtr->size()-1)); };
 
-  void reset_top_frame(EventHdlr_t hdlr);
+  void reset_top_frame(EventHdlrBase_t hdlr);
   void completed(const char *msg);
  public:
-  static void set_ctor_initial_callback(EventHdlr_t hdlr);
+  static void set_ctor_initial_callback(EventHdlrBase_t hdlr);
   static void clear_ctor_initial_callback();
 
  private:
-  void push_incomplete_call(EventHdlr_t rec, int event);
+  void push_incomplete_call(EventHdlrBase_t rec, int event);
 
  public:
   static thread_local EventCallContext        *st_currentCtxt;
-  static thread_local EventHdlrP_t            st_dfltAssignPoint;
+  static thread_local TSEventHdlrAssign       *st_dfltAssignPoint;
   static thread_local uint64_t                &st_allocCounterRef;
   static thread_local uint64_t                &st_deallocCounterRef;
 
@@ -274,11 +290,16 @@ struct EventCallContext
 ///////////////////////////////////////////////////////////////////////////////////
 /// Context for a single callback-assignable object ... within one module/purpose
 ///////////////////////////////////////////////////////////////////////////////////
-class EventHdlrState 
+template <class T_HDLRTYPE = EventHdlrAssign>
+class EventHdlrState
 {
   friend EventCallContext;
 
  public:
+
+  using EventHdlr_t = T_HDLRTYPE &;
+  using EventHdlrP_t = T_HDLRTYPE *;
+
   EventHdlrState(const EventHdlrState &state) = delete;
   // default initializer to catch earliest allocation stamps
   explicit EventHdlrState(void *p = NULL, 
@@ -309,34 +330,22 @@ class EventHdlrState
   unsigned id() const { return _scopeContext.id(); }
   unsigned oid() const { return _scopeContext.oid(); }
 
-  // allow comparisons with EventHdlrs
-  template <class T_OBJ, typename T_ARG>
-  bool operator!=(int(T_OBJ::*a)(int,T_ARG)) const {
-    return ! _assignPoint || *_assignPoint != reinterpret_cast<EventHdlrMethodPtr_t>(a);
+  // allow comparisons ...
+  template <class T_OBJ>
+  bool operator!=(int(T_OBJ::*a)(...)) const {
+    return ! _assignPoint || *_assignPoint != reinterpret_cast<int(T_OBJ::*a)(...)>(a);
   }
 
   // allow comparisons with TSEventFuncs
-  bool operator!=(TSEventFunc b) const {
-    return ! _assignPoint || *_assignPoint != reinterpret_cast<TSEventFunc>(b);
+  bool operator!=(int(*b)(...)) const {
+    return ! _assignPoint || *_assignPoint != reinterpret_cast<int(*)(...)>(b);
   }
-
-  // allow comparisons with EventHdlrs
-  template <class T_OBJ, typename T_ARG>
-  bool operator==(int(T_OBJ::*a)(int,T_ARG)) const {
-    return _assignPoint && *_assignPoint == reinterpret_cast<EventHdlrMethodPtr_t>(a);
-  }
-
-  // allow comparisons with TSEventFuncs
-  bool operator==(TSEventFunc b) const {
-    return _assignPoint && *_assignPoint == reinterpret_cast<TSEventFunc>(b);
-  }
-
-  void operator=(nullptr_t) = delete;
-
-  void operator=(TSEventFunc f);
 
   // class method-pointer full args
-  void operator=(EventHdlr_t cbAssign) { _assignPoint = &cbAssign; }
+  void operator=(EventHdlr_t cbAssign) 
+  { 
+    _assignPoint = &cbAssign; 
+  }
 
   // class method-pointer full args
   void operator=(const EventHdlrState &orig)
@@ -344,6 +353,9 @@ class EventHdlrState
     _assignPoint = orig._assignPoint;
     // all other values can remain intact
   }
+
+  void operator=(nullptr_t) = delete;
+  void operator=(TSEventFunc f);
 
 private:
   EventHdlrP_t     _assignPoint = nullptr;  // latest callback assigned for use
@@ -477,58 +489,6 @@ struct EventHdlrAssignRec::const_cb_callgen<int(T_OBJ::*)(int,T_ARG),FXN>
      };
   }
 };
-
-int
-inline EventHdlrState::operator()(TSCont ptr, TSEvent event, void *data)
-{
-//  auto profState = enter_new_state(*_assignPoint);
-//  auto profName = ( profState ? jemallctl::thread_prof_name() : "" );
-
-  EventCallContext _ctxt{*this, _scopeContext._chainPtr, event};
-  EventCallContext::st_currentCtxt = &_ctxt; // reset upon dtor
-
-  _scopeContext._chainPtr = _ctxt._chainPtr; // detach if thread-unsafe!
-
-  int r = 0;
-
-  ////////// perform call
-
-  if ( _assignPoint->_kTSEventFunc ) {
-    // direct C call.. 
-    r = (*_assignPoint->_kTSEventFunc)(ptr,event,data);
-  } else {
-    // C++ wrapper ...
-    r = (*_assignPoint->_kWrapFunc_Gen())(ptr,event,data);
-  }
-
-//  reset_old_state(profState, profName);
-
-  ////////// restore
-  return r;
-}
-
-int
-inline EventHdlrState::operator()(Continuation *self,int event, void *data)
-{
-//  auto profState = enter_new_state(*_assignPoint);
-//  auto profName = ( profState ? jemallctl::thread_prof_name() : "" );
-
-  auto r = 0;
-
-  {
-
-  EventCallContext ctxt{*this, _scopeContext._chainPtr, event};
-  EventCallContext::st_currentCtxt = &ctxt; // reset upon dtor
-
-  _scopeContext._chainPtr = ctxt._chainPtr; // detach if thread-unsafe!
-
-  r = (*_assignPoint->_kWrapHdlr_Gen())(self,event,data);
-  }
-
-//  reset_old_state(profState, profName);
-
-  return r;
-}
 
 #define LOG_SKIPPABLE_EVENTHDLR(_h) \
   template <>                                                               \

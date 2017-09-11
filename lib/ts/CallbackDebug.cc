@@ -263,6 +263,9 @@ void event_str(std::string &eventbuff, unsigned event)
     } 
 }
 
+void reset_old_state(bool origProfState, const std::string &origProfName);
+bool enter_new_state(EventHdlr_t nhdlr);
+
 } // anon namespace 
 
 // specialize operator..
@@ -923,6 +926,58 @@ thread_local EventCallContext *EventCallContext::st_currentCtxt = nullptr;
 thread_local EventHdlrP_t     EventCallContext::st_dfltAssignPoint = nullptr;
 thread_local uint64_t         &EventCallContext::st_allocCounterRef = *jemallctl::thread_allocatedp();
 thread_local uint64_t         &EventCallContext::st_deallocCounterRef = *jemallctl::thread_deallocatedp();
+
+int
+EventHdlrState::operator()(TSCont ptr, TSEvent event, void *data)
+{
+//  auto profState = enter_new_state(*_assignPoint);
+//  auto profName = ( profState ? jemallctl::thread_prof_name() : "" );
+
+  EventCallContext _ctxt{*this, _scopeContext._chainPtr, event};
+  EventCallContext::st_currentCtxt = &_ctxt; // reset upon dtor
+
+  _scopeContext._chainPtr = _ctxt._chainPtr; // detach if thread-unsafe!
+
+  int r = 0;
+
+  ////////// perform call
+
+  if ( _assignPoint->_kTSEventFunc ) {
+    // direct C call.. 
+    r = (*_assignPoint->_kTSEventFunc)(ptr,event,data);
+  } else {
+    // C++ wrapper ...
+    r = (*_assignPoint->_kWrapFunc_Gen())(ptr,event,data);
+  }
+
+//  reset_old_state(profState, profName);
+
+  ////////// restore
+  return r;
+}
+
+int
+EventHdlrState::operator()(Continuation *self,int event, void *data)
+{
+//  auto profState = enter_new_state(*_assignPoint);
+//  auto profName = ( profState ? jemallctl::thread_prof_name() : "" );
+
+  auto r = 0;
+
+  {
+
+  EventCallContext ctxt{*this, _scopeContext._chainPtr, event};
+  EventCallContext::st_currentCtxt = &ctxt; // reset upon dtor
+
+  _scopeContext._chainPtr = ctxt._chainPtr; // detach if thread-unsafe!
+
+  r = (*_assignPoint->_kWrapHdlr_Gen())(self,event,data);
+  }
+
+//  reset_old_state(profState, profName);
+
+  return r;
+}
 
 void EventCallContext::clear_ctor_initial_callback() {
   st_dfltAssignPoint = nullptr;

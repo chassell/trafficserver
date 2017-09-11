@@ -321,13 +321,11 @@ ats_alloc_stack(size_t stacksize)
 {
   if (!ats_hugepage_enabled()) {
     // get memory that grows down and is not populated until needed
-//    return mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE, -1, 0);
-    return mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    return mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE, -1, 0);
   }
 
   //    [but prefer hugepage alignment and request if possible]
-//  auto p = mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, (MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE), -1, 0);
-  auto p = mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, (MAP_ANONYMOUS | MAP_PRIVATE), -1, 0);
+  auto p = mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, (MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE), -1, 0);
   if (stacksize == aligned_spacing(stacksize, ats_hugepage_size())) {
     madvise(p, stacksize, MADV_HUGEPAGE); // opt in
   }
