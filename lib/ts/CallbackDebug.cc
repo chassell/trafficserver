@@ -269,7 +269,7 @@ void event_str(std::string &eventbuff, unsigned event)
 namespace std
 {
 template <>
-inline bool operator< <unsigned, const char*> (const std::pair<unsigned,const char*> &a, const std::pair<unsigned,const char*> &b)
+inline constexpr bool operator< <unsigned, const char*> (const std::pair<unsigned,const char*> &a, const std::pair<unsigned,const char*> &b)
   { return a.first < b.first; }
 }
 
