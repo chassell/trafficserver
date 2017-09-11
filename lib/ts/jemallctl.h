@@ -28,6 +28,7 @@
 #include "ts/ink_memory.h"
 
 #include <vector>
+#include <atomic>
 
 #if !HAVE_LIBJEMALLOC
 struct chunk_hooks_t {
@@ -36,8 +37,6 @@ struct chunk_hooks_t {
 
 namespace jemallctl
 {
-extern int const proc_arena;
-extern int const proc_arena_nodump;
 
 using objpath_t = std::vector<size_t>;
 
@@ -46,6 +45,7 @@ struct ObjBase {
 
 protected:
   const objpath_t _oid;
+  const char *_name;
 };
 
 template <typename T_VALUE, size_t N_DIFF = 0> struct GetObjFxn : public ObjBase {
@@ -58,15 +58,24 @@ template <typename T_VALUE, size_t N_DIFF = 0> struct SetObjFxn : public ObjBase
   auto operator()(const T_VALUE &) const -> int;
 };
 
-template <> struct GetObjFxn<void, 0> : public ObjBase {
+template <> struct SetObjFxn<bool,0> : public ObjBase {
+  using ObjBase::ObjBase;
+  auto operator()(void) const -> int;
+};
+
+template <> struct SetObjFxn<bool,1> : public ObjBase {
+  using ObjBase::ObjBase;
+  auto operator()(void) const -> int;
+};
+
+template <> struct GetObjFxn<void,0> : public ObjBase {
   using ObjBase::ObjBase;
   int operator()(void) const;
 };
 
-using DoObjFxn = GetObjFxn<void, 0>;
-
-chunk_hooks_t const &get_hugepage_hooks();
-chunk_hooks_t const &get_hugepage_nodump_hooks();
+using EnableObjFxn = SetObjFxn<bool,1>;
+using DisableObjFxn = SetObjFxn<bool,0>;
+using DoObjFxn = GetObjFxn<void,0>;
 
 extern const GetObjFxn<chunk_hooks_t> thread_arena_hooks;
 extern const SetObjFxn<chunk_hooks_t> set_thread_arena_hooks;
@@ -81,16 +90,31 @@ extern const GetObjFxn<unsigned> do_arenas_extend;
 extern const GetObjFxn<unsigned> thread_arena;
 extern const SetObjFxn<unsigned> set_thread_arena;
 extern const DoObjFxn do_thread_tcache_flush;
+extern const GetObjFxn<uint64_t*> thread_allocatedp;
+extern const GetObjFxn<uint64_t*> thread_deallocatedp;
 
 // from the build-time config
 extern const GetObjFxn<bool> config_thp;
 extern const GetObjFxn<std::string> config_malloc_conf;
 
 // for profiling only
+extern const GetObjFxn<bool> prof_active;
+extern const EnableObjFxn    enable_prof_active;
+extern const DisableObjFxn   disable_prof_active;
+
 extern const GetObjFxn<std::string> thread_prof_name;
 extern const SetObjFxn<std::string> set_thread_prof_name;
+
 extern const GetObjFxn<bool> thread_prof_active;
-extern const SetObjFxn<bool> set_thread_prof_active;
+extern const EnableObjFxn    enable_thread_prof_active;
+extern const DisableObjFxn   disable_thread_prof_active;
+
+extern const GetObjFxn<uint64_t>           stats_active;
+extern const GetObjFxn<std::atomic_ulong*> stats_cactive;
+extern const GetObjFxn<uint64_t>           stats_allocated;
+
+extern const GetObjFxn<bool *>   arenas_initialized;
+extern const GetObjFxn<unsigned> arenas_narenas;
 }
 
 #endif // _JEMALLCTL_H

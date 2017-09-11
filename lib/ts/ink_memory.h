@@ -71,10 +71,9 @@
 
 #endif // no jemalloc includes used
 
-
 #if HAVE_SYS_USER_H
 #include <sys/user.h>
-#elif ! PAGE_SIZE
+#elif !PAGE_SIZE
 #define PAGE_SIZE 4096
 #endif
 
@@ -132,33 +131,36 @@ char *_xstrdup(const char *str, int length, const char *path);
 #ifdef __cplusplus
 namespace numa
 {
-  unsigned new_affinity_id();
+unsigned new_affinity_id();
 
-#if TS_USE_HWLOC 
-  static inline hwloc_topology_t curr() { return ink_get_topology(); }
+#if TS_USE_HWLOC
+static inline hwloc_topology_t
+curr()
+{
+  return ink_get_topology();
+}
 
-  hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
-  int assign_thread_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit usable cpus to specific cpuset
+hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+int assign_thread_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit usable cpus to specific cpuset
 
-  // NOTE: creates new arenas under mutex if none present
-  unsigned get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
-  int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit new pages to specific nodes
-  void reset_thread_memory_by_cpuset(); // limit new pages to whatever cpuset is limited to
+// NOTE: creates new arenas under mutex if none present
+unsigned get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
 
-  auto constexpr kHwlocBitmapDeleter = [](hwloc_bitmap_t map){ map ? hwloc_bitmap_free(map) : (void) 0; };
+int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit new pages to specific nodes
+void reset_thread_memory_by_cpuset();                                           // limit new pages to whatever cpuset is limited to
 
-  struct hwloc_bitmap : public std::unique_ptr<hwloc_bitmap_s,void(*)(hwloc_bitmap_t)>
-  {
-    using super = std::unique_ptr<hwloc_bitmap_s,void(*)(hwloc_bitmap_t)>;
-    hwloc_bitmap() : super{ hwloc_bitmap_alloc(), kHwlocBitmapDeleter } 
-       { }
-    hwloc_bitmap(hwloc_const_bitmap_t map) : super{ hwloc_bitmap_dup(map), kHwlocBitmapDeleter } 
-       { }
-    operator hwloc_const_bitmap_t() const
-       { return get(); }
-    operator hwloc_bitmap_t()
-       { return get(); }
-  };
+int create_thread_memory_arena_fork(int nodesid=-1);
+int create_global_nodump_arena();
+
+auto constexpr kHwlocBitmapDeleter = [](hwloc_bitmap_t map) { map ? hwloc_bitmap_free(map) : (void)0; };
+
+struct hwloc_bitmap : public std::unique_ptr<hwloc_bitmap_s, void (*)(hwloc_bitmap_t)> {
+  using super = std::unique_ptr<hwloc_bitmap_s, void (*)(hwloc_bitmap_t)>;
+  hwloc_bitmap() : super{hwloc_bitmap_alloc(), kHwlocBitmapDeleter} {}
+  hwloc_bitmap(hwloc_const_bitmap_t map) : super{hwloc_bitmap_dup(map), kHwlocBitmapDeleter} {}
+  operator hwloc_const_bitmap_t() const { return get(); }
+  operator hwloc_bitmap_t() { return get(); }
+};
 
 #endif
 }
