@@ -119,8 +119,6 @@ EventProcessor::start(int n_event_threads, size_t stacksize)
   Debug("iocore_thread", "Affinity: %d %ss: %d PU: %d", affinity, kAffinity_obj_names[affinity], obj_count, ink_number_of_processors());
 
 #endif
-  auto allcpuset = numa::get_cpuset_by_affinity(HWLOC_OBJ_MACHINE, 0); // the all-cpus set
-
   for (i = 0; i < n_ethreads; i++) {
     ink_thread tid;
     numa::assign_thread_memory_by_affinity(kAffinity_objs[affinity], i);
@@ -138,9 +136,9 @@ EventProcessor::start(int n_event_threads, size_t stacksize)
       int cpu_mask_len = hwloc_bitmap_snprintf(NULL, 0, cpuset) + 1;
       char *cpu_mask   = (char *)alloca(cpu_mask_len);
       hwloc_bitmap_snprintf(cpu_mask, cpu_mask_len, cpuset);
-      Debug("iocore_thread", "EThread: %d %s: #%d CPU Mask: %s\n", i, obj_name, -1, cpu_mask);
+      Debug("iocore_thread", "EThread: %d %s: #%d CPU Mask: %s\n", i, kAffinity_obj_names[affinity], -1, cpu_mask);
 #else
-      Debug("iocore_thread", "EThread: %d %s: %d\n", i, obj_name, -1);
+      Debug("iocore_thread", "EThread: %d %s: %d\n", i, kAffinity_obj_names[affinity], -1);
 #endif // HWLOC_API_VERSION
       auto r = hwloc_set_thread_cpubind(ink_get_topology(), tid, cpuset, HWLOC_CPUBIND_STRICT); // last thread only
       ink_assert( ! r );
