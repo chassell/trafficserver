@@ -39,6 +39,7 @@
 #include "P_SSLCertLookup.h"
 #include "SSLSessionCache.h"
 #include <records/I_RecHttp.h>
+#include <cmath>
 
 int SSLConfig::configid                                     = 0;
 int SSLCertificateConfig::configid                          = 0;

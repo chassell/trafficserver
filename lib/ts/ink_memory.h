@@ -23,6 +23,13 @@
 #ifndef _ink_memory_h_
 #define _ink_memory_h_
 
+#include "ts/ink_config.h"
+#include "ts/ink_defs.h"
+
+#include <vector>
+#include <functional>
+#include <memory>
+
 #include <ctype.h>
 #include <string.h>
 #include <strings.h>
@@ -46,32 +53,29 @@
 #include <sys/mman.h>
 #endif
 
-#if TS_HAS_JEMALLOC
+#if HAVE_JEMALLOC_JEMALLOC_H
 #include <jemalloc/jemalloc.h>
-#else
+#elif HAVE_JEMALLOC_H
+#include <jemalloc.h>
+
+#else // no jemalloc includes used
+
+#define mallocx(...) nullptr
+#define sallocx(...) size_t()
+#define sdallocx(...)
+#define dallocx(...)
+
 #if HAVE_MALLOC_H
 #include <malloc.h>
-#endif // ! HAVE_MALLOC_H
-#endif // ! TS_HAS_JEMALLOC
-
-#ifndef MADV_NORMAL
-#define MADV_NORMAL 0
 #endif
 
-#ifndef MADV_RANDOM
-#define MADV_RANDOM 1
-#endif
+#endif // no jemalloc includes used
 
-#ifndef MADV_SEQUENTIAL
-#define MADV_SEQUENTIAL 2
-#endif
 
-#ifndef MADV_WILLNEED
-#define MADV_WILLNEED 3
-#endif
-
-#ifndef MADV_DONTNEED
-#define MADV_DONTNEED 4
+#if HAVE_SYS_USER_H
+#include <sys/user.h>
+#elif ! PAGE_SIZE
+#define PAGE_SIZE 4096
 #endif
 
 #ifdef __cplusplus
@@ -87,11 +91,10 @@ void *ats_memalign(size_t alignment, size_t size);
 void ats_free(void *ptr);
 void *ats_free_null(void *ptr);
 void ats_memalign_free(void *ptr);
-int ats_mallopt(int param, int value);
-
 int ats_msync(caddr_t addr, size_t len, caddr_t end, int flags);
 int ats_madvise(caddr_t addr, size_t len, int flags);
-int ats_mlock(caddr_t addr, size_t len);
+
+void *ats_alloc_stack(size_t stacksize);
 
 void *ats_track_malloc(size_t size, uint64_t *stat);
 void *ats_track_realloc(void *ptr, size_t size, uint64_t *alloc_stat, uint64_t *free_stat);
@@ -127,6 +130,38 @@ char *_xstrdup(const char *str, int length, const char *path);
 #endif
 
 #ifdef __cplusplus
+namespace numa
+{
+  unsigned new_affinity_id();
+
+#if TS_USE_HWLOC 
+  static inline hwloc_topology_t curr() { return ink_get_topology(); }
+
+  hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+  int assign_thread_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit usable cpus to specific cpuset
+
+  // NOTE: creates new arenas under mutex if none present
+  unsigned get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid);
+  int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid); // limit new pages to specific nodes
+  void reset_thread_memory_by_cpuset(); // limit new pages to whatever cpuset is limited to
+
+  auto constexpr kHwlocBitmapDeleter = [](hwloc_bitmap_t map){ map ? hwloc_bitmap_free(map) : (void) 0; };
+
+  struct hwloc_bitmap : public std::unique_ptr<hwloc_bitmap_s,void(*)(hwloc_bitmap_t)>
+  {
+    using super = std::unique_ptr<hwloc_bitmap_s,void(*)(hwloc_bitmap_t)>;
+    hwloc_bitmap() : super{ hwloc_bitmap_alloc(), kHwlocBitmapDeleter } 
+       { }
+    hwloc_bitmap(hwloc_const_bitmap_t map) : super{ hwloc_bitmap_dup(map), kHwlocBitmapDeleter } 
+       { }
+    operator hwloc_const_bitmap_t() const
+       { return get(); }
+    operator hwloc_bitmap_t()
+       { return get(); }
+  };
+
+#endif
+}
 
 template <typename PtrType, typename SizeType>
 static inline IOVec
