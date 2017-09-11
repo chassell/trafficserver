@@ -237,14 +237,16 @@ void event_str(std::string &eventbuff, unsigned event)
       { BLOCK_CACHE_EVENT_EVENTS_START, "BLKCACH" },
       { UTILS_EVENT_EVENTS_START, "UTIL" },
       { CONGESTION_EVENT_EVENTS_START, "CONGST" },
-      { INK_API_EVENT_EVENTS_START, "INK_API" },
+      { INK_API_EVENT_EVENTS_START, "API" },
       { SRV_EVENT_EVENTS_START, "DNSSRV" },
-      { REMAP_EVENT_EVENTS_START, "REMAP" }
+      { REMAP_EVENT_EVENTS_START, "REMAP" },
+      { 0xffff, "??" }
     };
 
     using key_t = decltype(lookup_events[0]);
 
-    key_t key = {event,""};
+    // always one past a full-match 
+    key_t key = {event+1,""};
     auto i = std::lower_bound(std::begin(lookup_events), std::end(lookup_events), key); 
 
     if ( i == std::end(lookup_events) ) {
@@ -253,7 +255,9 @@ void event_str(std::string &eventbuff, unsigned event)
       return;
     }
 
-    ink_release_assert( event >= i->first );
+    --i; // one *before* the closest-but-larger
+
+    ink_release_assert( event >= i[0].first && event < i[1].first );
 
     eventbuff = i->second;
     if ( event != i->first ) {
@@ -547,9 +551,15 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
 
   auto &chain = *_chainPtr;
 
-  if ( ~_chainInd && _chainInd+1 == chain.size() ) {
-    completed("push"); // just in case!?
-  }
+  // ctor first-records (no backref)
+  // untracked-top records (no earlier frame)
+  // unowned-call records (other chain is lost)
+  auto recp = &rec;
+
+  // not a real call?  then just mark it from its origins
+  if ( _waiting && &rec == &kHdlrAssignEmpty ) {
+    recp = _waiting->active_event()._hdlrAssign;
+  } 
 
   // logs should show it is not accurate
   _chainInd = -1;
@@ -563,8 +573,6 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
   // reset in case
   _chainInd = chain.size();
 
-  ink_release_assert( _chainInd == chain.size() ); 
-
   if ( _chainPtr->size() > 5000 ) {
     std::ostringstream oss;
     _chainPtr->printLog(oss,0,~0U,"reset-too-long");
@@ -575,9 +583,8 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
   // only with *real* handoff-calls    
   // only with non-ctors where memory is tracked
   // only where both are owned in stack
-  if ( _chainInd && _waiting 
-                 && _waiting->_chainPtr != _chainPtr 
-                 && ink_mutex_try_acquire(&_waiting->_chainPtr->_owner) )
+  if ( _waiting && _waiting->_chainPtr != _chainPtr 
+                && ink_mutex_try_acquire(&_waiting->_chainPtr->_owner) )
   {
     if ( _waiting->_chainPtr->size() > 5000 ) {
       std::ostringstream oss;
@@ -615,11 +622,11 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
       jump = 0; // stamp is not valid now
     }
 
-    // push called-record for previous chain
-    ochain.push_back( EventCalled(_waiting->_chainInd, ochain.back(), *this) );
+    // use waiting-active (previously) as origin
+    ochain.push_back( EventCalled(_waiting->_chainInd, *recp, *this) );
 
     // push calling-record for this chain
-    chain.push_back( EventCalled(_chainInd, *_waiting, rec, event) );
+    chain.push_back( EventCalled(_chainInd,            *_waiting, rec, event) );
 
     auto &self = chain.back();
     auto &calling = ochain.back();
@@ -655,27 +662,11 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
     return;
   }
 
-  // ctor first-records (no backref)
-  // untracked-top records (no earlier frame)
-  // unowned-call records (other chain is lost)
-  auto recp = &rec;
-
-  // not a real call?  then just mark it from its origins
-  if ( _waiting && &rec == &kHdlrAssignEmpty ) {
-    recp = _waiting->active_event()._hdlrAssign;
-  } 
-
   chain.push_back( EventCalled(_chainInd, *recp, event) );
 
   ink_release_assert( _chainInd == chain.size()-1 ); 
 
-  if ( ! _chainInd && _waiting ) {
-    Debug(TRACE_DEBUG_FLAG,"(C#%06x) <--- (C#%06x) ctor-init [ under %s %s@%d ]",chain.id(), _waiting->id(),
-                recp->_kLabel,recp->_kFile,recp->_kLine);
-  } else if ( ! _chainInd ) {
-    Debug(TRACE_DEBUG_FLAG,"(C#%06x) ctor-init [ under %s %s@%d ]",chain.id(),
-                recp->_kLabel,recp->_kFile,recp->_kLine);
-  } else if ( _waiting ) {
+  if ( _waiting ) {
     Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%u <=== @#%u in-chain-push [%05d] %s %s@%d",chain.id(), 
                 _chainInd, _chainInd-1, event, recp->_kLabel,recp->_kFile,recp->_kLine);
   } else if ( ! rec.is_no_log() ) {
@@ -685,6 +676,41 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
     Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%u <=== frame-push [%05d] %s %s@%d",chain.id(), _chainInd,
                event, recp->_kLabel,recp->_kFile,recp->_kLine);
   }
+
+  // must reset these ... to avoid middle-points above
+  const_cast<time_point &>(_start) = std::chrono::steady_clock::now();
+  const_cast<uint64_t &>(_allocStamp) = st_allocCounterRef;
+  const_cast<uint64_t &>(_deallocStamp) = st_deallocCounterRef;
+
+  auto &self = active_event();
+  ink_release_assert( &self == &chain.back() );
+  // NOTE: context resets memory counters when done w/ctor
+}
+
+void EventCallContext::push_initial_call(EventHdlr_t hdlr)
+{
+  auto &chain = *_chainPtr;
+
+  // ctor first-records (no backref)
+  auto underp = &hdlr;
+
+  // not a real call?  then just mark it from its origins
+  if ( _waiting && &hdlr == &kHdlrAssignEmpty ) {
+    underp = _waiting->active_event()._hdlrAssign;
+  }
+
+  auto under = *underp;
+
+  _chainInd = 0;
+  chain.push_back( EventCalled(0, under, EVENT_NONE) );
+
+  if ( _chainInd && _waiting ) {
+    Debug(TRACE_DEBUG_FLAG,"(C#%06x) <--- (C#%06x) ctor-init [ under %s %s@%d ]",chain.id(), _waiting->id(),
+                under._kLabel,under._kFile,under._kLine);
+  } else {
+    Debug(TRACE_DEBUG_FLAG,"(C#%06x) ctor-init [ under %s %s@%d ]",chain.id(),
+                under._kLabel,under._kFile,under._kLine);
+  } 
 
   // must reset these ... to avoid middle-points above
   const_cast<time_point &>(_start) = std::chrono::steady_clock::now();
@@ -718,15 +744,15 @@ EventCalled::EventCalled(unsigned i, const EventCallContext &octxt, EventHdlr_t 
 }
 
 // for caller-only
-EventCalled::EventCalled(unsigned i, const EventCalled &prev, const EventCallContext &nctxt)
-   : _hdlrAssign( prev._hdlrAssign ), // don't leave null!
+EventCalled::EventCalled(unsigned i, EventHdlr_t prevHdlr, const EventCallContext &nctxt)
+   : _hdlrAssign( &prevHdlr ), // don't leave null!
      _calledChain( nctxt._chainPtr ),
      _i(i),
      // event is zero
      _calledChainLen( nctxt._chainPtr->size() ) // should be correct (but update it)
 { 
   ink_release_assert(_hdlrAssign);
-  Debug(TRACE_DEBUG_FLAG,"@#%d calling into ==>(C#%06x) #%d-1: under prev %s %s@%d", _i, nctxt.id(), _calledChainLen, prev._hdlrAssign->_kLabel, prev._hdlrAssign->_kFile, prev._hdlrAssign->_kLine);
+  Debug(TRACE_DEBUG_FLAG,"@#%d calling into ==>(C#%06x) #%d-1: under prev %s %s@%d", _i, nctxt.id(), _calledChainLen, prevHdlr._kLabel, prevHdlr._kFile, prevHdlr._kLine);
 }
 
 bool EventChain::trim_back()
@@ -854,15 +880,17 @@ EventCallContext::EventCallContext(const EventHdlr_t &hdlr, const EventCalled::C
 {
   st_currentCtxt = this; // push down one immediately..
 
+  ink_release_assert(chainPtr);
+
   // is there a post-return call we are returning from?
   // close earlier context before taking over
-  if ( chainPtr && _waiting ) {
+  if ( _waiting ) {
     _waiting->completed("wctxt.ctor"); // mark and release chain (if owned)
-  } else if ( chainPtr ) {
+  } else {
     completed("ctxt.ctor"); // mark and release chain (if owned)
   }
 
-  if ( chainPtr && ! ink_mutex_try_acquire(&_chainPtr->_owner) )
+  if ( ! ink_mutex_try_acquire(&_chainPtr->_owner) )
   {
     auto &ochain = *_chainPtr;
     auto nchainPtr = std::make_shared<EventChain>(ochain.id()); // NOTE: chain adds into alloc tally
@@ -872,38 +900,41 @@ EventCallContext::EventCallContext(const EventHdlr_t &hdlr, const EventCalled::C
     _chainPtr = nchainPtr;
     // ctor acquires lock until completed() is called
   } 
-  else if ( ! chainPtr && _waiting ) 
-  {
-    // else lock was successfully acquired until completed()
-    Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%u <=== (C#%06x) chain-ctor [%05d] %s %s@%d", ~0U, 0, _waiting->id(),
-               event, hdlr._kLabel, hdlr._kFile, hdlr._kLine);
-    // ctor acquires lock until completed() is called
-    _chainPtr = std::make_shared<EventChain>(); // NOTE: chain adds into alloc tally
-  } 
-  else if ( ! chainPtr ) 
-  {
-    Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%u <=== top-ctor [%05d] %s %s@%d", ~0U, 0,
-               event, hdlr._kLabel, hdlr._kFile, hdlr._kLine);
-    // ctor acquires lock until completed() is called
-    _chainPtr = std::make_shared<EventChain>(); // NOTE: chain adds into alloc tally
-  }
 
   // chain is owned by this thread...
 
   // create entry using current rec
   push_incomplete_call(hdlr, event);
 
-  if ( ! chainPtr ) {
-    st_currentCtxt = _waiting; // reset because no real call has started yet
-    const_cast<EventCallContext*&>(_waiting) = nullptr; // do *not* use ctor-origin after now
-  }
-
   ink_release_assert(_chainPtr->size()); // now non-zero
 
   // disclude any init bytes above 
-//  active_event()._allocDelta -= st_allocCounterRef - _allocStamp;
-////  active_event()._deallocDelta -= st_deallocCounterRef - _deallocStamp;
 }
+
+
+
+EventCallContext::EventCallContext(const EventHdlr_t &hdlr)
+   // : init of _waiting(..)
+{
+  // ctor acquires lock until completed() is called
+  _chainPtr = std::make_shared<EventChain>(); // NOTE: chain adds into alloc tally
+
+  if ( _waiting ) {
+    Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%u <=== (C#%06x) chain-ctor %s %s@%d", id(), 0, _waiting->id(),
+               hdlr._kLabel, hdlr._kFile, hdlr._kLine);
+  } else {
+    Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%u <=== top-ctor %s %s@%d", id(), 0,
+               hdlr._kLabel, hdlr._kFile, hdlr._kLine);
+  }
+
+  // create entry using current rec
+  push_initial_call(hdlr);
+
+  const_cast<EventCallContext*&>(_waiting) = nullptr; // do *not* use ctor-origin after now
+
+  ink_release_assert(! _chainPtr->empty()); // now non-zero
+}
+
 
 EventCallContext::~EventCallContext()
 {

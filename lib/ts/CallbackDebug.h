@@ -152,7 +152,7 @@ struct EventCalled
   EventCalled(unsigned i, const EventCallContext &ctxt, EventHdlr_t assign, int event);
 
   // create record of calling-out (no event)
-  EventCalled(unsigned i, const EventCalled &prev, const EventCallContext &ctxt);
+  EventCalled(unsigned i, EventHdlr_t prevHdlr, const EventCallContext &ctxt);
 
   bool is_no_log_mem() const;
   bool is_no_log() const;
@@ -233,7 +233,8 @@ struct EventCallContext
   EventCallContext() = delete;
   EventCallContext(const EventCallContext &ctxt) = delete;
 
-  explicit EventCallContext(EventHdlr_t hdlr, const EventCalled::ChainPtr_t &chain=EventCalled::ChainPtr_t(), int event=0);
+  explicit EventCallContext(EventHdlr_t hdlr);
+  EventCallContext(EventHdlr_t hdlr, const EventCalled::ChainPtr_t &chain, int event);
   ~EventCallContext();
 
   unsigned id() const { return _chainPtr->id(); }
@@ -251,6 +252,7 @@ struct EventCallContext
 
  private:
   void push_incomplete_call(EventHdlr_t rec, int event);
+  void push_initial_call(EventHdlr_t rec);
 
  public:
   static thread_local EventCallContext        *st_currentCtxt;
@@ -452,6 +454,7 @@ const char *cb_alloc_plugin_label(const char *path, const char *symbol);
 
 #define CREATE_EVENT_FRAME_RECORD(str, chain)  \
          LABEL_FRAME_RECORD(str, const kHdlrAssignRec);    \
+         ink_release_assert(chain);                        \
          EventCallContext ctxt(kHdlrAssignRec, (chain), 0)
 
 #define WRAP_EVENT_FRAME_RECORD(str, chain, cmd)  \
