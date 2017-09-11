@@ -194,6 +194,7 @@ template <>
 auto
 mallctl_get<std::string>(const objpath_t &oid) -> std::string
 {
+//  char buff[256]; // adequate for paths and most things
   const char *cstr = nullptr;
   size_t len = sizeof(cstr);
   auto r = mallctlbymib(oid.data(), oid.size(), &cstr, &len, nullptr, 0);
@@ -230,6 +231,7 @@ mallctl_get<bool*>(const objpath_t &oid) -> bool*
   ink_assert(! r);
   return std::move(reinterpret_cast<bool*>(v));
 }
+
 
 template <>
 auto
@@ -290,6 +292,7 @@ const GetObjFxn<unsigned> thread_arena{"thread.arena"};     // unsigned rw
 const SetObjFxn<unsigned> set_thread_arena{"thread.arena"}; // unsigned rw
 const DoObjFxn do_thread_tcache_flush{"thread.tcache.flush"};
 
+// const GetObjFxn<bool> config_thp{"config.thp"};
 const GetObjFxn<std::string> config_malloc_conf{"config.malloc_conf"};
 
 const GetObjFxn<std::string> thread_prof_name{"thread.prof.name"};

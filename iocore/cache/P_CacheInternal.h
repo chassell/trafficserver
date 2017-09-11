@@ -442,7 +442,7 @@ struct CacheVC : public CacheVConnection {
   Dir *last_collision;
   Event *trigger;
   CacheKey *read_key;
-  ContinuationHandler save_handler;
+  EventHdlrP_t save_handler;
   uint32_t pin_in_cache;
   ink_hrtime start_time;
   int base_stat;
@@ -502,17 +502,17 @@ struct CacheVC : public CacheVConnection {
   // end region C
 };
 
-#define PUSH_HANDLER(_x)                                          \
-  do {                                                            \
-    ink_assert(handler != (ContinuationHandler)(&CacheVC::dead)); \
+#define PUSH_HANDLER(_x)                                            \
+  do {                                                              \
+    ink_assert(handler != &CacheVC::dead); \
     save_handler = handler;                                       \
-    handler      = (ContinuationHandler)(_x);                     \
+    SET_HANDLER(_x);                                                \
   } while (0)
 
-#define POP_HANDLER                                               \
-  do {                                                            \
-    handler = save_handler;                                       \
-    ink_assert(handler != (ContinuationHandler)(&CacheVC::dead)); \
+#define POP_HANDLER                                                 \
+  do {                                                              \
+    SET_SAVED_HANDLER(*save_handler);                                      \
+    ink_assert(handler != &CacheVC::dead); \
   } while (0)
 
 struct CacheRemoveCont : public Continuation {
@@ -685,9 +685,15 @@ CacheVC::die()
     } // else catch it at the end of openWriteWriteDone
     return EVENT_CONT;
   } else {
-    if (is_io_in_progress())
-      save_handler = (ContinuationHandler)&CacheVC::openReadClose;
-    else {
+    if (is_io_in_progress()) {
+      // preserve current
+      EventHdlr_t hold = handler; 
+      // add the new-pushed handler
+      SET_HANDLER(&CacheVC::openReadClose);
+      save_handler = handler;
+      // restore current handler
+      SET_SAVED_HANDLER(hold);
+    } else {
       SET_HANDLER(&CacheVC::openReadClose);
       if (!recursive)
         openReadClose(EVENT_NONE, NULL);

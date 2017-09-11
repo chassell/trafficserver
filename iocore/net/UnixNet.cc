@@ -33,6 +33,8 @@ ink_hrtime last_transient_accept_error;
 
 extern "C" void fd_reify(struct ev_loop *);
 
+LOG_SKIPPABLE_EVENTHDLR((NetContHandler)&NetHandler::mainNetEvent);
+
 #ifndef INACTIVITY_TIMEOUT
 int update_cop_config(const char *name, RecDataT data_type, RecData data, void *cookie);
 
@@ -42,14 +44,7 @@ int update_cop_config(const char *name, RecDataT data_type, RecData data, void *
 class InactivityCop : public Continuation
 {
 public:
-  InactivityCop(ProxyMutex *m) : Continuation(m), default_inactivity_timeout(0)
-  {
-    SET_HANDLER(&InactivityCop::check_inactivity);
-    REC_ReadConfigInteger(default_inactivity_timeout, "proxy.config.net.default_inactivity_timeout");
-    Debug("inactivity_cop", "default inactivity timeout is set to: %d", default_inactivity_timeout);
-
-    RecRegisterConfigUpdateCb("proxy.config.net.default_inactivity_timeout", update_cop_config, (void *)this);
-  }
+  InactivityCop(ProxyMutex *m);
 
   int
   check_inactivity(int event, Event *e)
@@ -119,6 +114,17 @@ public:
 private:
   int default_inactivity_timeout; // only used when one is not set for some bad reason
 };
+
+LOG_SKIPPABLE_EVENTHDLR(&InactivityCop::check_inactivity);
+
+InactivityCop::InactivityCop(ProxyMutex *m) : Continuation(m), default_inactivity_timeout(0)
+{
+  SET_HANDLER(&InactivityCop::check_inactivity);
+  REC_ReadConfigInteger(default_inactivity_timeout, "proxy.config.net.default_inactivity_timeout");
+  Debug("inactivity_cop", "default inactivity timeout is set to: %d", default_inactivity_timeout);
+
+  RecRegisterConfigUpdateCb("proxy.config.net.default_inactivity_timeout", update_cop_config, (void *)this);
+}
 
 int
 update_cop_config(const char *name, RecDataT data_type ATS_UNUSED, RecData data, void *cookie)

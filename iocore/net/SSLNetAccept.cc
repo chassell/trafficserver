@@ -48,9 +48,9 @@ SSLNetAccept::init_accept_per_thread(bool isTransparent)
   if (do_listen(NON_BLOCKING, isTransparent))
     return;
   if (accept_fn == net_accept)
-    SET_HANDLER((SSLNetAcceptHandler)&SSLNetAccept::acceptFastEvent);
+    SET_HANDLER(&SSLNetAccept::acceptFastEvent);
   else
-    SET_HANDLER((SSLNetAcceptHandler)&SSLNetAccept::acceptEvent);
+    SET_HANDLER(&SSLNetAccept::acceptEvent);
   period = -HRTIME_MSECONDS(net_accept_period);
   n      = eventProcessor.n_threads_for_type[SSLNetProcessor::ET_SSL];
   for (i = 0; i < n; i++) {

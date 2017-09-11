@@ -72,6 +72,7 @@
 
 #include <functional>
 
+#include "ts/CallbackDebug.h"
 #include "ts/ink_platform.h"
 #include "ts/ink_thread.h"
 
@@ -86,7 +87,7 @@ extern ProxyMutex *global_mutex;
 
 static const int MAX_THREAD_NAME_LENGTH = 16;
 static const int DEFAULT_STACKSIZE      = 1048576; // 1MB
-
+static const int MIN_STACKSIZE          = 100 * 1024;  // 100K
 /**
   Base class for the threads in the Event System. Thread is the base
   class for all the thread classes in the Event System. Objects of the

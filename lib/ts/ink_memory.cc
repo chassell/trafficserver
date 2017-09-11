@@ -321,11 +321,13 @@ ats_alloc_stack(size_t stacksize)
 {
   if (!ats_hugepage_enabled()) {
     // get memory that grows down and is not populated until needed
-    return mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE, -1, 0);
+//    return mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE, -1, 0);
+    return mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
   }
 
   //    [but prefer hugepage alignment and request if possible]
-  auto p = mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, (MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE), -1, 0);
+//  auto p = mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, (MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE), -1, 0);
+  auto p = mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, (MAP_ANONYMOUS | MAP_PRIVATE), -1, 0);
   if (stacksize == aligned_spacing(stacksize, ats_hugepage_size())) {
     madvise(p, stacksize, MADV_HUGEPAGE); // opt in
   }
@@ -342,6 +344,7 @@ get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
   auto nsid = get_nodes_id_by_affinity(objtype, affid);
 
   if (!nsid) {
+//    Debug("memory", "returned nsid 0");
     return 0;
   }
 
@@ -432,7 +435,7 @@ static void reorder_interleaved(CpuSetVector_t const &supers, CpuSetVector_t &su
 // produce a list of cpusets associated with the object passed
 //
 auto
-get_obj_cpusets(hwloc_obj_type_t objtype, CpuSetVector_t const &supers = CpuSetVector_t{}) -> CpuSetVector_t
+get_obj_cpusets(hwloc_obj_type_t objtype, CpuSetVector_t const &supers = CpuSetVector_t() ) -> CpuSetVector_t
 {
   auto n = hwloc_get_nbobjs_by_type(curr(), objtype);
 

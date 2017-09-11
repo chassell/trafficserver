@@ -54,6 +54,7 @@ libtsutil_la_SOURCES = \
   ConsistentHash.h \
   ContFlags.cc \
   ContFlags.h \
+  CallbackDebug.cc \
   Diags.cc \
   Diags.h \
   DynArray.h \

@@ -71,6 +71,8 @@ is_addr_query(int qtype)
 }
 }
 
+LOG_SKIPPABLE_EVENTHDLR((DNSEntryHandler)&DNSEntry::mainEvent);
+
 DNSProcessor dnsProcessor;
 ClassAllocator<DNSEntry> dnsEntryAllocator("dnsEntryAllocator");
 // Users are expected to free these entries in short order!
@@ -469,6 +471,9 @@ DNSHandler::validate_ip()
     }
   }
 }
+
+LOG_SKIPPABLE_EVENTHDLR(&DNSHandler::mainEvent);
+
 /**
   Initial state of the DNSHandler. Can reinitialize the running DNS
   handler to a new nameserver.

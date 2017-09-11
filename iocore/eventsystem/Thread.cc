@@ -28,8 +28,12 @@
 
 
 **************************************************************************/
-#include "P_EventSystem.h"
+#include "P_EventSystem.h" // include ahead of I_Thread
+#include "I_Thread.h"
+
 #include "ts/ink_string.h"
+#include "ts/ink_memory.h"
+#include "ts/jemallctl.h"
 
 ///////////////////////////////////////////////
 // Common Interface impl                     //
@@ -77,6 +81,10 @@ static void *
 spawn_thread_internal(void *a)
 {
   thread_data_internal *p = (thread_data_internal *)a;
+
+//  auto arena = jemallctl::thread_arena(); // default init first
+  jemallctl::set_thread_arena(0); // default init first
+//  jemallctl::disable_thread_prof_active();
 
   p->me->set_specific();
   ink_set_thread_name(p->name);

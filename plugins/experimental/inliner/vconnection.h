@@ -60,6 +60,8 @@ namespace io
         delete s;
       }
 
+    public: 
+      // event handler is public
       static int
       handleRead(TSCont c, TSEvent e, void *)
       {
@@ -91,6 +93,7 @@ namespace io
       template <class U> friend void read(TSVConn, U &&, const int64_t);
     };
 
+    // event handler is public
     template <class C>
     void
     read(TSVConn v, C &&c, const int64_t s)

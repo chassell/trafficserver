@@ -57,7 +57,6 @@ get_vc_event_name(int event)
 TS_INLINE
 VConnection::VConnection(ProxyMutex *aMutex) : Continuation(aMutex), lerrno(0)
 {
-  SET_HANDLER(0);
 }
 
 TS_INLINE

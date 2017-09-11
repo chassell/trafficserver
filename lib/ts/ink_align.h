@@ -63,6 +63,21 @@ aligned_spacing(size_t len, size_t block = INK_MIN_ALIGN)
 // Move a pointer forward until it meets the alignment width.
 //
 static inline void *
+align_pointer_backward(const void *pointer_, size_t alignment)
+{
+  char *pointer = (char *)pointer_;
+  //
+  // Round down alignment..
+  //
+  pointer = (char *)-INK_ALIGN(-(ptrdiff_t)pointer, alignment);
+
+  return (void *)pointer;
+}
+
+//
+// Move a pointer forward until it meets the alignment width.
+//
+static inline void *
 align_pointer_forward(const void *pointer_, size_t alignment)
 {
   char *pointer = (char *)pointer_;

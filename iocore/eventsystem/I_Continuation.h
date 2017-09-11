@@ -36,6 +36,8 @@
 #ifndef _I_Continuation_h_
 #define _I_Continuation_h_
 
+#include "ts/CallbackDebug.h"
+
 #include "ts/ink_platform.h"
 #include "ts/List.h"
 #include "I_Lock.h"
@@ -58,7 +60,7 @@ class EThread;
 #define CONTINUATION_DONE 0
 #define CONTINUATION_CONT 1
 
-typedef int (Continuation::*ContinuationHandler)(int event, void *data);
+using ContinuationHandler = EventHdlrState;
 
 class force_VFPT_to_top
 {
@@ -150,7 +152,7 @@ public:
   int
   handleEvent(int event = CONTINUATION_EVENT_NONE, void *data = 0)
   {
-    return (this->*handler)(event, data);
+    return handler(this,event,data);
   }
 
   /**
@@ -170,12 +172,9 @@ public:
   @param _h Pointer to the function used to callback with events.
 
 */
-#ifdef DEBUG
-#define SET_HANDLER(_h) (handler = ((ContinuationHandler)_h), handler_name = #_h)
-#else
-#define SET_HANDLER(_h) (handler = ((ContinuationHandler)_h))
-#endif
+#define SET_HANDLER(_h) SET_CONTINUATION_HANDLER(this,_h)
 
+#define SET_SAVED_HANDLER(_var)  (this->handler.operator=(_var))
 /**
   Sets a Continuation's handler.
 
@@ -185,11 +184,11 @@ public:
   @param _h Pointer to the function used to callback with events.
 
 */
-#ifdef DEBUG
-#define SET_CONTINUATION_HANDLER(_c, _h) (_c->handler = ((ContinuationHandler)_h), _c->handler_name = #_h)
-#else
-#define SET_CONTINUATION_HANDLER(_c, _h) (_c->handler = ((ContinuationHandler)_h))
-#endif
+#define SET_CONTINUATION_HANDLER(obj,_h)                     \
+   ({                                                        \
+     EVENT_HANDLER_RECORD(_h, kHdlrAssignRec);              \
+     static_cast<ContinuationHandler&>(obj->handler) = kHdlrAssignRec;      \
+   })
 
 inline Continuation::Continuation(ProxyMutex *amutex)
   : handler(NULL),

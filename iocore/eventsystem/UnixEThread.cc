@@ -182,19 +182,27 @@ EThread::execute()
 {
   switch (tt) {
   case REGULAR: {
+    NEW_CALL_FRAME_RECORD(&EThread::REGULAR_TOP,kTopCall);
+
     Event *e;
     Que(Event, link) NegativeQueue;
     ink_hrtime next_time = 0;
 
     // give priority to immediate events
     for (;;) {
+      RESET_CALL_FRAME_RECORD(&EThread::REGULAR,kTopCall);
       if (unlikely(shutdown_event_system == true)) {
         return;
       }
+
       // execute all the available external events that have
       // already been dequeued
       cur_time = Thread::get_hrtime_updated();
-      while ((e = EventQueueExternal.dequeue_local())) {
+      while ((e = EventQueueExternal.dequeue_local())) 
+      {
+        EventCalled::ChainPtr_t chain = e->continuation->handler;
+        CREATE_EVENT_FRAME_RECORD("<extq>", chain);
+
         if (e->cancelled)
           free_event(e);
         else if (!e->timeout_at) { // IMMEDIATE
@@ -220,7 +228,11 @@ EThread::execute()
         done_one = false;
         // execute all the eligible internal events
         EventQueue.check_ready(cur_time, this);
-        while ((e = EventQueue.dequeue_ready(cur_time))) {
+        while ((e = EventQueue.dequeue_ready(cur_time))) 
+        {
+          EventCalled::ChainPtr_t chain = e->continuation->handler;
+          CREATE_EVENT_FRAME_RECORD("<intq-rdy>]", chain);
+
           ink_assert(e);
           ink_assert(e->timeout_at > 0);
           if (e->cancelled)
@@ -240,7 +252,11 @@ EThread::execute()
         // do a cond_timedwait.
         if (!INK_ATOMICLIST_EMPTY(EventQueueExternal.al))
           EventQueueExternal.dequeue_timed(cur_time, next_time, false);
-        while ((e = EventQueueExternal.dequeue_local())) {
+        while ((e = EventQueueExternal.dequeue_local())) 
+        {
+          EventCalled::ChainPtr_t chain = e->continuation->handler;
+          CREATE_EVENT_FRAME_RECORD("<extq-timed>", chain);
+
           if (!e->timeout_at)
             process_event(e, e->callback_event);
           else {
@@ -271,8 +287,11 @@ EThread::execute()
           }
         }
         // execute poll events
-        while ((e = NegativeQueue.dequeue()))
+        while ((e = NegativeQueue.dequeue())) {
+          EventCalled::ChainPtr_t chain = e->continuation->handler;
+          CREATE_EVENT_FRAME_RECORD("<neg>", chain);
           process_event(e, EVENT_POLL);
+        }
         if (!INK_ATOMICLIST_EMPTY(EventQueueExternal.al))
           EventQueueExternal.dequeue_timed(cur_time, next_time, false);
       } else { // Means there are no negative events
@@ -294,7 +313,11 @@ EThread::execute()
 
   case DEDICATED: {
     // coverity[lock]
+    NEW_CALL_FRAME_RECORD(&EThread::DEDICATED,kTopCall);
     MUTEX_TAKE_LOCK_FOR(oneevent->mutex, this, oneevent->continuation);
+
+    EventCalled::ChainPtr_t chain = oneevent->continuation->handler;
+    CREATE_EVENT_FRAME_RECORD("execute.DEDICATED", chain);
     oneevent->continuation->handleEvent(EVENT_IMMEDIATE, oneevent);
     MUTEX_UNTAKE_LOCK(oneevent->mutex, this);
     free_event(oneevent);
