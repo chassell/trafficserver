@@ -41,6 +41,7 @@
 #include "ts/CCallbackDebug.h"
 #endif
 #include "ts/ink_mutex.h"
+#include "ts/ink_error.h"
 
 #include <atomic>
 #include <vector>
@@ -246,6 +247,7 @@ struct EventCallContext
   void completed(const char *msg);
  public:
   static void set_ctor_initial_callback(EventHdlr_t hdlr);
+  static void clear_ctor_initial_callback();
 
  private:
   void push_incomplete_call(EventHdlr_t rec, int event);
@@ -528,7 +530,6 @@ inline EventHdlrState::operator()(Continuation *self,int event, void *data)
   return r;
 }
 
-
 #define LOG_SKIPPABLE_EVENTHDLR(_h) \
   template <>                                                               \
   EventHdlrCompare_t *EventHdlrAssignRec::const_cb_callgen<decltype(_h),(_h)>::cmphdlr() \
@@ -547,24 +548,31 @@ inline EventHdlrState::operator()(Continuation *self,int event, void *data)
 #define TSThreadCreate(func,data)                              \
             ({                                                 \
                SET_NEXT_HANDLER_RECORD(func);                  \
-               TSThreadCreate(func,data);                      \
+               auto r = TSThreadCreate(func,data);             \
+               EventCallContext::clear_ctor_initial_callback();  \
+               r;                                              \
              })
 
 #define TSContCreate(func,mutexp)                              \
             ({                                                 \
                SET_NEXT_HANDLER_RECORD(func);                  \
-               TSContCreate(reinterpret_cast<TSEventFunc>(func),mutexp);     \
-               ink_release_assert( ! EventCallContext::st_dfltAssignPoint ); \
+               auto r = TSContCreate(reinterpret_cast<TSEventFunc>(func),mutexp);  \
+               EventCallContext::clear_ctor_initial_callback();  \
+               r;                                              \
              })
 #define TSTransformCreate(func,txnp)                           \
             ({                                                 \
                SET_NEXT_HANDLER_RECORD(func);                  \
-               TSTransformCreate(reinterpret_cast<TSEventFunc>(func),txnp);                 \
+               auto r = TSTransformCreate(reinterpret_cast<TSEventFunc>(func),txnp); \
+               EventCallContext::clear_ctor_initial_callback(); \
+               r;                                               \
              })
 #define TSVConnCreate(func,mutexp)                             \
             ({                                                 \
                SET_NEXT_HANDLER_RECORD(func);                  \
-               TSVConnCreate(reinterpret_cast<TSEventFunc>(func),mutexp);                     \
+               auto r = TSVConnCreate(reinterpret_cast<TSEventFunc>(func),mutexp); \
+               EventCallContext::clear_ctor_initial_callback();  \
+               r;                                              \
              })
 
 // standard TSAPI event handler signature

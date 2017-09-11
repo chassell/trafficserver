@@ -201,7 +201,7 @@ EThread::execute()
       while ((e = EventQueueExternal.dequeue_local())) 
       {
         EventCalled::ChainPtr_t chain = e->continuation->handler;
-        CREATE_EVENT_FRAME_RECORD("[ext_dequeue_local]", chain);
+        CREATE_EVENT_FRAME_RECORD("<extq>", chain);
 
         if (e->cancelled)
           free_event(e);
@@ -231,7 +231,7 @@ EThread::execute()
         while ((e = EventQueue.dequeue_ready(cur_time))) 
         {
           EventCalled::ChainPtr_t chain = e->continuation->handler;
-          CREATE_EVENT_FRAME_RECORD("[dequeue_ready]", chain);
+          CREATE_EVENT_FRAME_RECORD("<intq-rdy>]", chain);
 
           ink_assert(e);
           ink_assert(e->timeout_at > 0);
@@ -255,7 +255,7 @@ EThread::execute()
         while ((e = EventQueueExternal.dequeue_local())) 
         {
           EventCalled::ChainPtr_t chain = e->continuation->handler;
-          CREATE_EVENT_FRAME_RECORD("[ext_dequeue_timed]", chain);
+          CREATE_EVENT_FRAME_RECORD("<extq-timed>", chain);
 
           if (!e->timeout_at)
             process_event(e, e->callback_event);
@@ -289,7 +289,7 @@ EThread::execute()
         // execute poll events
         while ((e = NegativeQueue.dequeue())) {
           EventCalled::ChainPtr_t chain = e->continuation->handler;
-          CREATE_EVENT_FRAME_RECORD("[neg_dequeue]", chain);
+          CREATE_EVENT_FRAME_RECORD("<neg>", chain);
           process_event(e, EVENT_POLL);
         }
         if (!INK_ATOMICLIST_EMPTY(EventQueueExternal.al))

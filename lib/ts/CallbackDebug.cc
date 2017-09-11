@@ -103,8 +103,7 @@ std::atomic_uint EventChain::s_ident{1};
 
 CALL_FRAME_RECORD(null::null, kHdlrAssignEmpty);
 CALL_FRAME_RECORD(nodflt::nodflt, kHdlrAssignNoDflt);
-
-EventHdlrP_t const known_hdlr_value = &kHdlrAssignNoDflt;
+CALL_FRAME_RECORD(init::init, kHdlrAssignInit);
 
 namespace {
 
@@ -185,7 +184,6 @@ void callinout_str(std::string &callinout, const EventCalled &call)
     }
 }
 
-
 void event_str(std::string &eventbuff, unsigned event)
 {
     switch ( event ) 
@@ -255,6 +253,8 @@ void event_str(std::string &eventbuff, unsigned event)
       return;
     }
 
+    ink_release_assert( event >= i->first );
+
     eventbuff = i->second;
     if ( event != i->first ) {
       auto blank = eventbuff.size();
@@ -264,6 +264,14 @@ void event_str(std::string &eventbuff, unsigned event)
 }
 
 } // anon namespace 
+
+// specialize operator..
+namespace std
+{
+template <>
+inline bool operator< <unsigned, const char*> (const std::pair<unsigned,const char*> &a, const std::pair<unsigned,const char*> &b)
+  { return a.first < b.first; }
+}
 
 ///////////////////////////////////////////////
 // common interface impl                     //
@@ -653,7 +661,7 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
   auto recp = &rec;
 
   // not a real call?  then just mark it from its origins
-  if ( _waiting && &rec == &kHdlrAssignNoDflt ) {
+  if ( _waiting && &rec == &kHdlrAssignEmpty ) {
     recp = _waiting->active_event()._hdlrAssign;
   } 
 
@@ -916,25 +924,22 @@ thread_local EventHdlrP_t     EventCallContext::st_dfltAssignPoint = nullptr;
 thread_local uint64_t         &EventCallContext::st_allocCounterRef = *jemallctl::thread_allocatedp();
 thread_local uint64_t         &EventCallContext::st_deallocCounterRef = *jemallctl::thread_deallocatedp();
 
+void EventCallContext::clear_ctor_initial_callback() {
+  st_dfltAssignPoint = nullptr;
+  Debug(TRACE_DEBUG_FLAG,"pre-setting default");
+}
+
 void EventCallContext::set_ctor_initial_callback(EventHdlr_t rec) {
   st_dfltAssignPoint = &rec;
+  Debug(TRACE_DEBUG_FLAG,"pre-setting %s %s@%d", rec._kLabel, rec._kFile, rec._kLine );
 }
 
 namespace {
 EventHdlr_t current_default_assign_point()
 {
-//  if ( ! EventCallContext::st_currentCtxt 
-//       && ! EventCallContext::st_dfltAssignPoint ) {
-//    return kHdlrAssignEmpty;
-//  }
-
   auto rec = EventCallContext::st_dfltAssignPoint;
-  EventCallContext::st_dfltAssignPoint = nullptr; // use once
-
-  if ( rec == &kHdlrAssignNoDflt ) {
-    Debug(TRACE_DEBUG_FLAG," returning default assign point");
-    EventCallContext::st_dfltAssignPoint = rec; // detect a failed change
-    rec = nullptr;
+  if ( rec && rec != &kHdlrAssignNoDflt && rec != &kHdlrAssignEmpty ) {
+    Debug(TRACE_DEBUG_FLAG,"pre-set for use %s %s@%d", rec->_kLabel, rec->_kFile, rec->_kLine );
   }
 
   return ( rec ? *rec : kHdlrAssignNoDflt );
@@ -967,10 +972,8 @@ EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
 {
   _scopeContext.completed("cxt.ctor"); // mark as done and release chain
 
-  auto chk = &current_default_assign_point();
-
-  ink_release_assert( chk == &kHdlrAssignNoDflt || chk == &kHdlrAssignEmpty ); // clear if thread-global was set
-  ink_release_assert( _assignPoint != &kHdlrAssignNoDflt ); // clear if thread-global was set
+  current_default_assign_point();
+  EventCallContext::clear_ctor_initial_callback(); // this must be stack based and not in an object
 }
 
 EventHdlrState::~EventHdlrState()
