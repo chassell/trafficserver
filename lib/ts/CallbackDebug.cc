@@ -103,7 +103,6 @@ std::atomic_uint EventChain::s_ident{1};
 
 CALL_FRAME_RECORD(null::null, kHdlrAssignEmpty);
 CALL_FRAME_RECORD(nodflt::nodflt, kHdlrAssignNoDflt);
-CALL_FRAME_RECORD(init::init, kHdlrAssignInit);
 
 namespace {
 
@@ -699,7 +698,7 @@ void EventCallContext::push_initial_call(EventHdlr_t hdlr)
     underp = _waiting->active_event()._hdlrAssign;
   }
 
-  auto under = *underp;
+  auto &under = *underp;
 
   _chainInd = 0;
   chain.push_back( EventCalled(0, under, EVENT_NONE) );
@@ -979,7 +978,7 @@ EventHdlr_t current_default_assign_point()
 
 EventHdlrState::EventHdlrState(void *p, uint64_t allocStamp, uint64_t deallocStamp)
    : _assignPoint(&kHdlrAssignEmpty),      // must be set before scopeContext ctor
-     _scopeContext(*this)
+     _scopeContext(kHdlrAssignEmpty)
 {
   // get the earliest point before construction started
   const_cast<uint64_t &>(_scopeContext._allocStamp) = allocStamp;
@@ -999,7 +998,7 @@ EventHdlrState::EventHdlrState(void *p, uint64_t allocStamp, uint64_t deallocSta
 //
 EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
    : _assignPoint(&hdlr),
-     _scopeContext(*this) // add ctor on to stack!
+     _scopeContext(hdlr) // add ctor on to stack!
 {
   _scopeContext.completed("cxt.ctor"); // mark as done and release chain
 

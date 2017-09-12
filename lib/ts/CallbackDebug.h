@@ -134,6 +134,11 @@ struct EventHdlrAssignRec
 
   EventHdlrFxnGen_t     *const _kWrapHdlr_Gen; // ref to custom wrapper function-ptr callable 
   TSEventFuncGen_t      *const _kWrapFunc_Gen; // ref to custom wrapper function-ptr callable 
+
+ private:
+  EventHdlrAssignRec() = delete;
+  EventHdlrAssignRec(const EventHdlrAssignRec &) = delete;
+
 };
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -144,6 +149,8 @@ struct EventCalled
   using ChainIter_t = std::vector<EventCalled>::iterator;
   using ChainPtr_t = std::shared_ptr<EventChain>;
   using ChainWPtr_t = std::weak_ptr<EventChain>;
+
+  EventCalled(EventCalled &&old) = default;
 
   // same chain 
   EventCalled(unsigned i, EventHdlr_t assign, int event);
@@ -174,7 +181,7 @@ struct EventCalled
   bool has_called() const { return _calledChain && _calledChainLen; }
 
   // upon ctor
-  EventHdlrP_t        const _hdlrAssign;   // full callback info 
+  EventHdlrP_t        const _hdlrAssign = nullptr;   // full callback info 
 
   // upon ctor
   ChainWPtr_t         const _callingChain;        // chain held by caller's context (from context)
@@ -190,12 +197,25 @@ struct EventCalled
   int64_t                  _allocDelta = 0;       // actual delta upon return
   int64_t                  _deallocDelta = 0;     // actual delta upon return
   float                    _delay = 0;            // total lapsed time [0.0 only if incomplete]
+
+ private:
+  EventCalled() = delete;
+  EventCalled(const EventCalled &old) = delete;
 };
+
+
 
 struct EventChain : public std::vector<EventCalled>
 {
+   EventChain();
+   EventChain(uint32_t oid);
+   ~EventChain();
+
    unsigned id() const { return _id; }
    unsigned oid() const { return _oid; }
+
+   bool trim_check();
+   bool trim_back(); 
 
    static std::atomic_uint s_ident;
 
@@ -206,14 +226,10 @@ struct EventChain : public std::vector<EventCalled>
    const uint32_t _id = s_ident++;
    const uint32_t _oid = 0;
 
-   EventChain();
-   EventChain(uint32_t oid);
-   ~EventChain();
-
-  bool trim_check();
-  bool trim_back(); 
-
    int printLog(std::ostringstream &out, unsigned ibegin, unsigned iend, const char *msg);
+
+  private:
+   EventChain(const EventChain &) = delete;
 };
 
 
@@ -230,9 +246,6 @@ struct EventCallContext
 
  public:
   // HdlrState can record this event occurring
-  EventCallContext() = delete;
-  EventCallContext(const EventCallContext &ctxt) = delete;
-
   explicit EventCallContext(EventHdlr_t hdlr);
   EventCallContext(EventHdlr_t hdlr, const EventCalled::ChainPtr_t &chain, int event);
   ~EventCallContext();
@@ -269,6 +282,10 @@ struct EventCallContext
   uint64_t                const _allocStamp = ~0ULL; // reset when ctor is done
   uint64_t                const _deallocStamp = ~0ULL; // reset when ctor is done
   time_point              const _start;
+
+ private:
+  EventCallContext() = delete;
+  EventCallContext(const EventCallContext &ctxt) = delete;
 };
 
 
@@ -281,7 +298,6 @@ class EventHdlrState
   friend EventCallContext;
 
  public:
-  EventHdlrState(const EventHdlrState &state) = delete;
   // default initializer to catch earliest allocation stamps
   explicit EventHdlrState(void *p = NULL, 
                           uint64_t allocStamp = EventCallContext::st_allocCounterRef,
@@ -350,6 +366,8 @@ class EventHdlrState
 private:
   EventHdlrP_t     _assignPoint = nullptr;  // latest callback assigned for use
   EventCallContext _scopeContext; // call-record after full alloc
+
+  EventHdlrState(const EventHdlrState &state) = delete;
 };
 
 inline void EventHdlrState::operator=(TSEventFunc f) 
@@ -373,8 +391,7 @@ inline void EventHdlrState::operator=(TSEventFunc f)
 
 #define EVENT_HANDLER_RECORD(_h, name) \
      using decay_t = typename std::decay<decltype(_h)>::type; \
-     static constexpr auto name =                          \
-                    EventHdlrAssignRec{                   \
+     static EventHdlrAssignRec name{                \
                        ((#_h)+0),                          \
                        (__FILE__+0),                       \
                        __LINE__,                           \
@@ -386,7 +403,7 @@ inline void EventHdlrState::operator=(TSEventFunc f)
                     }
 
 #define LABEL_FRAME_RECORD(str, name) \
-     static auto name = EventHdlrAssignRec{                \
+     static EventHdlrAssignRec name{                \
                        (str+0),                            \
                        (__FILE__+0),                       \
                        __LINE__,                           \
