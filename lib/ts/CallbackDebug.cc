@@ -35,6 +35,7 @@
 #include "ts/ink_assert.h"
 #include "ts/Diags.h"
 #include "ts/ink_stack_trace.h"
+#include "ts/apidefs.h"
 
 #include <sstream>
 #include <chrono>
@@ -62,6 +63,7 @@ static_assert( offsetof(EventHdlrAssignRec, _kTSEventFunc) == offsetof(EventCHdl
 #define EVENT_ERROR 3
 #define EVENT_CALL 4
 #define EVENT_POLL 5
+#define EVENT_RESET_FAKE 0xffff
 
 #define VC_EVENT_EVENTS_START 100
 #define NET_EVENT_EVENTS_START 200
@@ -216,7 +218,23 @@ void event_str(std::string &eventbuff, unsigned event)
       { CONFIG_EVENT_EVENTS_START, "CFG" },
       { LOG_EVENT_EVENTS_START, "LOG" },
       { MULTI_CACHE_EVENT_EVENTS_START, "MCACH" },
-      { CACHE_EVENT_EVENTS_START, "CACHE" },
+
+	  {	CACHE_EVENT_EVENTS_START + 0, "CACH.LKUP" }, // CACHE_EVENT_LOOKUP
+	  {	CACHE_EVENT_EVENTS_START + 1, "CACH.NOLKUP" }, // CACHE_EVENT_LOOKUP_FAILED
+	  {	CACHE_EVENT_EVENTS_START + 2, "CACH.RD" }, // CACHE_EVENT_OPEN_READ
+	  {	CACHE_EVENT_EVENTS_START + 3, "CACH.NORD" }, // CACHE_EVENT_OPEN_READ_FAILED
+	  {	CACHE_EVENT_EVENTS_START + 8, "CACH.WR" }, // CACHE_EVENT_OPEN_WRITE
+	  {	CACHE_EVENT_EVENTS_START + 9, "CACH.NOWR" }, // CACHE_EVENT_OPEN_WRITE_FAILED
+	  {	CACHE_EVENT_EVENTS_START + 12, "CACH.RM" }, // CACHE_EVENT_REMOVE
+	  {	CACHE_EVENT_EVENTS_START + 13, "CACH.NORM" }, // CACHE_EVENT_REMOVE_FAILED
+	  {	CACHE_EVENT_EVENTS_START + 20, "CACH.SCN" }, // CACHE_EVENT_SCAN
+	  {	CACHE_EVENT_EVENTS_START + 21, "CACH.NOSCN" }, // CACHE_EVENT_SCAN_FAILED
+	  {	CACHE_EVENT_EVENTS_START + 22, "CACH.SCNOBJ" }, // CACHE_EVENT_SCAN_OBJECT
+	  {	CACHE_EVENT_EVENTS_START + 23, "CACH.BLKSCN" }, // CACHE_EVENT_SCAN_OPERATION_BLOCKED
+	  {	CACHE_EVENT_EVENTS_START + 24, "CACH.NOSCN" }, // CACHE_EVENT_SCAN_OPERATION_FAILED
+	  {	CACHE_EVENT_EVENTS_START + 25, "CACH.SCNEND" }, // CACHE_EVENT_SCAN_DONE
+	  {	CACHE_EVENT_EVENTS_START + 50, "CACH.RSP" }, // CACHE_EVENT_RESPONSE
+
       { CACHE_DIRECTORY_EVENT_EVENTS_START, "CACHDIR" },
       { CACHE_DB_EVENT_EVENTS_START, "CACHDB" },
       { HTTP_NET_CONNECTION_EVENT_EVENTS_START, "NETCXN" },
@@ -239,10 +257,36 @@ void event_str(std::string &eventbuff, unsigned event)
       { BLOCK_CACHE_EVENT_EVENTS_START, "BLKCACH" },
       { UTILS_EVENT_EVENTS_START, "UTIL" },
       { CONGESTION_EVENT_EVENTS_START, "CONGST" },
-      { INK_API_EVENT_EVENTS_START, "API" },
+
+	  { TS_EVENT_HTTP_CONTINUE, "TSTXN.CONT" },
+	  { TS_EVENT_HTTP_ERROR, "TSTXN.ERR" },
+	  { TS_EVENT_HTTP_READ_REQUEST_HDR, "TSTXN.RDREQ" },
+	  { TS_EVENT_HTTP_OS_DNS, "TSTXN.DNS" },
+	  { TS_EVENT_HTTP_SEND_REQUEST_HDR, "TSTXN.WRREQ" },
+	  { TS_EVENT_HTTP_READ_CACHE_HDR, "TSTXN.RDCACH" },
+	  { TS_EVENT_HTTP_READ_RESPONSE_HDR, "TSTXN.RDRSP" },
+	  { TS_EVENT_HTTP_SEND_RESPONSE_HDR, "TSTXN.WRRSP" },
+	  { TS_EVENT_HTTP_REQUEST_TRANSFORM, "TSTXN.XFREQ"},
+	  { TS_EVENT_HTTP_RESPONSE_TRANSFORM, "TSTXN.XFRSP"},
+	  { TS_EVENT_HTTP_SELECT_ALT, "TSTXN.ALT" },
+	  { TS_EVENT_HTTP_TXN_START, "TSTXN.START" },
+	  { TS_EVENT_HTTP_TXN_CLOSE, "TSTXN.CLOSE" },
+	  { TS_EVENT_HTTP_SSN_START, "TSSSN.START" },
+	  { TS_EVENT_HTTP_SSN_CLOSE, "TSSSN.CLOSE" },
+	  { TS_EVENT_HTTP_CACHE_LOOKUP_COMPLETE, "TSCACH.LKUP" },
+	  { TS_EVENT_HTTP_PRE_REMAP, "TSREMAP.PRE" },
+	  { TS_EVENT_HTTP_POST_REMAP, "TSREMAP.POST" },
+	  { TS_EVENT_LIFECYCLE_PORTS_INITIALIZED, "TSLCYCLE.PINIT" },
+	  { TS_EVENT_LIFECYCLE_PORTS_READY, "TSLCYCLE.PRDY" },
+	  { TS_EVENT_LIFECYCLE_CACHE_READY, "TSLCYCLE.CRDY" },
+	  { TS_EVENT_LIFECYCLE_SERVER_SSL_CTX_INITIALIZED, "TSLCYCLE.SSLSVR" },
+	  { TS_EVENT_LIFECYCLE_CLIENT_SSL_CTX_INITIALIZED, "TSLCYCLE.SSLCLT" },
+	  { TS_EVENT_VCONN_PRE_ACCEPT, "TSVCONN.ACC" },
+	  { TS_EVENT_MGMT_UPDATE, "TSMGMT.UPD" },
+
       { SRV_EVENT_EVENTS_START, "DNSSRV" },
       { REMAP_EVENT_EVENTS_START, "REMAP" },
-      { 0xffff, "??" }
+      { EVENT_RESET_FAKE, "_____" }
     };
 
     using key_t = decltype(lookup_events[0]);
@@ -250,12 +294,6 @@ void event_str(std::string &eventbuff, unsigned event)
     // always one past a full-match 
     key_t key = {event+1,""};
     auto i = std::lower_bound(std::begin(lookup_events), std::end(lookup_events), key); 
-
-    if ( i == std::end(lookup_events) ) {
-      eventbuff.resize(10);
-      snprintf(&eventbuff.front(),eventbuff.size(),"??.%05d",event);
-      return;
-    }
 
     --i; // one *before* the closest-but-larger
 
@@ -312,7 +350,7 @@ bool EventCalled::is_no_log_mem() const
     return true; // don't log
   }
 
-  if ( _event > EVENT_INTERVAL ) {
+  if ( _event > EVENT_INTERVAL && _event < EVENT_RESET_FAKE ) {
     return false; // interesting event!
   }
 
@@ -337,7 +375,7 @@ bool EventCalled::is_no_log() const
   }
 
   // if no important event was delivered..
-  return _event == EVENT_NONE || _event == EVENT_INTERVAL;
+  return _event <= EVENT_INTERVAL || _event == EVENT_RESET_FAKE;
 }
 
 
@@ -566,10 +604,6 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
     orecp = _waiting->active_hdlrp();
   } 
 
-  if ( recp == &kHdlrAssignEmpty ) {
-    recp = orecp;
-  }
-
   // logs should show it is not accurate
   _chainInd = -1;
 
@@ -589,11 +623,13 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
     ink_fatal("too long!");
   }
 
+  auto own_try = -1;
+
   // only with *real* handoff-calls    
   // only with non-ctors where memory is tracked
   // only where both are owned in stack
   if ( _waiting && _waiting->_chainPtr != _chainPtr 
-                && ink_mutex_try_acquire(&_waiting->_chainPtr->_owner) )
+                && (own_try=ink_mutex_try_acquire(&_waiting->_chainPtr->_owner)) )
   {
     if ( _waiting->_chainPtr->size() > 5000 ) {
       std::ostringstream oss;
@@ -632,10 +668,10 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
     }
 
     // use waiting-active (previously) as origin
-    ochain.push_back( EventCalled(ochain._cnt++, *orecp, *this) );
+    ochain.push_back( EventCalled(ochain._cnt++, *orecp, *this, event) );
 
     // push calling-record for this chain
-    chain.push_back( EventCalled(chain._cnt++,           *_waiting, rec, event) );
+    chain.push_back( EventCalled(chain._cnt++, *_waiting, rec, event) );
 
     auto &self = chain.back();
     auto &calling = ochain.back();
@@ -673,9 +709,12 @@ void EventCallContext::push_incomplete_call(EventHdlr_t rec, int event)
 
   ink_release_assert( _chainInd == chain.size()-1 ); 
 
-  if ( _waiting ) {
-    Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%u <=== @#%u in-chain-push [%05d] %s %s@%d",chain.id(), 
-                _chainInd, _chainInd-1, event, recp->_kLabel,recp->_kFile,recp->_kLine);
+  if ( _waiting && ! own_try ) {
+    Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%u <=== @#%u thread-jump-push [%05d] %s %s@%d",chain.id(), 
+                active_event()._i, _waiting->active_event()._i, event, recp->_kLabel,recp->_kFile,recp->_kLine);
+  } else if ( _waiting ) {
+    Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%u <=== @#%u same-chain-push [%05d] %s %s@%d",chain.id(), 
+                active_event()._i, _waiting->active_event()._i, event, recp->_kLabel,recp->_kFile,recp->_kLine);
   } else if ( ! rec.is_no_log() ) {
     Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%u <=== event-push [%05d] %s %s@%d",chain.id(), _chainInd,
                event, recp->_kLabel,recp->_kFile,recp->_kLine);
@@ -743,11 +782,11 @@ EventCalled::EventCalled(unsigned i, const EventCallContext &octxt, EventHdlr_t 
 }
 
 // for caller-only
-EventCalled::EventCalled(unsigned i, EventHdlr_t prevHdlr, const EventCallContext &nctxt)
+EventCalled::EventCalled(unsigned i, EventHdlr_t prevHdlr, const EventCallContext &nctxt, int event)
    : _hdlrAssign( &prevHdlr ), // don't leave null!
      _calledChain( nctxt._chainPtr ),
      _i(i),
-     // event is zero
+     _event(event),
      _calledChainLen( nctxt._chainPtr->size() ) // should be correct (but update it)
 { 
   ink_release_assert(_hdlrAssign);
@@ -772,17 +811,17 @@ bool EventChain::trim_back()
     auto &called = back().called();
     auto &cchain = *back()._calledChain;
     const EventHdlrAssignRec &calledRec = *called._hdlrAssign;
-    Debug(TRACE_DEBUG_FLAG,"(C#%06x) trim downcall #%lu [%05d] %s %s@%d", cchain.id(), cchain.size()-1, called._event, calledRec._kLabel, calledRec._kFile, calledRec._kLine);
+    Debug(TRACE_DEBUG_FLAG,"(C#%06x) trim downcall @#%d n=%lu [%05d] %s %s@%d", cchain.id(), cchain.back()._i, cchain.size(), called._event, calledRec._kLabel, calledRec._kFile, calledRec._kLine);
   }
 
   const EventHdlrAssignRec &rec = *back()._hdlrAssign;
 
   if ( ! back().trim_back_prep() ) {
-    Debug(TRACE_DEBUG_FLAG,"(C#%06x) failed to trim local #%lu [%05d] %s %s@%d", id(), size()-1, back()._event, rec._kLabel, rec._kFile, rec._kLine);
+    Debug(TRACE_DEBUG_FLAG,"(C#%06x) failed to trim local @#%d [%05d] %s %s@%d", id(), back()._i, back()._event, rec._kLabel, rec._kFile, rec._kLine);
     return false; // no pop allowed
   }
 
-  Debug(TRACE_DEBUG_FLAG,"(C#%06x) trim local #%lu [%05d] %s %s@%d", id(), size()-1, back()._event, rec._kLabel, rec._kFile, rec._kLine);
+  Debug(TRACE_DEBUG_FLAG,"(C#%06x) trim local @#%d [%05d] %s %s@%d", id(), back()._i, back()._event, rec._kLabel, rec._kFile, rec._kLine);
   pop_back();
 
   return true; // popped
@@ -883,10 +922,10 @@ EventCallContext::EventCallContext(const EventHdlr_t &hdlr, const EventCalled::C
 
   // is there a post-return call we are returning from?
   // close earlier context before taking over
-  if ( _waiting ) {
+  if ( _waiting && _waiting->_chainPtr == _chainPtr ) {
+    // allow bytes in same-chain to add up
+  } else if ( _waiting ) {
     _waiting->completed("wctxt.ctor"); // mark and release chain (if owned)
-  } else {
-    completed("ctxt.ctor"); // mark and release chain (if owned)
   }
 
   // must branch?
@@ -894,8 +933,8 @@ EventCallContext::EventCallContext(const EventHdlr_t &hdlr, const EventCalled::C
   {
     auto &ochain = *_chainPtr;
     auto nchainPtr = std::make_shared<EventChain>(ochain.id(),ochain._cnt+1); // NOTE: chain adds into alloc tally
-    Debug(TRACE_FLAG,"(C#%06x) @#%lu --> (C#%06x): event-thread-restart [tot:%ld] %s %s@%d",
-       ochain.id(), ochain.size()-1, nchainPtr->id(), ochain._allocTotal - ochain._deallocTotal,
+    Debug(TRACE_FLAG,"(C#%06x) @#%d --> (C#%06x): event-thread-restart [tot:%ld] %s %s@%d",
+       ochain.id(), ochain.back()._i, nchainPtr->id(), ochain._allocTotal - ochain._deallocTotal,
        hdlr._kLabel, hdlr._kFile, hdlr._kLine);
 
     _chainPtr = nchainPtr;
@@ -903,6 +942,9 @@ EventCallContext::EventCallContext(const EventHdlr_t &hdlr, const EventCalled::C
     push_initial_call(*ochain[0]._hdlrAssign);
     // ctor acquires lock until completed() is called
   } 
+
+  // either we're in my chain... or my chain has no waiting entries
+  ink_release_assert( _waiting || chainPtr->back()._delay );
 
   // chain is owned by this thread...
 
@@ -1039,8 +1081,8 @@ void EventCallContext::reset_frame(EventHdlr_t hdlr)
   } else {
     auto &ochain = *_chainPtr; // save chain (if usable)
     auto nchainPtr = std::make_shared<EventChain>(ochain.id(),ochain._cnt+1); // NOTE: chain adds into alloc tally
-    Debug(TRACE_FLAG,"(C#%06x) @#%lu --> (C#%06x): event-thread-restart [tot:%ld] %s %s@%d",
-       ochain.id(), ochain.size()-1, nchainPtr->id(), ochain._allocTotal - ochain._deallocTotal,
+    Debug(TRACE_FLAG,"(C#%06x) @#%d --> (C#%06x): event-thread-restart [tot:%ld] %s %s@%d",
+       ochain.id(), ochain.back()._i, nchainPtr->id(), ochain._allocTotal - ochain._deallocTotal,
        hdlr._kLabel, hdlr._kFile, hdlr._kLine);
 
     // keep lock for the next pushed entry (push_incomplete_call)
@@ -1050,7 +1092,7 @@ void EventCallContext::reset_frame(EventHdlr_t hdlr)
   }
 
   // create entry using current rec (and reset storage stamp)
-  push_incomplete_call(hdlr, 0);
+  push_incomplete_call(hdlr, EVENT_RESET_FAKE);
 
   Debug(TRACE_DEBUG_FLAG,"(C#%06x) resetting done %s %s@%d",
      id(), hdlr._kLabel, hdlr._kFile, hdlr._kLine );
@@ -1166,66 +1208,80 @@ EventCalled::completed(EventCallContext const &ctxt, const char *msg)
   }
 
   auto prevDiff = _allocDelta - _deallocDelta;
-  auto callingInd = 0;
   auto callingID = 0;
   auto calledID = 0;
+  auto callingInd = 0;
+  auto calledInd = 0;
 
   if ( has_calling() ) {
-    callingID = _callingChain.lock()->id();
+    auto &ochain = *_callingChain.lock();
+    callingID = ochain.id();
+    callingInd = calling()._i;
   }
   if ( has_called() ) {
     calledID = _calledChain->id();
+    calledInd = called()._i;
   }
 
   _allocDelta += allocTot;
   _deallocDelta += deallocTot;
 
+  const char *title = "anon-call";
+
   if ( _i ) {
     chain._allocTotal += _allocDelta;
     chain._deallocTotal += _deallocDelta;
-  }
-
-  const char *title = "top-call";
+  } 
 
   do {
-    if ( has_calling() && ! calling().is_frame_rec() ) {
-      title = "sub-event"; break; // no log yet
+    if ( callingID ) {
+      break; // consider calling frame
+    }
+    if ( _i && ! calledID && ! this[-1]._delay ) {
+      callingInd = this[-1]._i;
+      callingID = chain.id(); // note self..
+      title = "in-chain-call";
+      break; // consider calling frame
     }
 
-    if ( has_calling() && is_frame_rec() ) {
-      title = "sub-frame"; break; // no log yet
+    if ( calledID && is_frame_rec() ) {
+      title = "frame-post-call"; // print log
+    } else if ( calledID ) {
+      title = "event-post-call"; // print log
     }
 
-    if ( has_calling() ) {
-      title = "top-event";
-    } else if ( has_called() && is_frame_rec() ) {
-      title = "post-return-frame";
-    } else if ( has_called() ) {
-      title = "post-return-event";
+    // current or lower 
+    if ( _i && ! calledID && this != &chain.back() ) {
+      calledID = chain.id(); // note self..
+      calledInd = this[1]._i;
+      title = "top-call"; // print log
     }
 
-    Debug(TRACE_DEBUG_FLAG,"[ (C#%06x) @#%d ] <==> (C#%06x) @#%d called: %s complete [post:%+ld pre:%+ld -> %+ld] [tot:%ld] %s %s@%d [%s]",
-       ctxt.id(), _i, calledID, _calledChainLen-1, title, 
-       allocTot - deallocTot, prevDiff, _allocDelta - _deallocDelta, 
-       chain._allocTotal - chain._deallocTotal,
-       _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine, msg);
+    if ( ! _i ) {
+      title = "ctor-call"; // print one-line log
+    }
+
+    if ( calledID ) {
+      Debug(TRACE_DEBUG_FLAG,"[ (C#%06x) @#%d ] <==> (C#%06x) @#%d called: %s complete [post:%+ld pre:%+ld -> %+ld] [tot:%ld] [%05d] %s %s@%d [%s]",
+         chain.id(), _i, calledID, calledInd, title, 
+         allocTot - deallocTot, prevDiff, _allocDelta - _deallocDelta, 
+         chain._allocTotal - chain._deallocTotal, 
+         _event, _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine, msg);
+    }
+    else
+    {
+      Debug(TRACE_DEBUG_FLAG,"[ (C#%06x) @#%d ]: %s complete [post:%+ld pre:%+ld -> %+ld] [tot:%ld] [%05d] %s %s@%d [%s]",
+         chain.id(), _i, title, 
+         allocTot - deallocTot, prevDiff, _allocDelta - _deallocDelta, 
+         chain._allocTotal - chain._deallocTotal, _event,
+         _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine, msg);
+    }
 
     std::ostringstream oss;
     chain.printLog(oss,this - &chain.front(),~0U,msg);
 
-    if ( ! oss.str().empty() ) 
-    {
-      // break from *last* entry?
-      /*
-      char buff[256];
-      snprintf(buff,sizeof(buff),
-           "\n" TRACE_SNPRINTF_PREFIX " (C#%06x) @#%d[%lu] top-object: %s %s@%d [evt#%05d] (refs=%ld)",
-           TRACE_SNPRINTF_DATA chain.id(), _i, chain.size(), _hdlrAssign->_kLabel,_hdlrAssign->_kFile,_hdlrAssign->_kLine, 
-           _event, ctxt._chainPtr.use_count());
-      oss << buff;
-
-      */
-      DebugSpecific(true,TRACE_FLAG,"trace-out [%s] %s",msg,oss.str().c_str());
+    if ( ! oss.str().empty() ) {
+      DebugSpecific(true,TRACE_FLAG,"%s calls [%s] %s", title, msg, oss.str().c_str());
     }
 
     ink_mutex_release(&chain._owner); // now free to go to other threads
@@ -1233,11 +1289,27 @@ EventCalled::completed(EventCallContext const &ctxt, const char *msg)
 
   } while(false);
 
-  Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%d <===> [ (C#%06x) @#%d called ]: %s completed [post:%+ld pre:%+ld -> %+ld] [tot:%ld] %s %s@%d [%s]",
-     callingID, callingInd, ctxt.id(), _i, title,
+  // calling context is interesting
+  std::ostringstream oss;
+
+  if ( is_frame_rec() ) {
+    title = "enter-frame"; // no log yet
+  } else if ( ! calling().is_frame_rec() ) {
+    title = "mid-event"; // no log yet
+  } else { 
+    title = "top-event"; // print log
+    chain.printLog(oss,this - &chain.front(),~0U,msg);
+  } 
+
+  Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%d <===> [ (C#%06x) @#%d called ]: %s completed [post:%+ld pre:%+ld -> %+ld] [tot:%ld] [%05d] %s %s@%d [%s]",
+     callingID, callingInd, chain.id(), _i, title,
      allocTot - deallocTot, prevDiff, 
      _allocDelta - _deallocDelta, chain._allocTotal - chain._deallocTotal,
-     _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine, msg);
+     _event, _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine, msg);
+
+  if ( ! oss.str().empty() ) {
+    DebugSpecific(true,TRACE_FLAG,"%s calls [%s] %s", title, msg, oss.str().c_str());
+  }
 
   // clear up any old calls on this chain...
   while ( chain.trim_check() ) { 

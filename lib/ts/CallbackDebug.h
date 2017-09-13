@@ -160,7 +160,7 @@ struct EventCalled
   EventCalled(unsigned i, const EventCallContext &ctxt, EventHdlr_t assign, int event);
 
   // create record of calling-out (no event)
-  EventCalled(unsigned i, EventHdlr_t prevHdlr, const EventCallContext &ctxt);
+  EventCalled(unsigned i, EventHdlr_t prevHdlr, const EventCallContext &ctxt, int event);
 
   bool is_no_log_mem() const;
   bool is_no_log() const;
