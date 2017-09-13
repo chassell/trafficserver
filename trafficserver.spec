@@ -32,7 +32,7 @@ git checkout %{commit} .
 autoreconf -vfi
 
 %build
-./configure --prefix=%{install_prefix}/%{name} --with-user=ats --with-group=ats --with-build-number=%{release} --enable-experimental-plugins --with-max-api-stats=%{api_stats}
+./configure --prefix=%{install_prefix}/%{name} --with-user=ats --with-group=ats --with-build-number=%{release} --enable-experimental-plugins --with-max-api-stats=%{api_stats} --disable-unwind
 make %{?_smp_mflags}
 
 %install
