@@ -172,9 +172,9 @@ public:
   @param _h Pointer to the function used to callback with events.
 
 */
-#define SET_HANDLER(_h) SET_CONTINUATION_HANDLER(this,_h)
+#define SET_HANDLER(_h) (static_cast<Continuation&>(*this).handler = EVENT_HANDLER(_h))
 
-#define SET_SAVED_HANDLER(_var)  (this->handler.operator=(_var))
+#define SET_SAVED_HANDLER(_var)  (static_cast<Continuation&>(*this).handler = (_var))
 /**
   Sets a Continuation's handler.
 
@@ -184,11 +184,7 @@ public:
   @param _h Pointer to the function used to callback with events.
 
 */
-#define SET_CONTINUATION_HANDLER(obj,_h)                     \
-   ({                                                        \
-     EVENT_HANDLER_RECORD(_h, kHdlrAssignRec);              \
-     static_cast<ContinuationHandler&>(obj->handler) = kHdlrAssignRec;      \
-   })
+#define SET_CONTINUATION_HANDLER(_c,_h) (static_cast<Continuation&>(*_c).handler = EVENT_HANDLER(_h))
 
 inline Continuation::Continuation(ProxyMutex *amutex)
   : handler(NULL),

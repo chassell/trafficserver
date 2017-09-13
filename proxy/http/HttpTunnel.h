@@ -59,12 +59,20 @@
 struct HttpTunnelProducer;
 class HttpSM;
 class HttpPagesHandler;
-typedef int (HttpSM::*HttpSMHandler)(int event, void *data);
+
+using HttpSMHandler = EventHdlr_t;
+// typedef int (HttpSM::*HttpSMHandler)(int event, void *data);
 
 struct HttpTunnelConsumer;
 struct HttpTunnelProducer;
-typedef int (HttpSM::*HttpProducerHandler)(int event, HttpTunnelProducer *p);
-typedef int (HttpSM::*HttpConsumerHandler)(int event, HttpTunnelConsumer *c);
+
+using HttpProducerHandler = EventHdlr_t;
+using HttpConsumerHandler = EventHdlr_t;
+using HttpProducerHandlerP = EventHdlrP_t;
+using HttpConsumerHandlerP = EventHdlrP_t;
+
+// typedef int (HttpSM::*HttpProducerHandler)(int event, HttpTunnelProducer *p);
+// typedef int (HttpSM::*HttpConsumerHandler)(int event, HttpTunnelConsumer *c);
 
 enum HttpTunnelType_t {
   HT_HTTP_SERVER,
@@ -166,7 +174,7 @@ struct HttpTunnelConsumer {
   HttpTunnelType_t vc_type;
   VConnection *vc;
   IOBufferReader *buffer_reader;
-  HttpConsumerHandler vc_handler;
+  HttpConsumerHandlerP vc_handler;
   VIO *write_vio;
 
   int64_t skip_bytes;    // bytes to skip at beginning of stream
@@ -194,7 +202,7 @@ struct HttpTunnelProducer {
   DLL<HttpTunnelConsumer> consumer_list;
   HttpTunnelConsumer *self_consumer;
   VConnection *vc;
-  HttpProducerHandler vc_handler;
+  HttpProducerHandlerP vc_handler;
   VIO *read_vio;
   MIOBuffer *read_buffer;
   IOBufferReader *buffer_start;

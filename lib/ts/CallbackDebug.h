@@ -33,13 +33,10 @@
 
  */
 
-#ifndef _I_DebugCont_h_
-#define _I_DebugCont_h_
+#ifndef _I_CallbackDebug_h_
+#define _I_CallbackDebug_h_
 
-#include "ts/apidefs.h"
-#if ! defined(__cplusplus) 
-#include "ts/CCallbackDebug.h"
-#endif
+#include "ts/apidefs.h" // for TSCont and TSEventFunc
 #include "ts/ink_mutex.h"
 #include "ts/ink_error.h"
 
@@ -88,15 +85,13 @@ struct EventHdlrAssignRec
   struct const_cb_callgen_base
   {
     static EventHdlrCompare_t *cmphdlr(void)
-      { return [](EventHdlrMethodPtr_t) -> bool { return false; }; }
-    static EventHdlrCompare_t *cmphdlr_nolog(void)
-      { return nullptr; }
+      { return [](EventHdlrMethodPtr_t) -> bool { assert(0); return false; }; }
     static EventFuncCompare_t *cmpfunc(void)
-      { return [](TSEventFunc) -> bool { return false; }; }
+      { assert(0); return [](TSEventFunc) -> bool { assert(0); return false; }; }
     static EventHdlrFxn_t *hdlr(void)
-      { return [](Continuation *, int, void *) { return 0; }; }
+      { assert(0); return [](Continuation *, int, void *) { assert(0); return 0; }; }
     static TSEventFuncSig *func(void)
-      { return [](TSCont, TSEvent, void *) { return 0; }; }
+      { assert(0); return [](TSCont, TSEvent, void *) { assert(0); return 0; }; }
   };
 
  public:
@@ -106,8 +101,11 @@ struct EventHdlrAssignRec
      { return ! _kEqualHdlr_Gen || ! _kEqualHdlr_Gen()(a); }
   bool operator!=(TSEventFunc b) const 
      { return ! _kEqualFunc_Gen || ! _kEqualFunc_Gen()(b); }
-  bool operator==(EventHdlrMethodPtr_t a) const 
-     { return _kEqualHdlr_Gen && _kEqualHdlr_Gen()(a); }
+
+  template <class T_OBJ, typename T_DATA>
+  bool operator==(int (T_OBJ::*a)(int event, T_DATA data)) const 
+     { return _kEqualHdlr_Gen && _kEqualHdlr_Gen()(reinterpret_cast<EventHdlrMethodPtr_t>(a)); }
+
   bool operator==(TSEventFunc b) const 
      { return _kEqualFunc_Gen && _kEqualFunc_Gen()(b); }
 
@@ -115,11 +113,10 @@ struct EventHdlrAssignRec
     return ! _kEqualHdlr_Gen();
   }
   bool is_frame_rec() const {
-    return _kEqualHdlr_Gen == EventHdlrAssignRec::const_cb_callgen_base::cmphdlr_nolog;
+    return _kLabel[0] == '#';
   }
   bool is_plugin_rec() const {
-    return _kEqualHdlr_Gen == EventHdlrAssignRec::const_cb_callgen_base::cmphdlr
-           && _kEqualFunc_Gen == EventHdlrAssignRec::const_cb_callgen_base::cmpfunc;
+    return strstr(_kLabel,"::@"); // slow.. but called rarely
   }
 
  public:
@@ -135,11 +132,15 @@ struct EventHdlrAssignRec
   EventHdlrFxnGen_t     *const _kWrapHdlr_Gen; // ref to custom wrapper function-ptr callable 
   TSEventFuncGen_t      *const _kWrapFunc_Gen; // ref to custom wrapper function-ptr callable 
 
+# if (GCC_VERSION >= 6000)
  private:
   EventHdlrAssignRec() = delete;
   EventHdlrAssignRec(const EventHdlrAssignRec &) = delete;
-
+#endif
 };
+
+extern const EventHdlrAssignRec &kHdlrAssignEmpty;
+extern const EventHdlrAssignRec &kHdlrAssignNoDflt;
 
 ///////////////////////////////////////////////////////////////////////////////////
 /// Call record to a specific assign-point's handler
@@ -181,7 +182,7 @@ struct EventCalled
   bool has_called() const { return _calledChain && _calledChainLen; }
 
   // upon ctor
-  EventHdlrP_t        const _hdlrAssign = nullptr;   // full callback info 
+  EventHdlrP_t        const _hdlrAssign;          // full callback struct 
 
   // upon ctor
   ChainWPtr_t         const _callingChain;        // chain held by caller's context (from context)
@@ -208,7 +209,7 @@ struct EventCalled
 struct EventChain : public std::vector<EventCalled>
 {
    EventChain();
-   EventChain(uint32_t oid);
+   EventChain(uint32_t oid, uint16_t cnt);
    ~EventChain();
 
    unsigned id() const { return _id; }
@@ -225,6 +226,8 @@ struct EventChain : public std::vector<EventCalled>
 
    const uint32_t _id = s_ident++;
    const uint32_t _oid = 0;
+
+   uint16_t _cnt = 0; // loop over as needed
 
    int printLog(std::ostringstream &out, unsigned ibegin, unsigned iend, const char *msg);
 
@@ -246,7 +249,7 @@ struct EventCallContext
 
  public:
   // HdlrState can record this event occurring
-  explicit EventCallContext(EventHdlr_t hdlr);
+  explicit EventCallContext();
   EventCallContext(EventHdlr_t hdlr, const EventCalled::ChainPtr_t &chain, int event);
   ~EventCallContext();
 
@@ -257,7 +260,10 @@ struct EventCallContext
   EventCalled       &active_event()       { return _chainPtr->operator[](std::min(_chainInd+0UL,_chainPtr->size()-1)); };
   EventCalled const &active_event() const { return _chainPtr->operator[](std::min(_chainInd+0UL,_chainPtr->size()-1)); };
 
-  void reset_top_frame(EventHdlr_t hdlr);
+  EventHdlr_t active_hdlr() const { return *active_event()._hdlrAssign; }
+  EventHdlrP_t active_hdlrp() const { return active_event()._hdlrAssign; }
+
+  void reset_frame(EventHdlr_t hdlr);
   void completed(const char *msg);
  public:
   static void set_ctor_initial_callback(EventHdlr_t hdlr);
@@ -284,7 +290,6 @@ struct EventCallContext
   time_point              const _start;
 
  private:
-  EventCallContext() = delete;
   EventCallContext(const EventCallContext &ctxt) = delete;
 };
 
@@ -309,11 +314,10 @@ class EventHdlrState
   ~EventHdlrState();
 
  public:
-  void reset_top_frame() 
+  static void reset_curr_frame(EventHdlr_t hdlr)
   {
-    ( EventCallContext::st_currentCtxt 
-       ? EventCallContext::st_currentCtxt->reset_top_frame(*_assignPoint)
-       : _scopeContext.reset_top_frame(*_assignPoint) );
+    assert( EventCallContext::st_currentCtxt );
+    EventCallContext::st_currentCtxt->reset_frame(hdlr);
   }
 
   int operator()(Continuation *self,int event,void *data);
@@ -376,109 +380,7 @@ inline void EventHdlrState::operator=(TSEventFunc f)
   assert( ! _assignPoint->_kTSEventFunc || _assignPoint->_kTSEventFunc == f ); // must match 
 }
 
-// 
-// DeferredCall::defer(...)      
-//    [static templated call]
-// DeferredCall::handleEvent --> this->call.operator()      
-//    [strongly typed field]
-//
-// INKVConnInternal::init() 
-// INKContInternal::handle_event --> INKContInternal::m_event_func.operator(TSCont,TSEvent,void*)
-//        [created with fxn pointer]
-// INKVConnInternal::init() 
-// INKVConnInternal::handle_event --> INKContInternal::m_event_func.operator(TSCont,TSEvent,void*)
-//        [created with fxn pointer]
-
-#define EVENT_HANDLER_RECORD(_h, name) \
-     using decay_t = typename std::decay<decltype(_h)>::type; \
-     static EventHdlrAssignRec name{                \
-                       ((#_h)+0),                          \
-                       (__FILE__+0),                       \
-                       __LINE__,                           \
-                       nullptr,                            \
-                      &EventHdlrAssignRec::const_cb_callgen<decay_t,(_h)>::cmphdlr,  \
-                      &EventHdlrAssignRec::const_cb_callgen<decay_t,(_h)>::cmpfunc,  \
-                      &EventHdlrAssignRec::const_cb_callgen<decay_t,(_h)>::hdlr, \
-                      &EventHdlrAssignRec::const_cb_callgen<decay_t,(_h)>::func \
-                    }
-
-#define LABEL_FRAME_RECORD(str, name) \
-     static EventHdlrAssignRec name{                \
-                       (str+0),                            \
-                       (__FILE__+0),                       \
-                       __LINE__,                           \
-                       nullptr,                            \
-                      &EventHdlrAssignRec::const_cb_callgen_base::cmphdlr_nolog,  \
-                      &EventHdlrAssignRec::const_cb_callgen_base::cmpfunc,  \
-                      &EventHdlrAssignRec::const_cb_callgen_base::hdlr, \
-                      &EventHdlrAssignRec::const_cb_callgen_base::func \
-                    }
-
-#define PLUGIN_FRAME_RECORD(path,symbol,name) \
-     auto &name = *new EventHdlrAssignRec{                 \
-                       cb_alloc_plugin_label(path,symbol), \
-                       (__FILE__+0),                       \
-                       __LINE__,                           \
-                       nullptr,                            \
-                      &EventHdlrAssignRec::const_cb_callgen_base::cmphdlr,  \
-                      &EventHdlrAssignRec::const_cb_callgen_base::cmpfunc,  \
-                      &EventHdlrAssignRec::const_cb_callgen_base::hdlr, \
-                      &EventHdlrAssignRec::const_cb_callgen_base::func \
-                    }
-
-#define CALL_FRAME_RECORD(_h, name) LABEL_FRAME_RECORD(#_h, name)
-
 const char *cb_alloc_plugin_label(const char *path, const char *symbol);
-
-// define null as "caller" context... and set up next one
-#define SET_NEXT_HANDLER_RECORD(_h)                   \
-          {                                                               \
-            EVENT_HANDLER_RECORD(_h, kHdlrAssignRec);                     \
-            EventCallContext::set_ctor_initial_callback(kHdlrAssignRec);  \
-          }
-
-#define NEW_LABEL_FRAME_RECORD(str, name)          \
-            LABEL_FRAME_RECORD(str, const name);   \
-            EventHdlrState _state_ ## name{name};  \
-            EventCallContext _ctxt_ ## name{name, _state_ ## name, 0}
-
-#define NEW_PLUGIN_FRAME_RECORD(path, symbol, name)   \
-            PLUGIN_FRAME_RECORD(path,symbol,name);    \
-            EventHdlrState _state_ ## name{name};     \
-            EventCallContext _ctxt_ ## name{name, _state_ ## name, 0}
-
-#define NEW_CALL_FRAME_RECORD(_h, name)                \
-            CALL_FRAME_RECORD(_h, const name);         \
-            EventHdlrState _state_ ## name{name};      \
-            EventCallContext _ctxt_ ## name{name, _state_ ## name, 0}
-
-#define RESET_ORIG_FRAME_RECORD(name)   \
-          _state_ ## name = name;                 \
-          _state_ ## name.reset_top_frame()
-
-
-#define _RESET_LABEL_FRAME_RECORD(str, name)       \
-         {                                         \
-            LABEL_FRAME_RECORD(str, const name);   \
-            RESET_ORIG_FRAME_RECORD(name);         \
-         }
-
-#define RESET_LABEL_FRAME_RECORD(str, name)   \
-            _RESET_LABEL_FRAME_RECORD(str, name)
-
-#define RESET_CALL_FRAME_RECORD(_h, name)   \
-            _RESET_LABEL_FRAME_RECORD(#_h, name)
-
-#define CREATE_EVENT_FRAME_RECORD(str, chain)  \
-         LABEL_FRAME_RECORD(str, const kHdlrAssignRec);    \
-         ink_release_assert(chain);                        \
-         EventCallContext ctxt(kHdlrAssignRec, (chain), 0)
-
-#define WRAP_EVENT_FRAME_RECORD(str, chain, cmd)  \
-         ({                                                    \
-            CREATE_EVENT_FRAME_RECORD(str, chain);            \
-            { cmd; }                                          \
-         })
 
 // standard Continuation handler signature(s)
 template<class T_OBJ, typename T_ARG, int(T_OBJ::*FXN)(int,T_ARG)>
@@ -550,92 +452,93 @@ inline EventHdlrState::operator()(Continuation *self,int event, void *data)
   return r;
 }
 
+// 
+// DeferredCall::defer(...)      
+//    [static templated call]
+// DeferredCall::handleEvent --> this->call.operator()      
+//    [strongly typed field]
+//
+// INKVConnInternal::init() 
+// INKContInternal::handle_event --> INKContInternal::m_event_func.operator(TSCont,TSEvent,void*)
+//        [created with fxn pointer]
+// INKVConnInternal::init() 
+// INKVConnInternal::handle_event --> INKContInternal::m_event_func.operator(TSCont,TSEvent,void*)
+//        [created with fxn pointer]
+
+#define EVENT_HANDLER(_h) \
+  *({                                                         \
+     using decay_t = typename std::decay<decltype(_h)>::type; \
+     static constexpr EventHdlrAssignRec _kHdlrAssignRec_{  \
+                       ((#_h)+0),                          \
+                       (__FILE__+0),                       \
+                       __LINE__,                           \
+                       nullptr,                            \
+                      &EventHdlrAssignRec::const_cb_callgen<decay_t,(_h)>::cmphdlr,  \
+                      &EventHdlrAssignRec::const_cb_callgen<decay_t,(_h)>::cmpfunc,  \
+                      &EventHdlrAssignRec::const_cb_callgen<decay_t,(_h)>::hdlr,     \
+                      &EventHdlrAssignRec::const_cb_callgen<decay_t,(_h)>::func      \
+                    };                                                               \
+     &_kHdlrAssignRec_;                                                             \
+  })
+
+#define LABEL_FRAME_GLOBAL(str,name) \
+     constexpr EventHdlrAssignRec name{  \
+                       (("#" str)+0),                        \
+                       (__FILE__+0),                       \
+                       __LINE__,                           \
+                       nullptr,                            \
+                      &EventHdlrAssignRec::const_cb_callgen_base::cmphdlr,  \
+                      &EventHdlrAssignRec::const_cb_callgen_base::cmpfunc,  \
+                      &EventHdlrAssignRec::const_cb_callgen_base::hdlr, \
+                      &EventHdlrAssignRec::const_cb_callgen_base::func \
+                    }
+
+#define ALLOC_PLUGIN_FRAME(path,symbol) \
+    *(                                                                     \
+     new EventHdlrAssignRec{                                             \
+                       cb_alloc_plugin_label(path,symbol),                \
+                       (__FILE__+0),                                      \
+                       __LINE__,                                          \
+                       nullptr,                                           \
+                      &EventHdlrAssignRec::const_cb_callgen_base::cmphdlr, \
+                      &EventHdlrAssignRec::const_cb_callgen_base::cmpfunc, \
+                      &EventHdlrAssignRec::const_cb_callgen_base::hdlr, \
+                      &EventHdlrAssignRec::const_cb_callgen_base::func \
+                    }                                                  \
+    )
+
+#define LABEL_FRAME(str) *({ static LABEL_FRAME_GLOBAL(str,_kLabelAssignRec_); &_kLabelAssignRec_; })
+#define CALL_FRAME(_h)    LABEL_FRAME(#_h)
+
+#define NAMED_CALL_FRAME(name,_h) \
+   LABEL_FRAME_GLOBAL(#_h,name)
+
+// define null as "caller" context... and set up next one
+#define NEW_LABEL_FRAME(str, name)          \
+            EventHdlrState _state_ ## name(LABEL_FRAME(str))
+
+#define NEW_PLUGIN_FRAME(path, symbol, name)   \
+            EventHdlrState _state_ ## name(ALLOC_PLUGIN_FRAME(path,symbol))
+
+#define NEW_CALL_FRAME(_h, name)                \
+            EventHdlrState _state_ ## name(CALL_FRAME(_h))
+
+#define RESET_LABEL_FRAME(str) \
+            EventHdlrState::reset_curr_frame(LABEL_FRAME(str))
+
+#define RESET_CALL_FRAME(_h, name)   \
+            EventHdlrState::reset_curr_frame(CALL_FRAME(_h))
+
+#define CREATE_EVENT_FRAME(str, chain)  \
+         EventCallContext ctxt(LABEL_FRAME(str), (chain), 0)
+
+
 #define LOG_SKIPPABLE_EVENTHDLR(_h) \
   template <>                                                               \
   EventHdlrCompare_t *EventHdlrAssignRec::const_cb_callgen<decltype(_h),(_h)>::cmphdlr() \
      { return nullptr; }
 
-#endif // _I_DebugCont_h_
-////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////
+#define SET_NEXT_HANDLER(_h)                         \
+            EventCallContext::set_ctor_initial_callback(EVENT_HANDLER(_h))
 
-////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////
-#if defined(__cplusplus) && defined(__TS_API_H__) && ! defined(_I_DebugCont_TSAPI_)
-#define _I_DebugCont_TSAPI_
-
-#define TSThreadCreate(func,data)                              \
-            ({                                                 \
-               SET_NEXT_HANDLER_RECORD(func);                  \
-               auto r = TSThreadCreate(func,data);             \
-               EventCallContext::clear_ctor_initial_callback();  \
-               r;                                              \
-             })
-
-#define TSContCreate(func,mutexp)                              \
-            ({                                                 \
-               SET_NEXT_HANDLER_RECORD(func);                  \
-               auto r = TSContCreate(reinterpret_cast<TSEventFunc>(func),mutexp);  \
-               EventCallContext::clear_ctor_initial_callback();  \
-               r;                                              \
-             })
-#define TSTransformCreate(func,txnp)                           \
-            ({                                                 \
-               SET_NEXT_HANDLER_RECORD(func);                  \
-               auto r = TSTransformCreate(reinterpret_cast<TSEventFunc>(func),txnp); \
-               EventCallContext::clear_ctor_initial_callback(); \
-               r;                                               \
-             })
-#define TSVConnCreate(func,mutexp)                             \
-            ({                                                 \
-               SET_NEXT_HANDLER_RECORD(func);                  \
-               auto r = TSVConnCreate(reinterpret_cast<TSEventFunc>(func),mutexp); \
-               EventCallContext::clear_ctor_initial_callback();  \
-               r;                                              \
-             })
-
-// standard TSAPI event handler signature
-template <TSEventFunc FXN>
-struct EventHdlrAssignRec::const_cb_callgen<TSEventFunc,FXN>
-   : public const_cb_callgen_base
-{
-  static EventFuncCompare_t *cmpfunc(void) {
-    return [](TSEventFunc fxn) { return FXN == fxn; };
-  }
-  static TSEventFuncSig *func(void)
-  {
-    return [](TSCont cont, TSEvent event, void *data) {
-       return (*FXN)(cont,event,data);
-     };
-  }
-};
-
-// extra case that showed up
-template <void(*FXN)(TSCont,TSEvent,void *data)>
-struct EventHdlrAssignRec::const_cb_callgen<void(*)(TSCont,TSEvent,void *data),FXN>
-   : public const_cb_callgen_base
-{
-  static EventFuncCompare_t *cmpfunc(void) {
-    return [](TSEventFunc fxn) { 
-      return reinterpret_cast<TSEventFunc>(FXN) == fxn; 
-    };
-  }
-  static TSEventFuncSig *func(void)
-  {
-    return [](TSCont cont, TSEvent event, void *data) {
-       (*FXN)(cont,event,data);
-       return 0;
-     };
-  }
-};
-
-
-// thread functs should not be wrapped currently at all
-template <TSThreadFunc FXN>
-struct EventHdlrAssignRec::const_cb_callgen<TSThreadFunc,FXN>
-   : public const_cb_callgen_base
-{
-};
-
-#endif
+#endif // _I_CallbackDebug_h_

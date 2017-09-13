@@ -68,6 +68,8 @@ void              cb_set_ctor_initial_callback(EventCHdlrAssignRecPtr_t crec);
 }
 #endif
 
+#ifndef __cplusplus
+
 #define STATIC_C_HANDLER_RECORD(_fxn, name) \
      static const EventCHdlrAssignRec_t name = \
                      {                        \
@@ -81,8 +83,6 @@ void              cb_set_ctor_initial_callback(EventCHdlrAssignRecPtr_t crec);
                          &cb_null_return  }   \
                      }
 
-
-#ifndef __cplusplus
 
 #define SET_NEXT_HANDLER_RECORD(_fxn)                       \
             STATIC_C_HANDLER_RECORD(_fxn, kHdlrAssignRec);  \

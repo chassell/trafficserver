@@ -727,7 +727,7 @@ remap_load_plugin(const char **argv, int argc, url_mapping *mp, char *errbuf, in
     return -2; /* incorrect input data */
   }
 
-  NEW_PLUGIN_FRAME_RECORD(c,TSREMAP_FUNCNAME_INIT,kTmpPlugin);
+  NEW_PLUGIN_FRAME(c,TSREMAP_FUNCNAME_INIT,kTmpPlugin);
 
   if (stat(c, &stat_buf) != 0) {
     const char *plugin_default_path = TSPluginDirGet();
@@ -872,7 +872,7 @@ remap_load_plugin(const char **argv, int argc, url_mapping *mp, char *errbuf, in
     opterr = 0;
     optarg = NULL;
 
-    NEW_PLUGIN_FRAME_RECORD(c,TSREMAP_FUNCNAME_NEW_INSTANCE,kTmpPlugin);
+    NEW_PLUGIN_FRAME(c,TSREMAP_FUNCNAME_NEW_INSTANCE,kTmpPlugin);
     res = pi->fp_tsremap_new_instance(parc, parv, &ih, tmpbuf, sizeof(tmpbuf) - 1);
   }
 

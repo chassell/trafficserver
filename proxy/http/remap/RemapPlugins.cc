@@ -72,7 +72,7 @@ RemapPlugins::run_plugin(remap_plugin_info *plugin)
     _s->remap_plugin_instance  = ih;
   }
 
-  NEW_PLUGIN_FRAME_RECORD(plugin->path,TSREMAP_FUNCNAME_DO_REMAP,kTmpPlugin);
+  NEW_PLUGIN_FRAME(plugin->path,TSREMAP_FUNCNAME_DO_REMAP,kTmpPlugin);
 
   plugin_retcode = plugin->fp_tsremap_do_remap(ih, _s ? reinterpret_cast<TSHttpTxn>(_s->state_machine) : NULL, &rri);
   // TODO: Deal with negative return codes here

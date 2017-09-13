@@ -688,7 +688,7 @@ HttpTunnel::add_producer(VConnection *vc, int64_t nbytes_arg, IOBufferReader *re
     p->nbytes          = nbytes_arg;
     p->buffer_start    = reader_start;
     p->read_buffer     = reader_start->mbuf;
-    p->vc_handler      = sm_handler;
+    p->vc_handler      = &sm_handler;
     p->vc_type         = vc_type;
     p->name            = name_arg;
     p->chunking_action = TCA_PASSTHRU_DECHUNKED_CONTENT;
@@ -753,7 +753,7 @@ HttpTunnel::add_consumer(VConnection *vc, VConnection *producer, HttpConsumerHan
   c->vc                 = vc;
   c->alive              = true;
   c->skip_bytes         = skip_bytes;
-  c->vc_handler         = sm_handler;
+  c->vc_handler         = &sm_handler;
   c->vc_type            = vc_type;
   c->name               = name_arg;
 
@@ -1154,7 +1154,6 @@ bool
 HttpTunnel::producer_handler(int event, HttpTunnelProducer *p)
 {
   HttpTunnelConsumer *c;
-  HttpProducerHandler jump_point;
   bool sm_callback = false;
 
   Debug("http_tunnel", "[%" PRId64 "] producer_handler [%s %s]", sm->sm_id, p->name, HttpDebugNames::get_event_name(event));
@@ -1236,8 +1235,8 @@ HttpTunnel::producer_handler(int event, HttpTunnelProducer *p)
     //  initiate async I/O operation.  The SM needs to
     //  set how much I/O to do before async I/O is
     //  initiated
-    jump_point = p->vc_handler;
-    (sm->*jump_point)(event, p);
+    sm->stateHandler = *p->vc_handler;
+    sm->stateHandler(sm, event, p);
     sm_callback = true;
     p->update_state_if_not_set(HTTP_SM_POST_SUCCESS);
 
@@ -1257,8 +1256,8 @@ HttpTunnel::producer_handler(int event, HttpTunnelProducer *p)
       p->alive      = false;
       p->bytes_read = p->read_vio->ndone;
       // Interesting tunnel event, call SM
-      jump_point = p->vc_handler;
-      (sm->*jump_point)(event, p);
+      sm->stateHandler = *p->vc_handler;
+      sm->stateHandler(sm, event, p);
       sm_callback = true;
       // Failure case anyway
       p->update_state_if_not_set(HTTP_SM_POST_UA_FAIL);
@@ -1348,7 +1347,6 @@ bool
 HttpTunnel::consumer_handler(int event, HttpTunnelConsumer *c)
 {
   bool sm_callback = false;
-  HttpConsumerHandler jump_point;
   HttpTunnelProducer *p = c->producer;
 
   Debug("http_tunnel", "[%" PRId64 "] consumer_handler [%s %s]", sm->sm_id, c->name, HttpDebugNames::get_event_name(event));
@@ -1372,8 +1370,8 @@ HttpTunnel::consumer_handler(int event, HttpTunnelConsumer *c)
     c->bytes_written = c->write_vio ? c->write_vio->ndone : 0;
 
     // Interesting tunnel event, call SM
-    jump_point = c->vc_handler;
-    (sm->*jump_point)(event, c);
+    sm->stateHandler = *c->vc_handler;
+    sm->stateHandler(sm, event, c);
     // Make sure the handler_state is set
     // Necessary for post tunnel end processing
     if (c->producer && c->producer->handler_state == 0) {

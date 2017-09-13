@@ -134,7 +134,7 @@ plugin_load(int argc, char *argv[], bool validateOnly)
     opterr = 0;
     optarg = NULL;
 
-    NEW_PLUGIN_FRAME_RECORD(argv[0],"TSPluginInit",kTmpPlugin);
+    NEW_PLUGIN_FRAME(argv[0],"TSPluginInit",kTmpPlugin);
 
     init(argc, argv);
   } // done elevating access

@@ -86,7 +86,7 @@ HttpUpdateSM::start_scheduled_update(Continuation *cont, HTTPHdr *request)
   //   but since we can terminate the state machine on this
   //   stack, do this by calling througth the main handler
   //   so the sm will be properly terminated
-  this->default_handler = &HttpUpdateSM::state_add_to_list;
+  this->default_handler = &EVENT_HANDLER(&HttpUpdateSM::state_add_to_list);
   this->handleEvent(EVENT_NONE, NULL);
 
   if (cb_occured == 0) {
@@ -130,7 +130,7 @@ HttpUpdateSM::handle_api_return()
       ink_release_assert(c != NULL);
 
       if (tunnel.is_tunnel_active()) {
-        default_handler = &HttpUpdateSM::tunnel_handler;
+        default_handler = &EVENT_HANDLER(&HttpUpdateSM::tunnel_handler);
         if (c->alive == true) {
           // We're still streaming data to read
           //  side of the transform so abort it
@@ -208,7 +208,7 @@ HttpUpdateSM::kill_this_async_hook(int event, void * /* data ATS_UNUSED */)
   MUTEX_TRY_LOCK(lock, cb_action.mutex, this_ethread());
 
   if (!lock.is_locked()) {
-    default_handler = (HttpSMHandler)&HttpUpdateSM::kill_this_async_hook;
+    default_handler = &EVENT_HANDLER(&HttpUpdateSM::kill_this_async_hook);
     eventProcessor.schedule_in(this, HRTIME_MSECONDS(10), ET_CALL);
     return EVENT_DONE;
   }

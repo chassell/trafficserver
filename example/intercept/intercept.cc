@@ -214,7 +214,7 @@ InterceptContCreate(TSEventFunc hook, TSMutex mutexp, void *data)
 
 #define InterceptContCreate(func,mutexp,data) \
             ({                                                 \
-               SET_NEXT_HANDLER_RECORD(func);                  \
+               SET_NEXT_HANDLER(func);                  \
                InterceptContCreate(reinterpret_cast<TSEventFunc>(func),mutexp,data);                      \
              })
 

@@ -74,7 +74,9 @@ class HttpServerSession;
 class AuthHttpAdapter;
 
 class HttpSM;
-typedef int (HttpSM::*HttpSMHandler)(int event, void *data);
+using HttpSMHandler = EventHdlr_t;
+using HttpSMHandlerP = EventHdlrP_t;
+// typedef int (HttpSM::*HttpSMHandler)(int event, void *data);
 
 enum HttpVC_t {
   HTTP_UNKNOWN = 0,
@@ -101,7 +103,7 @@ struct HttpVCTableEntry {
   MIOBuffer *write_buffer;
   VIO *read_vio;
   VIO *write_vio;
-  HttpSMHandler vc_handler;
+  HttpSMHandlerP vc_handler;
   HttpVC_t vc_type;
   bool eos;
   bool in_tunnel;
@@ -306,6 +308,8 @@ public:
   void set_http_schedule(Continuation *);
   int get_http_schedule(int event, void *data);
 
+  EventHdlrState stateHandler;
+
 protected:
   IOBufferReader *ua_buffer_reader;
   IOBufferReader *ua_raw_buffer_reader;
@@ -333,7 +337,7 @@ protected:
   HttpCacheSM transform_cache_sm;
   HttpCacheSM *second_cache_sm;
 
-  HttpSMHandler default_handler;
+  HttpSMHandlerP default_handler;
   Action *pending_action;
   Action *historical_action;
   Continuation *schedule_cont;
