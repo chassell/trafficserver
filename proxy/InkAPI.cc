@@ -4471,6 +4471,8 @@ TSHttpSsnReenable(TSHttpSsn ssnp, TSEvent event)
   ProxyClientSession *cs = reinterpret_cast<ProxyClientSession *>(ssnp);
   EThread *eth           = this_ethread();
 
+  CREATE_EVENT_FRAME("<new ssncb>", cs->handler);
+
   // If this function is being executed on a thread created by the API
   // which is DEDICATED, the continuation needs to be called back on a
   // REGULAR thread.
@@ -5655,6 +5657,8 @@ TSHttpTxnReenable(TSHttpTxn txnp, TSEvent event)
 
   HttpSM *sm   = (HttpSM *)txnp;
   EThread *eth = this_ethread();
+
+  CREATE_EVENT_FRAME("<new smcb>", sm->stateHandler);
 
   // TS-2271: If this function is being executed on a thread which was not
   // created using the ATS EThread API, eth will be NULL, and the
@@ -9003,8 +9007,11 @@ TSVConnReenable(TSVConn vconn)
 {
   NetVConnection *vc        = reinterpret_cast<NetVConnection *>(vconn);
   SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+
   // We really only deal with a SSLNetVConnection at the moment
   if (ssl_vc != NULL) {
+    CREATE_EVENT_FRAME("<new sslcb>", ssl_vc->handler);
+
     EThread *eth    = this_ethread();
     bool reschedule = eth != ssl_vc->thread;
 
