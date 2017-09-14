@@ -182,7 +182,7 @@ struct EventCalled
   bool has_called() const { return _calledChain && _calledChainLen; }
 
   // upon ctor
-  EventHdlrP_t        const _hdlrAssign;          // full callback struct 
+  EventHdlrP_t        const _hdlrAssign = &kHdlrAssignEmpty;          // full callback struct 
 
   // upon ctor
   ChainWPtr_t         const _callingChain;        // chain held by caller's context (from context)
@@ -257,6 +257,8 @@ struct EventCallContext
   unsigned oid() const { return _chainPtr->oid(); }
 
   // report handler that this context has in place
+  bool               has_active() const { return _chainInd < _chainPtr->size(); }
+  bool               is_incomplete() const { return _chainInd < _chainPtr->size() && ! _chainPtr->operator[](_chainInd)._delay; }
   EventCalled       &active_event()       { return _chainPtr->operator[](std::min(_chainInd+0UL,_chainPtr->size()-1)); };
   EventCalled const &active_event() const { return _chainPtr->operator[](std::min(_chainInd+0UL,_chainPtr->size()-1)); };
 
@@ -270,7 +272,8 @@ struct EventCallContext
   static void clear_ctor_initial_callback();
 
  private:
-  void push_incomplete_call(EventHdlr_t rec, int event);
+  void push_call_chain_pair(EventHdlr_t rec, int event);
+  void push_call_entry(EventHdlr_t rec, int event);
   void push_initial_call(EventHdlr_t rec);
 
  public:
