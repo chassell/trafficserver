@@ -99,11 +99,6 @@ EventProcessor::start(int n_event_threads, size_t stacksize)
 
   for (i = 0; i < n_event_threads; i++) {
     EThread *t = new EThread(REGULAR, i);
-    if (i == 0) {
-      t->set_specific(); // delete old EThread...
-      global_mutex = t->mutex;
-      Thread::get_hrtime_updated();
-    }
     all_ethreads[i] = t;
 
     eventthread[ET_CALL][i] = t;
@@ -123,12 +118,10 @@ EventProcessor::start(int n_event_threads, size_t stacksize)
     ink_thread tid;
     numa::assign_thread_memory_by_affinity(kAffinity_objs[affinity], i);
     auto cpuset = numa::get_cpuset_by_affinity(kAffinity_objs[affinity], i); // global scope
-    if (i > 0) {
-      snprintf(thr_name, MAX_THREAD_NAME_LENGTH, "[ET_NET %d]", i);
-      tid = all_ethreads[i]->start(thr_name, stacksize);
-    } else {
-      tid = ink_thread_self();
-    }
+
+    snprintf(thr_name, MAX_THREAD_NAME_LENGTH, "[ET_NET %d]", i);
+    tid = all_ethreads[i]->start(thr_name, stacksize);
+
 #if TS_USE_HWLOC
     if (obj_count > 0) 
     {
@@ -140,7 +133,7 @@ EventProcessor::start(int n_event_threads, size_t stacksize)
 #else
       Debug("iocore_thread", "EThread: %d %s: %d\n", i, kAffinity_obj_names[affinity], -1);
 #endif // HWLOC_API_VERSION
-      auto r = hwloc_set_thread_cpubind(ink_get_topology(), tid, cpuset, HWLOC_CPUBIND_STRICT); // last thread only
+      auto r = hwloc_set_thread_cpubind(ink_get_topology(), tid, cpuset, HWLOC_CPUBIND_STRICT);
       ink_assert( ! r );
     } else {
       Warning("hwloc returned an unexpected value -- CPU affinity disabled");
