@@ -200,8 +200,8 @@ EThread::execute()
       cur_time = Thread::get_hrtime_updated();
       while ((e = EventQueueExternal.dequeue_local())) 
       {
-        CREATE_EVENT_FRAME("<extq>", e->continuation->handler);
-
+        // cannot reconcile becuase e->continuation may be a bad pointer
+        // CREATE_EVENT_FRAME("<extq>", e->continuation->handler);
         if (e->cancelled)
           free_event(e);
         else if (!e->timeout_at) { // IMMEDIATE
