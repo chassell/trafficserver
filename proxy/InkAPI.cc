@@ -958,6 +958,7 @@ INKContInternal::init(TSEventFunc funcp, TSMutex mutexp)
 void
 INKContInternal::destroy()
 {
+  CREATE_EVENT_FRAME("<tsdtor>", m_event_func);
   if (m_free_magic == INKCONT_INTERN_MAGIC_DEAD) {
     ink_release_assert(!"Plugin tries to use a continuation which is deleted");
   }
@@ -965,6 +966,7 @@ INKContInternal::destroy()
   if (m_deletable) {
     this->mutex  = NULL;
     m_free_magic = INKCONT_INTERN_MAGIC_DEAD;
+    CREATE_EVENT_FRAME("<tsdtor>", m_event_func);
     INKContAllocator.free(this);
   } else {
     // TODO: Should this schedule on some other "thread" ?
@@ -1000,6 +1002,7 @@ INKContInternal::handle_event(int event, void *edata)
     if (m_deletable) {
       this->mutex  = NULL;
       m_free_magic = INKCONT_INTERN_MAGIC_DEAD;
+      CREATE_EVENT_FRAME("<tsdtor>", m_event_func);
       INKContAllocator.free(this);
     } else {
       Warning("INKCont Deletable but not deleted %d", m_event_count);
@@ -1052,6 +1055,7 @@ INKVConnInternal::destroy()
     this->mutex = NULL;
     m_read_vio.set_continuation(NULL);
     m_write_vio.set_continuation(NULL);
+    CREATE_EVENT_FRAME("<tsdtor>", m_event_func);
     INKVConnAllocator.free(this);
   }
 }
@@ -1065,6 +1069,7 @@ INKVConnInternal::handle_event(int event, void *edata)
       this->mutex = NULL;
       m_read_vio.set_continuation(NULL);
       m_write_vio.set_continuation(NULL);
+      CREATE_EVENT_FRAME("<tsdtor>", m_event_func);
       INKVConnAllocator.free(this);
     }
   } else {
@@ -1272,7 +1277,9 @@ void
 APIHooks::clear()
 {
   APIHook *hook;
-  while (0 != (hook = m_hooks.pop())) {
+  while (0 != (hook = m_hooks.pop())) 
+  {
+    CREATE_EVENT_FRAME("<hook>", hook->m_cont->m_event_func);
     apiHookAllocator.free(hook);
   }
 }
@@ -4389,6 +4396,7 @@ TSHttpHookAdd(TSHttpHookID id, TSCont contp)
   sdk_assert(sdk_sanity_check_hook_id(id) == TS_SUCCESS);
 
   icontp = reinterpret_cast<INKContInternal *>(contp);
+  CREATE_EVENT_FRAME("<new ssncb>", icontp->handler);
 
   if (id >= TS_SSL_FIRST_HOOK && id <= TS_SSL_LAST_HOOK) {
     TSSslHookInternalID internalId = static_cast<TSSslHookInternalID>(id - TS_SSL_FIRST_HOOK);
