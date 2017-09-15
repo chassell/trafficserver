@@ -173,12 +173,12 @@ struct Arena_NoCache : public Arena {
   inkcoreapi void *
   alloc(size_t size, size_t alignment = sizeof(double))
   {
-    return m_alloc.allocate((size + 1) / sizeof(uint64_t));
+    return m_alloc.allocate((size + sizeof(uint64_t)-1 ) / sizeof(uint64_t));
   }
   void
   free(void *mem, size_t size)
   {
-    m_alloc.deallocate(static_cast<uint64_t *>(mem), size);
+    m_alloc.deallocate(static_cast<uint64_t *>(mem), (size + sizeof(uint64_t)-1 ) / sizeof(uint64_t));
   }
 };
 
