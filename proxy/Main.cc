@@ -1507,17 +1507,17 @@ main(int /* argc ATS_UNUSED */, const char **argv)
     jemallctl::GetObjFxn<bool>  cfg_prof{"config.prof"};
     jemallctl::GetObjFxn<bool>  opt_prof{"opt.prof"};
     jemallctl::GetObjFxn<bool>  opt_prof_active{"opt.prof_active"};
-    jemallctl::GetObjFxn<bool>  prof_active{"prof.active"};
 
-    jemallctl::EnableObjFxn     enable_prof_active{"prof.active"};
     jemallctl::DisableObjFxn    disable_prof_thread_active_init{"prof.thread_active_init"};
     jemallctl::EnableObjFxn     enable_prof_thread_active_init{"prof.thread_active_init"};
 
     if ( cfg_prof() && opt_prof() ) 
     {
+      // don't start with threads on
+      disable_prof_thread_active_init();
+
+      jemallctl::enable_prof_active();                    // but do start activity
       jemallctl::disable_thread_prof_active(); // not yet ...
-//      enable_prof_active();                    // but do start activity
-//      assert( cfg_prof() && prof_active() );
     }
   }
 

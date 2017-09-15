@@ -585,6 +585,7 @@ bool EventCalled::trim_check() const
   if ( has_calling() && ! calling().trim_check() ) {
     return false;
   }
+
   if ( has_calling() && _callingChain.lock()->size() != _callingChainLen ) {
     return false;
   }
@@ -738,14 +739,21 @@ void EventCallContext::push_call_chain_pair(EventHdlr_t rec, int event)
   EventCalled *callingp = nullptr;
 
   // same chain records
-  if ( &ochain == &chain ) 
+  if ( &ochain == &chain || orecp->is_frame_rec() )
   {
     // prep higher context for post-call
-    ochain.push_back( EventCalled(ochain._cnt++, *recp, event) );
+    ochain.push_back( EventCalled(ochain._cnt++, *orecp, event) );
     _waiting->_chainInd = &ochain.back() - &ochain.front();
 
-    // push self for this context
-    chain.push_back( EventCalled(chain._cnt++, *recp, event) );
+//    if ( orecp->is_frame_rec() )
+//    {
+//      // maybe use the frame as reference???  no.
+//      chain.push_back( EventCalled(chain._cnt++, *_waiting, rec, event) );
+//    } else {
+      // push self for this context
+      chain.push_back( EventCalled(chain._cnt++, *recp, event) );
+    // Debug(TRACE_DEBUG_FLAG,"@#%d calling into ==>(C#%06x) #%d-1: under prev %s %s@%d", _i, nctxt.id(), _calledChainLen, prevHdlr._kLabel, prevHdlr._kFile, prevHdlr._kLine);
+//    }
     _chainInd = &chain.back() - &chain.front();
 
     callingp = &_waiting->active_event();
@@ -754,11 +762,11 @@ void EventCallContext::push_call_chain_pair(EventHdlr_t rec, int event)
   // different-chains records
   else 
   {
-    // use current context as called rec
+    // use waiting-active as calling rec
     ochain.push_back( EventCalled(ochain._cnt++, *orecp, *this, event) );
     _waiting->_chainInd = &ochain.back() - &ochain.front();
 
-    // use waiting-active as calling rec
+    // use current context as called rec
     chain.push_back( EventCalled(chain._cnt++, *_waiting, rec, event) );
     _chainInd = &chain.back() - &chain.front();
 
@@ -975,6 +983,8 @@ EventChain::~EventChain()
 EventCallContext::EventCallContext(const EventHdlr_t &hdlr, const EventCalled::ChainPtr_t &chainPtr, int event)
    : _chainPtr(chainPtr) // _waiting(
 {
+  CHK_NOT_STACK(&hdlr);
+
   st_currentCtxt = this; // push down one immediately..
 
   ink_release_assert(chainPtr);
@@ -1062,7 +1072,10 @@ void EventCallContext::clear_ctor_initial_callback() {
   Debug(TRACE_DEBUG_FLAG,"pre-setting default");
 }
 
-void EventCallContext::set_ctor_initial_callback(EventHdlr_t rec) {
+void EventCallContext::set_ctor_initial_callback(EventHdlr_t rec) 
+{
+  CHK_NOT_STACK(&rec);
+
   if ( st_dfltAssignPoint == &rec ) {
     return;
   }
@@ -1084,6 +1097,19 @@ EventHdlrState::EventHdlrState(void *p, uint64_t allocStamp, uint64_t deallocSta
   // many ctors may use this as default.. in an object
   *this = current_default_assign_point();
 
+  if ( EventCallContext::st_currentCtxt && EventCallContext::st_currentCtxt->is_incomplete() ) 
+  {
+    auto &upper = *EventCallContext::st_currentCtxt;
+    auto &active = upper.active_event();
+    auto &hdlr = *active._hdlrAssign;
+    auto &ctor = _scopeContext._chainPtr->operator[](0);
+    active._allocDelta -= ctor._allocDelta; // undo
+    active._deallocDelta -= ctor._deallocDelta; // undo
+
+    Debug(TRACE_FLAG,"(C#%06x) --> (C#%06x) [ mem %ld ]     CONSTRUCT       under %s %s@%d",
+       id(), upper.id(), ctor._allocDelta - ctor._deallocDelta, hdlr._kLabel, hdlr._kFile, hdlr._kLine );
+  }
+
   // must return an error...
   ink_release_assert( pthread_mutex_unlock(&_scopeContext._chainPtr->_owner) );
 }
@@ -1095,6 +1121,8 @@ EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
    : _assignPoint(&hdlr),
      _scopeContext() // add ctor-record
 {
+  CHK_NOT_STACK(&hdlr);
+
   _scopeContext.completed("cxt.ctor"); // mark as done and release chain
 
   // must be simple/stack created .. so no other ctors left
@@ -1112,10 +1140,26 @@ EventHdlrState::~EventHdlrState()
    // detaches from shared-ptr!
 {
   _scopeContext.completed("hdlr.dtor");
+
+  if ( EventCallContext::st_currentCtxt && EventCallContext::st_currentCtxt->is_incomplete() ) 
+  {
+    auto &upper = *EventCallContext::st_currentCtxt;
+    auto &active = upper.active_event();
+    auto &hdlr = *active._hdlrAssign;
+    auto &ctor = _scopeContext._chainPtr->operator[](0);
+    active._allocDelta += ctor._allocDelta; // reverse undo
+    active._deallocDelta += ctor._deallocDelta; // reverse undo
+
+    Debug(TRACE_FLAG,"(C#%06x) --> (C#%06x) [ mem %ld ]     DESTRUCT       under %s %s@%d",
+       id(), upper.id(), ctor._allocDelta - ctor._deallocDelta, hdlr._kLabel, hdlr._kFile, hdlr._kLine );
+    // if incomplete... compensate for the deallocation-so-far (later-ctor stuff is unkn)
+  }
 }
 
 void EventCallContext::reset_frame(EventHdlr_t hdlr) 
 {
+  CHK_NOT_STACK(&hdlr);
+
   ink_release_assert( st_currentCtxt == this || ! st_currentCtxt ); // must reset top here
 
   EventCallContext::st_currentCtxt = this; // must reset top here

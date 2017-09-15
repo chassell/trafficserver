@@ -40,6 +40,7 @@ static void ink_die_die_die() TS_NORETURN;
 static void
 ink_die_die_die()
 {
+  exit(70);
   abort();
   _exit(70); // 70 corresponds to EX_SOFTWARE in BSD's sysexits. As good a status as any.
   exit(70);

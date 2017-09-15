@@ -49,6 +49,7 @@
 #include <new>
 #include <memory>
 #include <cstdlib>
+#include <type_traits>
 
 class AlignedAllocator
 {
@@ -96,10 +97,12 @@ protected:
   }
 };
 
-template <typename T_OBJECT> class ObjAllocator : public std::allocator<T_OBJECT>
+inline void obj_allocator_adjust(void *p) { }
+
+template <typename T_OBJECT> class ObjAllocator
 {
 public:
-  using typename std::allocator<T_OBJECT>::value_type;
+  using value_type = T_OBJECT;
 
   ObjAllocator(const char *name, unsigned chunk_size = 128) : _name(name)
   {
@@ -142,7 +145,8 @@ protected:
   allocate()
   {
     auto p = static_cast<value_type *>(mallocx(sizeof(value_type), MALLOCX_ALIGN(alignof(value_type)) | MALLOCX_ZERO));
-    this->construct(p); // default constructor + pre-zeroed
+    std::allocator<T_OBJECT>().construct(p); 
+    obj_allocator_adjust(p);
     return p;
   }
 
@@ -155,3 +159,4 @@ protected:
 private:
   const char *_name;
 };
+

@@ -48,6 +48,19 @@
 #include <chrono>
 #include <cassert>
 
+#define CHK_NOT_STACK(p)    { \
+   int a; \
+   ink_release_assert( reinterpret_cast<const char*>(p) < reinterpret_cast<const char*>(&a) \
+            || p == &kHdlrAssignEmpty || p == &kHdlrAssignNoDflt ); \
+  }
+
+
+#define CHK_NOT_STACK2(p)    { \
+   int a; \
+   assert( reinterpret_cast<const char*>(p) < reinterpret_cast<const char*>(&a) \
+            || p == &kHdlrAssignEmpty || p == &kHdlrAssignNoDflt ); \
+  }
+
 struct Continuation;
 struct EventHdlrAssignRec;
 struct EventCalled;
@@ -361,7 +374,10 @@ class EventHdlrState
   void operator=(TSEventFunc f);
 
   // class method-pointer full args
-  void operator=(EventHdlr_t cbAssign) { _assignPoint = &cbAssign; }
+  void operator=(EventHdlr_t cbAssign) {
+     CHK_NOT_STACK2(&cbAssign);
+    _assignPoint = &cbAssign; 
+  }
 
   // class method-pointer full args
   void operator=(const EventHdlrState &orig)
@@ -485,7 +501,7 @@ inline EventHdlrState::operator()(Continuation *self,int event, void *data)
   })
 
 #define LABEL_FRAME_GLOBAL(str,name) \
-     constexpr EventHdlrAssignRec name{  \
+     constexpr const EventHdlrAssignRec name{  \
                        (("#" str)+0),                        \
                        (__FILE__+0),                       \
                        __LINE__,                           \
@@ -543,5 +559,18 @@ inline EventHdlrState::operator()(Continuation *self,int event, void *data)
 
 #define SET_NEXT_HANDLER(_h)                         \
             EventCallContext::set_ctor_initial_callback(EVENT_HANDLER(_h))
+
+class INKContInternal;
+class INKVConnInternal;
+class HttpSM;
+class Event;
+class Continuation;
+
+void obj_allocator_adjust(INKContInternal *);  // special cases
+void obj_allocator_adjust(INKVConnInternal *); // special cases
+void obj_allocator_adjust(HttpSM *);           // special cases
+
+template <class T_OBJ>
+auto obj_allocator_adjust(T_OBJ *p) -> typename std::enable_if<std::is_base_of<Continuation, T_OBJ>::value, void>::type;
 
 #endif // _I_CallbackDebug_h_
