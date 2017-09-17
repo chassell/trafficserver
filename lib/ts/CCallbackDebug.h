@@ -63,6 +63,11 @@ typedef struct tsapi_contdebug *TSContDebug;
 
 const TSEventFunc cb_null_return();
 void              cb_set_ctor_initial_callback(EventCHdlrAssignRecPtr_t crec);
+const char       *cb_alloc_plugin_label(const char *path, const char *symbol);
+void              cb_enable_thread_prof_active();
+void              cb_disable_thread_prof_active();
+void              cb_flush_thread_prof_active();
+int64_t           cb_get_thread_alloc_surplus();
 
 #if defined(__cplusplus)
 }

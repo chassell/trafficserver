@@ -276,6 +276,7 @@ template struct SetObjFxn<uint64_t>;
 template struct SetObjFxn<unsigned>;
 template struct SetObjFxn<bool>;
 template struct SetObjFxn<chunk_hooks_t>;
+template struct SetObjFxn<const char*>;
 template struct SetObjFxn<std::string>;
 
 const GetObjFxn<chunk_hooks_t> thread_arena_hooks{"arena.0.chunk_hooks"};

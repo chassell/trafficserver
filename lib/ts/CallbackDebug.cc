@@ -744,6 +744,7 @@ void EventCallContext::push_call_chain_pair(EventHdlr_t rec, int event)
     // prep higher context for post-call
     ochain.push_back( EventCalled(ochain._cnt++, *orecp, event) );
     _waiting->_chainInd = &ochain.back() - &ochain.front();
+  // Debug(TRACE_DEBUG_FLAG,"@#%d called from <==(C#%06x) @#%d-1: using new %s %s@%d", _i, octxt.id(), _callingChainLen, assign._kLabel, assign._kFile, assign._kLine);
 
 //    if ( orecp->is_frame_rec() )
 //    {
@@ -845,7 +846,6 @@ EventCalled::EventCalled(unsigned i, const EventCallContext &octxt, EventHdlr_t 
      _callingChainLen( octxt._chainPtr->size() ) // should be correct (but update it)
 {
   ink_release_assert(_hdlrAssign);
-  Debug(TRACE_DEBUG_FLAG,"@#%d called from <==(C#%06x) @#%d-1: using new %s %s@%d", _i, octxt.id(), _callingChainLen, assign._kLabel, assign._kFile, assign._kLine);
 }
 
 // for caller-only
@@ -857,7 +857,6 @@ EventCalled::EventCalled(unsigned i, EventHdlr_t prevHdlr, const EventCallContex
      _calledChainLen( nctxt._chainPtr->size() ) // should be correct (but update it)
 { 
   ink_release_assert(_hdlrAssign);
-  Debug(TRACE_DEBUG_FLAG,"@#%d calling into ==>(C#%06x) #%d-1: under prev %s %s@%d", _i, nctxt.id(), _calledChainLen, prevHdlr._kLabel, prevHdlr._kFile, prevHdlr._kLine);
 }
 
 bool EventChain::trim_back()
@@ -1032,6 +1031,7 @@ EventCallContext::EventCallContext()
     Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%u <=== (C#%06x) chain-ctor %s %s@%d", id(), 0, _waiting->id(),
                rec._kLabel, rec._kFile, rec._kLine);
     push_initial_call(rec);
+    _chainPtr->reserve(50);
   } else {
     Debug(TRACE_DEBUG_FLAG,"(C#%06x) <=== top-ctor", id());
     push_initial_call(kHdlrAssignEmpty);
@@ -1297,6 +1297,7 @@ EventCalled::completed(EventCallContext const &ctxt, const char *msg)
   }
 
   auto &chain = *ctxt._chainPtr;
+  auto callInd = this - &chain.front();
 
   auto duration = std::chrono::steady_clock::now() - ctxt._start;
   auto allocTot = int64_t() + EventCallContext::st_allocCounterRef - ctxt._allocStamp;
@@ -1337,58 +1338,58 @@ EventCalled::completed(EventCallContext const &ctxt, const char *msg)
   } 
 
   do {
-    if ( callingID ) {
-      break; // consider calling frame
-    }
-    if ( _i && ! calledID && ! this[-1]._delay ) {
-      callingInd = this[-1]._i;
-      callingID = chain.id(); // note self..
-      title = "in-chain-call";
-      break; // consider calling frame
-    }
+      if ( callingID ) {
+        break; // consider calling frame
+      }
+      if ( _i && ! calledID && ! this[-1]._delay ) {
+        callingInd = this[-1]._i;
+        callingID = chain.id(); // note self..
+        title = "in-chain-call";
+        break; // consider calling frame
+      }
 
-    if ( calledID && is_frame_rec() ) {
-      title = "frame-post-call"; // print log
-    } else if ( calledID ) {
-      title = "event-post-call"; // print log
-    }
+      if ( calledID && is_frame_rec() ) {
+        title = "frame-post-call"; // print log
+      } else if ( calledID ) {
+        title = "event-post-call"; // print log
+      }
 
-    // current or lower 
-    if ( _i && ! calledID && this != &chain.back() ) {
-      calledID = chain.id(); // note self..
-      calledInd = this[1]._i;
-      title = "top-call"; // print log
-    }
+      // current or lower 
+      if ( _i && ! calledID && this != &chain.back() ) {
+        calledID = chain.id(); // note self..
+        calledInd = this[1]._i;
+        title = "top-call"; // print log
+      }
 
-    if ( ! _i ) {
-      title = "ctor-call"; // print one-line log
-    }
+      if ( ! _i ) {
+        title = "ctor-call"; // print one-line log
+      }
 
-    if ( calledID ) {
-      Debug(TRACE_DEBUG_FLAG,"[ (C#%06x) @#%d ] <==> (C#%06x) @#%d called: %s complete [post:%+ld pre:%+ld -> %+ld] [tot:%ld] [%05d] %s %s@%d [%s]",
-         chain.id(), _i, calledID, calledInd, title, 
-         allocTot - deallocTot, prevDiff, _allocDelta - _deallocDelta, 
-         chain._allocTotal - chain._deallocTotal, 
-         _event, _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine, msg);
-    }
-    else
-    {
-      Debug(TRACE_DEBUG_FLAG,"[ (C#%06x) @#%d ]: %s complete [post:%+ld pre:%+ld -> %+ld] [tot:%ld] [%05d] %s %s@%d [%s]",
-         chain.id(), _i, title, 
-         allocTot - deallocTot, prevDiff, _allocDelta - _deallocDelta, 
-         chain._allocTotal - chain._deallocTotal, _event,
-         _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine, msg);
-    }
+      if ( calledID ) {
+        Debug(TRACE_DEBUG_FLAG,"[ (C#%06x) @#%d ] <==> (C#%06x) @#%d called: %s complete [post:%+ld pre:%+ld -> %+ld] [tot:%ld] [%05d] %s %s@%d [%s]",
+           chain.id(), _i, calledID, calledInd, title, 
+           allocTot - deallocTot, prevDiff, _allocDelta - _deallocDelta, 
+           chain._allocTotal - chain._deallocTotal, 
+           _event, _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine, msg);
+      }
+      else
+      {
+        Debug(TRACE_DEBUG_FLAG,"[ (C#%06x) @#%d ]: %s complete [post:%+ld pre:%+ld -> %+ld] [tot:%ld] [%05d] %s %s@%d [%s]",
+           chain.id(), _i, title, 
+           allocTot - deallocTot, prevDiff, _allocDelta - _deallocDelta, 
+           chain._allocTotal - chain._deallocTotal, _event,
+           _hdlrAssign->_kLabel, _hdlrAssign->_kFile, _hdlrAssign->_kLine, msg);
+      }
 
-    std::ostringstream oss;
-    chain.printLog(oss,this - &chain.front(),~0U,msg);
+      std::ostringstream oss;
+      chain.printLog(oss,callInd,~0U,msg);
 
-    if ( ! oss.str().empty() ) {
-      DebugSpecific(true,TRACE_FLAG,"%s calls [%s] %s", title, msg, oss.str().c_str());
-    }
+      if ( ! oss.str().empty() ) {
+        DebugSpecific(true,TRACE_FLAG,"%s calls [%s] %s", title, msg, oss.str().c_str());
+      }
 
-    ink_mutex_release(&chain._owner); // now free to go to other threads
-    return;
+      ink_mutex_release(&chain._owner); // now free to go to other threads
+      return;
 
   } while(false);
 
@@ -1398,11 +1399,13 @@ EventCalled::completed(EventCallContext const &ctxt, const char *msg)
   if ( is_frame_rec() ) {
     title = "enter-frame"; // no log yet
   } else if ( ! calling().is_frame_rec() ) {
-    title = "mid-event"; // no log yet
+    title = "sub-event"; 
+    // need to log in case a new call is made
+    chain.printLog(oss,callInd,~0U,msg); 
   } else { 
     title = "top-event"; // print log
-    chain.printLog(oss,this - &chain.front(),~0U,msg);
-  } 
+    chain.printLog(oss,callInd,~0U,msg);
+  }
 
   Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%d <===> [ (C#%06x) @#%d called ]: %s completed [post:%+ld pre:%+ld -> %+ld] [tot:%ld] [%05d] %s %s@%d [%s]",
      callingID, callingInd, chain.id(), _i, title,
@@ -1423,6 +1426,8 @@ EventCalled::completed(EventCallContext const &ctxt, const char *msg)
 
   // on single shot, release chain's lock too
 }
+
+extern "C" {
 
 const char *cb_alloc_plugin_label(const char *path, const char *symbol)
 {
@@ -1449,12 +1454,33 @@ const char *cb_alloc_plugin_label(const char *path, const char *symbol)
   return strdup(out.c_str());
 }
 
-extern "C" {
 const TSEventFunc cb_null_return() { return nullptr; }
 
 void cb_set_ctor_initial_callback(EventCHdlrAssignRecPtr_t crec)
 {
   EventCallContext::set_ctor_initial_callback(reinterpret_cast<EventHdlr_t>(*crec));
+}
+
+void cb_enable_thread_prof_active()
+{
+  jemallctl::enable_thread_prof_active(); 
+}
+
+int64_t cb_get_thread_alloc_surplus()
+{
+  return EventCallContext::st_allocCounterRef - EventCallContext::st_deallocCounterRef;
+}
+
+jemallctl::SetObjFxn<const char*>  g_prof_dump{"prof.dump"};
+
+void cb_disable_thread_prof_active()
+{
+  jemallctl::disable_thread_prof_active(); 
+}
+
+void cb_flush_thread_prof_active()
+{
+  g_prof_dump(nullptr);
 }
 
 }

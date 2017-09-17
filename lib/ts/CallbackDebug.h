@@ -399,7 +399,9 @@ inline void EventHdlrState::operator=(TSEventFunc f)
   assert( ! _assignPoint->_kTSEventFunc || _assignPoint->_kTSEventFunc == f ); // must match 
 }
 
+extern "C" {
 const char *cb_alloc_plugin_label(const char *path, const char *symbol);
+}
 
 // standard Continuation handler signature(s)
 template<class T_OBJ, typename T_ARG, int(T_OBJ::*FXN)(int,T_ARG)>
