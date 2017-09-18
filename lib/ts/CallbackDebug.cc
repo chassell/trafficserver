@@ -966,9 +966,9 @@ EventChain::~EventChain()
   oss.str().empty() || ({ DebugSpecific(true,TRACE_FLAG,"chain-dtor %s",oss.str().c_str()); true; });
 
   if ( front()._hdlrAssign->is_plugin_rec() ) {
-    Debug(TRACE_DEBUG_FLAG,"deleting assign-rec %s %s@%d", front()._hdlrAssign->_kLabel, front()._hdlrAssign->_kFile, front()._hdlrAssign->_kLine);
-    delete front()._hdlrAssign->_kLabel;
-    delete front()._hdlrAssign;
+    Debug(TRACE_FLAG,"NOT deleting assign-rec %s %s@%d", front()._hdlrAssign->_kLabel, front()._hdlrAssign->_kFile, front()._hdlrAssign->_kLine);
+//    delete front()._hdlrAssign->_kLabel;
+//    delete front()._hdlrAssign;
   }
 
   while ( ! pthread_mutex_unlock(&_owner) ) {
