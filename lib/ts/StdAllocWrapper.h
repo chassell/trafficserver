@@ -157,6 +157,7 @@ public:
   void
   free_void(void *ptr)
   {
+    ObjAllocatorBase::deallocate_hook(static_cast<value_type*>(ptr));
     static_cast<value_type *>(ptr)->~value_type();
     ObjAllocatorBase::deallocate(ptr,sizeof(value_type));
   }
