@@ -28,8 +28,14 @@
 
 *****************************************************************************/
 #include "P_EventSystem.h"
+#include "ts/CallbackDebug.h"
 
 ClassAllocator<Event> eventAllocator("eventAllocator", 256);
+
+//void obj_allocator_adjust(Event *, int32_t adj)
+//{
+//  EventCallContext::remove_mem_delta("[event]", adj);
+//}
 
 void
 Event::schedule_imm(int acallback_event)

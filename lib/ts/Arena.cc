@@ -25,10 +25,13 @@
 #include "ts/ink_memory.h"
 
 // need standard Allocator for this
-#undef HAVE_LIBJEMALLOC
+// #undef HAVE_LIBJEMALLOC
 
 #include "ts/Allocator.h"
 #include "ts/Arena.h"
+#include "ts/CallbackDebug.h"
+#include "ts/CCallbackDebug.h"
+
 #include <assert.h>
 #include <string.h>
 
@@ -45,11 +48,15 @@ blk_alloc(int size)
 {
   ArenaBlock *blk;
 
+  auto delta = - cb_get_thread_alloc_surplus();
   if (size == DEFAULT_BLOCK_SIZE) {
     blk = (ArenaBlock *)defaultSizeArenaBlock.alloc_void();
   } else {
     blk = (ArenaBlock *)ats_malloc(size + sizeof(ArenaBlock) - 8);
   }
+  delta += cb_get_thread_alloc_surplus();
+
+  cb_remove_mem_delta("[arena]", delta); // Arenas do not account against
 
   blk->next          = NULL;
   blk->m_heap_end    = &blk->data[size];
@@ -154,10 +161,15 @@ Arena::reset()
 {
   ArenaBlock *b;
 
+  auto delta = - cb_get_thread_alloc_surplus();
   while (m_blocks) {
     b = m_blocks->next;
     blk_free(m_blocks);
     m_blocks = b;
   }
+  delta += cb_get_thread_alloc_surplus();
+
+  cb_remove_mem_delta("[~arena]", delta); // Arenas do not account against
+
   ink_assert(m_blocks == NULL);
 }

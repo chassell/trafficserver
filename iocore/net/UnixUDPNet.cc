@@ -61,8 +61,6 @@ int32_t g_udp_numSendRetries;
 int G_bwGrapherFd;
 sockaddr_in6 G_bwGrapherLoc;
 
-LOG_SKIPPABLE_EVENTHDLR((UDPNetContHandler)&UDPNetHandler::mainNetEvent);
-
 void
 initialize_thread_for_udp_net(EThread *thread)
 {

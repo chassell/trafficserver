@@ -91,6 +91,7 @@ EThread::schedule_every(Continuation *cont, ink_hrtime t, int callback_event, vo
 TS_INLINE Event *
 EThread::schedule(Event *e, bool fast_signal)
 {
+  EventCallContext::remove_mem_delta(e->continuation->handler.id(), sizeof(Event));
   e->ethread = this;
   ink_assert(tt == REGULAR);
   if (e->continuation->mutex)
@@ -166,8 +167,11 @@ TS_INLINE void
 EThread::free_event(Event *e)
 {
   ink_assert(!e->in_the_priority_queue && !e->in_the_prot_queue);
+  int32_t delta = - cb_get_thread_alloc_surplus();
   e->mutex = NULL;
   EVENT_FREE(e, eventAllocator, this);
+  delta += cb_get_thread_alloc_surplus();
+  EventCallContext::remove_mem_delta("[~event]", delta );
 }
 
 #endif /*_EThread_h_*/

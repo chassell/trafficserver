@@ -117,6 +117,9 @@ milestone_update_api_time(TransactionMilestones &milestones, ink_hrtime &api_tim
 
 ClassAllocator<HttpSM> httpSMAllocator("httpSMAllocator");
 
+//void obj_allocator_adjust(HttpSM *cont, int32_t adj)
+//  { cont->stateHandler.remove_ctor_delta(adj); }
+
 HttpVCTable::HttpVCTable()
 {
   memset(&vc_table, 0, sizeof(vc_table));

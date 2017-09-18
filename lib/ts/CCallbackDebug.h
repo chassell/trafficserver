@@ -68,6 +68,8 @@ void              cb_enable_thread_prof_active();
 void              cb_disable_thread_prof_active();
 void              cb_flush_thread_prof_active();
 int64_t           cb_get_thread_alloc_surplus();
+void              cb_allocate_hook(void *, unsigned n);
+void              cb_remove_mem_delta(const char *, unsigned n);
 
 #if defined(__cplusplus)
 }

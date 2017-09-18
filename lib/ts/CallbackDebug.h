@@ -279,7 +279,10 @@ struct EventCallContext
   EventHdlrP_t active_hdlrp() const { return active_event()._hdlrAssign; }
 
   void reset_frame(EventHdlr_t hdlr);
-  void completed(const char *msg);
+  bool complete_call(const char *msg);
+  bool restart_upper_stamp(const char *msg);
+  static bool remove_mem_delta(int id, int32_t adj);
+  static bool remove_mem_delta(const char *str, int32_t adj);
  public:
   static void set_ctor_initial_callback(EventHdlr_t hdlr);
   static void clear_ctor_initial_callback();
@@ -320,24 +323,11 @@ class EventHdlrState
 
  public:
   // default initializer to catch earliest allocation stamps
-  explicit EventHdlrState(void *p = NULL, 
-                          uint64_t allocStamp = EventCallContext::st_allocCounterRef,
-                          uint64_t deallocStamp = EventCallContext::st_deallocCounterRef);
-
+  explicit EventHdlrState(void *p = NULL);
   // init with a handler-rec
   explicit EventHdlrState(EventHdlr_t assigned);
 
   ~EventHdlrState();
-
- public:
-  static void reset_curr_frame(EventHdlr_t hdlr)
-  {
-    assert( EventCallContext::st_currentCtxt );
-    EventCallContext::st_currentCtxt->reset_frame(hdlr);
-  }
-
-  int operator()(Continuation *self,int event,void *data);
-  int operator()(TSCont,TSEvent,void *data);
 
  public:
   operator EventHdlr_t() const { return *_assignPoint; }
@@ -386,7 +376,30 @@ class EventHdlrState
     // all other values can remain intact
   }
 
+ public:
+  static void reset_curr_frame(EventHdlr_t hdlr)
+  {
+    assert( EventCallContext::st_currentCtxt );
+    EventCallContext::st_currentCtxt->reset_frame(hdlr);
+  }
+
+  static void allocate_hook(void *p, unsigned n)
+  {
+    st_preAllocCounter = EventCallContext::st_allocCounterRef - n;
+    st_preCtorObject = p;
+    st_preCtorObjectEnd = static_cast<char *>(p) + n;
+  }
+
+  int operator()(Continuation *self,int event,void *data);
+  int operator()(TSCont,TSEvent,void *data);
+
 private:
+  void remove_ctor_delta();
+
+  static thread_local uint64_t st_preAllocCounter;
+  static thread_local void *st_preCtorObject;
+  static thread_local void *st_preCtorObjectEnd;
+
   EventHdlrP_t     _assignPoint = nullptr;  // latest callback assigned for use
   EventCallContext _scopeContext; // call-record after full alloc
 
@@ -401,6 +414,9 @@ inline void EventHdlrState::operator=(TSEventFunc f)
 
 extern "C" {
 const char *cb_alloc_plugin_label(const char *path, const char *symbol);
+int64_t     cb_get_thread_alloc_surplus();
+void        cb_allocate_hook(void *,unsigned n);
+void        cb_remove_mem_delta(const char *, unsigned n);
 }
 
 // standard Continuation handler signature(s)
@@ -567,12 +583,5 @@ class INKVConnInternal;
 class HttpSM;
 class Event;
 class Continuation;
-
-void obj_allocator_adjust(INKContInternal *);  // special cases
-void obj_allocator_adjust(INKVConnInternal *); // special cases
-void obj_allocator_adjust(HttpSM *);           // special cases
-
-template <class T_OBJ>
-auto obj_allocator_adjust(T_OBJ *p) -> typename std::enable_if<std::is_base_of<Continuation, T_OBJ>::value, void>::type;
 
 #endif // _I_CallbackDebug_h_

@@ -44,12 +44,18 @@
 #include "ts/ink_align.h"
 #include "ts/ink_memory.h"
 
+#include "ts/CallbackDebug.h"
+
 #include <execinfo.h> // for backtrace!
 
 #include <new>
 #include <memory>
 #include <cstdlib>
 #include <type_traits>
+
+class Continuation;
+class HttpSM;
+class Event;
 
 class AlignedAllocator
 {
@@ -97,47 +103,70 @@ protected:
   }
 };
 
-inline void obj_allocator_adjust(void *p) { }
+class ObjAllocatorBase
+{
+public:
+  ObjAllocatorBase(const char *name, unsigned size, unsigned aligned, unsigned chunk_size = 128) : _name(name)
+  {
+    void *preCached[chunk_size];
 
-template <typename T_OBJECT> class ObjAllocator
+    for (int n = chunk_size; n--;) {
+      // create correct size and alignment
+      preCached[n] = mallocx(size, MALLOCX_ALIGN(aligned));
+    }
+    for (int n = chunk_size; n--;) {
+      deallocate(preCached[n], size);
+    }
+  }
+
+protected:
+  void deallocate(void *p, unsigned size) { sdallocx(p, size, 0); }
+
+  static void allocate_hook(void *p) { }
+  static void deallocate_hook(void *p) { }
+
+  // publish object extents for EventHdlrState ctors
+  template <class T_OBJ>
+  static auto allocate_hook(T_OBJ *p) -> typename std::enable_if<std::is_base_of<Continuation, T_OBJ>::value, void>::type
+     { cb_allocate_hook(p,sizeof(T_OBJ)); }
+
+  // remove memory objs from enclosing system
+  template <class T_OBJ>
+  static auto allocate_hook(T_OBJ *p) -> typename std::enable_if<std::is_base_of<Event, T_OBJ>::value, void>::type
+     { cb_remove_mem_delta("[event]",static_cast<int32_t>(sizeof(T_OBJ))); }
+  template <class T_OBJ>
+  static auto deallocate_hook(T_OBJ *p) -> typename std::enable_if<std::is_base_of<Event, T_OBJ>::value, void>::type
+     { cb_remove_mem_delta("[~event]",-static_cast<int32_t>(sizeof(T_OBJ))); }
+
+private:
+  const char *_name;
+};
+
+template <typename T_OBJECT> class ObjAllocator : public ObjAllocatorBase
 {
 public:
   using value_type = T_OBJECT;
 
-  ObjAllocator(const char *name, unsigned chunk_size = 128) : _name(name)
-  {
-    value_type *preCached[chunk_size];
+  ObjAllocator(const char *name, unsigned chunk_size = 128) 
+     : ObjAllocatorBase(name, sizeof(value_type), alignof(value_type), chunk_size)
+  { }
 
-    for (int n = chunk_size; n--;) {
-      // create correct size and alignment
-      preCached[n] = static_cast<value_type *>(mallocx(sizeof(value_type), MALLOCX_ALIGN(alignof(value_type))));
-    }
-    for (int n = chunk_size; n--;) {
-      deallocate(preCached[n]);
-    }
-  }
+  void *alloc_void() { return allocate(); }
+  value_type *alloc() { return allocate(); }
 
-  void *
-  alloc_void()
-  {
-    return allocate();
-  }
   void
   free_void(void *ptr)
   {
     static_cast<value_type *>(ptr)->~value_type();
-    deallocate(ptr);
+    ObjAllocatorBase::deallocate(ptr,sizeof(value_type));
   }
-  value_type *
-  alloc()
-  {
-    return allocate();
-  }
+
   void
   free(value_type *ptr)
   {
-    ptr->~value_type();
-    deallocate(ptr);
+    ObjAllocatorBase::deallocate_hook(ptr);
+    ptr->~value_type(); // dtor called
+    ObjAllocatorBase::deallocate(ptr,sizeof(value_type));
   }
 
 protected:
@@ -145,18 +174,9 @@ protected:
   allocate()
   {
     auto p = static_cast<value_type *>(mallocx(sizeof(value_type), MALLOCX_ALIGN(alignof(value_type)) | MALLOCX_ZERO));
-    std::allocator<T_OBJECT>().construct(p); 
-    obj_allocator_adjust(p);
+    ObjAllocatorBase::allocate_hook(p);
+    std::allocator<T_OBJECT>().construct(p);  // ctor called
     return p;
   }
-
-  void
-  deallocate(value_type *p)
-  {
-    sdallocx(p, sizeof(value_type), 0);
-  }
-
-private:
-  const char *_name;
 };
 

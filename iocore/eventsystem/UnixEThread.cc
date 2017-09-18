@@ -201,7 +201,6 @@ EThread::execute()
       while ((e = EventQueueExternal.dequeue_local())) 
       {
         // cannot reconcile becuase e->continuation may be a bad pointer
-        // CREATE_EVENT_FRAME("<extq>", e->continuation->handler);
         if (e->cancelled)
           free_event(e);
         else if (!e->timeout_at) { // IMMEDIATE
@@ -229,8 +228,6 @@ EThread::execute()
         EventQueue.check_ready(cur_time, this);
         while ((e = EventQueue.dequeue_ready(cur_time))) 
         {
-          CREATE_EVENT_FRAME("<intq-rdy>]", e->continuation->handler);
-
           ink_assert(e);
           ink_assert(e->timeout_at > 0);
           if (e->cancelled)
@@ -252,8 +249,6 @@ EThread::execute()
           EventQueueExternal.dequeue_timed(cur_time, next_time, false);
         while ((e = EventQueueExternal.dequeue_local())) 
         {
-          CREATE_EVENT_FRAME("<extq-timed>", e->continuation->handler);
-
           if (!e->timeout_at)
             process_event(e, e->callback_event);
           else {
@@ -285,7 +280,6 @@ EThread::execute()
         }
         // execute poll events
         while ((e = NegativeQueue.dequeue())) {
-          CREATE_EVENT_FRAME("<neg>", e->continuation->handler);
           process_event(e, EVENT_POLL);
         }
         if (!INK_ATOMICLIST_EMPTY(EventQueueExternal.al))

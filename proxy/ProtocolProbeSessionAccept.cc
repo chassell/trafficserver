@@ -144,6 +144,9 @@ ProtocolProbeSessionAccept::mainEvent(int event, void *data)
 
     VIO *vio;
     NetVConnection *netvc          = (NetVConnection *)data;
+
+    CREATE_EVENT_FRAME("<new pptramp>", netvc->handler);
+
     ProtocolProbeTrampoline *probe = new ProtocolProbeTrampoline(this, netvc->mutex, NULL, NULL);
 
     // XXX we need to apply accept inactivity timeout here ...

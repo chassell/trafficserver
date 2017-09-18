@@ -92,6 +92,7 @@ public:
   the Continuation's class constructor.
 
 */
+class ink_dummy_for_new;
 
 class Continuation : private force_VFPT_to_top
 {
@@ -162,6 +163,16 @@ public:
     @param amutex Lock to be set for this Continuation.
 
   */
+  void *operator new(size_t n) 
+  {
+    auto p = static_cast<Continuation*>(::operator new(n));
+    cb_allocate_hook(p,n);
+    return p;
+  }
+
+  void *operator new(size_t n, ink_dummy_for_new *p) 
+     { return ::operator new(n,p); }
+
   Continuation(ProxyMutex *amutex = NULL);
 };
 

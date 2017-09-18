@@ -370,6 +370,12 @@ static ClassAllocator<INKContInternal> INKContAllocator("INKContAllocator");
 static ClassAllocator<INKVConnInternal> INKVConnAllocator("INKVConnAllocator");
 static ClassAllocator<MIMEFieldSDKHandle> mHandleAllocator("MIMEFieldSDKHandle");
 
+// void obj_allocator_adjust(INKContInternal *cont, int32_t adj)
+//   { cont->m_event_func.remove_ctor_delta(adj); }
+
+// void obj_allocator_adjust(INKVConnInternal *cont, int32_t adj)
+//   { cont->m_event_func.remove_ctor_delta(adj); }
+
 ////////////////////////////////////////////////////////////////////
 //
 // API error logging
@@ -918,9 +924,6 @@ FileImpl::fgets(char *buf, int length)
 //
 ////////////////////////////////////////////////////////////////////
 
-LOG_SKIPPABLE_EVENTHDLR(&INKContInternal::handle_event);
-LOG_SKIPPABLE_EVENTHDLR(&INKVConnInternal::handle_event);
-
 INKContInternal::INKContInternal()
   : DummyVConnection(NULL),
     mdata(NULL),
@@ -958,7 +961,6 @@ INKContInternal::init(TSEventFunc funcp, TSMutex mutexp)
 void
 INKContInternal::destroy()
 {
-  CREATE_EVENT_FRAME("<tsdtor>", m_event_func);
   if (m_free_magic == INKCONT_INTERN_MAGIC_DEAD) {
     ink_release_assert(!"Plugin tries to use a continuation which is deleted");
   }
@@ -966,7 +968,6 @@ INKContInternal::destroy()
   if (m_deletable) {
     this->mutex  = NULL;
     m_free_magic = INKCONT_INTERN_MAGIC_DEAD;
-    CREATE_EVENT_FRAME("<tsdtor>", m_event_func);
     INKContAllocator.free(this);
   } else {
     // TODO: Should this schedule on some other "thread" ?
@@ -1002,7 +1003,6 @@ INKContInternal::handle_event(int event, void *edata)
     if (m_deletable) {
       this->mutex  = NULL;
       m_free_magic = INKCONT_INTERN_MAGIC_DEAD;
-      CREATE_EVENT_FRAME("<tsdtor>", m_event_func);
       INKContAllocator.free(this);
     } else {
       Warning("INKCont Deletable but not deleted %d", m_event_count);
@@ -1055,7 +1055,6 @@ INKVConnInternal::destroy()
     this->mutex = NULL;
     m_read_vio.set_continuation(NULL);
     m_write_vio.set_continuation(NULL);
-    CREATE_EVENT_FRAME("<tsdtor>", m_event_func);
     INKVConnAllocator.free(this);
   }
 }
@@ -1069,7 +1068,6 @@ INKVConnInternal::handle_event(int event, void *edata)
       this->mutex = NULL;
       m_read_vio.set_continuation(NULL);
       m_write_vio.set_continuation(NULL);
-      CREATE_EVENT_FRAME("<tsdtor>", m_event_func);
       INKVConnAllocator.free(this);
     }
   } else {
@@ -9017,7 +9015,8 @@ TSVConnReenable(TSVConn vconn)
   SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
 
   // We really only deal with a SSLNetVConnection at the moment
-  if (ssl_vc != NULL) {
+  if (ssl_vc != NULL) 
+  {
     CREATE_EVENT_FRAME("<new sslcb>", ssl_vc->handler);
 
     EThread *eth    = this_ethread();

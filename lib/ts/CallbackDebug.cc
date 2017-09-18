@@ -722,7 +722,8 @@ void EventCallContext::push_call_chain_pair(EventHdlr_t rec, int event)
   }
 
   // remove a lock from _waiting
-  _waiting->completed("upush"); // complete any post-call or call-in
+  _waiting->complete_call("upush") && _waiting->restart_upper_stamp("upush");
+  // complete any post-call or call-in
 
   // logs should show its done
   _waiting->_chainInd = -1;
@@ -962,7 +963,7 @@ EventChain::~EventChain()
 {
   std::ostringstream oss;
   printLog(oss,0,~0U,"chain.dtor");
-  oss.str().empty() || ({ DebugSpecific(true,TRACE_FLAG,"pop-dtor %s",oss.str().c_str()); true; });
+  oss.str().empty() || ({ DebugSpecific(true,TRACE_FLAG,"chain-dtor %s",oss.str().c_str()); true; });
 
   if ( front()._hdlrAssign->is_plugin_rec() ) {
     Debug(TRACE_DEBUG_FLAG,"deleting assign-rec %s %s@%d", front()._hdlrAssign->_kLabel, front()._hdlrAssign->_kFile, front()._hdlrAssign->_kLine);
@@ -982,8 +983,6 @@ EventChain::~EventChain()
 EventCallContext::EventCallContext(const EventHdlr_t &hdlr, const EventCalled::ChainPtr_t &chainPtr, int event)
    : _chainPtr(chainPtr) // _waiting(
 {
-  CHK_NOT_STACK(&hdlr);
-
   st_currentCtxt = this; // push down one immediately..
 
   ink_release_assert(chainPtr);
@@ -1031,7 +1030,6 @@ EventCallContext::EventCallContext()
     Debug(TRACE_DEBUG_FLAG,"(C#%06x) @#%u <=== (C#%06x) chain-ctor %s %s@%d", id(), 0, _waiting->id(),
                rec._kLabel, rec._kFile, rec._kLine);
     push_initial_call(rec);
-    _chainPtr->reserve(50);
   } else {
     Debug(TRACE_DEBUG_FLAG,"(C#%06x) <=== top-ctor", id());
     push_initial_call(kHdlrAssignEmpty);
@@ -1040,13 +1038,15 @@ EventCallContext::EventCallContext()
   // create entry using current rec
   const_cast<EventCallContext*&>(_waiting) = nullptr; // do *not* use ctor-origin after now
 
+  complete_call("ctxt.ctor");
+
   ink_release_assert(! _chainPtr->empty()); // now non-zero
 }
 
 
 EventCallContext::~EventCallContext()
 {
-  completed(nullptr);
+  complete_call(nullptr) && restart_upper_stamp(nullptr);
 
   if ( st_currentCtxt == this ) {
     st_currentCtxt = _waiting;
@@ -1062,6 +1062,9 @@ thread_local EventCallContext *EventCallContext::st_currentCtxt = nullptr;
 thread_local EventHdlrP_t     EventCallContext::st_dfltAssignPoint = nullptr;
 thread_local uint64_t         &EventCallContext::st_allocCounterRef = *jemallctl::thread_allocatedp();
 thread_local uint64_t         &EventCallContext::st_deallocCounterRef = *jemallctl::thread_deallocatedp();
+thread_local uint64_t         EventHdlrState::st_preAllocCounter = 0LL;
+thread_local void            *EventHdlrState::st_preCtorObject = nullptr;
+thread_local void            *EventHdlrState::st_preCtorObjectEnd = nullptr;
 
 void EventCallContext::clear_ctor_initial_callback() {
   if ( ! st_dfltAssignPoint ) {
@@ -1074,8 +1077,6 @@ void EventCallContext::clear_ctor_initial_callback() {
 
 void EventCallContext::set_ctor_initial_callback(EventHdlr_t rec) 
 {
-  CHK_NOT_STACK(&rec);
-
   if ( st_dfltAssignPoint == &rec ) {
     return;
   }
@@ -1084,34 +1085,20 @@ void EventCallContext::set_ctor_initial_callback(EventHdlr_t rec)
   Debug(TRACE_DEBUG_FLAG,"pre-setting %s %s@%d", rec._kLabel, rec._kFile, rec._kLine );
 }
 
-EventHdlrState::EventHdlrState(void *p, uint64_t allocStamp, uint64_t deallocStamp)
+EventHdlrState::EventHdlrState(void *p)
    : _assignPoint(&kHdlrAssignEmpty), // no-op at first
      _scopeContext()  // add ctor-record
 {
-  // get the earliest point before construction started
-  const_cast<uint64_t &>(_scopeContext._allocStamp) = allocStamp;
-  const_cast<uint64_t &>(_scopeContext._deallocStamp) = deallocStamp;
-
-  _scopeContext.completed("cxt.ctor"); // mark as done and release chain
-
   // many ctors may use this as default.. in an object
+
   *this = current_default_assign_point();
 
-  if ( EventCallContext::st_currentCtxt && EventCallContext::st_currentCtxt->is_incomplete() ) 
-  {
-    auto &upper = *EventCallContext::st_currentCtxt;
-    auto &active = upper.active_event();
-    auto &hdlr = *active._hdlrAssign;
-    auto &ctor = _scopeContext._chainPtr->operator[](0);
-    active._allocDelta -= ctor._allocDelta; // undo
-    active._deallocDelta -= ctor._deallocDelta; // undo
-
-    Debug(TRACE_FLAG,"(C#%06x) --> (C#%06x) [ mem %ld ]     CONSTRUCT       under %s %s@%d",
-       id(), upper.id(), ctor._allocDelta - ctor._deallocDelta, hdlr._kLabel, hdlr._kFile, hdlr._kLine );
-  }
+  // claim bytes grabbed so far ...
+  remove_ctor_delta();
 
   // must return an error...
-  ink_release_assert( pthread_mutex_unlock(&_scopeContext._chainPtr->_owner) );
+  auto r = pthread_mutex_unlock(&_scopeContext._chainPtr->_owner);
+  ink_release_assert( r ); // assert it did
 }
 
 //
@@ -1121,14 +1108,10 @@ EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
    : _assignPoint(&hdlr),
      _scopeContext() // add ctor-record
 {
-  CHK_NOT_STACK(&hdlr);
-
-  _scopeContext.completed("cxt.ctor"); // mark as done and release chain
-
   // must be simple/stack created .. so no other ctors left
   EventCallContext::clear_ctor_initial_callback(); 
 
-  // re-start the chain of contexts for a live run
+  // prep for a restart of upper frame...
   const_cast<EventCallContext*&>(_scopeContext._waiting) = EventCallContext::st_currentCtxt; 
   EventCallContext::st_currentCtxt = &_scopeContext;
 
@@ -1139,27 +1122,20 @@ EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
 EventHdlrState::~EventHdlrState()
    // detaches from shared-ptr!
 {
-  _scopeContext.completed("hdlr.dtor");
+  _scopeContext.complete_call("hdlr.dtor");
 
-  if ( EventCallContext::st_currentCtxt && EventCallContext::st_currentCtxt->is_incomplete() ) 
+  if ( EventCallContext::st_currentCtxt == &_scopeContext )
   {
-    auto &upper = *EventCallContext::st_currentCtxt;
-    auto &active = upper.active_event();
-    auto &hdlr = *active._hdlrAssign;
-    auto &ctor = _scopeContext._chainPtr->operator[](0);
-    active._allocDelta += ctor._allocDelta; // reverse undo
-    active._deallocDelta += ctor._deallocDelta; // reverse undo
-
-    Debug(TRACE_FLAG,"(C#%06x) --> (C#%06x) [ mem %ld ]     DESTRUCT       under %s %s@%d",
-       id(), upper.id(), ctor._allocDelta - ctor._deallocDelta, hdlr._kLabel, hdlr._kFile, hdlr._kLine );
-    // if incomplete... compensate for the deallocation-so-far (later-ctor stuff is unkn)
+    auto &ctor = _scopeContext._chainPtr->front();
+    auto delta = ctor._allocDelta - ctor._deallocDelta;
+    EventCallContext::st_currentCtxt = _scopeContext._waiting;
+    EventCallContext::remove_mem_delta( id(), -delta ); // 
+    EventCallContext::st_currentCtxt = &_scopeContext;
   }
 }
 
 void EventCallContext::reset_frame(EventHdlr_t hdlr) 
 {
-  CHK_NOT_STACK(&hdlr);
-
   ink_release_assert( st_currentCtxt == this || ! st_currentCtxt ); // must reset top here
 
   EventCallContext::st_currentCtxt = this; // must reset top here
@@ -1170,7 +1146,7 @@ void EventCallContext::reset_frame(EventHdlr_t hdlr)
     Debug(TRACE_DEBUG_FLAG,"(C#%06x) resetting %s %s@%d",
        id(), hdlr._kLabel, hdlr._kFile, hdlr._kLine );
 
-    completed("reset"); // mark and balance locks
+    complete_call("reset") && restart_upper_stamp("reset");
   } else {
     auto &ochain = *_chainPtr; // save chain (if usable)
     auto nchainPtr = std::make_shared<EventChain>(ochain.id(),ochain._cnt+1); // NOTE: chain adds into alloc tally
@@ -1245,18 +1221,18 @@ void reset_old_state(bool origProfState, const std::string &origProfName)
   }
 }
 
-void EventCallContext::completed(const char *omsg) 
+bool EventCallContext::complete_call(const char *omsg) 
 {
   // no need?
   if ( ! is_incomplete() ) {
-    return;
+    return false;
   }
 
   auto &mutex = _chainPtr->_owner;
 
   // cannot own this chain?
   if ( ! ink_mutex_try_acquire(&mutex) ) {
-    return;
+    return false;
   }
 
   // reset accounting for upper if it matters
@@ -1264,15 +1240,20 @@ void EventCallContext::completed(const char *omsg)
   active_event().completed(*this,( omsg ? : "ctxt.dtor" ));  // complete this record (and adjust caller record)
 
   ink_mutex_release(&mutex); // balance from top
+  return true;
+}
 
+
+bool EventCallContext::restart_upper_stamp(const char *omsg) 
+{
   if ( ! _waiting || ! _waiting->is_incomplete() ) {
-    return; // won't reset upper context
+    return false; // won't reset upper context
   }
 
   auto &upper = *_waiting;
 
   if ( ! ink_mutex_try_acquire(&upper._chainPtr->_owner) ) {
-    return; // can't own
+    return false; // can't own
   }
 
   // reset accounting for active upper
@@ -1287,6 +1268,70 @@ void EventCallContext::completed(const char *omsg)
   const_cast<uint64_t &>(upper._deallocStamp) = st_deallocCounterRef;
 
   ink_mutex_release(&upper._chainPtr->_owner); // balance for upper
+  return true;
+}
+
+
+bool EventCallContext::remove_mem_delta(int id, int32_t adj)
+{
+  char buff[20];
+  snprintf(buff,sizeof(buff),"(C#%06x)",id);
+  return remove_mem_delta(buff,adj);
+}
+
+bool EventCallContext::remove_mem_delta(const char* id, int32_t adj)
+{
+  if ( ! EventCallContext::st_currentCtxt ) {
+    DebugSpecific(true,TRACE_FLAG,"remove-mem-delta\n(conttrace           ) " TRACE_SNPRINTF_PREFIX "   %s              [ mem %d ]     NO-ADJUST       topmost", 
+       TRACE_SNPRINTF_DATA id, adj );
+    return false;
+  }
+
+  auto &upper = *EventCallContext::st_currentCtxt;
+
+  if ( ! EventCallContext::st_currentCtxt->has_active() ) {
+    DebugSpecific(true,TRACE_FLAG,"remove-mem-delta\n(conttrace           ) " TRACE_SNPRINTF_PREFIX "   %s --> (C#%06x) [ mem %d ]     NO-ADJUST       no active",
+       TRACE_SNPRINTF_DATA id, upper.id(), adj );
+    return false;
+  }
+  auto &active = upper.active_event();
+  auto &hdlr = *active._hdlrAssign;
+
+  if ( ! EventCallContext::st_currentCtxt->is_incomplete() ) {
+    DebugSpecific(true,TRACE_FLAG,"remove-mem-delta\n(conttrace           ) " TRACE_SNPRINTF_PREFIX "   %s --> (C#%06x) [ mem %d ]     NO-ADJUST       under %s %s@%d",
+       TRACE_SNPRINTF_DATA id, upper.id(), adj, hdlr._kLabel, hdlr._kFile, hdlr._kLine );
+    return false;
+  }
+
+  active._allocDelta -= ( adj > 0 ? adj : 0 );
+  active._deallocDelta -= ( adj < 0 ? -adj : 0 );
+
+  DebugSpecific(true,TRACE_FLAG,"remove-mem-delta\n(conttrace           ) " TRACE_SNPRINTF_PREFIX "   %s --> (C#%06x) [ mem %d ]     ADJUST       under %s %s@%d",
+     TRACE_SNPRINTF_DATA id, upper.id(), adj, hdlr._kLabel, hdlr._kFile, hdlr._kLine );
+
+  // if incomplete... compensate for the deallocation-so-far (later-ctor stuff is unkn)
+  return true;
+}
+
+void EventHdlrState::remove_ctor_delta()
+{
+  if ( this < st_preCtorObject ) {
+    return; // new was unrelated to this object
+  }
+  if ( this >= st_preCtorObjectEnd ) {
+    return; // new was unrelated to this object
+  }
+
+  // not on stack and not an old alloc
+
+  // inside this alloc
+  auto objsize = static_cast<char*>(st_preCtorObjectEnd) - static_cast<char*>(st_preCtorObject);
+
+  // remove object's memory from caller 
+  EventCallContext::remove_mem_delta(_scopeContext.id(), objsize);
+
+  // **don't** allow others to claim the alloc
+  st_preCtorObjectEnd = st_preCtorObject; 
 }
 
 void
@@ -1417,7 +1462,7 @@ EventCalled::completed(EventCallContext const &ctxt, const char *msg)
     DebugSpecific(true,TRACE_FLAG,"%s calls [%s] %s", title, msg, oss.str().c_str());
   }
 
-  // clear up any old calls on this chain...
+  // clear up any old calls on this chain now that it's done
   while ( chain.trim_check() ) { 
     ink_release_assert( chain.trim_back() ); 
   }
@@ -1453,6 +1498,12 @@ const char *cb_alloc_plugin_label(const char *path, const char *symbol)
 
   return strdup(out.c_str());
 }
+
+void cb_remove_mem_delta(const char *msg, unsigned n) 
+   { EventCallContext::remove_mem_delta(msg, n); }
+
+void cb_allocate_hook(void *p, unsigned n) 
+   { EventHdlrState::allocate_hook(p,n); }
 
 const TSEventFunc cb_null_return() { return nullptr; }
 
