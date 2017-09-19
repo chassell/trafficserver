@@ -143,7 +143,7 @@ void debug_str(std::string &debugStr, const char *label)
    debugStr.resize(20,' ');
 }
 
-void callback_str(std::string &callback, const EventCalled &call, const char *label) 
+void callback_str(std::string &callback, bool isFrameRec, const char *label) 
 {
   callback = label;
   if ( callback.find('&') != callback.npos ) {
@@ -152,7 +152,7 @@ void callback_str(std::string &callback, const EventCalled &call, const char *la
   if ( callback.find(')') != callback.npos ) {
      callback.erase(0,callback.find(')')+1);
   }
-  if ( call.is_frame_rec() && callback.front() != '#' ) {
+  if ( isFrameRec && callback.front() != '#' ) {
      callback.insert(0,1,'#');
   }
 }
@@ -507,7 +507,7 @@ int EventChain::printLog(std::ostringstream &out, unsigned ibegin, unsigned iend
 
     debug_str(debugStr, rec._kLabel);
     callinout_str(callinout,call);
-    callback_str(callback, call, rec._kLabel);
+    callback_str(callback, call.is_frame_rec(), rec._kLabel);
 
     const char *debug = debugStr.c_str();
     if ( ! call._i && oid() ) 
@@ -980,7 +980,7 @@ EventChain::~EventChain()
 /////////////////////////////////////////////////////////////////
 // create new callback-entry on chain associated with HdlrState
 /////////////////////////////////////////////////////////////////
-EventCallContext::EventCallContext(const EventHdlr_t &hdlr, const EventCalled::ChainPtr_t &chainPtr, int event)
+EventCallContext::EventCallContext(EventHdlr_t hdlr, const EventCalled::ChainPtr_t &chainPtr, int event)
    : _chainPtr(chainPtr) // _waiting(
 {
   st_currentCtxt = this; // push down one immediately..
@@ -990,15 +990,43 @@ EventCallContext::EventCallContext(const EventHdlr_t &hdlr, const EventCalled::C
   // must branch?  [NOTE: alloc *before* completed entries below]
   if ( ! ink_mutex_try_acquire(&_chainPtr->_owner) )
   {
-    auto &ochain = *_chainPtr;
-    auto nchainPtr = std::make_shared<EventChain>(ochain.id(),ochain._cnt+1); // NOTE: chain adds into alloc tally
-    Debug(TRACE_FLAG,"(C#%06x) @#%d --> (C#%06x): event-thread-restart [tot:%ld] %s %s@%d",
-       ochain.id(), ochain.back()._i, nchainPtr->id(), ochain._allocTotal - ochain._deallocTotal,
-       hdlr._kLabel, hdlr._kFile, hdlr._kLine);
+    int64_t memAlloc = 0;
+    int64_t memDealloc = 0;
+    EventHdlrP_t ohdlr = nullptr;
+    auto oid = 0;
+    auto ocnt = 0;
 
+    {
+      auto ochainPtr = _chainPtr;
+      auto &ochain = *_chainPtr;
+      oid = ochain.id();
+      ocnt = ochain._cnt+1;
+      memAlloc = ochain._allocTotal;
+      memDealloc = ochain._deallocTotal;
+      ohdlr = ochain[0]._hdlrAssign;
+    }
+
+    auto nchainPtr = std::make_shared<EventChain>(oid,ocnt); // NOTE: chain adds into alloc tally
+    auto &nchain = *nchainPtr;
     _chainPtr = nchainPtr;
 
-    push_initial_call(*ochain[0]._hdlrAssign);
+    nchain._allocTotal = memAlloc;
+    nchain._deallocTotal = memDealloc;
+
+    {
+      std::string eventbuff, callback;
+
+      event_str(eventbuff,event);
+      callback_str(callback, false, hdlr._kLabel); // wish me luck!
+
+      DebugSpecific(true,TRACE_FLAG,"thread-jump\n(conttrace           ) " 
+                 TRACE_SNPRINTF_PREFIX "   (C#%06x) @#%02d   :[ tot mem %9ld ] %10s %s %s@%d [%s]", 
+                 TRACE_SNPRINTF_DATA nchain.oid(), nchain._cnt-1, memAlloc - memDealloc,
+                 eventbuff.c_str(), callback.c_str(), hdlr._kFile, hdlr._kLine, "ctxt.jump" );
+    }
+
+    push_initial_call(*ohdlr);
+    complete_call("ctxt.jump");
     // ctor acquires lock until completed() is called
   }
 

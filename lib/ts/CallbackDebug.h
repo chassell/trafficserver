@@ -48,19 +48,6 @@
 #include <chrono>
 #include <cassert>
 
-#define CHK_NOT_STACK(p)    { \
-   int a; \
-   ink_release_assert( reinterpret_cast<const char*>(p) < reinterpret_cast<const char*>(&a) \
-            || p == &kHdlrAssignEmpty || p == &kHdlrAssignNoDflt ); \
-  }
-
-
-#define CHK_NOT_STACK2(p)    { \
-   int a; \
-   assert( reinterpret_cast<const char*>(p) < reinterpret_cast<const char*>(&a) \
-            || p == &kHdlrAssignEmpty || p == &kHdlrAssignNoDflt ); \
-  }
-
 struct Continuation;
 struct EventHdlrAssignRec;
 struct EventCalled;
@@ -364,10 +351,7 @@ class EventHdlrState
   void operator=(TSEventFunc f);
 
   // class method-pointer full args
-  void operator=(EventHdlr_t cbAssign) {
-     CHK_NOT_STACK2(&cbAssign);
-    _assignPoint = &cbAssign; 
-  }
+  void operator=(EventHdlr_t cbAssign) { _assignPoint = &cbAssign; }
 
   // class method-pointer full args
   void operator=(const EventHdlrState &orig)
