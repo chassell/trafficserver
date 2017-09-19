@@ -457,7 +457,7 @@ int EventChain::printLog(std::ostringstream &out, unsigned ibegin, unsigned iend
   ptrdiff_t i = n-1;
 
   // start from below entry if possible
-  if ( latest->_calledChainLen ) 
+  if ( latest->_calledChainLen && iend == ~0U ) 
   {
     n += latest->_calledChain->printLog(out, latest->_calledChainLen-1, ~0U, omsg);
     if ( ! out.str().empty() && begin <= latest ) {
@@ -638,7 +638,7 @@ void EventCallContext::push_call_entry(EventHdlr_t rec, int event)
 
   if ( chain.size() > 5000 ) {
     std::ostringstream oss;
-    chain.printLog(oss,0,~0U,"reset-too-long");
+    chain.printLog(oss,0,chain.size(),"reset-too-long");
     DebugSpecific(true,TRACE_FLAG,"chain-big: %s",oss.str().c_str());
     ink_fatal("too long!");
   }
@@ -708,7 +708,7 @@ void EventCallContext::push_call_chain_pair(EventHdlr_t rec, int event)
   if ( chain.size() > 5000 ) 
   {
     std::ostringstream oss;
-    chain.printLog(oss,0,~0U,"reset-too-long");
+    chain.printLog(oss,0,chain.size(),"reset-too-long");
     DebugSpecific(true,TRACE_FLAG,"chain-big: %s",oss.str().c_str());
     ink_fatal("too long!");
   }
@@ -716,7 +716,7 @@ void EventCallContext::push_call_chain_pair(EventHdlr_t rec, int event)
   if ( ochain.size() > 5000 ) 
   {
     std::ostringstream oss;
-    ochain.printLog(oss,0,~0U,"reset-too-long");
+    ochain.printLog(oss,0,chain.size(),"reset-too-long");
     DebugSpecific(true,TRACE_FLAG,"chain-big: %s",oss.str().c_str());
     ink_fatal("too long!");
   }
@@ -962,7 +962,7 @@ EventChain::EventChain(uint32_t oid, uint16_t cnt)
 EventChain::~EventChain()
 {
   std::ostringstream oss;
-  printLog(oss,0,~0U,"chain.dtor");
+  printLog(oss,0,size(),"chain.dtor");
   oss.str().empty() || ({ DebugSpecific(true,TRACE_FLAG,"chain-dtor %s",oss.str().c_str()); true; });
 
   if ( front()._hdlrAssign->is_plugin_rec() ) {
