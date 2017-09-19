@@ -185,8 +185,8 @@ struct EventCalled
   EventHdlrP_t        const _hdlrAssign = &kHdlrAssignEmpty;          // full callback struct 
 
   // upon ctor
-  ChainWPtr_t         const _callingChain;        // chain held by caller's context (from context)
-  ChainPtr_t          const _calledChain;         // chain for the next recorded called object
+  ChainWPtr_t         _callingChain;        // chain held by caller's context (from context)
+  ChainPtr_t          _calledChain;         // chain for the next recorded called object
 
   // upon call
   uint16_t            const _i; // extern caller's chain-size upon entry (or local)
@@ -265,6 +265,7 @@ struct EventCallContext
   EventHdlr_t active_hdlr() const { return *active_event()._hdlrAssign; }
   EventHdlrP_t active_hdlrp() const { return active_event()._hdlrAssign; }
 
+  EventCalled::ChainPtr_t create_thread_jump_chain(EventHdlr_t hdlr, int event);
   void reset_frame(EventHdlr_t hdlr);
   bool complete_call(const char *msg);
   bool restart_upper_stamp(const char *msg);
@@ -433,6 +434,7 @@ inline EventHdlrState::operator()(TSCont ptr, TSEvent event, void *data)
   EventCallContext _ctxt{*this, _scopeContext._chainPtr, event};
   EventCallContext::st_currentCtxt = &_ctxt; // reset upon dtor
 
+  // XXX thread conflict here XXX
   _scopeContext._chainPtr = _ctxt._chainPtr; // detach if thread-unsafe!
 
   int r = 0;

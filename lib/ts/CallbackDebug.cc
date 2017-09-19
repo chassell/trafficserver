@@ -159,6 +159,9 @@ void callback_str(std::string &callback, bool isFrameRec, const char *label)
 
 void callinout_str(std::string &callinout, const EventCalled &call) 
 {
+    auto callingChainRefAdd = call._callingChain.lock();
+    auto calledChainRefAdd = call._calledChain;
+
     if ( call.has_calling() )
     {
       auto extCalling = call.calling()._hdlrAssign->_kLabel;
@@ -182,7 +185,7 @@ void callinout_str(std::string &callinout, const EventCalled &call)
       callinout += std::string() + "<-- XXXXX ";
     }
 
-    if ( call._calledChainLen ) 
+    if ( call.has_called() ) 
     {
       auto extCalled = call.called()._hdlrAssign->_kLabel;
 
@@ -360,13 +363,13 @@ EventChain::iterator EventCalled::calling_iterator() const
 }
 EventChain::iterator EventCalled::called_iterator() const
 {
-  ink_release_assert( _calledChainLen && _calledChain ); 
+  ink_release_assert( _calledChain && _calledChainLen ); 
   return _calledChain->begin() + _calledChainLen-1; 
 }
 
 const EventCalled &EventCalled::called() const 
 { 
-  return ( _calledChainLen ? *called_iterator() : this[1] );  
+  return ( _calledChain && _calledChainLen ? *called_iterator() : this[1] );  
 }
 const EventCalled &EventCalled::calling() const 
 {
@@ -456,13 +459,17 @@ int EventChain::printLog(std::ostringstream &out, unsigned ibegin, unsigned iend
   ptrdiff_t n = oend - begin;
   ptrdiff_t i = n-1;
 
-  // start from below entry if possible
-  if ( latest->_calledChainLen && iend == ~0U ) 
   {
-    n += latest->_calledChain->printLog(out, latest->_calledChainLen-1, ~0U, omsg);
+  auto calledChainRefAdd = latest->_calledChain;
+
+  // start from below entry if possible
+  if ( latest->has_called() && iend == ~0U ) 
+  {
+    n += calledChainRefAdd->printLog(out, latest->_calledChainLen-1, ~0U, omsg);
     if ( ! out.str().empty() && begin <= latest ) {
       out << std::endl << "<----"; // called-link entry is separate from earlier ones
     }
+  }
   }
 
   // not even one entry to print?
@@ -543,13 +550,13 @@ int EventChain::printLog(std::ostringstream &out, unsigned ibegin, unsigned iend
          eventbuff.c_str(), callback.c_str(), rec._kFile, rec._kLine, callinout.c_str(), omsg );
 
     // only if a not-first call was outward
-    if ( call._calledChainLen && iter != latest && iter != begin ) {
+    if ( call.has_called() && iter != latest && iter != begin ) {
       out << std::endl << "---->"; // separate from last one
     }
     out << std::endl << "(" << debug << ") ";
     out << buff;
     // only if a not-last call was inward 
-    if ( call._callingChainLen && iter != begin && iter != latest  ) {
+    if ( call.has_calling() && iter != begin && iter != latest  ) {
       out << std::endl << "<----";
     }
   }
@@ -580,6 +587,8 @@ bool EventCalled::trim_check() const
   // can simply detach from down-calls ...
   // must pop higher calls 
 
+  auto callingChainRefAdd = _callingChain.lock(); // hold for this thread
+
   // recurse up to see if we can trim all these out
   //   TODO: could go nuts and recurse down parent chains!
   if ( has_calling() && ! calling().trim_check() ) {
@@ -604,6 +613,8 @@ bool EventChain::trim_check()
   if ( size() <= 1 ) {
     return false;
   }
+
+  auto callingChainRefAdd = back()._callingChain.lock(); // hold for this thread
 
   if ( ! back().trim_check() ) 
   {
@@ -632,8 +643,7 @@ void EventCallContext::push_call_entry(EventHdlr_t rec, int event)
 
   // clear up any old calls on the new chain...
   //   NOTE: may trim *lower* chains
-  while ( chain.trim_check() ) { 
-    ink_release_assert( chain.trim_back() ); 
+  while ( chain.trim_check() && chain.trim_back() ) {
   }
 
   if ( chain.size() > 5000 ) {
@@ -729,11 +739,9 @@ void EventCallContext::push_call_chain_pair(EventHdlr_t rec, int event)
   _waiting->_chainInd = -1;
 
   // do first to finish any upward checks
-  while ( ochain.trim_check() ) { 
-    ink_release_assert( ochain.trim_back() ); 
+  while ( ochain.trim_check() && ochain.trim_back() ) {
   }
-  while ( chain.trim_check() ) { 
-    ink_release_assert( chain.trim_back() ); 
+  while ( chain.trim_check() && chain.trim_back() ) {
   }
 
   EventCalled *selfp = nullptr;
@@ -866,12 +874,13 @@ bool EventChain::trim_back()
     return false;
   }
 
-  // is owned on this thread
-  ink_mutex_release(&_owner);
-
   if ( empty() ) {
+    ink_mutex_release(&_owner); // balance
     return false;
   }
+
+  auto calledChainRefAdd = back()._calledChain; // hold in thread
+  auto callingChainRefAdd = back()._callingChain.lock(); // hold in thread
 
   if ( back().has_called() ) 
   {
@@ -883,7 +892,8 @@ bool EventChain::trim_back()
 
   auto &rec = *back()._hdlrAssign;
 
-  if ( ! back().trim_back_prep() ) {
+  // holding refs over call
+  if ( ! back().trim_back_prep() ) {                  // RECURSE up/down
     Debug(TRACE_DEBUG_FLAG,"(C#%06x) failed to trim local @#%d [%05d] %s %s@%d", id(), back()._i, back()._event, rec._kLabel, rec._kFile, rec._kLine);
     return false; // no pop allowed
   }
@@ -891,20 +901,27 @@ bool EventChain::trim_back()
   Debug(TRACE_DEBUG_FLAG,"(C#%06x) trim local @#%d [%05d] %s %s@%d", id(), back()._i, back()._event, rec._kLabel, rec._kFile, rec._kLine);
   pop_back();
 
+  ink_mutex_release(&_owner); // balance
   return true; // popped
 }
 
 bool EventCalled::trim_back_prep()
 {
-  if ( has_called() ) 
+  if ( has_called() )
   {
+    if ( ! ink_mutex_try_acquire(&_calledChain->_owner) ) {
+      return false; // no pop allowed
+    }
+
     auto &cchain = *_calledChain;
     const_cast<ChainWPtr_t&>(called()._callingChain).reset();
 
     // that last lower one is feasible?
     if ( cchain.size() == _calledChainLen ) {
-      cchain.trim_back(); // try to trim *now*
+      cchain.trim_back(); // try to trim *now*               // RECURSE down
     }
+
+    ink_mutex_release(&cchain._owner); // balance
   }
 
   if ( ! has_calling() ) {
@@ -924,7 +941,7 @@ bool EventCalled::trim_back_prep()
   const_cast<ChainPtr_t&>(callingRec._calledChain).reset(); 
   const_cast<uint16_t&>(callingRec._calledChainLen) = 0; 
 
-  callingChain.trim_back(); // recurse up-only
+  callingChain.trim_back(); // recurse up-only               // RECURSE up
 
   // base case --> no calling refs left
   return true;
@@ -961,6 +978,13 @@ EventChain::EventChain(uint32_t oid, uint16_t cnt)
 
 EventChain::~EventChain()
 {
+  if ( ! ink_mutex_try_acquire(&_owner) ) {
+    Debug(TRACE_FLAG,"(C#%06x) <-- (C#%06x) %p dtor deleting", id(), oid(), this);
+    ink_mutex_acquire(&_owner); // blocking for last grab
+  }
+
+  ink_release_assert( ! empty() );
+
   std::ostringstream oss;
   printLog(oss,0,size(),"chain.dtor");
   oss.str().empty() || ({ DebugSpecific(true,TRACE_FLAG,"chain-dtor %s",oss.str().c_str()); true; });
@@ -971,65 +995,77 @@ EventChain::~EventChain()
 //    delete front()._hdlrAssign;
   }
 
+  clear(); // remove contents within lock
+
+  ink_mutex_release(&_owner); // blocking for last grab
+
   while ( ! pthread_mutex_unlock(&_owner) ) {
     Warning("Leftover locks at chain dtor");
   }
   pthread_mutex_destroy(&_owner);
 }
 
+EventCalled::ChainPtr_t EventCallContext::create_thread_jump_chain(EventHdlr_t hdlr, int event)
+{
+  int64_t memAlloc = 0;
+  int64_t memDealloc = 0;
+  auto oid = 0;
+  auto ocnt = 0;
+
+  {
+    auto ochainPtr = _chainPtr;
+    auto &ochain = *_chainPtr;
+    oid = ochain.id();
+    ocnt = ochain._cnt+1;
+    memAlloc = ochain._allocTotal;
+    memDealloc = ochain._deallocTotal;
+  }
+
+  auto nchainPtr = std::make_shared<EventChain>(oid,ocnt); // NOTE: chain adds into alloc tally
+  auto &nchain = *nchainPtr;
+
+  nchain._allocTotal = memAlloc;
+  nchain._deallocTotal = memDealloc;
+
+  {
+    std::string eventbuff, callback;
+
+    event_str(eventbuff,event);
+    callback_str(callback, false, hdlr._kLabel); // wish me luck!
+
+    DebugSpecific(true,TRACE_FLAG,"thread-jump\n(conttrace           ) " 
+               TRACE_SNPRINTF_PREFIX "   (C#%06x) @#%02d   :[ tot mem %9ld ] %10s %s %s@%d [%s]", 
+               TRACE_SNPRINTF_DATA nchain.oid(), nchain._cnt-1, memAlloc - memDealloc,
+               eventbuff.c_str(), callback.c_str(), hdlr._kFile, hdlr._kLine, "ctxt.jump" );
+  }
+  return nchainPtr;
+}
+
 /////////////////////////////////////////////////////////////////
-// create new callback-entry on chain associated with HdlrState
+// STACK-BASED: create new callback-entry on chain associated with HdlrState
 /////////////////////////////////////////////////////////////////
 EventCallContext::EventCallContext(EventHdlr_t hdlr, const EventCalled::ChainPtr_t &chainPtr, int event)
    : _chainPtr(chainPtr) // _waiting(
 {
+  // a stack-held ref is safe in thread...
   st_currentCtxt = this; // push down one immediately..
 
   ink_release_assert(chainPtr);
 
   // must branch?  [NOTE: alloc *before* completed entries below]
-  if ( ! ink_mutex_try_acquire(&_chainPtr->_owner) )
+  if ( ! ink_mutex_try_acquire(&_chainPtr->_owner) ) 
   {
-    int64_t memAlloc = 0;
-    int64_t memDealloc = 0;
-    EventHdlrP_t ohdlr = nullptr;
-    auto oid = 0;
-    auto ocnt = 0;
+    auto nchainPtr = create_thread_jump_chain(hdlr, event);
+    ink_release_assert( ink_mutex_try_acquire(&nchainPtr->_owner) ); // get extra lock
 
-    {
-      auto ochainPtr = _chainPtr;
-      auto &ochain = *_chainPtr;
-      oid = ochain.id();
-      ocnt = ochain._cnt+1;
-      memAlloc = ochain._allocTotal;
-      memDealloc = ochain._deallocTotal;
-      ohdlr = ochain[0]._hdlrAssign;
-    }
+    _chainInd = 0; // index #0
+    nchainPtr->push_back( EventCalled(0, hdlr, EVENT_NONE) ); // event #0
 
-    auto nchainPtr = std::make_shared<EventChain>(oid,ocnt); // NOTE: chain adds into alloc tally
-    auto &nchain = *nchainPtr;
-    _chainPtr = nchainPtr;
-
-    nchain._allocTotal = memAlloc;
-    nchain._deallocTotal = memDealloc;
-
-    {
-      std::string eventbuff, callback;
-
-      event_str(eventbuff,event);
-      callback_str(callback, false, hdlr._kLabel); // wish me luck!
-
-      DebugSpecific(true,TRACE_FLAG,"thread-jump\n(conttrace           ) " 
-                 TRACE_SNPRINTF_PREFIX "   (C#%06x) @#%02d   :[ tot mem %9ld ] %10s %s %s@%d [%s]", 
-                 TRACE_SNPRINTF_DATA nchain.oid(), nchain._cnt-1, memAlloc - memDealloc,
-                 eventbuff.c_str(), callback.c_str(), hdlr._kFile, hdlr._kLine, "ctxt.jump" );
-    }
-
-    push_initial_call(*ohdlr);
+    _chainPtr.swap(nchainPtr); // put into action..
     complete_call("ctxt.jump");
-    // ctor acquires lock until completed() is called
   }
 
+  // chain ref should be stack-based too..
   if ( _waiting && _waiting->is_incomplete() 
                 && ink_mutex_try_acquire(&_waiting->_chainPtr->_owner) ) 
   {
@@ -1046,11 +1082,16 @@ EventCallContext::EventCallContext(EventHdlr_t hdlr, const EventCalled::ChainPtr
 }
 
 
+/////////////////////////////////////////////////////////////////
+// HEAP-BASED: create starting callcontext for within EventHdlrState
+/////////////////////////////////////////////////////////////////
 EventCallContext::EventCallContext()
    : _chainPtr(std::make_shared<EventChain>(0,1)),  // init oid==0, cnt==1
      _chainInd(0) 
    // : init of _waiting(..)
 {
+  auto chainPtrRefAdd = _chainPtr; // add local ref for thread (bit silly)
+
   // ctor acquires lock until completed() is called
 
   if ( _waiting ) {
@@ -1129,9 +1170,9 @@ EventHdlrState::EventHdlrState(void *p)
   ink_release_assert( r ); // assert it did
 }
 
-//
-// a HdlrState that merely "owns" the top of other calls
-//
+///////////////////////////////////////////////
+// STACK-BASED HdlrState that merely "owns" the top of other calls
+///////////////////////////////////////////////
 EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
    : _assignPoint(&hdlr),
      _scopeContext() // add ctor-record
@@ -1150,9 +1191,9 @@ EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
 EventHdlrState::~EventHdlrState()
    // detaches from shared-ptr!
 {
-  if ( _scopeContext._chainPtr ) { // why test?
-    _scopeContext.complete_call("hdlr.dtor");
-  }
+  ink_release_assert( _scopeContext._chainPtr );
+
+  _scopeContext.complete_call("hdlr.dtor");
 
   if ( EventCallContext::st_currentCtxt != &_scopeContext ) {
     return;
@@ -1168,6 +1209,8 @@ EventHdlrState::~EventHdlrState()
 
 void EventCallContext::reset_frame(EventHdlr_t hdlr) 
 {
+  auto chainPtrRefAdd = _chainPtr; // add local ref for the thread
+
   ink_release_assert( st_currentCtxt == this || ! st_currentCtxt ); // must reset top here
 
   EventCallContext::st_currentCtxt = this; // must reset top here
@@ -1179,7 +1222,9 @@ void EventCallContext::reset_frame(EventHdlr_t hdlr)
        id(), hdlr._kLabel, hdlr._kFile, hdlr._kLine );
 
     complete_call("reset") && restart_upper_stamp("reset");
-  } else {
+  } 
+  else 
+  {
     auto &ochain = *_chainPtr; // save chain (if usable)
     auto nchainPtr = std::make_shared<EventChain>(ochain.id(),ochain._cnt+1); // NOTE: chain adds into alloc tally
     Debug(TRACE_FLAG,"(C#%06x) @#%d --> (C#%06x): event-thread-restart [tot:%ld] %s %s@%d",
@@ -1190,6 +1235,7 @@ void EventCallContext::reset_frame(EventHdlr_t hdlr)
     _chainPtr = nchainPtr; // NOTE: chain adds into alloc tally
 
     push_initial_call(*ochain[0]._hdlrAssign);
+    chainPtrRefAdd = nchainPtr; // ochain can be freed .. and new preserved
   }
 
   // chain is owned by ctor
@@ -1390,6 +1436,7 @@ EventCalled::completed(EventCallContext const &ctxt, const char *msg)
     return; // don't attempt release (can't be locked either)
   }
 
+  auto chainRefAdd = ctxt._chainPtr;
   auto &chain = *ctxt._chainPtr;
   auto callInd = this - &chain.front();
 
@@ -1411,14 +1458,18 @@ EventCalled::completed(EventCallContext const &ctxt, const char *msg)
   auto callingInd = 0;
   auto calledInd = 0;
 
-  if ( has_calling() ) {
-    auto &ochain = *_callingChain.lock();
-    callingID = ochain.id();
-    callingInd = calling()._i;
-  }
-  if ( has_called() ) {
-    calledID = _calledChain->id();
-    calledInd = called()._i;
+  {
+    auto callingChainRefAdd = _callingChain.lock();
+    auto calledChainRefAdd = _calledChain;
+    if ( has_calling() ) {
+      auto &ochain = *_callingChain.lock();
+      callingID = ochain.id();
+      callingInd = calling()._i;
+    }
+    if ( has_called() ) {
+      calledID = _calledChain->id();
+      calledInd = called()._i;
+    }
   }
 
   _allocDelta += allocTot;
@@ -1512,8 +1563,7 @@ EventCalled::completed(EventCallContext const &ctxt, const char *msg)
   }
 
   // clear up any old calls on this chain now that it's done
-  while ( chain.trim_check() ) { 
-    ink_release_assert( chain.trim_back() ); 
+  while ( chain.trim_check() && chain.trim_back() ) {
   }
 
   ink_mutex_release(&chain._owner); // now free to go to other threads
