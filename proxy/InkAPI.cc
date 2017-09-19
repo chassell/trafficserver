@@ -645,7 +645,7 @@ sdk_sanity_check_ssl_hook_id(TSHttpHookID id)
 }
 
 TSReturnCode
-sdk_sanity_check_null_ptr(void *ptr)
+sdk_sanity_check_null_ptr(const void *ptr)
 {
   if (ptr == NULL)
     return TS_ERROR;
@@ -1673,6 +1673,26 @@ _TSfree(void *ptr)
   ats_free(ptr);
 }
 
+tsapi void *TSHttpTxnRegionAlloc(TSHttpTxn txnp, size_t size)
+{
+  sdk_assert(sdk_sanity_check_txn(txnp) == TS_SUCCESS);
+  sdk_assert(size <= TS_HTTP_REGION_ALLOC_MAX);
+
+  HttpSM *sm         = (HttpSM *)txnp;
+  auto p = sm->t_state.arena.alloc(size);
+  memset(p,'\0',size);
+  return p;
+}
+
+tsapi char *TSHttpTxnRegionStrndup(TSHttpTxn txnp, const char *str, size_t size)
+{
+  sdk_assert(sdk_sanity_check_txn(txnp) == TS_SUCCESS);
+  sdk_assert(sdk_sanity_check_null_ptr(str) == TS_SUCCESS);
+  sdk_assert(size <= TS_HTTP_REGION_ALLOC_MAX);
+
+  HttpSM *sm         = (HttpSM *)txnp;
+  return sm->t_state.arena.str_store(str, size);
+}
 ////////////////////////////////////////////////////////////////////
 //
 // Encoding utility

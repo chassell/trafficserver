@@ -46,6 +46,7 @@ extern "C" {
 #define TSstrlcat(d, s, l) _TSstrlcat((d), (s), (l))
 #define TSfree(p) _TSfree(p)
 
+#define TS_HTTP_REGION_ALLOC_MAX (16*1024)
 tsapi void *_TSmalloc(size_t size, const char *path);
 tsapi void *_TSrealloc(void *ptr, size_t size, const char *path);
 tsapi char *_TSstrdup(const char *str, int64_t length, const char *path);
@@ -1229,6 +1230,9 @@ tsapi int TSVConnIsSsl(TSVConn sslp);
 
 /* --------------------------------------------------------------------------
    HTTP transactions */
+tsapi void *TSHttpTxnRegionAlloc(TSHttpTxn txnp, size_t size);
+tsapi char *TSHttpTxnRegionStrndup(TSHttpTxn txnp, const char *str, size_t len);
+
 tsapi void TSHttpTxnHookAdd(TSHttpTxn txnp, TSHttpHookID id, TSCont contp);
 tsapi TSHttpSsn TSHttpTxnSsnGet(TSHttpTxn txnp);
 
