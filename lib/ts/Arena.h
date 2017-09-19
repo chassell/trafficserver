@@ -24,6 +24,8 @@
 #ifndef __ARENA_H__
 #define __ARENA_H__
 
+#include "ts/CallbackDebug.h"
+
 #include <sys/types.h>
 #include <memory.h>
 #include "ts/ink_assert.h"
@@ -51,6 +53,7 @@ public:
 
 private:
   ArenaBlock *m_blocks;
+  EventHdlrState m_memchk;
 };
 
 /*-------------------------------------------------------------------------

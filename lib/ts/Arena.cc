@@ -48,15 +48,11 @@ blk_alloc(int size)
 {
   ArenaBlock *blk;
 
-  auto delta = - cb_get_thread_alloc_surplus();
   if (size == DEFAULT_BLOCK_SIZE) {
     blk = (ArenaBlock *)defaultSizeArenaBlock.alloc_void();
   } else {
     blk = (ArenaBlock *)ats_malloc(size + sizeof(ArenaBlock) - 8);
   }
-  delta += cb_get_thread_alloc_surplus();
-
-  cb_remove_mem_delta("[arena]", delta); // Arenas do not account against
 
   blk->next          = NULL;
   blk->m_heap_end    = &blk->data[size];
@@ -125,7 +121,10 @@ Arena::alloc(size_t size, size_t alignment)
     block_size = DEFAULT_BLOCK_SIZE;
   }
 
-  b        = blk_alloc(block_size);
+  {
+    CREATE_EVENT_FRAME("[arena]", m_memchk);
+    b        = blk_alloc(block_size);
+  }
   b->next  = m_blocks;
   m_blocks = b;
 
@@ -159,17 +158,14 @@ Arena::free(void *mem, size_t size)
 void
 Arena::reset()
 {
+  CREATE_EVENT_FRAME("[~arena]", m_memchk);
   ArenaBlock *b;
 
-  auto delta = - cb_get_thread_alloc_surplus();
   while (m_blocks) {
     b = m_blocks->next;
     blk_free(m_blocks);
     m_blocks = b;
   }
-  delta += cb_get_thread_alloc_surplus();
-
-  cb_remove_mem_delta("[~arena]", delta); // Arenas do not account against
 
   ink_assert(m_blocks == NULL);
 }
