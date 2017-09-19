@@ -42,7 +42,14 @@ int update_cop_config(const char *name, RecDataT data_type, RecData data, void *
 class InactivityCop : public Continuation
 {
 public:
-  InactivityCop(ProxyMutex *m);
+  InactivityCop(ProxyMutex *m) : Continuation(m), default_inactivity_timeout(0)
+  {
+    SET_HANDLER(&InactivityCop::check_inactivity);
+    REC_ReadConfigInteger(default_inactivity_timeout, "proxy.config.net.default_inactivity_timeout");
+    Debug("inactivity_cop", "default inactivity timeout is set to: %d", default_inactivity_timeout);
+
+    RecRegisterConfigUpdateCb("proxy.config.net.default_inactivity_timeout", update_cop_config, (void *)this);
+  }
 
   int
   check_inactivity(int event, Event *e)
@@ -112,15 +119,6 @@ public:
 private:
   int default_inactivity_timeout; // only used when one is not set for some bad reason
 };
-
-InactivityCop::InactivityCop(ProxyMutex *m) : Continuation(m), default_inactivity_timeout(0)
-{
-  SET_HANDLER(&InactivityCop::check_inactivity);
-  REC_ReadConfigInteger(default_inactivity_timeout, "proxy.config.net.default_inactivity_timeout");
-  Debug("inactivity_cop", "default inactivity timeout is set to: %d", default_inactivity_timeout);
-
-  RecRegisterConfigUpdateCb("proxy.config.net.default_inactivity_timeout", update_cop_config, (void *)this);
-}
 
 int
 update_cop_config(const char *name, RecDataT data_type ATS_UNUSED, RecData data, void *cookie)

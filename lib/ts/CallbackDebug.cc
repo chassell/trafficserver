@@ -1150,7 +1150,9 @@ EventHdlrState::EventHdlrState(EventHdlr_t hdlr)
 EventHdlrState::~EventHdlrState()
    // detaches from shared-ptr!
 {
-  _scopeContext.complete_call("hdlr.dtor");
+  if ( _scopeContext._chainPtr ) { // why test?
+    _scopeContext.complete_call("hdlr.dtor");
+  }
 
   if ( EventCallContext::st_currentCtxt != &_scopeContext ) {
     return;
@@ -1320,16 +1322,16 @@ bool EventCallContext::remove_mem_delta(const char* idstr, int32_t adj)
   auto &upper = *EventCallContext::st_currentCtxt;
 
   if ( ! upper.has_active() ) {
-    DebugSpecific(true,TRACE_FLAG,"remove-mem-delta\n(conttrace           ) " TRACE_SNPRINTF_PREFIX "   (C#%06x) <-- %s  [ mem %d ]     NO-ADJUST       no active",
-       TRACE_SNPRINTF_DATA upper.id(), idstr, -adj );
+    DebugSpecific(true,TRACE_FLAG,"remove-mem-delta\n(conttrace           ) " TRACE_SNPRINTF_PREFIX "   (C#%06x) @#%02d <-- %s  [ mem %d ]     NO-ADJUST       no active",
+       TRACE_SNPRINTF_DATA upper.id(), upper.active_event()._i, idstr, -adj );
     return false;
   }
   auto &active = upper.active_event();
   auto &hdlr = *active._hdlrAssign;
 
   if ( ! upper.is_incomplete() ) {
-    DebugSpecific(true,TRACE_FLAG,"remove-mem-delta\n(conttrace           ) " TRACE_SNPRINTF_PREFIX "   (C#%06x) <-- %s [ mem %d ]     NO-ADJUST       under %s %s@%d",
-       TRACE_SNPRINTF_DATA  upper.id(), idstr, -adj, hdlr._kLabel, hdlr._kFile, hdlr._kLine );
+    DebugSpecific(true,TRACE_FLAG,"remove-mem-delta\n(conttrace           ) " TRACE_SNPRINTF_PREFIX "   (C#%06x) @#%02d <-- %s [ mem %d ]     NO-ADJUST       under %s %s@%d",
+       TRACE_SNPRINTF_DATA  upper.id(), upper.active_event()._i, idstr, -adj, hdlr._kLabel, hdlr._kFile, hdlr._kLine );
     return false;
   }
 
@@ -1344,8 +1346,8 @@ bool EventCallContext::reverse_mem_delta(const char* idstr, int32_t adj)
   active._allocDelta -= ( adj > 0 ? adj : 0 ); // back it up
   active._deallocDelta -= ( adj < 0 ? -adj : 0 ); // back it up
 
-  DebugSpecific(true,TRACE_FLAG,"remove-mem-delta\n(conttrace           ) " TRACE_SNPRINTF_PREFIX "   (C#%06x) <-- %s [ mem %d ]     ADJUST       under %s %s@%d",
-     TRACE_SNPRINTF_DATA id(), idstr, -adj, hdlr._kLabel, hdlr._kFile, hdlr._kLine );
+  DebugSpecific(true,TRACE_FLAG,"remove-mem-delta\n(conttrace           ) " TRACE_SNPRINTF_PREFIX "   (C#%06x) @#%02d <-- %s [ mem %d ]     ADJUST       under %s %s@%d",
+     TRACE_SNPRINTF_DATA id(), active_event()._i, idstr, -adj, hdlr._kLabel, hdlr._kFile, hdlr._kLine );
 
   // if incomplete... compensate for the deallocation-so-far (later-ctor stuff is unkn)
   return true;

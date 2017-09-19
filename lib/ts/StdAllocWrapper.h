@@ -123,7 +123,7 @@ protected:
   void deallocate(void *p, unsigned size) { sdallocx(p, size, 0); }
 
   static void allocate_hook(void *p) { }
-  static void deallocate_hook(void *p) { }
+  static void deallocate_hook(void *p, unsigned n) { }
 
   // publish object extents for EventHdlrState ctors
   template <class T_OBJ>
@@ -134,9 +134,11 @@ protected:
   template <class T_OBJ>
   static auto allocate_hook(T_OBJ *p) -> typename std::enable_if<std::is_base_of<Event, T_OBJ>::value, void>::type
      { cb_remove_mem_delta("[event]",static_cast<int32_t>(sizeof(T_OBJ))); }
+
+  // size doesn't matter.. as much as matching all derived types allocated
   template <class T_OBJ>
-  static auto deallocate_hook(T_OBJ *p) -> typename std::enable_if<std::is_base_of<Event, T_OBJ>::value, void>::type
-     { cb_remove_mem_delta("[~event]",-static_cast<int32_t>(sizeof(T_OBJ))); }
+  static auto deallocate_hook(T_OBJ *p, int n) -> typename std::enable_if<std::is_base_of<Event, T_OBJ>::value, void>::type
+     { cb_remove_mem_delta("[~event]",-n); }
 
 private:
   const char *_name;
@@ -157,17 +159,19 @@ public:
   void
   free_void(void *ptr)
   {
-    ObjAllocatorBase::deallocate_hook(static_cast<value_type*>(ptr));
     static_cast<value_type *>(ptr)->~value_type();
+    auto mark = cb_get_thread_alloc_surplus();
     ObjAllocatorBase::deallocate(ptr,sizeof(value_type));
+    ObjAllocatorBase::deallocate_hook(static_cast<value_type*>(ptr), mark - cb_get_thread_alloc_surplus()); // freed some
   }
 
   void
   free(value_type *ptr)
   {
-    ObjAllocatorBase::deallocate_hook(ptr);
     ptr->~value_type(); // dtor called
+    auto mark = cb_get_thread_alloc_surplus();
     ObjAllocatorBase::deallocate(ptr,sizeof(value_type));
+    ObjAllocatorBase::deallocate_hook(ptr, mark - cb_get_thread_alloc_surplus()); // freed some
   }
 
 protected:
