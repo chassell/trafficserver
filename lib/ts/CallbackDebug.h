@@ -268,8 +268,11 @@ struct EventCallContext
   void reset_frame(EventHdlr_t hdlr);
   bool complete_call(const char *msg);
   bool restart_upper_stamp(const char *msg);
+
   static bool remove_mem_delta(int id, int32_t adj);
   static bool remove_mem_delta(const char *str, int32_t adj);
+  bool reverse_mem_delta(int32_t adj) { return reverse_mem_delta("<self>",adj); }
+  bool reverse_mem_delta(const char *str, int32_t adj);
  public:
   static void set_ctor_initial_callback(EventHdlr_t hdlr);
   static void clear_ctor_initial_callback();

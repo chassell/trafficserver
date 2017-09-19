@@ -1152,14 +1152,16 @@ EventHdlrState::~EventHdlrState()
 {
   _scopeContext.complete_call("hdlr.dtor");
 
-  if ( EventCallContext::st_currentCtxt == &_scopeContext )
-  {
-    auto &ctor = _scopeContext._chainPtr->front();
-    auto delta = ctor._allocDelta - ctor._deallocDelta;
-    EventCallContext::st_currentCtxt = _scopeContext._waiting;
-    EventCallContext::remove_mem_delta( id(), -delta ); // 
-    EventCallContext::st_currentCtxt = &_scopeContext;
+  if ( EventCallContext::st_currentCtxt != &_scopeContext ) {
+    return;
   }
+
+  // account for freeing the object to higher calls
+  auto &ctor = _scopeContext._chainPtr->front();
+  auto delta = ctor._allocDelta - ctor._deallocDelta;
+  EventCallContext::st_currentCtxt = _scopeContext._waiting;
+  EventCallContext::remove_mem_delta( id(), -delta ); // 
+  EventCallContext::st_currentCtxt = &_scopeContext;
 }
 
 void EventCallContext::reset_frame(EventHdlr_t hdlr) 
@@ -1307,35 +1309,43 @@ bool EventCallContext::remove_mem_delta(int id, int32_t adj)
   return remove_mem_delta(buff,adj);
 }
 
-bool EventCallContext::remove_mem_delta(const char* id, int32_t adj)
+bool EventCallContext::remove_mem_delta(const char* idstr, int32_t adj)
 {
   if ( ! EventCallContext::st_currentCtxt ) {
     DebugSpecific(true,TRACE_FLAG,"remove-mem-delta\n(conttrace           ) " TRACE_SNPRINTF_PREFIX "   %s              [ mem %d ]     NO-ADJUST       topmost", 
-       TRACE_SNPRINTF_DATA id, adj );
+       TRACE_SNPRINTF_DATA idstr, -adj );
     return false;
   }
 
   auto &upper = *EventCallContext::st_currentCtxt;
 
-  if ( ! EventCallContext::st_currentCtxt->has_active() ) {
-    DebugSpecific(true,TRACE_FLAG,"remove-mem-delta\n(conttrace           ) " TRACE_SNPRINTF_PREFIX "   %s --> (C#%06x) [ mem %d ]     NO-ADJUST       no active",
-       TRACE_SNPRINTF_DATA id, upper.id(), adj );
+  if ( ! upper.has_active() ) {
+    DebugSpecific(true,TRACE_FLAG,"remove-mem-delta\n(conttrace           ) " TRACE_SNPRINTF_PREFIX "   (C#%06x) <-- %s  [ mem %d ]     NO-ADJUST       no active",
+       TRACE_SNPRINTF_DATA upper.id(), idstr, -adj );
     return false;
   }
   auto &active = upper.active_event();
   auto &hdlr = *active._hdlrAssign;
 
-  if ( ! EventCallContext::st_currentCtxt->is_incomplete() ) {
-    DebugSpecific(true,TRACE_FLAG,"remove-mem-delta\n(conttrace           ) " TRACE_SNPRINTF_PREFIX "   %s --> (C#%06x) [ mem %d ]     NO-ADJUST       under %s %s@%d",
-       TRACE_SNPRINTF_DATA id, upper.id(), adj, hdlr._kLabel, hdlr._kFile, hdlr._kLine );
+  if ( ! upper.is_incomplete() ) {
+    DebugSpecific(true,TRACE_FLAG,"remove-mem-delta\n(conttrace           ) " TRACE_SNPRINTF_PREFIX "   (C#%06x) <-- %s [ mem %d ]     NO-ADJUST       under %s %s@%d",
+       TRACE_SNPRINTF_DATA  upper.id(), idstr, -adj, hdlr._kLabel, hdlr._kFile, hdlr._kLine );
     return false;
   }
 
-  active._allocDelta -= ( adj > 0 ? adj : 0 );
-  active._deallocDelta -= ( adj < 0 ? -adj : 0 );
+  return upper.reverse_mem_delta(idstr,adj);
+}
 
-  DebugSpecific(true,TRACE_FLAG,"remove-mem-delta\n(conttrace           ) " TRACE_SNPRINTF_PREFIX "   %s --> (C#%06x) [ mem %d ]     ADJUST       under %s %s@%d",
-     TRACE_SNPRINTF_DATA id, upper.id(), adj, hdlr._kLabel, hdlr._kFile, hdlr._kLine );
+bool EventCallContext::reverse_mem_delta(const char* idstr, int32_t adj)
+{
+  auto &active = active_event();
+  auto &hdlr = *active._hdlrAssign;
+
+  active._allocDelta -= ( adj > 0 ? adj : 0 ); // back it up
+  active._deallocDelta -= ( adj < 0 ? -adj : 0 ); // back it up
+
+  DebugSpecific(true,TRACE_FLAG,"remove-mem-delta\n(conttrace           ) " TRACE_SNPRINTF_PREFIX "   (C#%06x) <-- %s [ mem %d ]     ADJUST       under %s %s@%d",
+     TRACE_SNPRINTF_DATA id(), idstr, -adj, hdlr._kLabel, hdlr._kFile, hdlr._kLine );
 
   // if incomplete... compensate for the deallocation-so-far (later-ctor stuff is unkn)
   return true;
@@ -1357,6 +1367,15 @@ void EventHdlrState::remove_ctor_delta()
 
   // remove object's memory from caller 
   EventCallContext::remove_mem_delta(_scopeContext.id(), objsize);
+
+  // add object's memory to ctor context (already completed)
+  _scopeContext.reverse_mem_delta(-objsize);
+
+  {
+    std::ostringstream oss;
+    _scopeContext._chainPtr->printLog(oss,0,1,"hdlr-adjust.ctor");
+    oss.str().empty() || ({ DebugSpecific(true,TRACE_FLAG,"hdlr-adjust.ctor %s",oss.str().c_str()); true; });
+  }
 
   // **don't** allow others to claim the alloc
   st_preCtorObjectEnd = st_preCtorObject; 
