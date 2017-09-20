@@ -88,7 +88,7 @@ typedef struct {
   config_t *plugin_config;
 } StateInfo;
 
-static void
+static ResponseInfo *
 create_response_buffers(StateInfo *state)
 {
   ResponseInfo *resp_info;
@@ -100,6 +100,7 @@ create_response_buffers(StateInfo *state)
   resp_info->parser       = TSHttpParserCreate();
   resp_info->parsed       = false;
 
+  return resp_info;
 }
 
 static void
@@ -113,7 +114,7 @@ free_response_buffers(StateInfo *state)
   state->resp_info = NULL;
 }
 
-static void
+static RequestInfo *
 create_request_buffers(StateInfo *state, TSHttpTxn txn)
 {
   RequestInfo *req_info;
@@ -134,6 +135,8 @@ create_request_buffers(StateInfo *state, TSHttpTxn txn)
   TSHandleMLocRelease(buf, TS_NULL_MLOC, loc);
 
   memmove(&req_info->client_addr, TSHttpTxnClientAddrGet(txn), sizeof(struct sockaddr));
+
+  return req_info;
 }
 
 static void
@@ -178,14 +181,13 @@ create_state_info(TSHttpTxn txn, config_t *plugin_config)
 
   state->plugin_config = plugin_config;
   time(&state->txn_start);
-  // always needed
-  create_request_buffers(state, txn); 
+  create_request_buffers(state, txn); // always needed
 
   return state;
 }
 
-static void
-create_cached_header_info(CachedHeaderInfo *chi, TSHttpTxn txn)
+static CachedHeaderInfo *
+get_cached_header_info(CachedHeaderInfo *chi, TSHttpTxn txn)
 {
   TSMBuffer cr_buf;
   TSMLoc cr_hdr_loc, cr_date_loc, cr_cache_control_loc, cr_cache_control_dup_loc;
@@ -250,6 +252,8 @@ create_cached_header_info(CachedHeaderInfo *chi, TSHttpTxn txn)
     }
     TSHandleMLocRelease(cr_buf, TS_NULL_MLOC, cr_hdr_loc);
   }
+
+  return chi;
 }
 
 static int
@@ -284,14 +288,30 @@ parse_response(StateInfo *state)
   }
 }
 
+static void 
+consume_data(StateInfo *state)
+{
+  int64_t avail;
+
+  if ((state->resp_info) && !state->resp_info->parsed) {
+    parse_response(state);
+  }
+
+  // Consume data
+  avail = TSIOBufferReaderAvail(state->resp_io_buf_reader);
+  TSIOBufferReaderConsume(state->resp_io_buf_reader, avail);
+  TSVIONDoneSet(state->r_vio, TSVIONDoneGet(state->r_vio) + avail);
+}
+
+
+static void 
+consume_complete(StateInfo *state);
+
 static int
 consume_resource(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
 {
   StateInfo *state;
-  int64_t avail;
   TSVConn vconn;
-  TSMLoc url_loc;
-  int lookup_count;
 
   vconn = (TSVConn)edata;
   state = (StateInfo *)TSContDataGet(cont);
@@ -309,72 +329,28 @@ consume_resource(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
     break;
   case TS_EVENT_VCONN_READ_READY:
     TSDebug(PLUGIN_NAME, "Read Ready");
-
-    if ((state->resp_info) && !state->resp_info->parsed) {
-      parse_response(state);
-    }
-
-    // Consume data
-    avail = TSIOBufferReaderAvail(state->resp_io_buf_reader);
-    TSIOBufferReaderConsume(state->resp_io_buf_reader, avail);
-    TSVIONDoneSet(state->r_vio, TSVIONDoneGet(state->r_vio) + avail);
-    TSVIOReenable(state->r_vio);
+    consume_data(state);
     break;
   case TS_EVENT_VCONN_READ_COMPLETE:
+    TSDebug(PLUGIN_NAME, "Read Complete");
+    TSVConnClose(state->vconn);
+    consume_data(state);
+    consume_complete(state);
+    TSContDestroy(cont);
+    break;
   case TS_EVENT_VCONN_EOS:
+    TSDebug(PLUGIN_NAME, "EOS");
+    TSVConnClose(state->vconn);
+    consume_data(state);
+    consume_complete(state);
+    TSContDestroy(cont);
+    break;
   case TS_EVENT_VCONN_INACTIVITY_TIMEOUT:
-    if (event == TS_EVENT_VCONN_INACTIVITY_TIMEOUT) {
-      TSDebug(PLUGIN_NAME, "Inactivity Timeout");
-      TSVConnAbort(vconn, TS_VC_CLOSE_ABORT);
-    } else {
-      if (event == TS_EVENT_VCONN_READ_COMPLETE) {
-        TSDebug(PLUGIN_NAME, "Read Complete");
-      } else if (event == TS_EVENT_VCONN_EOS) {
-        TSDebug(PLUGIN_NAME, "EOS");
-      }
-      TSVConnClose(state->vconn);
-    }
-
-    if ((state->resp_info) && !state->resp_info->parsed) {
-      parse_response(state);
-    }
-
-    // Consume data
-    avail = TSIOBufferReaderAvail(state->resp_io_buf_reader);
-    TSIOBufferReaderConsume(state->resp_io_buf_reader, avail);
-    TSVIONDoneSet(state->r_vio, TSVIONDoneGet(state->r_vio) + avail);
-    if (state->async_req) {
-      TSDebug(PLUGIN_NAME, "Unlock URL");
-      TSMutexLock(state->plugin_config->troot_mutex);
-      tdelete(state->req_info->effective_url, &(state->plugin_config->troot), xstrcmp);
-      TSMutexUnlock(state->plugin_config->troot_mutex);
-    } else {
-      TSDebug(PLUGIN_NAME, "In sync path. setting fresh and re-enabling");
-      TSHttpTxnCacheLookupCountGet(state->txn, &lookup_count);
-      if (state->resp_info && ((state->resp_info->status == 500) ||
-                               ((state->resp_info->status >= 502) && (state->resp_info->status <= 504)) || lookup_count > 2)) {
-        TSDebug(PLUGIN_NAME, "Sending stale data as fresh");
-        if (state->plugin_config->log_info.object &&
-            (state->plugin_config->log_info.all || state->plugin_config->log_info.stale_if_error)) 
-        {
-          CachedHeaderInfo chiV,*chi = &chiV;
-          create_cached_header_info(chi,state->txn);
-          TSTextLogObjectWrite(state->plugin_config->log_info.object, "stale-if-error: %d - %d < %d + %d %s", (int)state->txn_start,
-                               (int)chi->date, (int)chi->max_age, (int)chi->stale_on_error, state->req_info->effective_url);
-        }
-        TSHttpTxnHookAdd(state->txn, TS_HTTP_SEND_RESPONSE_HDR_HOOK, state->main_cont);
-        TSHttpTxnCacheLookupStatusSet(state->txn, TS_CACHE_LOOKUP_HIT_FRESH);
-      } else {
-        TSDebug(PLUGIN_NAME, "Attempting new cache lookup");
-        TSHttpHdrUrlGet(state->req_info->buf, state->req_info->http_hdr_loc, &url_loc);
-        TSHttpTxnNewCacheLookupDo(state->txn, state->req_info->buf, url_loc);
-        TSHandleMLocRelease(state->req_info->buf, state->req_info->http_hdr_loc, url_loc);
-        // TODO add txn translation hook and pass result along, maybe inside continuation?
-        // TSHttpTxnHookAdd(state->txn, TS_HTTP_RESPONSE_TRANSFORM_HOOK, TSTransformCreate(replace_transform, state->txn));
-      }
-      TSHttpTxnReenable(state->txn, TS_EVENT_HTTP_CONTINUE);
-    }
-    free_buffers(state);
+    // only case to use passed vconn 
+    TSDebug(PLUGIN_NAME, "Inactivity Timeout");
+    TSVConnAbort(vconn, TS_VC_CLOSE_ABORT);
+    consume_data(state);
+    consume_complete(state);
     TSContDestroy(cont);
     break;
   default:
@@ -385,6 +361,50 @@ consume_resource(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
   return 0;
 }
 
+void 
+consume_complete(StateInfo *state)
+{
+  TSMLoc url_loc;
+  int lookup_count;
+
+  if (state->async_req) {
+    TSDebug(PLUGIN_NAME, "Unlock URL");
+    TSMutexLock(state->plugin_config->troot_mutex);
+    tdelete(state->req_info->effective_url, &(state->plugin_config->troot), xstrcmp);
+    TSMutexUnlock(state->plugin_config->troot_mutex);
+    free_buffers(state);
+    free_io_buffers(state);
+    return;                                                         ///// RETURN
+  }
+
+  TSDebug(PLUGIN_NAME, "In sync path. setting fresh and re-enabling");
+  TSHttpTxnCacheLookupCountGet(state->txn, &lookup_count);
+  if (state->resp_info && ((state->resp_info->status == 500) ||
+                           ((state->resp_info->status >= 502) && (state->resp_info->status <= 504)) || lookup_count > 2)) {
+    TSDebug(PLUGIN_NAME, "Sending stale data as fresh");
+    if (state->plugin_config->log_info.object &&
+        (state->plugin_config->log_info.all || state->plugin_config->log_info.stale_if_error)) 
+    {
+      CachedHeaderInfo chiV;
+      CachedHeaderInfo *chi = get_cached_header_info(&chiV,state->txn);
+      TSTextLogObjectWrite(state->plugin_config->log_info.object, "stale-if-error: %d - %d < %d + %d %s", (int)state->txn_start,
+                           (int)chi->date, (int)chi->max_age, (int)chi->stale_on_error, state->req_info->effective_url);
+    }
+    TSHttpTxnHookAdd(state->txn, TS_HTTP_SEND_RESPONSE_HDR_HOOK, state->main_cont); // stateless callback
+    TSHttpTxnCacheLookupStatusSet(state->txn, TS_CACHE_LOOKUP_HIT_FRESH);
+  } else {
+    TSDebug(PLUGIN_NAME, "Attempting new cache lookup");
+    TSHttpHdrUrlGet(state->req_info->buf, state->req_info->http_hdr_loc, &url_loc);
+    TSHttpTxnNewCacheLookupDo(state->txn, state->req_info->buf, url_loc);
+    TSHandleMLocRelease(state->req_info->buf, state->req_info->http_hdr_loc, url_loc);
+    // TODO add txn translation hook and pass result along, maybe inside continuation?
+    // TSHttpTxnHookAdd(state->txn, TS_HTTP_RESPONSE_TRANSFORM_HOOK, TSTransformCreate(replace_transform, state->txn));
+  }
+  TSHttpTxnReenable(state->txn, TS_EVENT_HTTP_CONTINUE);
+  free_buffers(state);
+  free_io_buffers(state);
+}
+
 static int
 fetch_resource(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
 {
@@ -393,10 +413,10 @@ fetch_resource(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
   // struct sockaddr_in client_addr;
   TSMLoc connection_hdr_loc, connection_hdr_dup_loc;
 
-  // no further events from this for fetch_resource
-
   state = (StateInfo *)TSContDataGet(cont);
   TSContDestroy(cont);
+
+  // no further events from txn here
 
   // li = (RequestInfo *) edata;
   if (state->async_req) {
@@ -406,7 +426,7 @@ fetch_resource(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
       TSDebug(PLUGIN_NAME, "Looks like an async is already in progress");
       TSMutexUnlock(state->plugin_config->troot_mutex);
       free_buffers(state);
-      return 0;
+      return 0;                                                               ///// RETURN
     }
     // Otherwise lets do the lookup!
     // Lock in tree
@@ -477,7 +497,8 @@ static int
 main_plugin(TSCont cont, TSEvent event, void *edata)
 {
   TSHttpTxn txn = (TSHttpTxn)edata;
-  int status, lookup_count;
+  int status;
+  CachedHeaderInfo *chi;
   TSCont fetch_cont;
   StateInfo *state;
   TSMBuffer buf;
@@ -513,11 +534,11 @@ main_plugin(TSCont cont, TSEvent event, void *edata)
     if (TSHttpTxnCacheLookupStatusGet(txn, &status) == TS_SUCCESS) {
       // Are we stale?
       if (status == TS_CACHE_LOOKUP_HIT_STALE) {
-        CachedHeaderInfo chiV,*chi = &chiV;
+        CachedHeaderInfo chiV;
 
         TSDebug(PLUGIN_NAME, "CacheLookupStatus is STALE");
         // Get headers
-        create_cached_header_info(&chiV,txn);
+        chi = get_cached_header_info(&chiV,state->txn);
 
         if (state->plugin_config->stale_if_error_override > chi->stale_on_error)
           chi->stale_on_error = state->plugin_config->stale_if_error_override;
