@@ -26,8 +26,6 @@
 #include "ts/ink_config.h"
 #include "ts/ink_defs.h"
 
-#include <vector>
-#include <functional>
 #include <memory>
 
 #include <ctype.h>
@@ -243,6 +241,8 @@ unsigned new_affinity_id();
   };
 
 #endif
+
+int create_global_nodump_arena();
 }
 
 template <typename PtrType, typename SizeType>

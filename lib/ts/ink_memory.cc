@@ -169,10 +169,8 @@ int
 ats_mallopt(int param ATS_UNUSED, int value ATS_UNUSED)
 {
 #if HAVE_LIBJEMALLOC
-// TODO: jemalloc code ?
   return 0;
 #elif TS_HAS_TCMALLOC
-// TODO: tcmalloc code ?
   return 0;
 #elif defined(linux)
   return mallopt(param, value);
@@ -298,18 +296,18 @@ _xstrdup(const char *str, int length, const char * /* path ATS_UNUSED */)
   return nullptr;
 }
 
-void *ats_alloc_stack(size_t stacksize)
+void *
+ats_alloc_stack(size_t stacksize)
 {
-  if ( ! ats_hugepage_enabled() ) 
-  {
+  if (!ats_hugepage_enabled()) {
     // get memory that grows down and is not populated until needed
-    return mmap(nullptr,stacksize, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_GROWSDOWN|MAP_PRIVATE, -1, 0);
+    return mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE, -1, 0);
   }
 
   //    [but prefer hugepage alignment and request if possible]
-  auto p = mmap(nullptr,stacksize, PROT_READ|PROT_WRITE, (MAP_ANONYMOUS|MAP_GROWSDOWN|MAP_PRIVATE), -1, 0);
-  if ( stacksize == aligned_spacing(stacksize,ats_hugepage_size()) ) {
-      madvise(p,stacksize,MADV_HUGEPAGE); // opt in
+  auto p = mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, (MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE), -1, 0);
+  if (stacksize == aligned_spacing(stacksize, ats_hugepage_size())) {
+    madvise(p, stacksize, MADV_HUGEPAGE); // opt in
   }
 
   return p;
@@ -651,6 +649,40 @@ void reset_thread_memory_by_cpuset() // limit new pages to specific nodes as the
 }
 
 
-} // namespace numa
+#if HAVE_LIBJEMALLOC
+namespace
+{
+  chunk_alloc_t *s_origAllocHook = nullptr; // safe pre-main
+}
 
+int
+create_global_nodump_arena()
+{
+  auto origArena = jemallctl::thread_arena();
+
+  // fork from base nodes set (id#0)
+  auto newArena = jemallctl::do_arenas_extend();
+
+  jemallctl::set_thread_arena(newArena);
+
+  chunk_hooks_t origHooks = jemallctl::thread_arena_hooks();
+  s_origAllocHook         = origHooks.alloc;
+
+  origHooks.alloc = [](void *old, size_t len, size_t aligned, bool *zero, bool *commit, unsigned arena) {
+    void *r = (*s_origAllocHook)(old, len, aligned, zero, commit, arena);
+
+    if (r) {
+      madvise(r, aligned_spacing(len, aligned), MADV_DONTDUMP);
+    }
+
+    return r;
+  };
+
+  jemallctl::set_thread_arena_hooks(origHooks);
+
+  jemallctl::set_thread_arena(origArena); // default again
+  return newArena;
+}
+
+} // namespace numa
 #endif
