@@ -21,7 +21,6 @@
   limitations under the License.
  */
 #include "ts/jemallctl.h"
-#include "ts/hugepages.h"
 
 #include "ts/ink_platform.h"
 #include "ts/ink_memory.h"
@@ -29,7 +28,6 @@
 #include "ts/ink_stack_trace.h"
 #include "ts/Diags.h"
 #include "ts/ink_atomic.h"
-#include "ts/ink_align.h"
 
 #if defined(freebsd)
 #include <malloc_np.h> // for malloc_usable_size
