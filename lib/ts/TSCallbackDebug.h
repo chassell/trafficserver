@@ -42,45 +42,19 @@
 ////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////
 
-#define TSThreadCreate(func,data)                              \
-            ({                                                 \
-               SET_NEXT_HANDLER(func);                  \
-               auto r = TSThreadCreate(func,data);             \
-               EventCallContext::clear_ctor_initial_callback();  \
-               r;                                              \
-             })
-
-#define TSContCreate(func,mutexp)                              \
-            ({                                                 \
-               SET_NEXT_HANDLER(func);                  \
-               auto r = TSContCreate(reinterpret_cast<TSEventFunc>(func),mutexp);  \
-               EventCallContext::clear_ctor_initial_callback();  \
-               r;                                              \
-             })
-#define TSTransformCreate(func,txnp)                           \
-            ({                                                 \
-               SET_NEXT_HANDLER(func);                  \
-               auto r = TSTransformCreate(reinterpret_cast<TSEventFunc>(func),txnp); \
-               EventCallContext::clear_ctor_initial_callback(); \
-               r;                                               \
-             })
-#define TSVConnCreate(func,mutexp)                             \
-            ({                                                 \
-               SET_NEXT_HANDLER(func);                  \
-               auto r = TSVConnCreate(reinterpret_cast<TSEventFunc>(func),mutexp); \
-               EventCallContext::clear_ctor_initial_callback();  \
-               r;                                              \
-             })
+#define TSContCreate(func,mutexp)    TSContCreate(&EVENT_HANDLER(func),mutexp)
+#define TSVConnCreate(func,mutexp)   TSVConnCreate(&EVENT_HANDLER(func),mutexp)
+#define TSTransformCreate(func,txnp) TSTransformCreate(&EVENT_HANDLER(func),txnp)
 
 // standard TSAPI event handler signature
-template <TSEventFunc FXN>
-struct EventHdlrAssignRec::const_cb_callgen<TSEventFunc,FXN>
+template <EventFuncFxnPtr_t FXN>
+struct EventHdlrAssignRec::const_cb_callgen<EventFuncFxnPtr_t,FXN>
    : public const_cb_callgen_base
 {
   static EventFuncCompare_t *cmpfunc(void) {
-    return [](TSEventFunc fxn) { return FXN == fxn; };
+    return [](EventFuncFxnPtr_t fxn) { return FXN == fxn; };
   }
-  static TSEventFuncSig *func(void)
+  static EventFuncFxnPtr_t func(void)
   {
     return [](TSCont cont, TSEvent event, void *data) {
        return (*FXN)(cont,event,data);
@@ -94,11 +68,11 @@ struct EventHdlrAssignRec::const_cb_callgen<void(*)(TSCont,TSEvent,void *data),F
    : public const_cb_callgen_base
 {
   static EventFuncCompare_t *cmpfunc(void) {
-    return [](TSEventFunc fxn) { 
-      return reinterpret_cast<TSEventFunc>(FXN) == fxn; 
+    return [](EventFuncFxnPtr_t fxn) { 
+      return reinterpret_cast<EventFuncFxnPtr_t>(FXN) == fxn; 
     };
   }
-  static TSEventFuncSig *func(void)
+  static EventFuncFxnPtr_t func(void)
   {
     return [](TSCont cont, TSEvent event, void *data) {
        (*FXN)(cont,event,data);

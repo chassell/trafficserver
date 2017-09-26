@@ -469,7 +469,6 @@ DNSHandler::validate_ip()
     }
   }
 }
-
 /**
   Initial state of the DNSHandler. Can reinitialize the running DNS
   handler to a new nameserver.

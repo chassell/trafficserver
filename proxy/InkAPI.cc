@@ -61,6 +61,10 @@
 #include "I_RecCore.h"
 #include "HttpProxyServerMain.h"
 
+#undef TSContCreate
+#undef TSThreadCreate
+#undef TSTransformCreate
+
 /****************************************************************
  *  IMPORTANT - READ ME
  * Any plugin using the IO Core must enter
@@ -369,12 +373,6 @@ static ClassAllocator<APIHook> apiHookAllocator("apiHookAllocator");
 static ClassAllocator<INKContInternal> INKContAllocator("INKContAllocator");
 static ClassAllocator<INKVConnInternal> INKVConnAllocator("INKVConnAllocator");
 static ClassAllocator<MIMEFieldSDKHandle> mHandleAllocator("MIMEFieldSDKHandle");
-
-// void obj_allocator_adjust(INKContInternal *cont, int32_t adj)
-//   { cont->m_event_func.remove_ctor_delta(adj); }
-
-// void obj_allocator_adjust(INKVConnInternal *cont, int32_t adj)
-//   { cont->m_event_func.remove_ctor_delta(adj); }
 
 ////////////////////////////////////////////////////////////////////
 //
@@ -927,7 +925,7 @@ FileImpl::fgets(char *buf, int length)
 INKContInternal::INKContInternal()
   : DummyVConnection(NULL),
     mdata(NULL),
-    m_event_func(NULL),
+    m_event_func(),
     m_event_count(0),
     m_closed(1),
     m_deletable(0),
@@ -936,10 +934,10 @@ INKContInternal::INKContInternal()
 {
 }
 
-INKContInternal::INKContInternal(void *, TSMutex mutexp)
+INKContInternal::INKContInternal(TSEventFunc funcp, TSMutex mutexp)
   : DummyVConnection((ProxyMutex *)mutexp),
     mdata(NULL),
-    m_event_func(NULL),
+    m_event_func(*funcp),
     m_event_count(0),
     m_closed(1),
     m_deletable(0),
@@ -955,7 +953,7 @@ INKContInternal::init(TSEventFunc funcp, TSMutex mutexp)
   SET_HANDLER(&INKContInternal::handle_event);
 
   mutex        = (ProxyMutex *)mutexp;
-  m_event_func = funcp;
+  m_event_func = *funcp;
 }
 
 void
@@ -1033,8 +1031,8 @@ INKVConnInternal::INKVConnInternal() : INKContInternal(), m_read_vio(), m_write_
   m_closed = 0;
 }
 
-INKVConnInternal::INKVConnInternal(void*, TSMutex mutexp)
-  : INKContInternal(NULL, mutexp), m_read_vio(), m_write_vio(), m_output_vc(NULL)
+INKVConnInternal::INKVConnInternal(TSEventFunc funcp, TSMutex mutexp)
+  : INKContInternal(funcp, mutexp), m_read_vio(), m_write_vio(), m_output_vc(NULL)
 {
   m_closed = 0;
   SET_HANDLER(&INKVConnInternal::handle_event);
@@ -1673,26 +1671,6 @@ _TSfree(void *ptr)
   ats_free(ptr);
 }
 
-tsapi void *TSHttpTxnRegionAlloc(TSHttpTxn txnp, size_t size)
-{
-  sdk_assert(sdk_sanity_check_txn(txnp) == TS_SUCCESS);
-  sdk_assert(size <= TS_HTTP_REGION_ALLOC_MAX);
-
-  HttpSM *sm         = (HttpSM *)txnp;
-  auto p = sm->t_state.arena.alloc(size);
-  memset(p,'\0',size);
-  return p;
-}
-
-tsapi char *TSHttpTxnRegionStrndup(TSHttpTxn txnp, const char *str, size_t size)
-{
-  sdk_assert(sdk_sanity_check_txn(txnp) == TS_SUCCESS);
-  sdk_assert(sdk_sanity_check_null_ptr(str) == TS_SUCCESS);
-  sdk_assert(size <= TS_HTTP_REGION_ALLOC_MAX);
-
-  HttpSM *sm         = (HttpSM *)txnp;
-  return sm->t_state.arena.str_store(str, size);
-}
 ////////////////////////////////////////////////////////////////////
 //
 // Encoding utility
@@ -4209,25 +4187,6 @@ TSMgmtStringGet(const char *var_name, TSMgmtString *result)
 //
 ////////////////////////////////////////////////////////////////////
 
-#undef TSContCreate
-
-#ifdef __cplusplus
-/*
-TSCont
-TSContCreate(TSEventFunctor funcp, TSMutex mutexp)
-{
-  // mutexp can be NULL
-  if (mutexp != NULL)
-    sdk_assert(sdk_sanity_check_mutex(mutexp) == TS_SUCCESS);
-
-  INKContInternal *i = INKContAllocator.alloc();
-
-  i->init(funcp, mutexp);
-  return (TSCont)i;
-}
-*/
-#endif
-
 TSCont
 TSContCreate(TSEventFunc funcp, TSMutex mutexp)
 {
@@ -6249,28 +6208,6 @@ TSActionDone(TSAction actionp)
 }
 
 /* Connections */
-#undef TSVConnCreate
-
-#ifdef __cplusplus
-/*
-TSVConn
-TSVConnCreate(TSEventFunctor event_funcp, TSMutex mutexp)
-{
-  if (mutexp == NULL)
-    mutexp = (TSMutex)new_ProxyMutex();
-
-  // TODO: probably don't need this if memory allocations fails properly
-  sdk_assert(sdk_sanity_check_mutex(mutexp) == TS_SUCCESS);
-
-  INKVConnInternal *i = INKVConnAllocator.alloc();
-
-  sdk_assert(sdk_sanity_check_null_ptr((void *)i) == TS_SUCCESS);
-
-  i->init(event_funcp, mutexp);
-  return reinterpret_cast<TSVConn>(i);
-}
-*/
-#endif
 
 TSVConn
 TSVConnCreate(TSEventFunc event_funcp, TSMutex mutexp)
@@ -6459,21 +6396,7 @@ TSVConnCacheHttpInfoSet(TSVConn connp, TSCacheHttpInfo infop)
     vc->set_http_info((CacheHTTPInfo *)infop);
 }
 
-#undef TSTransformCreate
-
 /* Transformations */
-#ifdef __cplusplus
-/*
-TSVConn
-TSTransformCreate(TSEventFunctor event_funcp, TSHttpTxn txnp)
-{
-  sdk_assert(sdk_sanity_check_txn(txnp) == TS_SUCCESS);
-  // TODO: This is somewhat of a leap of faith, but I think a TSHttpTxn is just another
-  // fancy continuation?
-  return TSVConnCreate(event_funcp, TSContMutexGet(reinterpret_cast<TSCont>(txnp)));
-}
-*/
-#endif
 
 TSVConn
 TSTransformCreate(TSEventFunc event_funcp, TSHttpTxn txnp)
@@ -9033,7 +8956,6 @@ TSVConnReenable(TSVConn vconn)
 {
   NetVConnection *vc        = reinterpret_cast<NetVConnection *>(vconn);
   SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
-
   // We really only deal with a SSLNetVConnection at the moment
   if (ssl_vc != NULL) 
   {

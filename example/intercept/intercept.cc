@@ -200,6 +200,7 @@ union argument_type {
   argument_type(void *_p) : ptr(_p) {}
 };
 
+
 #undef TSContCreate
 
 static TSCont
@@ -212,11 +213,7 @@ InterceptContCreate(TSEventFunc hook, TSMutex mutexp, void *data)
   return contp;
 }
 
-#define InterceptContCreate(func,mutexp,data) \
-            ({                                                 \
-               SET_NEXT_HANDLER(func);                  \
-               InterceptContCreate(reinterpret_cast<TSEventFunc>(func),mutexp,data);                      \
-             })
+#define InterceptContCreate(fxn,mutexp,data)  InterceptContCreate(&EVENT_HANDLER(fxn),mutexp,data)
 
 static bool
 InterceptShouldInterceptRequest(TSHttpTxn txn)

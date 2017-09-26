@@ -450,7 +450,7 @@ TSPluginInit(int argc, const char *argv[])
 
   prl = load_config_file(argc > 1 ? argv[1] : NULL);
   if (prl) {
-    contp = TSContCreate((TSEventFunc)handle_hook, NULL);
+    contp = TSContCreate(handle_hook, NULL);
     /* Store the pattern replacement list in the continuation */
     TSContDataSet(contp, prl);
     TSHttpHookAdd(TS_HTTP_READ_REQUEST_HDR_HOOK, contp);

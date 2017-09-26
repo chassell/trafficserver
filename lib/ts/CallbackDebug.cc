@@ -30,6 +30,7 @@
 **************************************************************************/
 #include "ts/CallbackDebug.h"
 #include "ts/CCallbackDebug.h"
+#include "ts/TSCallbackDebug.h"
 
 #include "ts/jemallctl.h"
 #include "ts/ink_assert.h"
@@ -1604,7 +1605,7 @@ void cb_remove_mem_delta(const char *msg, unsigned n)
 void cb_allocate_hook(void *p, unsigned n) 
    { EventHdlrState::allocate_hook(p,n); }
 
-const TSEventFunc cb_null_return() { return nullptr; }
+const EventFuncFxnPtr_t cb_null_return() { return nullptr; }
 
 void cb_set_ctor_initial_callback(EventCHdlrAssignRecPtr_t crec)
 {

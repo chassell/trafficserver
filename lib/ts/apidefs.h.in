@@ -785,33 +785,18 @@ typedef struct tsapi_bufferreader *TSIOBufferReader;
 typedef struct tsapi_hostlookupresult *TSHostLookupResult;
 typedef struct tsapi_aiocallback *TSAIOCallback;
 
-#if __cplusplus >= 201103L
-using TSThreadFuncSig = void*(void *data);
-using TSEventFuncSig = int(TSCont contp, TSEvent event, void *edata);
-using TSConfigDestroyFuncSig = void(void *data);
-
-using TSThreadFunc = TSThreadFuncSig *;
-using TSEventFunc = TSEventFuncSig *;
-using TSConfigDestroyFunc = TSConfigDestroyFuncSig *;
-
-using TSThreadFunctor = std::function<TSThreadFuncSig>;
-using TSEventFunctor = std::function<TSEventFuncSig>;
-using TSConfigDestroyFunctor = std::function<TSConfigDestroyFuncSig>;
-
-static inline bool operator==(const TSEventFunctor &a, TSEventFunc b) {
-//  return a.target() == b.target();
-  return false;
-}
+#ifdef __cplusplus
+using EventHdlr_t = const class EventHdlrAssignRec &;
+using TSEventFunc = const class EventHdlrAssignRec *;
+using TSThreadFunc = void*(*)(void *data);
+using TSConfigDestroyFunc = void(*)(void *data);
 #else
-typedef void *(*TSThreadFuncSig)(void *data);
-typedef int (*TSEventFuncSig)(TSCont contp, TSEvent event, void *edata);
-typedef void (*TSConfigDestroyFuncSig)(void *data);
-
+typedef const struct EventCHdlrAssignRec *EventCHdlrAssignRecPtr_t;
+typedef EventCHdlrAssignRecPtr_t TSEventFunc;
+// typedef int (*TSEventFunc)(TSCont contp, TSEvent event, void *edata);
 typedef void *(*TSThreadFunc)(void *data);
-typedef int (*TSEventFunc)(TSCont contp, TSEvent event, void *edata);
 typedef void (*TSConfigDestroyFunc)(void *data);
 #endif
-
 
 typedef struct {
   int success_event_id;

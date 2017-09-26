@@ -170,5 +170,5 @@ TSPluginInit(int argc, const char *argv[])
     return;
   }
 
-  TSHttpHookAdd(TS_HTTP_READ_REQUEST_HDR_HOOK, TSContCreate((TSEventFunc)handle_hook, NULL));
+  TSHttpHookAdd(TS_HTTP_READ_REQUEST_HDR_HOOK, TSContCreate(handle_hook, NULL));
 }

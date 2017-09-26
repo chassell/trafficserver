@@ -44,15 +44,16 @@
 typedef const struct EventCHdlrAssignRec EventCHdlrAssignRec_t, 
                                         *EventCHdlrAssignRecPtr_t;
 
-typedef const TSEventFunc (*TSEventFuncGen)();
+typedef int(*EventFuncFxnPtr_t)(TSCont contp, TSEvent event, void *edata);
+typedef const EventFuncFxnPtr_t (*EventFuncFxnGenPtr_t)(void);
 
 struct EventCHdlrAssignRec
 {
   const char                      *_kLabel;   // at point of assign
   const char                      *_kFile;    // at point of assign
   uint32_t                        _kLine;     // at point of assign
-  TSEventFunc               const _kCallback;
-  TSEventFuncGen            const _pad[4];
+  EventFuncFxnPtr_t         const _kCallback;
+  EventFuncFxnGenPtr_t         const _pad[4];
 };
 
 #if defined(__cplusplus)
@@ -61,7 +62,7 @@ extern "C" {
 
 typedef struct tsapi_contdebug *TSContDebug;
 
-const TSEventFunc cb_null_return();
+const EventFuncFxnPtr_t cb_null_return();
 void              cb_set_ctor_initial_callback(EventCHdlrAssignRecPtr_t crec);
 const char       *cb_alloc_plugin_label(const char *path, const char *symbol);
 void              cb_enable_thread_prof_active();
@@ -77,50 +78,26 @@ void              cb_remove_mem_delta(const char *, unsigned n);
 
 #ifndef __cplusplus
 
-#define STATIC_C_HANDLER_RECORD(_fxn, name) \
-     static const EventCHdlrAssignRec_t name = \
+#define C_EVENT_HANDLER(_h) \
+   ({                                       \
+     static const EventCHdlrAssignRec_t _kHdlrAssignRec_ = \
                      {                        \
-                       ((#_fxn)+0),             \
+                       ((#_h)+0),             \
                        (__FILE__+0),          \
                        __LINE__,              \
-                       (TSEventFunc)(_fxn),     \
+                       (EventFuncFxnPtr_t)(_h),     \
                        { &cb_null_return,     \
                          &cb_null_return,     \
                          &cb_null_return,     \
                          &cb_null_return  }   \
-                     }
+                     };                    \
+     &_kHdlrAssignRec_;                    \
+   })
 
-
-#define SET_NEXT_HANDLER_RECORD(_fxn)                       \
-            STATIC_C_HANDLER_RECORD(_fxn, kHdlrAssignRec);  \
-            
-#define TSThreadCreate(_fxn,data)                              \
-            ({                                                 \
-               STATIC_C_HANDLER_RECORD(_fxn,kHdlrAssignRec);   \
-               cb_set_ctor_initial_callback(&kHdlrAssignRec);  \
-               TSThreadCreate((_fxn),data);                    \
-             })
-
-#define TSContCreate(_fxn,mutexp)                              \
-            ({                                                 \
-               STATIC_C_HANDLER_RECORD(_fxn,kHdlrAssignRec);   \
-               cb_set_ctor_initial_callback(&kHdlrAssignRec);  \
-               TSContCreate(_fxn,mutexp);                      \
-             })
-
-#define TSTransformCreate(_fxn,txnp)                           \
-            ({                                                 \
-               STATIC_C_HANDLER_RECORD(_fxn,kHdlrAssignRec);   \
-               cb_set_ctor_initial_callback(&kHdlrAssignRec);  \
-               TSTransformCreate(_fxn,txnp);                   \
-             })
-
-#define TSVConnCreate(_fxn,mutexp)                             \
-            ({                                                 \
-               STATIC_C_HANDLER_RECORD(_fxn,kHdlrAssignRec);   \
-               cb_set_ctor_initial_callback(&kHdlrAssignRec);  \
-               TSVConnCreate(_fxn,mutexp);                     \
-             })
+#define TSThreadCreate(func,data)    TSThreadCreate(C_EVENT_HANDLER(func),data)
+#define TSContCreate(func,mutexp)    TSContCreate(C_EVENT_HANDLER(func),mutexp)
+#define TSTransformCreate(func,txnp) TSTransformCreate(C_EVENT_HANDLER(func),txnp)
+#define TSVConnCreate(func,mutexp)   TSVConnCreate(C_EVENT_HANDLER(func),mutexp)
 #endif
 
 #endif

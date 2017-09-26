@@ -23,7 +23,6 @@
 
 #ifndef _P_UnixEvent_h_
 #define _P_UnixEvent_h_
-#include "ts/CallbackDebug.h"
 
 TS_INLINE Event *
 Event::init(Continuation *c, ink_hrtime atimeout_at, ink_hrtime aperiod)

@@ -60,16 +60,16 @@ using EventHdlrP_t = const EventHdlrAssignRec *;
 
 using EventHdlrMethodPtr_t = int (Continuation::*)(int event, void *data);
 using EventHdlrFxn_t       = int(Continuation *, int event, void *data);
-// using TSEventFuncSig = int(TSCont contp, TSEvent event, void *edata);
+using EventFuncFxn_t     = int(TSCont contp, TSEvent event, void *edata);
 
 using EventHdlrFxnPtr_t    = EventHdlrFxn_t *;
-// using TSEventFunc = = TSEventFuncSig *;
+using EventFuncFxnPtr_t    = EventFuncFxn_t *;
 
 using EventHdlrCompare_t    = bool(EventHdlrMethodPtr_t);
-using EventFuncCompare_t    = bool(TSEventFunc);
+using EventFuncCompare_t    = bool(EventFuncFxnPtr_t);
 
 using EventHdlrFxnGen_t    = EventHdlrFxnPtr_t(void);
-using TSEventFuncGen_t     = TSEventFunc(void);
+using EventFuncFxnGen_t    = EventFuncFxnPtr_t(void);
 using EventHdlrCompareGen_t = EventHdlrCompare_t *(void);
 using EventFuncCompareGen_t = EventFuncCompare_t *(void);
 
@@ -87,10 +87,10 @@ struct EventHdlrAssignRec
     static EventHdlrCompare_t *cmphdlr(void)
       { return [](EventHdlrMethodPtr_t) -> bool { assert(0); return false; }; }
     static EventFuncCompare_t *cmpfunc(void)
-      { assert(0); return [](TSEventFunc) -> bool { assert(0); return false; }; }
-    static EventHdlrFxn_t *hdlr(void)
+      { assert(0); return [](EventFuncFxnPtr_t) -> bool { assert(0); return false; }; }
+    static EventHdlrFxnPtr_t hdlr(void)
       { assert(0); return [](Continuation *, int, void *) { assert(0); return 0; }; }
-    static TSEventFuncSig *func(void)
+    static EventFuncFxnPtr_t func(void)
       { assert(0); return [](TSCont, TSEvent, void *) { assert(0); return 0; }; }
   };
 
@@ -99,14 +99,14 @@ struct EventHdlrAssignRec
 
   bool operator!=(EventHdlrMethodPtr_t a) const 
      { return ! _kEqualHdlr_Gen || ! _kEqualHdlr_Gen()(a); }
-  bool operator!=(TSEventFunc b) const 
+  bool operator!=(EventFuncFxnPtr_t b) const 
      { return ! _kEqualFunc_Gen || ! _kEqualFunc_Gen()(b); }
 
   template <class T_OBJ, typename T_DATA>
   bool operator==(int (T_OBJ::*a)(int event, T_DATA data)) const 
      { return _kEqualHdlr_Gen && _kEqualHdlr_Gen()(reinterpret_cast<EventHdlrMethodPtr_t>(a)); }
 
-  bool operator==(TSEventFunc b) const 
+  bool operator==(EventFuncFxnPtr_t b) const 
      { return _kEqualFunc_Gen && _kEqualFunc_Gen()(b); }
 
   bool is_no_log() const {
@@ -124,13 +124,13 @@ struct EventHdlrAssignRec
   const char *const _kFile;    // at point of assign
   uint32_t    const _kLine;    // at point of assign
 
-  TSEventFunc const _kTSEventFunc; // direct callback ptr (from C)
+  EventFuncFxnPtr_t const _kTSEventFunc; // direct callback ptr (from C)
 
   EventHdlrCompareGen_t *const _kEqualHdlr_Gen; // distinct method-pointer (not usable)
   EventFuncCompareGen_t *const _kEqualFunc_Gen; // distinct method-pointer (not usable)
 
   EventHdlrFxnGen_t     *const _kWrapHdlr_Gen; // ref to custom wrapper function-ptr callable 
-  TSEventFuncGen_t      *const _kWrapFunc_Gen; // ref to custom wrapper function-ptr callable 
+  EventFuncFxnGen_t     *const _kWrapFunc_Gen; // ref to custom wrapper function-ptr callable 
 
 # if (GCC_VERSION >= 6000)
  private:
@@ -334,9 +334,9 @@ class EventHdlrState
     return ! _assignPoint || *_assignPoint != reinterpret_cast<EventHdlrMethodPtr_t>(a);
   }
 
-  // allow comparisons with TSEventFuncs
-  bool operator!=(TSEventFunc b) const {
-    return ! _assignPoint || *_assignPoint != reinterpret_cast<TSEventFunc>(b);
+  // allow comparisons with EventFuncFxnPtr_t
+  bool operator!=(EventFuncFxnPtr_t b) const {
+    return ! _assignPoint || *_assignPoint != reinterpret_cast<EventFuncFxnPtr_t>(b);
   }
 
   // allow comparisons with EventHdlrs
@@ -345,14 +345,14 @@ class EventHdlrState
     return _assignPoint && *_assignPoint == reinterpret_cast<EventHdlrMethodPtr_t>(a);
   }
 
-  // allow comparisons with TSEventFuncs
-  bool operator==(TSEventFunc b) const {
-    return _assignPoint && *_assignPoint == reinterpret_cast<TSEventFunc>(b);
+  // allow comparisons with EventFuncFxnPtr_t
+  bool operator==(EventFuncFxnPtr_t b) const {
+    return _assignPoint && *_assignPoint == reinterpret_cast<EventFuncFxnPtr_t>(b);
   }
 
   void operator=(nullptr_t) = delete;
 
-  void operator=(TSEventFunc f);
+  void operator=(EventFuncFxnPtr_t f);
 
   // class method-pointer full args
   void operator=(EventHdlr_t cbAssign) { _assignPoint = &cbAssign; }
@@ -394,7 +394,7 @@ private:
   EventHdlrState(const EventHdlrState &state) = delete;
 };
 
-inline void EventHdlrState::operator=(TSEventFunc f) 
+inline void EventHdlrState::operator=(EventFuncFxnPtr_t f) 
 {
   assert( _assignPoint );
   assert( ! _assignPoint->_kTSEventFunc || _assignPoint->_kTSEventFunc == f ); // must match 

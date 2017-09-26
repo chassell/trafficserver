@@ -5941,7 +5941,7 @@ struct ParentTest {
   const char *testcase;
   SocketServer *os;
   ClientTxn *browser;
-  TSEventFunc handler;
+  EventHdlrState handler;
 
   RecBool parent_proxy_routing_enable;
   unsigned int magic;
@@ -6116,7 +6116,7 @@ EXCLUSIVE_REGRESSION_TEST(SDK_API_HttpParentProxySet_Fail)(RegressionTest *test,
   ParentTest *ptest = new ParentTest(test, pstatus);
 
   ptest->testcase = "FailCase";
-  ptest->handler  = parent_proxy_fail;
+  ptest->handler  = EVENT_HANDLER(parent_proxy_fail);
   TSContDataSet(cont, ptest);
 
   /* Hook read request headers, since that is the earliest reasonable place to set the parent proxy. */
