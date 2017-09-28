@@ -42,7 +42,8 @@ typedef struct invalidate_t {
   const char *regex_text;
   pcre *regex;
   pcre_extra *regex_extra;
-  time_t epoch;
+  time_t refresh;
+  time_t priority;
   time_t expiry;
   struct invalidate_t *volatile next;
 } invalidate_t;
@@ -71,6 +72,7 @@ static void schedule_free_invalidate_t(invalidate_t *iptr);
 #define OVECTOR_SIZE 30
 #define LOG_ROLL_INTERVAL 86400
 #define LOG_ROLL_OFFSET 0
+#define MAX_TTL (28*24*3600)
 
 static inline void *
 ts_malloc(size_t s)
@@ -90,7 +92,7 @@ init_invalidate_t(invalidate_t *i)
   i->regex_text  = NULL;
   i->regex       = NULL;
   i->regex_extra = NULL;
-  i->epoch       = 0;
+  i->refresh     = 0;
   i->expiry      = 0;
   i->next        = NULL;
   return i;
@@ -171,9 +173,9 @@ list_config(config_holder_t *config_holder, invalidate_t *i)
   if (i) {
     iptr = i;
     while (iptr) {
-      TSDebug(PLUGIN_TAG, "%s epoch: %d expiry: %d", iptr->regex_text, (int)iptr->epoch, (int)iptr->expiry);
+      TSDebug(PLUGIN_TAG, "%s refresh: %d expiry: %d", iptr->regex_text, (int)iptr->refresh, (int)iptr->expiry);
       if (config_holder->log)
-        TSTextLogObjectWrite(config_holder->log, "%s epoch: %d expiry: %d", iptr->regex_text, (int)iptr->epoch, (int)iptr->expiry);
+        TSTextLogObjectWrite(config_holder->log, "%s refresh: %d expiry: %d", iptr->regex_text, (int)iptr->refresh, (int)iptr->expiry);
       iptr = iptr->next;
     }
   } else {
@@ -240,7 +242,7 @@ main_handler(TSCont cont, TSEvent event, void *edata)
             date = get_date_from_cached_hdr(txn);
             now  = time(NULL);
           }
-          if ((difftime(iptr->epoch, date) >= 0) && (difftime(iptr->expiry, now) >= 0)) {
+          if ((difftime(iptr->refresh, date) >= 0) && (difftime(iptr->expiry, now) >= 0)) {
             if (!url)
               url = TSHttpTxnEffectiveUrlStringGet(txn, &url_len);
             if (pcre_exec(iptr->regex, iptr->regex_extra, url, url_len, 0, 0, NULL, 0) >= 0) {
@@ -371,72 +373,169 @@ TSPluginInit(int argc, const char *argv[])
 }
 
 static config_t *
-new_config(TSFile fs)
+new_config(TSFile fs, time_t now)
 {
   char line[LINE_MAX];
-  time_t now;
   pcre *config_re;
   const char *errptr;
   int erroffset, ovector[OVECTOR_SIZE], rc;
   int ln = 0;
-  invalidate_t *iptr, *i, *config = 0;
+  invalidate_t *i, *volatile config = NULL; // (as the ->next field)
 
-  now = time(NULL);
+#define MINSUB "([^#].+?)"
+#define WSPC  "\\s+"
+#define INTSUB "(\\d+)"
 
-  config_re = pcre_compile("^([^#].+?)\\s+(\\d+)\\s*$", 0, &errptr, &erroffset, NULL);
-  while (TSfgets(fs, line, LINE_MAX - 1) != NULL) {
+  // ([0-1] defines entire pattern match
+  // ([6-7] defines optional-subpatt match
+  //            rc == 3 :   regex:[2-3]  expiry:[4-5]     ----
+  //            rc == 4 :   regex:[2-3]   start:[4-5]    ttl:[8-9]
+  config_re = pcre_compile("^" MINSUB WSPC INTSUB "(" WSPC INTSUB ")?" "\\s*$", 0, &errptr, &erroffset, NULL);
+
+  while (TSfgets(fs, line, LINE_MAX - 1) != NULL) 
+  {
     ln++;
     TSDebug(PLUGIN_TAG, "Processing: %d %s", ln, line);
+
     rc = pcre_exec(config_re, NULL, line, strlen(line), 0, 0, ovector, OVECTOR_SIZE);
-    if (rc == 3) {
-      i = (invalidate_t *)TSmalloc(sizeof(invalidate_t));
-      init_invalidate_t(i);
-      pcre_get_substring(line, ovector, rc, 1, &i->regex_text);
-      i->epoch  = now;
-      i->expiry = atoi(line + ovector[4]);
-      i->regex  = pcre_compile(i->regex_text, 0, &errptr, &erroffset, NULL);
-      if (i->expiry <= i->epoch) {
-        TSDebug(PLUGIN_TAG, "NOT Loaded, already expired! %s %d %d", i->regex_text, (int)i->epoch, (int)i->expiry);
-        TSError(PLUGIN_TAG " - NOT Loaded, already expired: %s %d %d", i->regex_text, (int)i->epoch, (int)i->expiry);
-        free_invalidate_t(i);
-      } else if (i->regex == NULL) {
-        TSDebug(PLUGIN_TAG, "%s did not compile", i->regex_text);
-        free_invalidate_t(i);
-      } else {
-        i->regex_extra = pcre_study(i->regex, 0, &errptr);
-        if (!config) {
-          config = i;
-          TSDebug(PLUGIN_TAG, "Created new list and Loaded %s %d %d", i->regex_text, (int)i->epoch, (int)i->expiry);
-          TSError(PLUGIN_TAG " - New Revalidate: %s %d %d", i->regex_text, (int)i->epoch, (int)i->expiry);
-        } else {
-          iptr = config;
-          while (1) {
-            if (strcmp(i->regex_text, iptr->regex_text) == 0) {
-              if (iptr->expiry != i->expiry) {
-                TSDebug(PLUGIN_TAG, "Updating duplicate %s", i->regex_text);
-                iptr->epoch  = i->epoch;
-                iptr->expiry = i->expiry;
-              }
-              free_invalidate_t(i);
-              i = NULL;
-              break;
-            } else if (!iptr->next)
-              break;
-            else
-              iptr = iptr->next;
-          }
-          if (i) {
-            iptr->next = i;
-            TSDebug(PLUGIN_TAG, "Loaded %s %d %d", i->regex_text, (int)i->epoch, (int)i->expiry);
-          }
-        }
-      }
-    } else
+
+    if (rc != 3 && rc != 5) {
       TSDebug(PLUGIN_TAG, "Skipping line %d", ln);
+      continue; /// CONTINUE
+    }
+
+    i = (invalidate_t *)TSmalloc(sizeof(invalidate_t));
+    init_invalidate_t(i);
+    pcre_get_substring(line, ovector, rc, 1, &i->regex_text);
+
+    if ( rc == 3 ) 
+    {
+      // regex-identical lines?: later expiry takes precedence
+      i->expiry = atoi(line + ovector[4]);
+      i->refresh = now; // assumed new
+      i->priority = i->expiry - MAX_TTL; // among all regexs
+    } 
+    else if ( rc == 5 ) 
+    {
+      // regex-identical lines?: later refresh takes precedence
+      i->refresh = atoi(line + ovector[4]);
+      i->expiry  = now + atoi(line + ovector[8]);
+      i->priority = i->refresh; // among all regexs
+    }
+
+    i->expiry = MIN( i->expiry, now + MAX_TTL ); // no need after all of cache is renewed
+    i->regex  = pcre_compile(i->regex_text, 0, &errptr, &erroffset, NULL);
+
+    if (i->expiry <= now ) {
+      TSDebug(PLUGIN_TAG, "NOT Loaded, already expired! %s %+ld", i->regex_text, now - i->expiry);
+      TSError(PLUGIN_TAG " - NOT Loaded, already expired: %s %+ld", i->regex_text, now - i->expiry);
+      free_invalidate_t(i);
+      continue; /// CONTINUE
+    } 
+    
+    // regex line not expired
+
+    if (i->regex == NULL) {
+      TSDebug(PLUGIN_TAG, "%s did not compile", i->regex_text);
+      free_invalidate_t(i);
+      continue; /// CONTINUE
+    } 
+
+    // can attempt to insert
+
+    i->regex_extra = pcre_study(i->regex, 0, &errptr);
+
+    invalidate_t *volatile *iref; // anchor for new elt in i
+    int cmp = -1;
+
+    //
+    // insert into a later-expire-first priority-sorted linked list 
+    //    (i.e. skip all later entries and stop at first earlier one)
+    //
+    for( iref = &config ; *iref ; iref = &(*iref)->next )
+    {
+      if ( ! (cmp = strcmp(i->regex_text,(*iref)->regex_text)) ) {
+        break; // stop if full match found
+      }
+
+      if ( (*iref)->priority < i->priority ) {
+        break; // iref points to earlier entry
+      }
+      if ( (*iref)->priority == i->priority && cmp < 0 ) {
+        break; // iref points to earlier entry
+      }
+
+      // iref points to later entry.. so skip
+    }
+
+    // i is full dup against refresh-or-same entry?
+    if ( ! cmp )
+    {
+       TSDebug(PLUGIN_TAG, "Ignoring duplicate: max-age/ttl %+lds/%lds (vs. %+lds/%lds), %s", 
+                now - i->refresh, i->expiry - i->refresh, 
+                now - (*iref)->refresh, (*iref)->expiry - (*iref)->refresh,
+                i->regex_text);
+       free_invalidate_t(i);
+       i = NULL;
+       continue; // CONTINUE : i is obsolete
+    }
+
+    // iref point is found, but not unique-regex yet
+
+    invalidate_t *volatile *dup = iref; // (point to ->next)
+
+    // check any earlier-expire lines for dups
+    while ( *dup && strcmp(i->regex_text,(*dup)->regex_text) ) {
+      dup = &(*dup)->next;
+    }
+
+    // found a dup?
+    if ( *dup )
+    {
+      invalidate_t *pdup = (*dup); // reference of last ptr
+
+      TSDebug(PLUGIN_TAG, "Updating duplicate max-age/ttl %+lds/%lds (vs. %+lds/%lds), %s", 
+                now - pdup->refresh, pdup->expiry - pdup->refresh, 
+                now - i->refresh, i->expiry - i->refresh,
+                pdup->regex_text);
+
+      (*dup) = (*dup)->next; // snip
+      free_invalidate_t(pdup);
+    }
+
+    i->next = *iref;
+    *iref = i; // insert
   }
   pcre_free(config_re);
 
   return config;
+}
+
+static void
+keep_refresh_times(config_t *newconfig, time_t now, config_t *oldconfig)
+{
+  invalidate_t *nelt = newconfig; 
+  invalidate_t *oelt = oldconfig;
+
+  long r = 0;
+  for( ; nelt && oelt ; r > 0 ? (nelt=nelt->next) : (oelt=oelt->next) )
+  {
+    if ( (r=nelt->priority - oelt->priority) ) {
+      continue; // non-match --> skip over the earliest
+    }
+
+    // one is earlier than the other?
+    if ( (r=strcmp(nelt->regex_text, oelt->regex_text)) ) {
+      continue; // non-match --> skip over the earliest 
+    }
+
+    // bring in earlier refresh time (if guessed as "now")
+    if ( nelt->refresh == now && nelt->expiry == nelt->priority + MAX_TTL ) { 
+      nelt->refresh = oelt->refresh; // regress to previous refresh time
+    }
+    nelt = nelt->next;
+    // will skip to next older entry too
+  }
 }
 
 static void
@@ -506,10 +605,15 @@ load_config_file(config_holder_t *config_holder)
     return;
   }
 
+  time_t now = time(NULL);
   newconfig = 0;
-  newconfig = new_config(fh);
+  newconfig = new_config(fh,now);
   if (newconfig) {
-    config_holder->last_load = time(NULL);
+    config_holder->last_load = now;
+
+    config_t *olderconfig = config_holder->config;
+    keep_refresh_times(newconfig,now,olderconfig);
+
     config_t **confp         = &(config_holder->config);
     oldconfig                = __sync_lock_test_and_set(confp, newconfig);
     if (oldconfig) {
@@ -517,6 +621,13 @@ load_config_file(config_holder_t *config_holder)
       free_cont = TSContCreate(free_handler, TSMutexCreate());
       TSContDataSet(free_cont, (void *)oldconfig);
       TSContSchedule(free_cont, FREE_TMOUT, TS_THREAD_POOL_TASK);
+    }
+
+    for( invalidate_t *i = newconfig ; i ; i = i->next ) {
+      TSDebug(PLUGIN_TAG, "Loaded age-span %.2fhrs (%+.2fhrs ttl) %s", 
+                  (i->expiry - i->refresh)/3600.0,
+                  (i->expiry - now)/3600.0, 
+                  i->regex_text);
     }
   }
   if (fh)
