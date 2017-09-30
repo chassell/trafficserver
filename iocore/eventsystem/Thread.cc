@@ -31,6 +31,9 @@
 #include "P_EventSystem.h"
 #include "ts/ink_string.h"
 
+#include "ts/hugepages.h"
+#include "ts/ink_memory.h"
+
 ///////////////////////////////////////////////
 // Common Interface impl                     //
 ///////////////////////////////////////////////
@@ -40,7 +43,7 @@ inkcoreapi ink_thread_key Thread::thread_data_key;
 
 namespace
 {
-static bool initialized ATS_UNUSED = ([]() -> bool {
+static bool initialized = ([]() -> bool {
   // File scope initialization goes here.
   ink_thread_key_create(&Thread::thread_data_key, nullptr);
   return true;
@@ -65,39 +68,26 @@ Thread::~Thread()
 // Unix & non-NT Interface impl              //
 ///////////////////////////////////////////////
 
-struct thread_data_internal {
-  ThreadFunction f;                  ///< Function to excecute in the thread.
-  Thread *me;                        ///< The class instance.
-  char name[MAX_THREAD_NAME_LENGTH]; ///< Name for the thread.
-};
 
-static void *
-spawn_thread_internal(void *a)
+ink_thread
+Thread::start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction &hookFxn)
 {
-  auto *p = static_cast<thread_data_internal *>(a);
+  auto threadHook = [](void *ptr) -> void*
+    { static_cast<ThreadFunction*>(ptr)->operator()(); return nullptr; };
 
-  p->me->set_specific();
-  ink_set_thread_name(p->name);
+  // Make finally sure it is an even multiple of our page size
+  auto page = (ats_hugepage_enabled() ? sizeof(MemoryPageHuge) : sizeof(MemoryPage) );
+  stacksize = aligned_spacing( stacksize, page );
 
-  if (p->f) {
-    p->f();
-  } else {
-    p->me->execute();
-  }
+  void *stack = ats_alloc_stack(stacksize); // correctly mmap it
 
-  delete p;
-  return nullptr;
-}
+  ink_sem_init(&stackWait,0);
 
-void
-Thread::start(const char *name, void *stack, size_t stacksize, ThreadFunction const &f)
-{
-  auto *p = new thread_data_internal{f, this, ""};
+  auto tid = ink_thread_create(threadHook, const_cast<ThreadFunction*>(&hookFxn), false, stacksize, stack);
 
-  ink_zero(p->name);
-  ink_strlcpy(p->name, name, MAX_THREAD_NAME_LENGTH);
-  if (stacksize == 0) {
-    stacksize = DEFAULT_STACKSIZE;
-  }
-  ink_thread_create(&tid, spawn_thread_internal, p, 0, stacksize, stack);
+  // wait on child init 
+  ink_sem_wait(&stackWait);
+  ink_sem_destroy(&stackWait);
+
+  return tid;
 }

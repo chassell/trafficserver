@@ -74,8 +74,10 @@
 #include "ts/ink_thread.h"
 
 class ProxyMutex;
+class EThread;
 
 constexpr int MAX_THREAD_NAME_LENGTH = 16;
+constexpr int MIN_STACKSIZE          = 100*1024; // 100K
 
 /// The signature of a function to be called by a thread.
 using ThreadFunction = std::function<void()>;
@@ -97,6 +99,8 @@ using ThreadFunction = std::function<void()>;
 class Thread
 {
 public:
+  using EThreadInitFxn_t = std::function<void(EThread *)>;
+
   /*-------------------------------------------*\
   | Common Interface                            |
   \*-------------------------------------------*/
@@ -108,7 +112,8 @@ public:
     processors and you should not modify it directly.
 
   */
-  ink_thread tid = 0;
+  ink_thread  tid() const         { return _tid; }
+  unsigned    affinity_id() const { return _affid; }
 
   /**
     Thread lock to ensure atomic operations. The thread lock available
@@ -125,6 +130,7 @@ public:
   virtual ~Thread();
 
   void set_specific();
+  void set_affinity_id(unsigned affid) { _affid = affid; }
 
   static ink_hrtime cur_time;
   inkcoreapi static ink_thread_key thread_data_key;
@@ -155,7 +161,15 @@ public:
       @c nullptr a stack of size @a stacksize is allocated and used. If @a f is present and valid it
       is called in the thread context. Otherwise the method @c execute is invoked.
   */
-  void start(const char *name, void *stack, size_t stacksize, ThreadFunction const &f = ThreadFunction());
+  static ink_thread start(ink_semaphore &stackWait, unsigned stacksize, const ThreadFunction &hookFxn);
+
+  template <class T_THREAD, class T_FUNCTOR>
+  static void launch(T_THREAD *thread, T_FUNCTOR launchFxn)
+  {
+    // launchFxn was copied as param [on stack]
+    thread->set_specific(); // assign thread structure
+    launchFxn(thread); // callback must sem_post to stackWait in start() call above
+  }
 
   virtual void execute() = 0;
 
@@ -176,9 +190,13 @@ public:
       @note This also updates the cached time.
   */
   static ink_hrtime get_hrtime_updated();
+
+private:
+  ink_thread _tid = ink_thread{};
+  unsigned _affid = 0U;
 };
 
-extern Thread *this_thread();
+Thread *this_thread();
 
 TS_INLINE ink_hrtime
 Thread::get_hrtime()

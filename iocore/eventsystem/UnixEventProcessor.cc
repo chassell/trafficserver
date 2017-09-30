@@ -32,34 +32,61 @@
 #include "ts/ink_defs.h"
 #include "ts/hugepages.h"
 
+#include <algorithm>
+
 /// Global singleton.
 class EventProcessor eventProcessor;
 
-class ThreadAffinityInitializer : public Continuation
-{
-  typedef ThreadAffinityInitializer self;
-
-public:
-  /// Default construct.
-  ThreadAffinityInitializer() { SET_HANDLER(&self::set_affinity); }
-  /// Load up basic affinity data.
-  void init();
-  /// Set the affinity for the current thread.
-  int set_affinity(int, Event *);
 #if TS_USE_HWLOC
-
-  hwloc_obj_type_t cpuset_type() const { return obj_type; }
-private:
-  hwloc_obj_type_t obj_type = HWLOC_OBJ_NODE;
-  int obj_count        = 0;
-  char const *obj_name = nullptr;
+static const hwloc_obj_type_t kAffinity_objs[] = 
+   { HWLOC_OBJ_MACHINE, HWLOC_OBJ_NUMANODE, HWLOC_OBJ_SOCKET, HWLOC_OBJ_CORE
+#if HAVE_HWLOC_OBJ_PU
+         , HWLOC_OBJ_PU   // include only if valid in HWLOC version
 #endif
-};
+  };
 
-ThreadAffinityInitializer Thread_Affinity_Initializer;
+static const char *const kAffinity_obj_names[] =
+   { "[Unrestricted]",         "NUMA Node",        "Socket",         "Core"
+         , "Logical CPU"  // [ignore if not found]
+   };
 
-namespace
+// Pretty print our CPU set
+void pretty_print_cpuset(const char *thrname, hwloc_obj_type_t objtype, int affid, hwloc_const_cpuset_t cpuset)
 {
+  auto n = std::find( std::begin(kAffinity_objs), std::end(kAffinity_objs), objtype ) - std::begin(kAffinity_objs);
+  n %= countof(kAffinity_objs); // remap end to index zero
+  const char *objname = kAffinity_obj_names[n];
+
+#if HWLOC_API_VERSION >= 0x00010100
+  int cpu_mask_len = hwloc_bitmap_snprintf(NULL, 0, cpuset);
+  char cpu_mask[cpu_mask_len+1];
+  hwloc_bitmap_snprintf(cpu_mask, sizeof(cpu_mask), cpuset);
+  Debug("iocore_thread", "EThread: %s -> %s# %d CPU Mask: %s", thrname, objname, affid, cpu_mask);
+#else
+  Debug("iocore_thread", "EThread: %s -> %s# %d", thrname, objname, affid);
+#endif // HWLOC_API_VERSION
+}
+#endif
+
+
+void
+EventMetricStatInit()
+{
+  // Get our statistics set up
+  RecRawStatBlock *rsb = RecAllocateRawStatBlock(EThread::N_EVENT_STATS * EThread::N_EVENT_TIMESCALES);
+  char name[256];
+
+  for (int ts_idx = 0; ts_idx < EThread::N_EVENT_TIMESCALES; ++ts_idx) {
+    for (int id = 0; id < EThread::N_EVENT_STATS; ++id) {
+      snprintf(name, sizeof(name), "%s.%ds", EThread::STAT_NAME[id], EThread::SAMPLE_COUNT[ts_idx]);
+      RecRegisterRawStat(rsb, RECT_PROCESS, name, RECD_INT, RECP_NON_PERSISTENT, id + (ts_idx * EThread::N_EVENT_STATS), NULL);
+    }
+  }
+
+  // Name must be that of a stat, pick one at random since we do all of them in one pass/callback.
+  RecRegisterRawStatSyncCb(name, EventMetricStatSync, rsb, 0);
+}
+
 int
 EventMetricStatSync(const char *, RecDataT, RecData *, RecRawStatBlock *rsb, int)
 {
@@ -106,248 +133,50 @@ EventMetricStatSync(const char *, RecDataT, RecData *, RecRawStatBlock *rsb, int
   return REC_ERR_OKAY;
 }
 
-/// This is a wrapper used to convert a static function into a continuation. The function pointer is
-/// passed in the cookie. For this reason the class is used as a singleton.
-/// @internal This is the implementation for @c schedule_spawn... overloads.
-class ThreadInitByFunc : public Continuation
-{
-public:
-  ThreadInitByFunc() { SET_HANDLER(&ThreadInitByFunc::invoke); }
-  int
-  invoke(int, Event *ev)
-  {
-    void (*f)(EThread *) = reinterpret_cast<void (*)(EThread *)>(ev->cookie);
-    f(ev->ethread);
-    return 0;
-  }
-} Thread_Init_Func;
-}
-
-
-#if TS_USE_HWLOC
-void
-ThreadAffinityInitializer::init()
-{
-  int affinity = 1;
-  REC_ReadConfigInteger(affinity, "proxy.config.exec_thread.affinity");
-
-  switch (affinity) {
-  case 4: // assign threads to logical processing units
-// Older versions of libhwloc (eg. Ubuntu 10.04) don't have HWLOC_OBJ_PU.
-#if HAVE_HWLOC_OBJ_PU
-    obj_type = HWLOC_OBJ_PU;
-    obj_name = "Logical Processor";
-    break;
-#endif
-
-  case 3: // assign threads to real cores
-    obj_type = HWLOC_OBJ_CORE;
-    obj_name = "Core";
-    break;
-
-  case 1: // assign threads to NUMA nodes (often 1:1 with sockets)
-    obj_type = HWLOC_OBJ_NODE;
-    obj_name = "NUMA Node";
-    if (hwloc_get_nbobjs_by_type(ink_get_topology(), obj_type) > 0) {
-      break;
-    }
-  // fallthrough
-
-  case 2: // assign threads to sockets
-    obj_type = HWLOC_OBJ_SOCKET;
-    obj_name = "Socket";
-    break;
-  default: // assign threads to the machine as a whole (a level below SYSTEM)
-    obj_type = HWLOC_OBJ_MACHINE;
-    obj_name = "Machine";
-  }
-
-  obj_count = hwloc_get_nbobjs_by_type(ink_get_topology(), obj_type);
-  Debug("iocore_thread", "Affinity: %d %ss: %d PU: %d", affinity, obj_name, obj_count, ink_number_of_processors());
-}
-
-int
-ThreadAffinityInitializer::set_affinity(int, Event *)
-{
-  EThread *t = this_ethread();
-  numa::assign_thread_cpuset_by_affinity(obj_type, t->id);
-  numa::assign_thread_memory_by_affinity(obj_type, t->id);
-
-  if ( obj_count < 2 ) {
-    return 0;
-  }
-  // Get our `obj` instance with index based on the thread number we are on.
-  numa::hwloc_bitmap cpuset;
-  hwloc_get_cpubind(ink_get_topology(), cpuset, HWLOC_CPUBIND_THREAD);
-#if HWLOC_API_VERSION >= 0x00010100
-  int cpu_mask_len = hwloc_bitmap_snprintf(NULL, 0, cpuset) + 1;
-  char *cpu_mask   = (char *)alloca(cpu_mask_len);
-  hwloc_bitmap_snprintf(cpu_mask, cpu_mask_len, cpuset);
-  Debug("iocore_thread", "EThread: %p %s: %d CPU Mask: %s\n", t, obj_name, t->id % obj_count, cpu_mask);
-#else
-  Debug("iocore_thread", "EThread: %d %s: %d", t->id % obj_count, _name);
-#endif // HWLOC_API_VERSION
-  return 0;
-}
-
-#else
-
-void
-ThreadAffinityInitializer::init()
-{
-}
-
-int
-ThreadAffinityInitializer::set_affinity(int, Event *)
-{
-  return 0;
-}
-
-#endif // TS_USE_HWLOC
-
-EventProcessor::EventProcessor() : thread_initializer(this)
-{
-  ink_zero(all_ethreads);
-  ink_zero(all_dthreads);
-  ink_zero(thread_group);
-  ink_mutex_init(&dedicated_thread_spawn_mutex);
-  // Because ET_NET is compile time set to 0 it *must* be the first type registered.
-  this->register_event_type("ET_NET");
-}
-
-EventProcessor::~EventProcessor()
-{
-  ink_mutex_destroy(&dedicated_thread_spawn_mutex);
-}
-
-namespace
-{
-Event *
-make_event_for_scheduling(Continuation *c, int event_code, void *cookie)
-{
-  Event *e = eventAllocator.alloc();
-
-  e->init(c);
-  e->mutex          = c->mutex;
-  e->callback_event = event_code;
-  e->cookie         = cookie;
-
-  return e;
-}
-}
-
-Event *
-EventProcessor::schedule_spawn(Continuation *c, EventType ev_type, int event_code, void *cookie)
-{
-  Event *e = make_event_for_scheduling(c, event_code, cookie);
-  ink_assert(ev_type < MAX_EVENT_TYPES);
-  thread_group[ev_type]._spawnQueue.enqueue(e);
-  return e;
-}
-
-Event *
-EventProcessor::schedule_spawn(void (*f)(EThread *), EventType ev_type)
-{
-  Event *e = make_event_for_scheduling(&Thread_Init_Func, EVENT_IMMEDIATE, reinterpret_cast<void *>(f));
-  ink_assert(ev_type < MAX_EVENT_TYPES);
-  thread_group[ev_type]._spawnQueue.enqueue(e);
-  return e;
-}
-
 EventType
-EventProcessor::register_event_type(char const *name)
+EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t stacksize, const ThreadFxn_t &runFxn)
 {
-  ThreadGroupDescriptor *tg = &(thread_group[n_thread_groups++]);
-  ink_release_assert(n_thread_groups <= MAX_EVENT_TYPES); // check for overflow
-
-  tg->_name = ats_strdup(name);
-  return n_thread_groups - 1;
-}
-
-EventType
-EventProcessor::spawn_event_threads(char const *name, int n_threads, size_t stacksize)
-{
-  int ev_type = this->register_event_type(name);
-  this->spawn_event_threads(ev_type, n_threads, stacksize);
-  return ev_type;
-}
-
-EventType
-EventProcessor::spawn_event_threads(EventType ev_type, int n_threads, size_t stacksize)
-{
-  char thr_name[MAX_THREAD_NAME_LENGTH];
-  int i;
-  ThreadGroupDescriptor *tg = &(thread_group[ev_type]);
-
-  ink_release_assert(n_threads > 0);
-  ink_release_assert((n_ethreads + n_threads) <= MAX_EVENT_THREADS);
+  ink_release_assert( 0 < n_threads && n_threads <= (MAX_EVENT_THREADS - n_ethreads) );
   ink_release_assert(ev_type < MAX_EVENT_TYPES);
 
-  stacksize = std::max(stacksize, static_cast<decltype(stacksize)>(INK_THREAD_STACK_MIN));
-  // Make sure it is a multiple of our page size
-  if (ats_hugepage_enabled()) {
-    stacksize = INK_ALIGN(stacksize, ats_hugepage_size());
-  } else {
-    stacksize = INK_ALIGN(stacksize, ats_pagesize());
-  }
+  // Determine correct multiple of our page size
+  auto page = (ats_hugepage_enabled() ? sizeof(MemoryPageHuge) : sizeof(MemoryPage) );
+
+  // correctly define size of stack now
+  stacksize = std::max(0UL+stacksize,0UL+MIN_STACKSIZE);
+  stacksize = aligned_spacing( stacksize, page );
 
   Debug("iocore_thread", "Thread stack size set to %zu", stacksize);
 
-  for (i = 0; i < n_threads; ++i) {
-    numa::assign_thread_memory_by_affinity(Thread_Affinity_Initializer.cpuset_type(), i);
+  //
+  // hold all threads until all and stored values are ready
+  pthread_barrier_t grpBarrier;
+  ink_release_assert( pthread_barrier_init(&grpBarrier,nullptr,n_threads+1) == 0 );
 
-    EThread *t                   = new EThread(REGULAR, n_ethreads + i);
-    all_ethreads[n_ethreads + i] = t;
-    tg->_thread[i]               = t;
-    t->id                        = i; // unfortunately needed to support affinity and NUMA logic.
-    t->set_event_type(ev_type);
-    t->schedule_spawn(&thread_initializer);
-    snprintf(thr_name, MAX_THREAD_NAME_LENGTH, "[%s %d]", tg->_name.get(), i);
-  }
-  tg->_count = n_threads;
-  n_ethreads += n_threads;
+  for (int i = 0; i < n_threads; ++i)
+  {
+    // *atomic-allocate* a new EThread-hook in whole-system list
+    EThread *&epEThread = all_ethreads[n_ethreads_nxt++];
 
-  // Separate loop to avoid race conditions between spawn events and updating the thread table for
-  // the group. Some thread set up depends on knowing the total number of threads but that can't be
-  // safely updated until all the EThread instances are created and stored in the table.
-  for (i = 0; i < n_threads; ++i) {
-    numa::assign_thread_memory_by_affinity(Thread_Affinity_Initializer.cpuset_type(), i);
+    ink_release_assert( ! epEThread ); // must hold nothing
 
-    void *stack = ats_alloc_stack(stacksize);
-    // inherit these current settings upon spawning
-    snprintf(thr_name, MAX_THREAD_NAME_LENGTH, "[%s %d]", tg->_name.get(), i);
-    tg->_thread[i]->start(thr_name, stack, stacksize);
+    // pass barrier and external EThread-hook into thread-group for spawn
+    thread_group[ev_type].start(grpBarrier, epEThread, stacksize, runFxn);
+
+    // thread has allocated and initialized its EThread 
+    // now only waiting on barrier
   }
 
-  numa::reset_thread_memory_by_cpuset();
+  // all threads are ready when passed
+  pthread_barrier_wait(&grpBarrier);
+  pthread_barrier_destroy(&grpBarrier);
 
-  Debug("iocore_thread", "Created thread group '%s' id %d with %d threads", tg->_name.get(), ev_type, n_threads);
+  // count threads as visible
+  n_ethreads = n_ethreads_nxt; 
+
+  Debug("iocore_thread", "Created thread group '%s' id %d with %d threads", thread_group[ev_type]._name.get(), ev_type, n_threads);
 
   return ev_type; // useless but not sure what would be better.
-}
-
-// This is called from inside a thread as the @a start_event for that thread.  It chains to the
-// startup events for the appropriate thread group start events.
-void
-EventProcessor::initThreadState(EThread *t)
-{
-  // Run all thread type initialization continuations that match the event types for this thread.
-  for (int i = 0; i < MAX_EVENT_TYPES; ++i) {
-    if (t->is_event_type(i)) { // that event type done here, roll thread start events of that type.
-      // To avoid race conditions on the event in the spawn queue, create a local one to actually send.
-      // Use the spawn queue event as a read only model.
-      Event *nev = eventAllocator.alloc();
-      for (Event *ev = thread_group[i]._spawnQueue.head; nullptr != ev; ev = ev->link.next) {
-        nev->init(ev->continuation, 0, 0);
-        nev->ethread        = t;
-        nev->callback_event = ev->callback_event;
-        nev->mutex          = ev->continuation->mutex;
-        nev->cookie         = ev->cookie;
-        ev->continuation->handleEvent(ev->callback_event, nev);
-      }
-      nev->free();
-    }
-  }
 }
 
 int
@@ -355,31 +184,18 @@ EventProcessor::start(int n_event_threads, size_t stacksize)
 {
   // do some sanity checking.
   static bool started = false;
+
   ink_release_assert(!started);
-  ink_release_assert(n_event_threads > 0 && n_event_threads <= MAX_EVENT_THREADS);
+  ink_release_assert( 0 < n_event_threads && n_event_threads <= MAX_EVENT_THREADS);
+
   started = true;
 
-  Thread_Affinity_Initializer.init();
-  // Least ugly thing - this needs to be the first callback from the thread but by the time this
-  // method is called other spawn callbacks have been registered. This forces thread affinity
-  // first. The other alternative would be to require a call to an @c init method which I like even
-  // less because this cannot be done in the constructor - that depends on too much other
-  // infrastructure being in place (e.g. the proxy allocators).
-  thread_group[ET_CALL]._spawnQueue.push(make_event_for_scheduling(&Thread_Affinity_Initializer, EVENT_IMMEDIATE, nullptr));
+  int affinity = 1;
+  REC_ReadConfigInteger(affinity, "proxy.config.exec_thread.affinity");
 
-  // Get our statistics set up
-  RecRawStatBlock *rsb = RecAllocateRawStatBlock(EThread::N_EVENT_STATS * EThread::N_EVENT_TIMESCALES);
-  char name[256];
+  thread_group[ET_CALL]._affcfg = kAffinity_objs[affinity];
+  this->spawn_event_threads(ET_CALL, n_event_threads, stacksize);
 
-  for (int ts_idx = 0; ts_idx < EThread::N_EVENT_TIMESCALES; ++ts_idx) {
-    for (int id = 0; id < EThread::N_EVENT_STATS; ++id) {
-      snprintf(name, sizeof(name), "%s.%ds", EThread::STAT_NAME[id], EThread::SAMPLE_COUNT[ts_idx]);
-      RecRegisterRawStat(rsb, RECT_PROCESS, name, RECD_INT, RECP_NON_PERSISTENT, id + (ts_idx * EThread::N_EVENT_STATS), NULL);
-    }
-  }
-
-  // Name must be that of a stat, pick one at random since we do all of them in one pass/callback.
-  RecRegisterRawStatSyncCb(name, EventMetricStatSync, rsb, 0);
 
   this->spawn_event_threads(ET_CALL, n_event_threads, stacksize);
 
@@ -392,38 +208,120 @@ EventProcessor::shutdown()
 {
 }
 
-Event *
-EventProcessor::spawn_thread(Continuation *cont, const char *thr_name, size_t stacksize)
+ink_thread
+EventProcessor::ThreadGroupDescriptor::start(pthread_barrier_t &grpBarrier, EThread *&epEThread, int stacksize, const ThreadFxn_t &runFxn)
 {
-  /* Spawning threads in a live system - There are two potential race conditions in this logic. The
-     first is multiple calls to this method.  In that case @a all_dthreads can end up in a bad state
-     as the same entry is overwritten while another is left uninitialized.
+  int const affid = numa::new_affinity_id();
+  ink_semaphore stackWait;
 
-     The other is read/write contention where another thread (e.g. the stats collection thread) is
-     iterating over the threads while the active count (@a n_dthreads) is being updated causing use
-     of a not yet initialized array element.
-
-     This logic covers both situations. For write/write the actual array update is locked. The
-     potentially expensive set up is done outside the lock making the time spent locked small. For
-     read/write it suffices to do the active count increment after initializing the array
-     element. It's not a problem if, for one cycle, a new thread is skipped.
-  */
-
-  // Do as much as possible outside the lock. Until the array element and count is changed
-  // this is thread safe.
-  Event *e = eventAllocator.alloc();
-  e->init(cont, 0, 0);
-  e->ethread  = new EThread(DEDICATED, e);
-  e->mutex    = e->ethread->mutex;
-  cont->mutex = e->ethread->mutex;
+  auto launchFxnRef = [this,&epEThread,affid,&stackWait,&grpBarrier](EThread *t) -> int
   {
-    ink_scoped_mutex_lock lock(dedicated_thread_spawn_mutex);
-    ink_release_assert(n_dthreads < MAX_EVENT_THREADS);
-    all_dthreads[n_dthreads] = e->ethread;
-    ++n_dthreads; // Be very sure this is after the array element update.
+    // NOTE: "grab" unique location [atomic]
+    EThread *&tgEThread = _thread[_count++];
+
+    ptrdiff_t id = ( &tgEThread - &_thread[0] ); // record index of it
+
+    char thr_name[MAX_THREAD_NAME_LENGTH+1];
+    snprintf(thr_name, sizeof(thr_name), "[%s %ld]", _name.get(), id);
+    ink_set_thread_name(thr_name);
+    
+    tgEThread = t;
+    epEThread = t;
+
+    t->id = id; // index
+    t->set_affinity_id(affid);
+
+    // parallel with waiting parent now 
+    ink_sem_post(&stackWait); 
+    // parent is released to create next thread
+    
+    // gather up all threads before running
+    pthread_barrier_wait(&grpBarrier);
+
+    // change to new cpuset [real delay]
+    numa::assign_thread_cpuset_by_affinity(_affcfg, affid); 
+
+    auto cpuset = numa::get_cpuset_by_affinity(_affcfg, affid); 
+    pretty_print_cpuset(thr_name, static_cast<hwloc_obj_type_t>(_affcfg), affid, cpuset);
+
+    // perform all inits for EThread 
+    for( auto &&cb : _spawnQueue ) {
+      cb(t); // init calls
+    }
+
+    return id;
+  };
+
+  // change to new memory before creating stack (inherited by child)
+  numa::assign_thread_memory_by_affinity(_affcfg, affid); 
+
+  ink_thread r;
+
+  // NOTE: both pause until launchFxnRef/stackWait are child-unneeded
+
+  if ( runFxn ) {
+    // custom callback
+    r = Thread::start(stackWait, stacksize, [&launchFxnRef,&runFxn]() 
+            { runFxn(launchFxnRef); });
+  } else {
+
+    // default callback
+    r = Thread::start(stackWait, stacksize, [&launchFxnRef]() 
+       {
+             // parent thread is waiting ... so copy-pass lambda-params
+             Thread::launch(new EThread{REGULAR,0}, launchFxnRef);
+
+           // parent has continued --> passed params are untouchable
+           this_thread()->execute(); // parent has continued on
+       });
   }
 
-  e->ethread->start(thr_name, nullptr, stacksize);
+  numa::reset_thread_memory_by_cpuset();
 
-  return e;
+  return r;
+}
+
+
+ink_thread 
+EventProcessor::spawn_thread(Continuation *cont, const char *thr_name, size_t stacksize)
+{
+  EThread *&epEThread = all_dthreads[n_dthreads_nxt++];
+  ink_semaphore stackWait;
+
+  // Determine correct multiple of our page size
+  auto page = (ats_hugepage_enabled() ? sizeof(MemoryPageHuge) : sizeof(MemoryPage) );
+
+  // correctly define size of stack now
+  stacksize = std::max(stacksize, static_cast<decltype(stacksize)>(MIN_STACKSIZE));
+  stacksize = aligned_spacing( stacksize, page );
+
+  auto launchFxnRef = [this,&epEThread,&stackWait,thr_name,cont](EThread *t) -> int
+  {
+    ink_set_thread_name(thr_name);
+
+    epEThread = t;
+
+    // parallel with parent now 
+    ink_sem_post(&stackWait);
+
+    return 0;
+  };
+
+  auto startFxn = [&launchFxnRef,cont]()
+  {
+    auto contV = cont;
+    // parent thread is waiting .. so copy lambda-params now
+    Thread::launch(new EThread{DEDICATED, nullptr}, launchFxnRef);
+
+    // parent has continued --> params are untouchable
+    contV->handleEvent(EVENT_IMMEDIATE,nullptr); // use cont as entire call
+  };
+
+  // NOTE: pauses until launchFxnRef/stackWait are child-unneeded
+  auto r = Thread::start(stackWait, stacksize, startFxn);
+
+  // ready to be included as valid now
+  n_dthreads = n_dthreads_nxt;
+
+  return r;
 }
