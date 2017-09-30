@@ -169,8 +169,10 @@ int
 ats_mallopt(int param ATS_UNUSED, int value ATS_UNUSED)
 {
 #if HAVE_LIBJEMALLOC
+  // TODO: jemalloc code ?
   return 0;
 #elif TS_HAS_TCMALLOC
+  // TODO: tcmalloc code ?
   return 0;
 #elif defined(linux)
   return mallopt(param, value);
@@ -295,22 +297,12 @@ _xstrdup(const char *str, int length, const char * /* path ATS_UNUSED */)
   }
   return nullptr;
 }
-
-void *
-ats_alloc_stack(size_t stacksize)
+void *ats_alloc_stack(size_t stacksize)
 {
-  if (!ats_hugepage_enabled()) {
-    // get memory that grows down and is not populated until needed
-    return mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE, -1, 0);
-  }
-
+  // get memory that grows down and is not populated until needed
   //    [but prefer hugepage alignment and request if possible]
-  auto p = mmap(nullptr, stacksize, PROT_READ | PROT_WRITE, (MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_PRIVATE), -1, 0);
-  if (stacksize == aligned_spacing(stacksize, ats_hugepage_size())) {
-    madvise(p, stacksize, MADV_HUGEPAGE); // opt in
-  }
-
-  return p;
+  return ats_hugepage_enabled() ? ats_alloc_hugepage_stack(stacksize)
+                                : mmap(nullptr,stacksize, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_GROWSDOWN|MAP_PRIVATE, -1, 0);
 }
 
 #if ! TS_USE_HWLOC
@@ -320,6 +312,21 @@ using CpuSetVector_t = std::vector<hwloc_const_cpuset_t>;
 using NodeSetVector_t = std::vector<hwloc_const_nodeset_t>;
 using NodesIDVector_t = std::vector<unsigned>;
 using ArenaIDVector_t = std::vector<unsigned>;
+
+static auto const kHwlocBitmapDeleter = [](hwloc_bitmap_t map){ map ? hwloc_bitmap_free(map) : (void) 0; };
+
+struct hwloc_bitmap : public std::unique_ptr<hwloc_bitmap_s,decltype(kHwlocBitmapDeleter)>
+{
+  using super = std::unique_ptr<hwloc_bitmap_s,decltype(kHwlocBitmapDeleter)>;
+  hwloc_bitmap() : super{ hwloc_bitmap_alloc(), kHwlocBitmapDeleter } 
+     { }
+  hwloc_bitmap(hwloc_const_bitmap_t map) : super{ hwloc_bitmap_dup(map), kHwlocBitmapDeleter } 
+     { }
+  operator hwloc_const_bitmap_t() const
+     { return get(); }
+  operator hwloc_bitmap_t()
+     { return get(); }
+};
 
 ////////////////////////////////// namespace numa
 namespace numa {
