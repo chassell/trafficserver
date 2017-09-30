@@ -25,7 +25,6 @@
 #include "ts/ink_memory.h"
 #include "ts/Allocator.h"
 #include "ts/Arena.h"
-
 #include <cassert>
 #include <cstring>
 
