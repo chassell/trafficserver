@@ -151,38 +151,24 @@ copy_invalidate_t(invalidate_t *i)
   return iptr;
 }
 
-static bool
-prune_config(invalidate_t **i)
+static void
+prune_config(time_t now, invalidate_t **iref)
 {
-  invalidate_t *iptr, *ilast;
-  time_t now;
-  bool pruned = false;
+  for( ; *iref && (*iref)->expiry > now ; iref = &(*iref)->next ) {
+    // not yet expired
+  }
 
-  now = time(NULL);
+  if ( *iref ) {
+    prune_config(now, &(*iref)->next);
 
-  if (*i) {
-    iptr  = *i;
-    ilast = NULL;
-    while (iptr) {
-      if (difftime(iptr->expiry, now) < 0) {
-        TSDebug(LOG_PREFIX, "Removing %s expiry: %d now: %d", iptr->regex_text, (int)iptr->expiry, (int)now);
-        if (ilast) {
-          ilast->next = iptr->next;
-          free_invalidate_t(iptr);
-          iptr = ilast->next;
-        } else {
-          *i = iptr->next;
-          free_invalidate_t(iptr);
-          iptr = *i;
-        }
-        pruned = true;
-      } else {
-        ilast = iptr;
-        iptr  = iptr->next;
-      }
+    invalidate_t *expd = *iref; // [below recurse-down]
+
+    // atomically snip out:  i.e. (*iref) = expd->next
+    if ( __sync_val_compare_and_swap(iref, expd, expd->next) == expd ) {
+      TSDebug(LOG_PREFIX, "Removing expired %+lds: %s", expd->expiry - now, expd->regex_text);
+      free_invalidate_t(expd);
     }
   }
-  return pruned;
 }
 
 invalidate_t *
@@ -224,7 +210,7 @@ load_line(int ln, const char *line, time_t cfgnow, time_t now, const pcre *confi
   }
 
   if (i->expiry <= now) {
-    TSDebug(LOG_PREFIX, "NOT Loaded, already expired! %s %+lds", i->regex_text, now - i->expiry);
+    TSDebug(LOG_PREFIX, "Ignoring expired %+lds: %s", i->expiry - now, i->regex_text);
     TSError(LOG_PREFIX " - NOT Loaded, already expired: %s %+lds", i->regex_text, now - i->expiry);
     free_invalidate_t(i);
     return NULL; /// CONTINUE
@@ -234,7 +220,7 @@ load_line(int ln, const char *line, time_t cfgnow, time_t now, const pcre *confi
 
   i->regex = pcre_compile(i->regex_text, 0, &errptr, &erroffset, NULL);
   if (i->regex == NULL) {
-    TSDebug(LOG_PREFIX, "%s did not compile", i->regex_text);
+    TSDebug(LOG_PREFIX, "Failed regex compile: %s", i->regex_text);
     free_invalidate_t(i);
     return NULL; /// CONTINUE
   }
@@ -342,7 +328,7 @@ load_config(plugin_state_t *pstate, invalidate_t **ilist)
   char line[LINE_MAX];
   time_t now, cfgnow;
   int ln = 0;
-  invalidate_t *i, **itr;
+  invalidate_t *i;
 
   if (pstate->config_file[0] != '/') {
     path_len = strlen(TSConfigDirGet()) + strlen(pstate->config_file) + 2;
@@ -354,12 +340,12 @@ load_config(plugin_state_t *pstate, invalidate_t **ilist)
 
   if (stat(path, &s) < 0) {
     TSDebug(LOG_PREFIX, "Could not stat %s", path);
-    return NULL;
+    return 0; ////// RETURN
   }
 
   if (s.st_mtime <= pstate->last_load) {
     TSDebug(LOG_PREFIX, "File mod time is not newer: %ld >= %ld", pstate->last_load, s.st_mtime);
-    return NULL; ////// RETURN
+    return 0; ////// RETURN
   }
 
   cfgnow = s.st_mtime;
@@ -367,7 +353,7 @@ load_config(plugin_state_t *pstate, invalidate_t **ilist)
 
   if (!(fs = fopen(path, "r"))) {
     TSDebug(LOG_PREFIX, "Could not open %s for reading", path);
-    return NULL; ////// RETURN
+    return 0; ////// RETURN
   }
 
   static const pcre *config_re = NULL;
@@ -387,8 +373,6 @@ load_config(plugin_state_t *pstate, invalidate_t **ilist)
   }
 
   for (ln = 0; fgets(line, LINE_MAX, fs); ++ln) {
-    int cmp = 0;
-
     // assign file date if new lines are found
     i = load_line(ln, line, cfgnow, now, config_re);
     if (!i) {
@@ -399,7 +383,7 @@ load_config(plugin_state_t *pstate, invalidate_t **ilist)
     invalidate_t **itr = find_lower_bound(ilist, i);
 
     if (!itr) {
-      TSDebug(LOG_PREFIX, "Ignoring duplicate: max-age/ttl %+lds/%lds (vs. %+lds/%lds), %s", now - i->refresh,
+      TSDebug(LOG_PREFIX, "Older duplicate: max-age/ttl %+lds/%lds (vs. %+lds/%lds), %s", now - i->refresh,
               i->expiry - i->refresh, now - (*itr)->refresh, (*itr)->expiry - (*itr)->refresh, i->regex_text);
       free_invalidate_t(i);
       i = NULL;
@@ -410,12 +394,12 @@ load_config(plugin_state_t *pstate, invalidate_t **ilist)
     i->next = *itr;
     *itr    = i;
 
-    // remove 'overshadowed' entries
+    // remove 'overshadowed' entry
     if ((itr = find_dup_regex(&i->next, i))) {
       invalidate_t *idup = *itr;
 
-      TSDebug(LOG_PREFIX, "Updating duplicate max-age/ttl %+lds/%lds (vs. %+lds/%lds), %s", now - idup->refresh,
-              idup->expiry - idup->refresh, now - i->refresh, i->expiry - i->refresh, (*itr)->regex_text);
+      TSDebug(LOG_PREFIX, "Older duplicate max-age/ttl %+lds/%lds (vs. %+lds/%lds): %s", now - idup->refresh,
+              idup->expiry - idup->refresh, now - i->refresh, i->expiry - i->refresh, idup->regex_text);
 
       (*itr) = (*itr)->next; // snip
       free_invalidate_t(idup);
@@ -431,6 +415,7 @@ static void
 list_config(plugin_state_t *pstate, invalidate_t *i)
 {
   invalidate_t *iptr;
+  double nowHrs = time(NULL) / 3600.0;
 
   TSDebug(LOG_PREFIX, "Current config:");
   if (pstate->log) {
@@ -439,7 +424,7 @@ list_config(plugin_state_t *pstate, invalidate_t *i)
   if (i) {
     iptr = i;
     while (iptr) {
-      TSDebug(LOG_PREFIX, "%s refresh: %ld expiry: %ld", iptr->regex_text, iptr->refresh, iptr->expiry);
+      TSDebug(LOG_PREFIX, "refresh/expiry: %+.3fhrs %+.3fhrs %s", iptr->refresh/3600.0-nowHrs, iptr->expiry/3600.0-nowHrs, iptr->regex_text);
       if (pstate->log) {
         TSTextLogObjectWrite(pstate->log, "%s refresh: %ld expiry: %ld", iptr->regex_text, iptr->refresh, iptr->expiry);
       }
@@ -471,7 +456,6 @@ config_handler(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
   plugin_state_t *pstate;
   invalidate_t *newlist, *oldlist, *prev;
   TSCont free_cont;
-  bool updated;
 
   TSDebug(LOG_PREFIX, "In config Handler");
   pstate = (plugin_state_t *)TSContDataGet(cont);
@@ -482,6 +466,8 @@ config_handler(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
   // "grandfather" old file-mtimes to their matching lines
   if (load_config(pstate, &newlist) && merge_to_new_list(&newlist, pstate->last_load, oldlist)) {
     prev = __sync_val_compare_and_swap(&(pstate->invalidate_list), oldlist, newlist);
+  } else {
+    prune_config(time(NULL),&pstate->invalidate_list); // remove (hopefully) trailing expired entries
   }
 
   // last_load is current again so recheck later
@@ -544,7 +530,7 @@ main_handler(TSCont cont, TSEvent event, void *edata)
             date = get_date_from_cached_hdr(txn);
             now  = time(NULL);
           }
-          if ((difftime(iptr->refresh, date) >= 0) && (difftime(iptr->expiry, now) >= 0)) {
+          if (iptr->refresh >= date && iptr->expiry >= now) {
             if (!url) {
               url = TSHttpTxnEffectiveUrlStringGet(txn, &url_len);
             }
