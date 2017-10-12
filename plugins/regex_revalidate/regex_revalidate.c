@@ -277,7 +277,7 @@ find_lower_bound(invalidate_t **itr, invalidate_t *i)
       invalidate_t *idup = *itr;
       (*itr) = (*itr)->next;
 
-      TSDebug(LOG_PREFIX, "Old-cfg remove dup %+.3fhrs+%.3fhrs (vs. %+.3f+%.3fhrs): %s", 
+      TSDebug(LOG_PREFIX, "Old-config duplicate %+.3fhrs+%.3fhrs (vs. %+.3f+%.3fhrs): %s", 
                (idup->refresh - now)/3600.0, (idup->expiry - idup->refresh)/3600.0, 
                (i->refresh - now)/3600.0, (i->expiry - i->refresh)/3600.0, i->regex_text);
 
@@ -331,7 +331,7 @@ load_config(plugin_state_t *pstate, invalidate_t **ilist)
   }
 
   if (s.st_mtime <= pstate->last_load) {
-    TSDebug(LOG_PREFIX, "File mod time is not newer: %ld >= %ld", pstate->last_load, s.st_mtime);
+    TSDebug(LOG_PREFIX, "File mod time is not newer: [%+lds]", s.st_mtime - pstate->last_load);
     return 0; ////// RETURN
   }
 
@@ -382,13 +382,13 @@ load_config(plugin_state_t *pstate, invalidate_t **ilist)
     i->next = *itr;
     *itr    = i;
 
-    TSDebug(LOG_PREFIX, "New-config refresh+ttl %+.3fhrs + %.3fhrs: %s", (i->refresh - now)/3600.0, (i->expiry - i->refresh)/3600.0, i->regex_text);
+    TSDebug(LOG_PREFIX, "New-config refresh %+.3fhrs + %.3fhrs: %s", (i->refresh - now)/3600.0, (i->expiry - i->refresh)/3600.0, i->regex_text);
 
     // remove 'overshadowed' entry
     if ((itr = find_dup_regex(&i->next, i))) {
       invalidate_t *idup = *itr;
 
-      TSDebug(LOG_PREFIX, "Older duplicate %+.3f+%.3fhrs (vs. %+.3f+%.3fhrs): %s", (idup->refresh - now)/3600.0, (idup->expiry - idup->refresh)/3600.0, 
+      TSDebug(LOG_PREFIX, "Old-config duplicate %+.3f+%.3fhrs (vs. %+.3f+%.3fhrs): %s", (idup->refresh - now)/3600.0, (idup->expiry - idup->refresh)/3600.0, 
               (i->refresh - now)/3600.0, (i->expiry - i->refresh)/3600.0, i->regex_text);
 
       (*itr) = (*itr)->next; // snip
