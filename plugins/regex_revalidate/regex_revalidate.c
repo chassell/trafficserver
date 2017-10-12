@@ -47,6 +47,9 @@
 #define LOG_ROLL_INTERVAL 86400
 #define LOG_ROLL_OFFSET 0
 
+// rational maximum
+#define MAX_TTL   (365*24*3600)
+
 static inline void *
 ts_malloc(size_t s)
 {
@@ -63,8 +66,9 @@ typedef struct invalidate_t {
   const char *regex_text;
   pcre *regex;
   pcre_extra *regex_extra;
-  time_t epoch;
+  time_t refresh;
   time_t expiry;
+  time_t priority;
   struct invalidate_t *next;
 } invalidate_t;
 
@@ -75,21 +79,12 @@ typedef struct {
   TSTextLogObject log;
 } plugin_state_t;
 
-static invalidate_t *
-init_invalidate_t(invalidate_t *i)
-{
-  i->regex_text  = NULL;
-  i->regex       = NULL;
-  i->regex_extra = NULL;
-  i->epoch       = 0;
-  i->expiry      = 0;
-  i->next        = NULL;
-  return i;
-}
-
 static void
 free_invalidate_t(invalidate_t *i)
 {
+  if ( ! i ) {
+    return;
+  }
   if (i->regex_extra) {
 #ifndef PCRE_STUDY_JIT_COMPILE
     pcre_free(i->regex_extra);
@@ -109,10 +104,11 @@ free_invalidate_t(invalidate_t *i)
 static void
 free_invalidate_t_list(invalidate_t *i)
 {
-  if (i->next) {
-    free_invalidate_t_list(i->next);
+  invalidate_t *p = NULL;
+  for( ; i ; (p = i), (i = i->next) ) {
+    free_invalidate_t(p);
   }
-  free_invalidate_t(i);
+  free_invalidate_t(p);
 }
 
 static plugin_state_t *
@@ -128,9 +124,7 @@ init_plugin_state_t(plugin_state_t *pstate)
 static void
 free_plugin_state_t(plugin_state_t *pstate)
 {
-  if (pstate->invalidate_list) {
-    free_invalidate_t_list(pstate->invalidate_list);
-  }
+  free_invalidate_t_list(pstate->invalidate_list);
   if (pstate->config_file) {
     TSfree(pstate->config_file);
   }
@@ -151,30 +145,10 @@ copy_invalidate_t(invalidate_t *i)
   iptr->regex_text  = TSstrdup(i->regex_text);
   iptr->regex       = pcre_compile(iptr->regex_text, 0, &errptr, &erroffset, NULL); // There is no pcre_copy :-(
   iptr->regex_extra = pcre_study(iptr->regex, 0, &errptr); // Assuming no errors since this worked before :-/
-  iptr->epoch       = i->epoch;
+  iptr->refresh     = i->refresh;
   iptr->expiry      = i->expiry;
   iptr->next        = NULL;
   return iptr;
-}
-
-static invalidate_t *
-copy_config(invalidate_t *old_list)
-{
-  invalidate_t *new_list = NULL;
-  invalidate_t *iptr_old, *iptr_new;
-
-  if (old_list) {
-    new_list = copy_invalidate_t(old_list);
-    iptr_old = old_list->next;
-    iptr_new = new_list;
-    while (iptr_old) {
-      iptr_new->next = copy_invalidate_t(iptr_old);
-      iptr_new       = iptr_new->next;
-      iptr_old       = iptr_old->next;
-    }
-  }
-
-  return new_list;
 }
 
 static bool
@@ -211,7 +185,160 @@ prune_config(invalidate_t **i)
   return pruned;
 }
 
-static bool
+invalidate_t *
+load_line(int ln, const char *line, time_t cfgnow, time_t now, const pcre *config_re)
+{
+  const char *errptr;
+  int erroffset, ovector[OVECTOR_SIZE], rc;
+  invalidate_t *i;
+
+  TSDebug(LOG_PREFIX, "Processing: %d %s", ln, line);
+
+  // ([0-1] defines entire pattern match
+  // ([6-7] defines optional-subpatt match
+  //            rc == 3 :   regex:[2-3]  expiry:[4-5]     ----
+  //            rc == 4 :   regex:[2-3]   start:[4-5]    ttl:[8-9]
+
+  rc = pcre_exec(config_re, NULL, line, strlen(line), 0, 0, ovector, OVECTOR_SIZE);
+
+  if (rc != 3 && rc != 5) {
+	TSDebug(LOG_PREFIX, "Skipping line %d", ln);
+	return NULL; /// CONTINUE
+  }
+
+  i = (invalidate_t *)TSmalloc(sizeof(invalidate_t));
+  memset(i,'\0',sizeof(*i)); // if early-freed
+
+  pcre_get_substring(line, ovector, rc, 1, &i->regex_text);
+
+  if ( rc == 3 )
+  {
+	// regex-identical lines?: later expiry takes precedence
+	i->expiry = atoi(line + ovector[4]);
+	i->refresh = cfgnow; // assumed new
+	i->priority = i->expiry; // among all regexs
+  }
+  else if ( rc == 5 )
+  {
+	// regex-identical lines?: later refresh takes precedence
+	i->refresh = atoi(line + ovector[4]);
+	i->expiry  = cfgnow + atoi(line + ovector[8]);
+	i->priority = i->refresh; // among all regexs
+  }
+
+  if (i->expiry <= now) {
+	TSDebug(LOG_PREFIX, "NOT Loaded, already expired! %s %+ld", i->regex_text, now - i->expiry);
+	TSError(LOG_PREFIX " - NOT Loaded, already expired: %s %+ld", i->regex_text, now - i->expiry);
+	free_invalidate_t(i);
+	return NULL; /// CONTINUE
+  }
+
+  // regex line not expired
+
+  i->regex = pcre_compile(i->regex_text, 0, &errptr, &erroffset, NULL);
+  if (i->regex == NULL) {
+	TSDebug(LOG_PREFIX, "%s did not compile", i->regex_text);
+	free_invalidate_t(i);
+	return NULL; /// CONTINUE
+  }
+
+  // can attempt to insert
+
+  i->regex_extra = pcre_study(i->regex, 0, &errptr);
+  i->next = NULL;
+  return i;
+}
+
+
+static bool                                                                                                     
+merge_old_records(invalidate_t **rnewconfig, time_t cfgnow, invalidate_t *oldconfig)
+{
+  invalidate_t **itr = rnewconfig; 
+  invalidate_t *nelt = *rnewconfig; 
+  invalidate_t *oelt = oldconfig;
+  bool changed = false;
+
+  int cmp = 0;
+  while ( (nelt=*itr) && oelt )
+  {
+    if ( oelt->expiry < cfgnow ) {
+      changed = true;  // drop expired
+      oelt = oelt->next;
+      continue; /// CONTINUE (past)
+    }
+
+    // cmp priority or (if zero) regex-strings
+    cmp = ( nelt->priority - oelt->priority ? : strcmp(nelt->regex_text, oelt->regex_text) );
+
+    if ( cmp > 0 ) {
+      changed = true; // added a new entry
+      itr = &(*itr)->next;
+      continue; /// CONTINUE (past)
+    }
+
+    // old is higher-priority than next new?
+    if ( cmp < 0 ) {
+      // deep copy from live version
+      invalidate_t *cpy = copy_invalidate_t(oelt);
+      cpy->next = *itr;
+      *itr = cpy;
+    } 
+    // guessed at refresh time and not new?
+    else if ( nelt->refresh == cfgnow && nelt->expiry == nelt->priority ) { 
+      nelt->refresh = oelt->refresh; // copy older refresh over
+    }
+
+    // skip pair
+    itr = &(*itr)->next;
+    oelt = oelt->next;
+  }
+
+  return changed;
+}
+  
+invalidate_t **
+find_lower_bound(invalidate_t **itr, invalidate_t *i)
+{
+  //
+  // insert into a later-expire-first sorted linked list 
+  //    (i.e. skip all later entries and stop at first earlier one)
+  //
+  for( ; *itr ; itr = &(*itr)->next )
+  {
+    int cmp = strcmp(i->regex_text,(*itr)->regex_text);
+
+    // stop if full match found [w/higher-than-adding priority]
+    if ( ! cmp ) {
+      return NULL;
+    }
+
+    if ( (*itr)->priority < i->priority ) {
+      return itr; // hit a lower-priority entry
+    }
+    if ( (*itr)->priority == i->priority && cmp < 0 ) {
+      return itr; // hit a same-pri-but-lower-regex entry
+    }
+
+    // hit a higher-priority (or higher regex) entry... so continue
+  }
+
+  return itr; // use end-anchor
+}
+
+invalidate_t **
+find_dup_regex(invalidate_t **itr, invalidate_t *i)
+{
+  invalidate_t **rdup = &i->next;
+
+  // check later for dups to remove
+  while ( *rdup && strcmp(i->regex_text,(*rdup)->regex_text) ) {
+    rdup = &(*rdup)->next;
+  }
+
+  return ( *rdup ? rdup : NULL );
+}
+
+static time_t
 load_config(plugin_state_t *pstate, invalidate_t **ilist)
 {
   FILE *fs;
@@ -219,12 +346,9 @@ load_config(plugin_state_t *pstate, invalidate_t **ilist)
   size_t path_len;
   char *path;
   char line[LINE_MAX];
-  time_t now;
-  pcre *config_re;
-  const char *errptr;
-  int erroffset, ovector[OVECTOR_SIZE], rc;
+  time_t now, cfgnow;
   int ln = 0;
-  invalidate_t *iptr, *i;
+  invalidate_t *i, **itr;
 
   if (pstate->config_file[0] != '/') {
     path_len = strlen(TSConfigDirGet()) + strlen(pstate->config_file) + 2;
@@ -233,75 +357,84 @@ load_config(plugin_state_t *pstate, invalidate_t **ilist)
   } else {
     path = pstate->config_file;
   }
+
   if (stat(path, &s) < 0) {
     TSDebug(LOG_PREFIX, "Could not stat %s", path);
-    return false;
+    return NULL;
   }
-  if (s.st_mtime > pstate->last_load) {
-    now = time(NULL);
-    if (!(fs = fopen(path, "r"))) {
-      TSDebug(LOG_PREFIX, "Could not open %s for reading", path);
-      return false;
-    }
-    config_re = pcre_compile("^([^#].+?)\\s+(\\d+)\\s*$", 0, &errptr, &erroffset, NULL);
-    while (fgets(line, LINE_MAX, fs) != NULL) {
-      ln++;
-      TSDebug(LOG_PREFIX, "Processing: %d %s", ln, line);
-      rc = pcre_exec(config_re, NULL, line, strlen(line), 0, 0, ovector, OVECTOR_SIZE);
-      if (rc == 3) {
-        i = (invalidate_t *)TSmalloc(sizeof(invalidate_t));
-        init_invalidate_t(i);
-        pcre_get_substring(line, ovector, rc, 1, &i->regex_text);
-        i->epoch  = now;
-        i->expiry = atoi(line + ovector[4]);
-        i->regex  = pcre_compile(i->regex_text, 0, &errptr, &erroffset, NULL);
-        if (i->expiry <= i->epoch) {
-          TSDebug(LOG_PREFIX, "Rule is already expired!");
-          free_invalidate_t(i);
-        } else if (i->regex == NULL) {
-          TSDebug(LOG_PREFIX, "%s did not compile", i->regex_text);
-          free_invalidate_t(i);
-        } else {
-          i->regex_extra = pcre_study(i->regex, 0, &errptr);
-          if (!*ilist) {
-            *ilist = i;
-            TSDebug(LOG_PREFIX, "Created new list and Loaded %s %d %d", i->regex_text, (int)i->epoch, (int)i->expiry);
-          } else {
-            iptr = *ilist;
-            while (1) {
-              if (strcmp(i->regex_text, iptr->regex_text) == 0) {
-                if (iptr->expiry != i->expiry) {
-                  TSDebug(LOG_PREFIX, "Updating duplicate %s", i->regex_text);
-                  iptr->epoch  = i->epoch;
-                  iptr->expiry = i->expiry;
-                }
-                free_invalidate_t(i);
-                i = NULL;
-                break;
-              } else if (!iptr->next) {
-                break;
-              } else {
-                iptr = iptr->next;
-              }
-            }
-            if (i) {
-              iptr->next = i;
-              TSDebug(LOG_PREFIX, "Loaded %s %d %d", i->regex_text, (int)i->epoch, (int)i->expiry);
-            }
-          }
-        }
-      } else {
-        TSDebug(LOG_PREFIX, "Skipping line %d", ln);
-      }
-    }
-    pcre_free(config_re);
-    fclose(fs);
-    pstate->last_load = s.st_mtime;
-    return true;
-  } else {
-    TSDebug(LOG_PREFIX, "File mod time is not newer: %d >= %d", (int)pstate->last_load, (int)s.st_mtime);
+
+  if (s.st_mtime <= pstate->last_load) {
+    TSDebug(LOG_PREFIX, "File mod time is not newer: %ld >= %ld", pstate->last_load, s.st_mtime);
+    return NULL; ////// RETURN
   }
-  return false;
+
+  cfgnow = s.st_mtime;
+  now = time(NULL);
+
+  if (!(fs = fopen(path, "r"))) {
+    TSDebug(LOG_PREFIX, "Could not open %s for reading", path);
+    return NULL; ////// RETURN
+  }
+
+  static const pcre *config_re = NULL;
+
+  // fill out once
+  if ( ! config_re ) {
+    const char *errptr;
+    int erroffset;
+
+#define URLSUB "([^#].+?)"
+#define WSPC  "\\s+"
+#define INTSUB "(\\d+)"
+
+    config_re = pcre_compile("^" URLSUB WSPC INTSUB "(" WSPC INTSUB ")?" "\\s*$", 0, &errptr, &erroffset, NULL);
+  }
+
+  for( ln = 0 ; fgets(line, LINE_MAX, fs) ; ++ln ) 
+  {
+	int cmp = 0;
+
+    // assign file date if new lines are found
+    i = load_line(ln, line, cfgnow, now, config_re);
+    if ( ! i ) {
+      continue; ////// CONTINUE (skip line)
+    }
+
+    // find a linked-list anchor to insert
+    invalidate_t **itr = find_lower_bound(ilist, i);
+
+    if ( ! itr ) {
+       TSDebug(LOG_PREFIX, "Ignoring duplicate: max-age/ttl %+lds/%lds (vs. %+lds/%lds), %s",
+                now - i->refresh, i->expiry - i->refresh,
+                now - (*itr)->refresh, (*itr)->expiry - (*itr)->refresh,
+                i->regex_text);
+       free_invalidate_t(i);
+       i = NULL;
+       continue; // CONTINUE (dup line)
+    }
+
+    // insert element before GLB
+    i->next = *itr;
+    *itr = i;
+    
+    // remove 'overshadowed' entries 
+    if ( (itr=find_dup_regex(&i->next,i)) ) 
+    {
+      invalidate_t *idup = *itr;
+
+      TSDebug(LOG_PREFIX, "Updating duplicate max-age/ttl %+lds/%lds (vs. %+lds/%lds), %s",
+                now - idup->refresh, idup->expiry - idup->refresh,
+                now - i->refresh, i->expiry - i->refresh,
+                (*itr)->regex_text);
+
+      (*itr) = (*itr)->next; // snip
+      free_invalidate_t(idup);
+    }
+  }
+
+  fclose(fs);
+  pstate->last_load = cfgnow;
+  return cfgnow;
 }
 
 static void
@@ -316,9 +449,9 @@ list_config(plugin_state_t *pstate, invalidate_t *i)
   if (i) {
     iptr = i;
     while (iptr) {
-      TSDebug(LOG_PREFIX, "%s epoch: %d expiry: %d", iptr->regex_text, (int)iptr->epoch, (int)iptr->expiry);
+      TSDebug(LOG_PREFIX, "%s refresh: %ld expiry: %ld", iptr->regex_text, iptr->refresh, iptr->expiry);
       if (pstate->log) {
-        TSTextLogObjectWrite(pstate->log, "%s epoch: %d expiry: %d", iptr->regex_text, (int)iptr->epoch, (int)iptr->expiry);
+        TSTextLogObjectWrite(pstate->log, "%s refresh: %ld expiry: %ld", iptr->regex_text, iptr->refresh, iptr->expiry);
       }
       iptr = iptr->next;
     }
@@ -346,35 +479,38 @@ static int
 config_handler(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
 {
   plugin_state_t *pstate;
-  invalidate_t *i, *iptr;
+  invalidate_t *newlist, *oldlist, *prev;
   TSCont free_cont;
   bool updated;
 
+
   TSDebug(LOG_PREFIX, "In config Handler");
   pstate = (plugin_state_t *)TSContDataGet(cont);
-  i      = copy_config(pstate->invalidate_list);
 
-  updated = prune_config(&i);
-  updated = load_config(pstate, &i) || updated;
+  prev = NULL;
+  oldlist = pstate->invalidate_list;
 
-  if (updated) {
-    list_config(pstate, i);
-    iptr = __sync_val_compare_and_swap(&(pstate->invalidate_list), pstate->invalidate_list, i);
-
-    if (iptr) {
-      free_cont = TSContCreate(free_handler, TSMutexCreate());
-      TSContDataSet(free_cont, (void *)iptr);
-      TSContSchedule(free_cont, FREE_TMOUT, TS_THREAD_POOL_TASK);
-    }
-  } else {
-    TSDebug(LOG_PREFIX, "No Changes");
-    if (i) {
-      free_invalidate_t_list(i);
-    }
+  // "grandfather" old file-mtimes to their matching lines
+  if ( load_config(pstate, &newlist) && merge_old_records(&newlist, pstate->last_load, oldlist) ) {
+    prev = __sync_val_compare_and_swap(&(pstate->invalidate_list), oldlist, newlist);
   }
 
+  // last_load is current again so recheck later
   TSContSchedule(cont, CONFIG_TMOUT, TS_THREAD_POOL_TASK);
-  return 0;
+
+  if ( prev != oldlist ) {
+    TSDebug(LOG_PREFIX, (prev ? "Blocked" : "No Changes") );
+    free_invalidate_t_list(newlist);
+    return -1; //// RETURN
+  }
+
+  list_config(pstate, newlist); // successfully swapped
+
+  free_cont = TSContCreate(free_handler, TSMutexCreate());
+  TSContDataSet(free_cont, (void *)prev);
+  // allow time for old list to become unused
+  TSContSchedule(free_cont, FREE_TMOUT, TS_THREAD_POOL_TASK);
+  return 0; //// RETURN (success)
 }
 
 static time_t
@@ -419,7 +555,7 @@ main_handler(TSCont cont, TSEvent event, void *edata)
             date = get_date_from_cached_hdr(txn);
             now  = time(NULL);
           }
-          if ((difftime(iptr->epoch, date) >= 0) && (difftime(iptr->expiry, now) >= 0)) {
+          if ((difftime(iptr->refresh, date) >= 0) && (difftime(iptr->expiry, now) >= 0)) {
             if (!url) {
               url = TSHttpTxnEffectiveUrlStringGet(txn, &url_len);
             }
