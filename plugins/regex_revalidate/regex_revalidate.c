@@ -461,6 +461,7 @@ config_handler(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
   pstate = (plugin_state_t *)TSContDataGet(cont);
 
   prev    = NULL;
+  newlist = NULL;
   oldlist = pstate->invalidate_list;
 
   // "grandfather" old file-mtimes to their matching lines
