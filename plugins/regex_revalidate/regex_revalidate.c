@@ -41,7 +41,7 @@
 #endif
 
 #define LOG_PREFIX "regex_revalidate"
-#define CONFIG_TMOUT 60000
+#define CONFIG_TMOUT 20000
 #define FREE_TMOUT 300000
 #define OVECTOR_SIZE 30
 #define LOG_ROLL_INTERVAL 86400
@@ -151,11 +151,25 @@ copy_invalidate_t(invalidate_t *i)
   return iptr;
 }
 
+static invalidate_t *
+copy_config(invalidate_t *old_list)
+{
+  invalidate_t *new_list = NULL;
+  invalidate_t **itr = &new_list;
+  while (old_list) {
+    (*itr) = copy_invalidate_t(old_list);
+    itr = &(*itr)->next;
+    old_list = old_list->next;
+  }
+
+  return new_list;
+}
+
 static void
-prune_config(time_t now, invalidate_t **iref)
+prune_config(const time_t now, invalidate_t **iref)
 {
   for( ; *iref && (*iref)->expiry > now ; iref = &(*iref)->next ) {
-    // not yet expired
+    // not yet expired elts
   }
 
   if ( *iref ) {
@@ -178,8 +192,6 @@ load_line(int ln, const char *line, time_t cfgnow, time_t now, const pcre *confi
   int erroffset, ovector[OVECTOR_SIZE], rc;
   invalidate_t *i;
 
-  TSDebug(LOG_PREFIX, "Processing: %d %s", ln, line);
-
   // ([0-1] defines entire pattern match
   // ([6-7] defines optional-subpatt match
   //            rc == 3 :   regex:[2-3]  expiry:[4-5]     ----
@@ -188,7 +200,7 @@ load_line(int ln, const char *line, time_t cfgnow, time_t now, const pcre *confi
   rc = pcre_exec(config_re, NULL, line, strlen(line), 0, 0, ovector, OVECTOR_SIZE);
 
   if (rc != 3 && rc != 5) {
-    TSDebug(LOG_PREFIX, "Skipping line %d", ln);
+    TSDebug(LOG_PREFIX, "Skipping line %d: %s", ln, line);
     return NULL; /// CONTINUE
   }
 
@@ -216,7 +228,7 @@ load_line(int ln, const char *line, time_t cfgnow, time_t now, const pcre *confi
     return NULL; /// CONTINUE
   }
 
-  // regex line not expired
+  // line not expired
 
   i->regex = pcre_compile(i->regex_text, 0, &errptr, &erroffset, NULL);
   if (i->regex == NULL) {
@@ -225,57 +237,11 @@ load_line(int ln, const char *line, time_t cfgnow, time_t now, const pcre *confi
     return NULL; /// CONTINUE
   }
 
-  // can attempt to insert
-
   i->regex_extra = pcre_study(i->regex, 0, &errptr);
   i->next        = NULL;
   return i;
 }
 
-static bool
-merge_to_new_list(invalidate_t **rnewconfig, time_t cfgnow, invalidate_t *oldconfig)
-{
-  invalidate_t **itr = rnewconfig;
-  invalidate_t *nelt = *rnewconfig;
-  invalidate_t *oelt = oldconfig;
-  bool changed       = false;
-
-  int cmp = 0;
-  while ((nelt = *itr) && oelt) {
-    if (oelt->expiry < cfgnow) {
-      changed = true; // drop expired
-      oelt    = oelt->next;
-      continue; /// CONTINUE (past)
-    }
-
-    // cmp priority or (if zero) regex-strings
-    cmp = (nelt->priority - oelt->priority ?: strcmp(nelt->regex_text, oelt->regex_text));
-
-    if (cmp > 0) {
-      changed = true; // added a new entry
-      itr     = &(*itr)->next;
-      continue; /// CONTINUE (past)
-    }
-
-    // old is higher-priority than next new?
-    if (cmp < 0) {
-      // deep copy from live version
-      invalidate_t *cpy = copy_invalidate_t(oelt);
-      cpy->next         = *itr;
-      *itr              = cpy;
-    }
-    // guessed at refresh time and not new?
-    else if (nelt->refresh == cfgnow && nelt->expiry == nelt->priority) {
-      nelt->refresh = oelt->refresh; // copy older refresh over
-    }
-
-    // skip pair
-    itr  = &(*itr)->next;
-    oelt = oelt->next;
-  }
-
-  return changed;
-}
 
 invalidate_t **
 find_lower_bound(invalidate_t **itr, invalidate_t *i)
@@ -289,7 +255,7 @@ find_lower_bound(invalidate_t **itr, invalidate_t *i)
 
     // full match found?
     if (!cmp) {
-      return NULL; // full regex match at higher-priority than added
+      return NULL; // full regex match means no adding
     }
 
     if ((*itr)->priority < i->priority) {
@@ -326,7 +292,7 @@ load_config(plugin_state_t *pstate, invalidate_t **ilist)
   size_t path_len;
   char *path;
   char line[LINE_MAX];
-  time_t now, cfgnow;
+  time_t now, cfgnow, newload;
   int ln = 0;
   invalidate_t *i;
 
@@ -348,6 +314,7 @@ load_config(plugin_state_t *pstate, invalidate_t **ilist)
     return 0; ////// RETURN
   }
 
+  newload = 0;
   cfgnow = s.st_mtime;
   now    = time(NULL);
 
@@ -383,39 +350,44 @@ load_config(plugin_state_t *pstate, invalidate_t **ilist)
     invalidate_t **itr = find_lower_bound(ilist, i);
 
     if (!itr) {
-      TSDebug(LOG_PREFIX, "Older duplicate: max-age/ttl %+lds/%lds (vs. %+lds/%lds), %s", now - i->refresh,
-              i->expiry - i->refresh, now - (*itr)->refresh, (*itr)->expiry - (*itr)->refresh, i->regex_text);
       free_invalidate_t(i);
       i = NULL;
-      continue; // CONTINUE (dup line)
+      continue; // CONTINUE (dup line with previous)
     }
+
+    newload = cfgnow; // new entry present
 
     // insert element before GLB
     i->next = *itr;
     *itr    = i;
 
+    TSDebug(LOG_PREFIX, "New-config refresh+ttl %+.3fhrs + %.3fhrs: %s", (i->refresh - now)/3600.0, (i->expiry - i->refresh)/3600.0, i->regex_text);
+
     // remove 'overshadowed' entry
     if ((itr = find_dup_regex(&i->next, i))) {
       invalidate_t *idup = *itr;
 
-      TSDebug(LOG_PREFIX, "Older duplicate max-age/ttl %+lds/%lds (vs. %+lds/%lds): %s", now - idup->refresh,
-              idup->expiry - idup->refresh, now - i->refresh, i->expiry - i->refresh, idup->regex_text);
+      TSDebug(LOG_PREFIX, "Older duplicate %+.3f+%.3fhrs (vs. %+.3f+%.3fhrs): %s", (idup->refresh - now)/3600.0, (idup->expiry - idup->refresh)/3600.0, 
+              (i->refresh - now)/3600.0, (i->expiry - i->refresh)/3600.0, i->regex_text);
 
       (*itr) = (*itr)->next; // snip
       free_invalidate_t(idup);
+
     }
   }
 
+  TSDebug(LOG_PREFIX, "File mod time updated: %d lines [%+lds]", ln, cfgnow - pstate->last_load);
+
   fclose(fs);
-  pstate->last_load = cfgnow;
-  return cfgnow;
+  pstate->last_load = cfgnow; // updated for file chk
+  return newload; // zero if nothing changed
 }
 
 static void
 list_config(plugin_state_t *pstate, invalidate_t *i)
 {
   invalidate_t *iptr;
-  double nowHrs = time(NULL) / 3600.0;
+  time_t now = time(NULL);
 
   TSDebug(LOG_PREFIX, "Current config:");
   if (pstate->log) {
@@ -424,7 +396,7 @@ list_config(plugin_state_t *pstate, invalidate_t *i)
   if (i) {
     iptr = i;
     while (iptr) {
-      TSDebug(LOG_PREFIX, "refresh/expiry: %+.3fhrs %+.3fhrs %s", iptr->refresh/3600.0-nowHrs, iptr->expiry/3600.0-nowHrs, iptr->regex_text);
+      TSDebug(LOG_PREFIX, "refresh/expiry: %+.3fhrs %+.3fhrs %s", (iptr->refresh - now)/3600.0, (iptr->expiry - now)/3600.0, iptr->regex_text);
       if (pstate->log) {
         TSTextLogObjectWrite(pstate->log, "%s refresh: %ld expiry: %ld", iptr->regex_text, iptr->refresh, iptr->expiry);
       }
@@ -453,29 +425,31 @@ free_handler(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
 static int
 config_handler(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
 {
-  plugin_state_t *pstate;
-  invalidate_t *newlist, *oldlist, *prev;
+  invalidate_t *newlist, *oldlist, *tofree;
   TSCont free_cont;
+  plugin_state_t *pstate = (plugin_state_t *)TSContDataGet(cont);
+  invalidate_t **const rhead = &pstate->invalidate_list;
 
   TSDebug(LOG_PREFIX, "In config Handler");
-  pstate = (plugin_state_t *)TSContDataGet(cont);
 
-  prev    = NULL;
-  newlist = NULL;
-  oldlist = pstate->invalidate_list;
+  prune_config(time(NULL),rhead); // atomic deletes
 
-  // "grandfather" old file-mtimes to their matching lines
-  if (load_config(pstate, &newlist) && merge_to_new_list(&newlist, pstate->last_load, oldlist)) {
-    prev = __sync_val_compare_and_swap(&(pstate->invalidate_list), oldlist, newlist);
-  } else {
-    prune_config(time(NULL),&pstate->invalidate_list); // remove (hopefully) trailing expired entries
+  // sample/merge from *rhead once
+
+  oldlist = *rhead;
+  newlist = copy_config(oldlist);
+  tofree  = newlist;
+
+  // merge any new entries in and remove older entries
+  if (load_config(pstate, &newlist) && __sync_val_compare_and_swap(rhead, oldlist, newlist) == oldlist ) {
+    tofree = oldlist;
   }
 
-  // last_load is current again so recheck later
+  // last_load was updated
   TSContSchedule(cont, CONFIG_TMOUT, TS_THREAD_POOL_TASK);
 
-  if (prev != oldlist) {
-    TSDebug(LOG_PREFIX, (prev ? "Blocked" : "No Changes"));
+  if (tofree == newlist) {
+    TSDebug(LOG_PREFIX, (tofree ? "Blocked" : "No Changes"));
     free_invalidate_t_list(newlist);
     return -1; //// RETURN
   }
@@ -483,7 +457,7 @@ config_handler(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
   list_config(pstate, newlist); // successfully swapped
 
   free_cont = TSContCreate(free_handler, TSMutexCreate());
-  TSContDataSet(free_cont, (void *)prev);
+  TSContDataSet(free_cont, (void *)tofree);
   // allow time for old list to become unused
   TSContSchedule(free_cont, FREE_TMOUT, TS_THREAD_POOL_TASK);
   return 0; //// RETURN (success)
