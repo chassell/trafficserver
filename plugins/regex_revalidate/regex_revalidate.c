@@ -147,22 +147,23 @@ copy_invalidate_t(invalidate_t *i)
   iptr->regex_extra = pcre_study(iptr->regex, 0, &errptr); // Assuming no errors since this worked before :-/
   iptr->refresh     = i->refresh;
   iptr->expiry      = i->expiry;
+  iptr->priority    = i->priority;
   iptr->next        = NULL;
   return iptr;
 }
 
 static invalidate_t *
-copy_config(invalidate_t *old_list)
+copy_config(invalidate_t *oelt)
 {
-  invalidate_t *new_list = NULL;
-  invalidate_t **itr = &new_list;
-  while (old_list) {
-    (*itr) = copy_invalidate_t(old_list);
+  invalidate_t *head = NULL;
+  invalidate_t **itr = &head;
+  while (oelt) {
+    (*itr) = copy_invalidate_t(oelt);
     itr = &(*itr)->next;
-    old_list = old_list->next;
+    oelt = oelt->next;
   }
 
-  return new_list;
+  return head;
 }
 
 static void
@@ -250,22 +251,42 @@ find_lower_bound(invalidate_t **itr, invalidate_t *i)
   // insert into a later-expire-first sorted linked list
   //    (i.e. skip all later entries and stop at first earlier one)
   //
-  for (; *itr; itr = &(*itr)->next) {
+  while (*itr) {
+
+    // higher-pri than rest?
+    if ((*itr)->priority < i->priority) {
+      return itr; // lower bound 
+    }
+
     int cmp = strcmp(i->regex_text, (*itr)->regex_text);
 
-    // full match found?
-    if (!cmp) {
-      return NULL; // full regex match means no adding
-    }
-
-    if ((*itr)->priority < i->priority) {
-      return itr; // hit the lower-priority entries
-    }
+    // at equal-pri and higher-regex?
     if ((*itr)->priority == i->priority && cmp < 0) {
-      return itr; // hit the same-pri-but-lower-regex entries
+      return itr; //// RETURN 
     }
 
-    // hit a higher-priority (or higher regex) entry... so continue
+    // everything is equal?
+    if (!cmp && (*itr)->priority == i->priority) {
+      return NULL; //// RETURN 
+    }
+
+    // regex are equal but adding lower-pri?  discard dup entry now
+    if (!cmp) {
+
+      time_t now = time(NULL);
+      invalidate_t *idup = *itr;
+      (*itr) = (*itr)->next;
+
+      TSDebug(LOG_PREFIX, "Old-cfg remove dup %+.3fhrs+%.3fhrs (vs. %+.3f+%.3fhrs): %s", 
+               (idup->refresh - now)/3600.0, (idup->expiry - idup->refresh)/3600.0, 
+               (i->refresh - now)/3600.0, (i->expiry - i->refresh)/3600.0, i->regex_text);
+
+      free_invalidate_t(idup);
+      continue; ///// CONTINUE (forward)
+    }
+
+    // still have lower-pri or lower-regex 
+    itr = &(*itr)->next; 
   }
 
   return itr; // use end-anchor
@@ -449,7 +470,7 @@ config_handler(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
   TSContSchedule(cont, CONFIG_TMOUT, TS_THREAD_POOL_TASK);
 
   if (tofree == newlist) {
-    TSDebug(LOG_PREFIX, (tofree ? "Blocked" : "No Changes"));
+    TSDebug(LOG_PREFIX, (*rhead != oldlist ? "Blocked" : "No Changes"));
     free_invalidate_t_list(newlist);
     return -1; //// RETURN
   }
