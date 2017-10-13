@@ -23,6 +23,7 @@
 #include "ts/jemallctl.h"
 #include "ts/hugepages.h"
 
+#include "ts/hugepages.h"
 #include "ts/ink_platform.h"
 #include "ts/ink_memory.h"
 #include "ts/ink_defs.h"
@@ -308,7 +309,7 @@ void *ats_alloc_stack(size_t stacksize)
 
   //    [but prefer hugepage alignment and request if possible]
   auto p = mmap(nullptr,stacksize, PROT_READ|PROT_WRITE, (MAP_ANONYMOUS|MAP_GROWSDOWN|MAP_PRIVATE), -1, 0);
-  if ( stacksize == aligned_spacing(stacksize,ats_hugepage_size()) ) {
+  if ( stacksize == aligned_size(stacksize,ats_hugepage_size()) ) {
       madvise(p,stacksize,MADV_HUGEPAGE); // opt in
   }
 
@@ -336,22 +337,32 @@ NodesIDVector_t::value_type get_nodes_id_by_affinity(hwloc_obj_type_t objtype, u
 
 ArenaIDVector_t::value_type get_arena_by_affinity(hwloc_obj_type_t objtype, unsigned affid)
 {
+  static ink_mutex s_mutex = PTHREAD_MUTEX_INITIALIZER;
   auto nsid = get_nodes_id_by_affinity(objtype,affid);
+  auto arena = jemallctl::thread_arena();
 
-  if ( ! nsid ) {
+  if ( ! nsid && arena < g_nodesByArena.size() ) {
     return 0;
   }
 
-  if ( g_arenaByNodesID.size() >= kUniqueNodeSets.size() && g_arenaByNodesID[nsid] ) {
-    return g_arenaByNodesID[nsid];
+  /////////////////////////////////////////////////// mutex to do resizes
+  ink_scoped_mutex_lock lock{s_mutex};
+
+  if ( arena >= g_nodesByArena.size() ) {
+    g_nodesByArena.resize(arena+1,NULL); // filled with same as default if needed
+  }
+
+  if ( kUniqueNodeSets.size() <= g_arenaByNodesID.size() && g_arenaByNodesID[nsid] ) {
+    return g_arenaByNodesID[nsid]; // non-default
   }
 
   ink_release_assert(kUniqueNodeSets.size() > nsid);
 
-  static ink_mutex s_mutex = PTHREAD_MUTEX_INITIALIZER;
-  ink_scoped_mutex_lock lock{s_mutex};
+  g_arenaByNodesID.resize(kUniqueNodeSets.size(),0); 
 
-  g_arenaByNodesID.resize(kUniqueNodeSets.size()); 
+  if ( ! nsid ) {
+    return g_arenaByNodesID[nsid];
+  }
 
   if ( g_arenaByNodesID[nsid] ) {
     return g_arenaByNodesID[nsid];
@@ -361,7 +372,7 @@ ArenaIDVector_t::value_type get_arena_by_affinity(hwloc_obj_type_t objtype, unsi
 
   unsigned newArena = jemallctl::do_arenas_extend();
 
-  Debug("memory", "extending arena to %u", newArena);
+  Debug("memory", "extending arena to %u for nsid=%d", newArena, nsid);
 
   int callerArena = jemallctl::thread_arena(); // push current arena (for a moment)
 
@@ -372,7 +383,7 @@ ArenaIDVector_t::value_type get_arena_by_affinity(hwloc_obj_type_t objtype, unsi
   jemallctl::set_thread_arena(callerArena);
   // store the node-set that this arena is going to partition off
   if ( g_nodesByArena.size() < newArena+1 ) {
-    g_nodesByArena.resize(newArena+1); // filled with nullptr if needed
+    g_nodesByArena.resize(newArena+1,NULL); // filled with same as default if needed
   }
 
   g_nodesByArena[newArena] = hwloc_bitmap{ kUniqueNodeSets[nsid] }.release();
@@ -393,10 +404,10 @@ bool is_same_thread_memory_affinity(hwloc_obj_type_t objtype, unsigned affid)
 int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid) // limit new pages to specific nodes
 {
   // keep using old arena for a moment...
-
+  auto oarena = jemallctl::thread_arena();
   auto arena = get_arena_by_affinity(objtype,affid);
 
-  if ( arena >= g_nodesByArena.size() ) {
+  if ( arena >= g_nodesByArena.size() || arena == oarena ) {
     return -1;
   }
 
@@ -412,7 +423,13 @@ int assign_thread_memory_by_affinity(hwloc_obj_type_t objtype, unsigned affid) /
     return -1;
   }
 
-  // thread-wide change in place
+  // don't change to default from unknown 
+  if ( ! arena && ! g_nodesByArena[oarena] ) {
+    return 0;
+  }
+
+  // if we proscribe a non-default... change it
+  Debug("memory","Bind to memory nodes w/arena nodes=%p->%p [max:%lu] arena=%d", g_nodesByArena[oarena], nodes, g_nodesByArena.size()-1, arena);
   jemallctl::set_thread_arena(arena); // make it active now
   return 0;
 }
@@ -582,12 +599,12 @@ hwloc_const_cpuset_t get_cpuset_by_affinity(hwloc_obj_type_t objtype, unsigned a
 }
 
 // unique nodesets 
-NodeSetVector_t const kUniqueNodeSets = { kNodesAllowed };
+NodeSetVector_t const kUniqueNodeSets = NodeSetVector_t{ kNodesAllowed };
 // unique nodeset index mapping to arenas 
-ArenaIDVector_t g_arenaByNodesID = { 0 };           // lookup with same index as kUniqueNodeSets
+ArenaIDVector_t g_arenaByNodesID = ArenaIDVector_t{ 0 };           // lookup with same index as kUniqueNodeSets
 
 // arena indexed map to actual nodeset [pointers]
-NodeSetVector_t g_nodesByArena = { kNodesAllowed }; // lookup with same index as Arena id
+NodeSetVector_t g_nodesByArena = NodeSetVector_t{ kNodesAllowed }; // lookup with same index as Arena id
 
 // lists of indexes into kUniqueNodeSets and 
 NodesIDVector_t const kNumaAffNodes = cpusets_to_nodes_id(kUniqueNodeSets,kNumaCPUSets);
@@ -635,6 +652,8 @@ void reset_thread_memory_by_cpuset() // limit new pages to specific nodes as the
     ink_release_assert( ! r );
     return;
   }
+
+  Debug("memory","Bind to memory nodes w/arena ns=%d arena=%d",list.front(),g_arenaByNodesID[list.front()]);
 
   // reset limited nodes to use
   hwloc_set_membind_nodeset(curr(), kUniqueNodeSets[list.front()], HWLOC_MEMBIND_INTERLEAVE, HWLOC_MEMBIND_THREAD);

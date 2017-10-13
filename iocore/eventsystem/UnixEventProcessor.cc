@@ -171,7 +171,7 @@ ThreadAffinityInitializer::set_affinity(int, Event *)
 {
   EThread *t = this_ethread();
   numa::assign_thread_cpuset_by_affinity(obj_type, t->id);
-  numa::reset_thread_memory_by_cpuset();
+  numa::assign_thread_memory_by_affinity(obj_type, t->id);
 
   if ( obj_count < 2 ) {
     return 0;
