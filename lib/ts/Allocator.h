@@ -44,8 +44,12 @@
 #include <stdlib.h>
 #include "ts/ink_queue.h"
 #include "ts/ink_defs.h"
+#include "ts/ink_queue.h"
 #include "ts/ink_resource.h"
+
 #include <execinfo.h>
+#include <new>
+#include <cstdlib>
 
 #define RND16(_x) (((_x) + 15) & ~15)
 
