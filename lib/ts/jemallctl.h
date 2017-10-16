@@ -30,14 +30,8 @@
 #include <vector>
 #include <atomic>
 
-#if !HAVE_LIBJEMALLOC
-struct chunk_hooks_t {
-};
-#endif
-
 namespace jemallctl
 {
-
 using objpath_t = std::vector<size_t>;
 
 struct ObjBase {
@@ -48,37 +42,90 @@ protected:
   const char *_name;
 };
 
+//
+// define API per jemallctl optional parameter
+//
 template <typename T_VALUE, size_t N_DIFF = 0> struct GetObjFxn : public ObjBase {
   using ObjBase::ObjBase;
-  auto operator()(void) const -> T_VALUE;
+  T_VALUE operator()(void) const;
 };
 
 template <typename T_VALUE, size_t N_DIFF = 0> struct SetObjFxn : public ObjBase {
   using ObjBase::ObjBase;
-  auto operator()(const T_VALUE &) const -> int;
+  int operator()(const T_VALUE &) const;
 };
 
-template <> struct SetObjFxn<bool,0> : public ObjBase {
-  using ObjBase::ObjBase;
-  auto operator()(void) const -> int;
-};
-
-template <> struct SetObjFxn<bool,1> : public ObjBase {
-  using ObjBase::ObjBase;
-  auto operator()(void) const -> int;
-};
-
-template <> struct GetObjFxn<void,0> : public ObjBase {
+template <> struct SetObjFxn<bool, 0> : public ObjBase {
   using ObjBase::ObjBase;
   int operator()(void) const;
 };
 
-using EnableObjFxn = SetObjFxn<bool,1>;
-using DisableObjFxn = SetObjFxn<bool,0>;
-using DoObjFxn = GetObjFxn<void,0>;
+template <> struct SetObjFxn<bool, 1> : public ObjBase {
+  using ObjBase::ObjBase;
+  int operator()(void) const;
+};
 
+template <> struct GetObjFxn<void, 0> : public ObjBase {
+  using ObjBase::ObjBase;
+  int operator()(void) const;
+};
+
+#if !HAVE_LIBJEMALLOC
+inline ObjBase::ObjBase(const char *name) 
+   : _name(name)
+{
+}
+
+template <typename T_VALUE, size_t N_DIFF>
+inline T_VALUE
+GetObjFxn<T_VALUE, N_DIFF>::operator()(void) const
+{
+  return -1;
+}
+
+template <typename T_VALUE, size_t N_DIFF>
+inline int
+SetObjFxn<T_VALUE, N_DIFF>::operator()(const T_VALUE &v) const
+{
+  return -1;
+}
+
+template <>
+inline int
+SetObjFxn<unsigned, 0>::operator()(const unsigned &v) const
+{
+  return -1;
+}
+
+inline int
+GetObjFxn<void, 0>::operator()(void) const
+{
+  return -1;
+}
+
+inline int
+SetObjFxn<bool, 0>::operator()(void) const
+{
+  return -1;
+}
+
+inline int
+SetObjFxn<bool, 1>::operator()(void) const
+{
+  return -1;
+}
+#endif
+
+int create_global_nodump_arena();
+
+using EnableObjFxn  = SetObjFxn<bool, 1>;
+using DisableObjFxn = SetObjFxn<bool, 0>;
+using DoObjFxn      = GetObjFxn<void, 0>;
+
+#if HAVE_LIBJEMALLOC
 extern const GetObjFxn<chunk_hooks_t> thread_arena_hooks;
 extern const SetObjFxn<chunk_hooks_t> set_thread_arena_hooks;
+#endif
 
 // request-or-sense new values in statistics
 extern const GetObjFxn<uint64_t> epoch;
@@ -90,8 +137,8 @@ extern const GetObjFxn<unsigned> do_arenas_extend;
 extern const GetObjFxn<unsigned> thread_arena;
 extern const SetObjFxn<unsigned> set_thread_arena;
 extern const DoObjFxn do_thread_tcache_flush;
-extern const GetObjFxn<uint64_t*> thread_allocatedp;
-extern const GetObjFxn<uint64_t*> thread_deallocatedp;
+extern const GetObjFxn<uint64_t *> thread_allocatedp;
+extern const GetObjFxn<uint64_t *> thread_deallocatedp;
 
 // from the build-time config
 extern const GetObjFxn<bool> config_thp;
@@ -99,21 +146,21 @@ extern const GetObjFxn<std::string> config_malloc_conf;
 
 // for profiling only
 extern const GetObjFxn<bool> prof_active;
-extern const EnableObjFxn    enable_prof_active;
-extern const DisableObjFxn   disable_prof_active;
+extern const EnableObjFxn enable_prof_active;
+extern const DisableObjFxn disable_prof_active;
 
 extern const GetObjFxn<std::string> thread_prof_name;
 extern const SetObjFxn<std::string> set_thread_prof_name;
 
 extern const GetObjFxn<bool> thread_prof_active;
-extern const EnableObjFxn    enable_thread_prof_active;
-extern const DisableObjFxn   disable_thread_prof_active;
+extern const EnableObjFxn enable_thread_prof_active;
+extern const DisableObjFxn disable_thread_prof_active;
 
-extern const GetObjFxn<uint64_t>           stats_active;
-extern const GetObjFxn<std::atomic_ulong*> stats_cactive;
-extern const GetObjFxn<uint64_t>           stats_allocated;
+extern const GetObjFxn<uint64_t> stats_active;
+extern const GetObjFxn<std::atomic_ulong *> stats_cactive;
+extern const GetObjFxn<uint64_t> stats_allocated;
 
-extern const GetObjFxn<bool *>   arenas_initialized;
+extern const GetObjFxn<bool *> arenas_initialized;
 extern const GetObjFxn<unsigned> arenas_narenas;
 }
 

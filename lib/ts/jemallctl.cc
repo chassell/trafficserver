@@ -21,6 +21,13 @@
   limitations under the License.
  */
 
+#include "ts/ink_platform.h"
+#include "ts/ink_memory.h"
+
+// compile this regardless of global use
+#ifndef HAVE_LIBJEMALLOC
+#define HAVE_LIBJEMALLOC   1
+#endif 
 #include "ts/jemallctl.h"
 
 #include "ts/ink_platform.h"
@@ -44,8 +51,7 @@
 
 #include <string>
 
-#include <sys/syscall.h>   /* For SYS_xxx definitions */
-
+#include <sys/syscall.h> /* For SYS_xxx definitions */
 
 namespace jemallctl
 {
@@ -77,23 +83,23 @@ auto
 SetObjFxn<T_VALUE, N_DIFF>::operator()(const T_VALUE &v) const -> int
 {
   auto r = ::jemallctl::mallctl_set(ObjBase::_oid, v);
-  ink_assert(! r);
+  ink_assert(!r);
   return r;
 }
 
 template <>
 auto
-SetObjFxn<unsigned,0>::operator()(const unsigned &v) const -> int
+SetObjFxn<unsigned, 0>::operator()(const unsigned &v) const -> int
 {
   auto ov = ::jemallctl::mallctl_get<unsigned>(ObjBase::_oid);
-  if ( ov == v ) {
-     return 0;
+  if (ov == v) {
+    return 0;
   }
 
   auto r = ::jemallctl::mallctl_set(ObjBase::_oid, v);
-  ink_assert(! r);
-  ink_assert( v == ::jemallctl::mallctl_get<unsigned>(ObjBase::_oid) );
-  Debug("memory","confirmed tid=%ld %s: %u->%u",syscall(__NR_gettid),_name,ov,v); 
+  ink_assert(!r);
+  ink_assert(v == ::jemallctl::mallctl_get<unsigned>(ObjBase::_oid));
+  Debug("memory", "confirmed tid=%ld %s: %u->%u", syscall(__NR_gettid), _name, ov, v);
   return r;
 }
 
@@ -103,49 +109,23 @@ GetObjFxn<void, 0>::operator()(void) const
   return ::jemallctl::mallctl_void(ObjBase::_oid);
 }
 
-int 
-SetObjFxn<bool,0>::operator()(void) const
+int
+SetObjFxn<bool, 0>::operator()(void) const
 {
   auto v = false;
   auto r = ::jemallctl::mallctl_set(ObjBase::_oid, v);
-  ink_assert(! r);
+  ink_assert(!r);
   return r;
 }
 
-int 
-SetObjFxn<bool,1>::operator()(void) const
+int
+SetObjFxn<bool, 1>::operator()(void) const
 {
   auto v = true;
   auto r = ::jemallctl::mallctl_set(ObjBase::_oid, v);
-  ink_assert(! r);
+  ink_assert(!r);
   return r;
 }
-
-#if !HAVE_LIBJEMALLOC
-objpath_t
-objpath(const std::string &path)
-{
-  return objpath_t();
-}
-auto
-mallctl_void(const objpath_t &oid) -> int
-{
-  return -1;
-}
-template <typename T_VALUE>
-auto
-mallctl_set(const objpath_t &oid, const T_VALUE &v) -> int
-{
-  return -1;
-}
-template <typename T_VALUE>
-auto
-mallctl_get(const objpath_t &oid) -> T_VALUE
-{
-  return std::move(T_VALUE{});
-}
-
-#else
 
 objpath_t
 objpath(const std::string &path)
@@ -154,8 +134,8 @@ objpath(const std::string &path)
 
   oid.resize(10); // longer than any oid target// *explicitly resize*
   size_t len = oid.size();
-  auto r = mallctlnametomib(path.c_str(), oid.data(), &len);
-  ink_assert(! r);
+  auto r     = mallctlnametomib(path.c_str(), oid.data(), &len);
+  ink_assert(!r);
   oid.resize(len);
   return std::move(oid);
 }
@@ -166,7 +146,7 @@ auto
 mallctl_void(const objpath_t &oid) -> int
 {
   auto r = mallctlbymib(oid.data(), oid.size(), nullptr, nullptr, nullptr, 0);
-  ink_assert(! r);
+  ink_assert(!r);
   return r;
 }
 
@@ -175,7 +155,7 @@ auto
 mallctl_set(const objpath_t &oid, const T_VALUE &v) -> int
 {
   auto r = mallctlbymib(oid.data(), oid.size(), nullptr, nullptr, const_cast<T_VALUE *>(&v), sizeof(v));
-  ink_assert(! r);
+  ink_assert(!r);
   return r;
 }
 
@@ -185,8 +165,8 @@ mallctl_get(const objpath_t &oid) -> T_VALUE
 {
   T_VALUE v{}; // init to zero if a pod type
   size_t len = sizeof(v);
-  auto r = mallctlbymib(oid.data(), oid.size(), &v, &len, nullptr, 0);
-  ink_assert(! r);
+  auto r     = mallctlbymib(oid.data(), oid.size(), &v, &len, nullptr, 0);
+  ink_assert(!r);
   return std::move(v);
 }
 
@@ -195,9 +175,9 @@ auto
 mallctl_get<std::string>(const objpath_t &oid) -> std::string
 {
   const char *cstr = nullptr;
-  size_t len = sizeof(cstr);
-  auto r = mallctlbymib(oid.data(), oid.size(), &cstr, &len, nullptr, 0);
-  ink_assert(! r && cstr );
+  size_t len       = sizeof(cstr);
+  auto r           = mallctlbymib(oid.data(), oid.size(), &cstr, &len, nullptr, 0);
+  ink_assert(!r && cstr);
   std::string v(cstr); // copy out
   return std::move(v);
 }
@@ -207,28 +187,27 @@ auto
 mallctl_set<std::string>(const objpath_t &oid, const std::string &v) -> int
 {
   const char *cstr = v.c_str();
-  size_t len = sizeof(cstr);
-  auto r = mallctlbymib(oid.data(), oid.size(), 
-                        nullptr, nullptr, 
-                        &cstr, len); // ptr-to-c-string-ptr
-  ink_assert(! r);
+  size_t len       = sizeof(cstr);
+  auto r           = mallctlbymib(oid.data(), oid.size(), nullptr, nullptr, &cstr, len); // ptr-to-c-string-ptr
+  ink_assert(!r);
   return 0;
 }
 
-namespace {
-std::vector<char> s_bools(256,0);
+namespace
+{
+  std::vector<char> s_bools(256, 0);
 }
 
 template <>
 auto
-mallctl_get<bool*>(const objpath_t &oid) -> bool*
+mallctl_get<bool *>(const objpath_t &oid) -> bool *
 {
   size_t len = arenas_narenas() * sizeof(s_bools[0]);
-  ink_assert( len < s_bools.size() );
+  ink_assert(len < s_bools.size());
   auto v = s_bools.data();
   auto r = mallctlbymib(oid.data(), oid.size(), v, &len, nullptr, 0);
-  ink_assert(! r);
-  return std::move(reinterpret_cast<bool*>(v));
+  ink_assert(!r);
+  return std::move(reinterpret_cast<bool *>(v));
 }
 
 template <>
@@ -240,8 +219,8 @@ mallctl_get<chunk_hooks_t>(const objpath_t &baseOid) -> chunk_hooks_t
 
   chunk_hooks_t v;
   size_t len = sizeof(v);
-  auto r = mallctlbymib(oid.data(), oid.size(), &v, &len, nullptr, 0);
-  ink_assert(! r);
+  auto r     = mallctlbymib(oid.data(), oid.size(), &v, &len, nullptr, 0);
+  ink_assert(!r);
   return std::move(v);
 }
 
@@ -256,17 +235,50 @@ mallctl_set<chunk_hooks_t>(const objpath_t &baseOid, const chunk_hooks_t &hooks)
                               (hooks.decommit ?: ohooks.decommit), (hooks.purge ?: ohooks.purge),   (hooks.split ?: ohooks.split),
                               (hooks.merge ?: ohooks.merge)};
   auto r = mallctlbymib(oid.data(), oid.size(), nullptr, nullptr, const_cast<chunk_hooks_t *>(&nhooks), sizeof(nhooks));
-  ink_assert(! r);
+  ink_assert(!r);
   return 0;
 }
-#endif
+
+namespace
+{
+  chunk_alloc_t *s_origAllocHook = nullptr; // safe pre-main
+}
+
+int
+create_global_nodump_arena()
+{
+  auto origArena = jemallctl::thread_arena();
+
+  // fork from base nodes set (id#0)
+  auto newArena = jemallctl::do_arenas_extend();
+
+  jemallctl::set_thread_arena(newArena);
+
+  chunk_hooks_t origHooks = jemallctl::thread_arena_hooks();
+  s_origAllocHook         = origHooks.alloc;
+
+  origHooks.alloc = [](void *old, size_t len, size_t aligned, bool *zero, bool *commit, unsigned arena) {
+    void *r = (*s_origAllocHook)(old, len, aligned, zero, commit, arena);
+
+    if (r) {
+      madvise(r, aligned_size(len, aligned), MADV_DONTDUMP);
+    }
+
+    return r;
+  };
+
+  jemallctl::set_thread_arena_hooks(origHooks);
+
+  jemallctl::set_thread_arena(origArena); // default again
+  return newArena;
+}
 
 template struct GetObjFxn<uint64_t>;
-template struct GetObjFxn<uint64_t*>;
-template struct GetObjFxn<std::atomic_ulong*>;
+template struct GetObjFxn<uint64_t *>;
+template struct GetObjFxn<std::atomic_ulong *>;
 template struct GetObjFxn<unsigned>;
 template struct GetObjFxn<bool>;
-template struct GetObjFxn<bool*>;
+template struct GetObjFxn<bool *>;
 template struct GetObjFxn<chunk_hooks_t>;
 template struct GetObjFxn<std::string>;
 
@@ -297,19 +309,19 @@ const SetObjFxn<std::string> set_thread_prof_name{"thread.prof.name"};
 
 // for profiling only
 const GetObjFxn<bool> prof_active{"prof.active"};
-const EnableObjFxn    enable_prof_active{"prof.active"};
-const DisableObjFxn   disable_prof_active{"prof.active"};
+const EnableObjFxn enable_prof_active{"prof.active"};
+const DisableObjFxn disable_prof_active{"prof.active"};
 
 const GetObjFxn<bool> thread_prof_active{"thread.prof.active"};
-const EnableObjFxn    enable_thread_prof_active{"thread.prof.active"};
-const DisableObjFxn   disable_thread_prof_active{"thread.prof.active"};
+const EnableObjFxn enable_thread_prof_active{"thread.prof.active"};
+const DisableObjFxn disable_thread_prof_active{"thread.prof.active"};
 
-const GetObjFxn<uint64_t*> thread_allocatedp{"thread.allocatedp"};
-const GetObjFxn<uint64_t*> thread_deallocatedp{"thread.deallocatedp"};
+const GetObjFxn<uint64_t *> thread_allocatedp{"thread.allocatedp"};
+const GetObjFxn<uint64_t *> thread_deallocatedp{"thread.deallocatedp"};
 
-const GetObjFxn<std::atomic_ulong*> stats_cactive{"stats.cactive"};
-const GetObjFxn<uint64_t>  stats_active{"stats.active"};
-const GetObjFxn<uint64_t>  stats_allocated{"stats.allocated"};
-const GetObjFxn<bool *>  arenas_initialized{"arenas.initialized"};
-const GetObjFxn<unsigned>  arenas_narenas{"arenas.narenas"};
+const GetObjFxn<std::atomic_ulong *> stats_cactive{"stats.cactive"};
+const GetObjFxn<uint64_t> stats_active{"stats.active"};
+const GetObjFxn<uint64_t> stats_allocated{"stats.allocated"};
+const GetObjFxn<bool *> arenas_initialized{"arenas.initialized"};
+const GetObjFxn<unsigned> arenas_narenas{"arenas.narenas"};
 } // namespace jemallctl

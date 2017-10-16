@@ -39,11 +39,7 @@ libtsutil_la_LIBADD = \
   @LIBCAP@
 
 libtsutil_la_SOURCES = \
-  jemallctl.cc \
-  jemallctl.h \
   Allocator.h \
-  StdAllocWrapper.h \
-  StdAllocWrapper.cc \
   Arena.cc \
   Arena.h \
   BaseLogFile.cc \
@@ -78,6 +74,10 @@ libtsutil_la_SOURCES = \
   IpMap.h \
   IpMapConf.cc \
   IpMapConf.h \
+  JemAllocator.h \
+  JemAllocator.cc \
+  jemallctl.h \
+  jemallctl.cc \
   Layout.cc \
   List.h \
   MMH.cc \
@@ -237,7 +237,6 @@ test_X509HostnameValidator_LDADD = libtsutil.la @LIBTCL@ @LIBPCRE@ @OPENSSL_LIBS
 test_X509HostnameValidator_LDFLAGS = @EXTRA_CXX_LDFLAGS@ @LIBTOOL_LINK_FLAGS@
 
 CompileParseRules_SOURCES = CompileParseRules.cc
-CompileParseRules_LDADD = ;true            # link command doesn't need $(LIBS)
 
 test:: $(TESTS)
 	for f in $(TESTS) ; do $$f ; done
