@@ -44,11 +44,7 @@ libtsutil_la_LIBADD = \
   @LIBCAP@
 
 libtsutil_la_SOURCES = \
-  jemallctl.cc \
-  jemallctl.h \
   Allocator.h \
-  JEMAllocator.h \
-  JEMAllocator.cc \
   Arena.cc \
   Arena.h \
   BaseLogFile.cc \
