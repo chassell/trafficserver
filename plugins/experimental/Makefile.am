@@ -22,6 +22,7 @@ SUBDIRS = \
  buffer_upload \
  cachekey \
  cache_range_requests \
+ cache_range_blocks \
  cache_promote \
  collapsed_connection \
  collapsed_forwarding \

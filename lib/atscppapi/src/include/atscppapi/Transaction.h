@@ -374,8 +374,10 @@ public:
   bool configStringGet(TSOverridableConfigKey conf, std::string &value);
   bool configFind(std::string const &name, TSOverridableConfigKey *conf, TSRecordDataType *type);
 
+  void refreshHeaders();
+
 private:
-  TransactionState *state_;          //!< The internal TransactionState object tied to the current Transaction
+  TransactionState *state_; //!< The internal TransactionState object tied to the current Transaction
 
   friend class TransactionPlugin;    //!< TransactionPlugin is a friend so it can call addPlugin()
   friend class TransformationPlugin; //!< TransformationPlugin is a friend so it can call addPlugin()
@@ -386,43 +388,6 @@ private:
    * @param raw_txn a void pointer that represents a TSHttpTxn
    */
   Transaction(void *);
-
-  /**
-   * Used to initialize the Request object for the Server.
-   *
-   * @private
-   */
-  void initServerRequest(TSEvent event);
-
-  /**
-   * Used to initialize the Response object for the Server.
-   *
-   * @private
-   */
-  void initServerResponse(TSEvent event);
-
-  /**
-   * Used to initialize the Response object for the Client.
-   *
-   * @private
-   */
-  void initClientResponse(TSEvent event);
-
-  /**
-   * Used to initialize the Request object for the cache.
-   *
-   * @private
-   */
-
-  void initCachedRequest(TSEvent event);
-
-  /**
-   * Used to initialize the Response object for the cache.
-   *
-   * @private
-   */
-
-  void initCachedResponse(TSEvent event);
 
   /**
    * Returns a list of TransactionPlugin pointers bound to the current Transaction

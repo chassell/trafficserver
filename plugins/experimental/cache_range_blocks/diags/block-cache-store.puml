@@ -19,7 +19,7 @@ activate GH1
 create "Txn Plugin Obj" as TX2
 GH1 --> TX2: detected range req
 deactivate GH1
-activate TX1
+activate TX2
 TC2 <- TX2: enable WRITE_RANGE option
 
 participant "Cached Response\n(TXN#1)" as CATC #cyan

@@ -46,13 +46,7 @@ const int TRANSACTION_STORAGE_INDEX = MAX_TXN_ARG;
 void
 initTransactionHandles(Transaction &transaction, TSEvent event)
 {
-  utils::internal::initTransactionCachedRequest(transaction, event);
-  utils::internal::initTransactionCachedResponse(transaction, event);
-  utils::internal::initTransactionCachedUpdatedResponse(transaction, event);
-  utils::internal::initTransactionServerRequest(transaction, event);
-  utils::internal::initTransactionServerResponse(transaction, event);
-  utils::internal::initTransactionClientResponse(transaction, event);
-
+  transaction.refreshHeaders();
   return;
 }
 
@@ -247,7 +241,7 @@ utils::internal::invokePluginForEvent(GlobalPlugin *plugin, TSHttpAltInfo altinf
   const Response cachedResp;
 
   TSHttpAltInfoCachedRespGet(altinfo_handle, &ohdr_buf, &ohdr_loc);
-  const_cast<Response&>(cachedResp).init(ohdr_buf,ohdr_loc);
+  const_cast<Response &>(cachedResp).init(ohdr_buf, ohdr_loc);
 
   plugin->handleSelectAlt(clientReq, cachedReq, cachedResp);
 }

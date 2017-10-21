@@ -31,7 +31,8 @@
 
 namespace atscppapi
 {
-namespace utils {
+namespace utils
+{
   class internal;
 }
 

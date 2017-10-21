@@ -54,10 +54,9 @@ struct atscppapi::TransactionState : noncopyable {
   map<string, shared_ptr<Transaction::ContextValue>> context_values_;
 
   TransactionState(TSHttpTxn txn, TSMBuffer client_request_hdr_buf, TSMLoc client_request_hdr_loc)
-    : txn_(txn),
-      event_(TS_EVENT_NONE),
-      client_request_(txn, client_request_hdr_buf, client_request_hdr_loc)
-  { }
+    : txn_(txn), event_(TS_EVENT_NONE), client_request_(txn, client_request_hdr_buf, client_request_hdr_loc)
+  {
+  }
 };
 
 Transaction::Transaction(void *raw_txn)
@@ -413,39 +412,61 @@ template <TSReturnCode (*T_GETTER)(TSHttpTxn, TSMBuffer *, TSMLoc *), class T_IN
 T_INITOBJECT &
 Transaction::init_from_getter(TSHttpTxn txn, T_INITOBJECT &obj)
 {
-  if ( obj.getHeaders().isInitialized() ) {
+  if (obj.getHeaders().isInitialized()) {
     return obj; // re-use
   }
 
   TSMBuffer buf;
   TSMLoc loc;
 
-  if ( T_GETTER(txn, &buf, &loc) != TS_SUCCESS ) {
+  if (T_GETTER(txn, &buf, &loc) != TS_SUCCESS) {
     return obj; // failed to load
   }
 
-  obj.init(buf,loc);
+  obj.init(buf, loc);
   return obj;
 }
 
-Request & Transaction::getServerRequest() { return init_from_getter<TSHttpTxnServerReqGet>(state_->txn_, state_->server_request_); }
-Response & Transaction::getServerResponse() { return init_from_getter<TSHttpTxnServerRespGet>(state_->txn_, state_->server_response_); }
-Response & Transaction::getClientResponse() { return init_from_getter<TSHttpTxnClientRespGet>(state_->txn_, state_->client_response_); }
-Request & Transaction::getCachedRequest() { return init_from_getter<TSHttpTxnCachedReqGet>(state_->txn_, state_->cached_request_); }
-Response & Transaction::getCachedResponse() { return init_from_getter<TSHttpTxnCachedRespGet>(state_->txn_, state_->cached_response_); }
-Response & Transaction::updateCachedResponse() {
-   state_->cached_response_.getHeaders().reset(nullptr,nullptr); // re-get it
-   return init_from_getter<TSHttpTxnCachedRespModifiableGet>(state_->txn_, state_->cached_response_);
+Request &
+Transaction::getServerRequest()
+{
+  return init_from_getter<TSHttpTxnServerReqGet>(state_->txn_, state_->server_request_);
+}
+Response &
+Transaction::getServerResponse()
+{
+  return init_from_getter<TSHttpTxnServerRespGet>(state_->txn_, state_->server_response_);
+}
+Response &
+Transaction::getClientResponse()
+{
+  return init_from_getter<TSHttpTxnClientRespGet>(state_->txn_, state_->client_response_);
+}
+Request &
+Transaction::getCachedRequest()
+{
+  return init_from_getter<TSHttpTxnCachedReqGet>(state_->txn_, state_->cached_request_);
+}
+Response &
+Transaction::getCachedResponse()
+{
+  return init_from_getter<TSHttpTxnCachedRespGet>(state_->txn_, state_->cached_response_);
+}
+Response &
+Transaction::updateCachedResponse()
+{
+  state_->cached_response_.getHeaders().reset(nullptr, nullptr); // re-get it
+  return init_from_getter<TSHttpTxnCachedRespModifiableGet>(state_->txn_, state_->cached_response_);
 }
 
 void
-Transaction::resetHandles()
+Transaction::refreshHeaders()
 {
-  state_->cached_response_.getHeaders().reset(nullptr,nullptr);
-  state_->cached_request_.getHeaders().reset(nullptr,nullptr);
+  state_->cached_response_.getHeaders().reset(nullptr, nullptr);
+  state_->cached_request_.getHeaders().reset(nullptr, nullptr);
 
-  state_->client_response_.getHeaders().reset(nullptr,nullptr);
+  state_->client_response_.getHeaders().reset(nullptr, nullptr);
 
-  state_->server_request_.getHeaders().reset(nullptr,nullptr);
-  state_->server_response_.getHeaders().reset(nullptr,nullptr);
+  state_->server_request_.getHeaders().reset(nullptr, nullptr);
+  state_->server_response_.getHeaders().reset(nullptr, nullptr);
 }

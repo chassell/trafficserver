@@ -50,13 +50,13 @@ handleGlobalPluginEvents(TSCont cont, TSEvent event, void *edata)
 {
   GlobalPluginState *state = static_cast<GlobalPluginState *>(TSContDataGet(cont));
 
-  if ( event == TS_EVENT_HTTP_SELECT_ALT ) {
+  if (event == TS_EVENT_HTTP_SELECT_ALT) {
     TSHttpAltInfo alt = static_cast<TSHttpAltInfo>(edata);
     utils::internal::invokePluginForEvent(state->global_plugin_, alt, event);
     return 0;
   }
 
-  TSHttpTxn txn            = static_cast<TSHttpTxn>(edata);
+  TSHttpTxn txn = static_cast<TSHttpTxn>(edata);
   if (state->ignore_internal_transactions_ && (TSHttpTxnIsInternal(txn) == TS_SUCCESS)) {
     LOG_DEBUG("Ignoring event %d on internal transaction %p for global plugin %p", event, txn, state->global_plugin_);
     TSHttpTxnReenable(txn, TS_EVENT_HTTP_CONTINUE);
