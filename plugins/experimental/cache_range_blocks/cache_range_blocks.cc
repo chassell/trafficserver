@@ -48,11 +48,13 @@ public:
   void
   handleReadRequestHeadersPostRemap(Transaction &txn) override
   {
-    _absRange = txn.getClientRequest().getHeaders().values("Range");
+    auto &clntHdrs = txn.getClientRequest().getHeaders();
     auto url  = txn.getEffectiveUrl();
 
+    _absRange = clntHdrs.values("Range");
+
     // save fields for later (passthru and passback)
-    txn.getClientRequest().getHeaders().set("Range", _blkRange);
+    clntHdrs.set("Range", _blkRange);
     txn.setCacheUrl(url);
     txn.resume();
   }
@@ -74,8 +76,12 @@ public:
   void
   handleReadResponseHeaders(Transaction &txn) override
   {
-    auto status = txn.getServerResponse().getStatusCode();
-    txn.getServerResponse().setStatusCode(HTTP_STATUS_OK);
+    auto &srvResp = txn.getServerResponse();
+
+    auto status = srvResp.getStatusCode();
+    if ( status == HTTP_STATUS_PARTIAL_CONTENT ) {
+      srvResp.setStatusCode(HTTP_STATUS_OK);
+    }
 
     // don't cache in some cases?? erase headers?
     txn.resume();
@@ -98,6 +104,14 @@ class GlobalHookPlugin : public atscppapi::GlobalPlugin
 {
 public:
   GlobalHookPlugin() { GlobalPlugin::registerHook(HOOK_READ_REQUEST_HEADERS_PRE_REMAP); }
+
+  void
+  // determine if ranges of appropriate size are present
+  handleSelectAlt(Transaction &txn) override
+  {
+  }
+
+  // transaction
   void
   handleReadRequestHeadersPostRemap(Transaction &txn) override
   {
