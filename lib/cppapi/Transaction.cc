@@ -92,15 +92,9 @@ Transaction::Transaction(void *raw_txn)
     LOG_ERROR("TSHttpTxnClientReqGet tshttptxn=%p returned a null hdr_buf=%p or hdr_loc=%p.", txn, hdr_buf, hdr_loc);
   }
 
-  state_ = new TransactionState(txn, hdr_buf, hdr_loc);
+  state_.reset( new TransactionState(txn, hdr_buf, hdr_loc) );
   LOG_DEBUG("Transaction tshttptxn=%p constructing Transaction object %p, client req hdr_buf=%p, client req hdr_loc=%p", txn, this,
             hdr_buf, hdr_loc);
-}
-
-Transaction::~Transaction()
-{
-  LOG_DEBUG("Transaction tshttptxn=%p destroying Transaction object %p", state_->txn_, this);
-  delete state_;
 }
 
 void
