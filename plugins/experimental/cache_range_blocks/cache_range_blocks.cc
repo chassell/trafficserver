@@ -17,7 +17,7 @@
  */
 
 #include <atscppapi/GlobalPlugin.h>
-#include <atscppapi/TransactionPlugin.h>
+#include <atscppapi/TransformationPlugin.h>
 #include <atscppapi/PluginInit.h>
 
 #include <iostream>
@@ -30,21 +30,22 @@ namespace
 std::shared_ptr<GlobalPlugin> plugin;
 }
 
-class TransactionHookPlugin : public atscppapi::TransactionPlugin
+class RangeBlockPlugin : public TransformationPlugin
 {
 public:
-  TransactionHookPlugin(Transaction &transaction) : TransactionPlugin(transaction)
+  RangeBlockPlugin(Transaction &transaction, std::string &&rangeFld) 
+     : TransformationPlugin(transaction, RESPONSE_TRANSFORMATION),
+       _absRange(rangeFld)
   {
     TransactionPlugin::registerHook(HOOK_CACHE_LOOKUP_COMPLETE);
     TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS);  // maybe unneeded
     TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // maybe unneeded
     TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS);
   }
-  ~TransactionHookPlugin() override {}
+  ~RangeBlockPlugin() override {}
 
-  //
-  // [called from global hook / remap hook]
-  //
+//////////////////////////////////////////
+//////////// in the Transaction phases
   void
   handleReadRequestHeadersPostRemap(Transaction &txn) override
   {
@@ -95,19 +96,35 @@ public:
     txn.resume();
   }
 
+//////////////////////////////////////////
+//////////// in Response-Transformation phase 
+
+  // upstream data in
+  void consume(const std::string &data) override
+  {
+    // produce() is how to pass onwards
+    // pause() gives a future for unblocking call
+  }
+
+  // after last receive
+  void handleInputComplete() override
+  {
+    // setOutputComplete() will close downstream
+  }
+
 private:
   std::string _absRange;
   std::string _blkRange;
 };
 
-class GlobalHookPlugin : public atscppapi::GlobalPlugin
+class GlobalHookPlugin : public GlobalPlugin
 {
 public:
   GlobalHookPlugin() { GlobalPlugin::registerHook(HOOK_READ_REQUEST_HEADERS_PRE_REMAP); }
 
   void
   // determine if ranges of appropriate size are present
-  handleSelectAlt(Transaction &txn) override
+  handleSelectAlt(const Request &clientReq, const Request &cachedReq, const Response &cachedResp) override
   {
   }
 
@@ -115,15 +132,16 @@ public:
   void
   handleReadRequestHeadersPostRemap(Transaction &txn) override
   {
-    //
-    // before lookup: do filtering here
-    //
-    if (false) {
-      txn.resume();
-      return;
+    auto &clntHdrs = txn.getClientRequest().getHeaders();
+    auto rangeFld = clntHdrs.values("Range");
+
+    if ( rangeFld.empty() ) {
+      return; // doesn't apply
     }
 
-    auto &txnPlugin = *new TransactionHookPlugin(txn);
+    // turn to blocks on a cache-miss of the file
+    auto &txnPlugin = *new RangeBlockPlugin(txn, std::move(rangeFld));
+
     txn.addPlugin(&txnPlugin);
     // forward event on
     txnPlugin.handleReadRequestHeadersPostRemap(txn);
