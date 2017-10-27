@@ -15,240 +15,109 @@
   See the License for the specific language governing permissions and
   limitations under the License.
  */
-#include "ts/ink_memory.h"
+#include "cache_range_blocks.h"
 
-#include <atscppapi/GlobalPlugin.h>
-#include <atscppapi/TransformationPlugin.h>
-#include <atscppapi/PluginInit.h>
-
-#include <iostream>
-#include <memory>
-
-#define CONTENT_ENCODING_INTERNAL "x-block-cache-range"
-
-#define CONTENT_ENCODING_TAG     "Content-Encoding"
-#define CONTENT_LENGTH_TAG       "Content-Length"
-#define RANGE_TAG                "Range"
-#define ACCEPT_ENCODING_TAG      "Accept-Encoding"
-#define X_BLOCK_PRESENCE_TAG     "X-Block-Presence"
-
-using namespace atscppapi;
-
-namespace
-{
+//namespace
+//{
 std::shared_ptr<GlobalPlugin> plugin;
 
-class BlockStoreXform;
-class BlockSendXform;
-
-class FindTxnBlockPlugin : public TransactionPlugin
-{
-public:
-  FindTxnBlockPlugin(Transaction &txn, Headers &clntReq)
-     : TransactionPlugin(txn), _clntReq(clntReq) 
-  {
-  }
-
-  ~FindTxnBlockPlugin() override {}
-
-//////////////////////////////////////////
-//////////// in the Transaction phases
-  void
-  handleReadRequestHeadersPostRemap(Transaction &txn) override
-  {
-    // add permission to use block-directory headers (on MISS)
-    //    but if internal HIT then use Range as given
-    _clntReq.append(ACCEPT_ENCODING,CONTENT_ENCODING_INTERNAL ";q=0.001");
-
-    // detect use of stub file then
-    //    A) cause a HIT->MISS change and transform response to correct range
-    //    B) leave a HIT and transform response into stored block info
-    TransactionPlugin::registerHook(HOOK_CACHE_LOOKUP_COMPLETE);
-    txn.resume();
-  }
-
-  void
-  handleReadCacheLookupComplete(Transaction &txn)
-  {
-    TSCacheKey blkKey = nullptr; // valid if stub-file block-hit occurred
-
-    // stub has found a cached key?
-    if (getCacheStatus() == CACHE_LOOKUP_HIT_FRESH && 
-            (_stubHdrs=get_stub_hdrs()) && 
-            (_blockInd=get_avail_blocks()) )
-    {
-      _sendXform.reset(new BlockSendXform(*this,txn));
-      return; // insert cached block of data upon SEND_RESPONSE
-    }
-
-    if ( getCacheStatus() == CACHE_LOOKUP_HIT_FRESH && !_stubHdrs ) {
-      return; // normal file is usable!
-    }
-
-    _storeXform.reset(new BlockStoreXform(*this,txn));
-
-    // this needs to be a MISS...
-    setCacheStatus(CACHE_LOOKUP_MISS); 
-
-    TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS);
-    TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS);
-    txn.resume();
-  }
-
-private:
-  Headers *get_stub_hdrs() 
-  {
-     auto &ccheHdrs = getCacheHeaders();
-     auto i = ccheHdrs.values(CONTENT_ENCODING_TAG).find(CONTENT_ENCODING_INTERNAL);
-     return ( i != std::string::npos ? &ccheHdrs : nullptr );
-  }
-
-  uint64_t get_avail_blocks();
-
-  Headers    &_clntReq;           // must be available
-  Headers    *_stubHdrs = nullptr; // if found
-  unsigned    _blockInd = 0U; // if found and in-cache
-  std::string _clntRange;
-  std::unique_ptr<BlockCopyXform> _copyXform;
-  std::unique_ptr<BlockSendXform> _sendXform;
+constexpr int8_t base64_values[] = {
+  /*+*/ 62,
+      ~0,~0,~0, /* ,-. */
+  /*/ */ 63,
+  /*0-9*/ 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
+      ~0,~0,~0,~0,~0,~0,~0,~0, 
+  /*A-Z*/ 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,23,24,25,
+      ~0,~0,~0,~0,~0,~0,~0,
+  /*a-z*/ 26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51
 };
 
-class BlockCopyXform : public TransformationPlugin
+
+inline bool is_base64_bit_set(const std::string &base64,unsigned i)
 {
-  BlockCopyXform(FindTxnBlockPlugin &ctxt, Transaction &txn)
-     : TransformationPlugin(txn, RESPONSE_TRANSFORMATION),
-  {
-    // substitute a HIT->MISS change if block is missing
-    TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS);
-  }
-  ~BlockCopyXform() override {}
-
-  void
-  handleSendResponseHeaders(Transaction &txn) override
-  {
-    txn.getClientResponse().getHeaders().set(RANGE_TAG, _absRange);
-    txn.getClientResponse().setStatusCode(HTTP_STATUS_PARTIAL_CONTENT);
-    txn.resume();
-  }
-
-//////////////////////////////////////////
-//////////// in Response-Transformation phase 
-
-  // upstream data in
-  void consume(const std::string &data) override
-  {
-    // produce() is how to pass onwards
-    // pause() gives a future for unblocking call
-  }
-
-  // after last receive
-  void handleInputComplete() override
-  {
-    // setOutputComplete() will close downstream
-  }
-}
-
-class BlockSendXform : public TransformationPlugin
-{
-  BlockCopyXform(FindTxnBlockPlugin &ctxt, Transaction &txn)
-     : TransformationPlugin(txn, RESPONSE_TRANSFORMATION),
-  {
-    // substitute a HIT->MISS change if block is missing
-    TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS);
-  }
-  ~BlockCopyXform() override {}
-
-  void
-  handleSendResponseHeaders(Transaction &txn) override
-  {
-    txn.getClientResponse().getHeaders().set(RANGE_TAG, _absRange);
-    txn.getClientResponse().setStatusCode(HTTP_STATUS_PARTIAL_CONTENT);
-    txn.resume();
-  }
-
-//////////////////////////////////////////
-//////////// in Response-Transformation phase 
-
-  // upstream data in
-  void consume(const std::string &data) override
-  {
-    // produce() is how to pass onwards
-    // pause() gives a future for unblocking call
-  }
-
-  // after last receive
-  void handleInputComplete() override
-  {
-    // setOutputComplete() will close downstream
-  }
+   return (1<<(i%6)) & base64_values[base64[i/6]+0];
 }
 
 
-class GlobalHookPlugin : public GlobalPlugin
+uint64_t FindTxnBlockPlugin::have_avail_blocks(Headers &stubHdrs)
 {
-public:
-  GlobalHookPlugin() { 
-    GlobalPlugin::registerHook(HOOK_READ_REQUEST_HEADERS_PRE_REMAP); 
-  }
+   if ( ! _blkRange.empty() ) {
+     return -1;
+   }
 
-  // add stub-allowing header if has a valid range
-  void
-  handleReadRequestHeadersPostRemap(Transaction &txn) override
-  {
-    auto &clntReq = txn.getClientRequest().getHeaders();
-    if ( clntReq.count(RANGE_TAG) != 1 ) {
-      return; // doesn't apply to weird ones
-    }
-
-    // allow MISS --> block-dir-stub lookup as possible
-    auto &txnPlugin = *new FindTxnBlockPlugin(txn, clntReq);
-
-    // perform state setup ...
-    txnPlugin.handleReadRequestHeadersPostRemap(txn);
-  }
-
-private:
-  std::string _random
-};
-
-}
-
-
-uint64_t FindTxnBlockPlugin::get_avail_blocks()
-{
-   auto rangeFld = _clntReq.value(RANGE_TAG);
+   auto rangeFld = _clntRange; // to parse
+   auto bitString = stubHdrs.value(X_BLOCK_PRESENCE_TAG);
+   auto len = std::stoll(stubHdrs.value(CONTENT_LENGTH_TAG));
 
    // value of digit-string after last '=' 
    //    or 0 if no '=' 
    //    or negative value if no digits and '-' present
    auto start = std::atoll( rangeFld.erase(0,rangeFld.rfind('=')).erase(0,1).c_str() );
-   // negative value of digit-string after last '-'
-   //    or 0 if no '=' or leading 0
-   auto end = std::atoll( rangeFld.erase(0,rangeFld.rfind('-').c_str()));
-
-   auto &stubHdrs = *_stubHdrs;
-   auto bitString = stubHdrs.value(X_BLOCK_PRESENCE_TAG);
-   auto len = std::stoll(stubHdrs.value(CONTENT_LENGTH_TAG));
-   auto blksize = INK_ALIGN(len/bitString.size(),4096); // re-use block size chosen
-
-   // to inclusive start/end of valid blocks
-   start = start/blksize
-   end = (end+blksize-1)/blksize;
-
-   for( auto i = start ; i < end && is_base64_bit_set(bitString,i) ; ++i ) {
+   
+   if ( ! start && ( rangeFld.empty() || rangeFld.front() != '0' ) ) {
+     start = -1;
    }
 
-   return i == 
+   // negative value of digit-string after last '-'
+   //    or 0 if no '=' or leading 0
+   auto end = - std::atoll( rangeFld.erase(0,rangeFld.rfind('-')).c_str());
 
+   auto blksize = INK_ALIGN(len/bitString.size(),4096*6); // re-use block size chosen
+
+   // to inclusive start/end of valid blocks
+   if ( start < 0 && ! end ) {
+     return 0; // error!
+   } 
+   
+   auto startBlk = static_cast<int>(start/blksize); // switch to suffix-of
+   auto endBlk = static_cast<int>((end+blksize-1)/blksize); // switch to suffix-of
+
+   if ( start >= 0 && ! end ) {
+     endBlk = static_cast<int>((len+blksize-1) / blksize);
+   } else if ( start < 0 && end ) {
+     startBlk = endBlk; // switch to suffix-style range
+     endBlk = static_cast<int>((len+blksize-1) / blksize);
+   }
+
+   _blkRange = std::to_string(blksize*startBlk) + "-" + std::to_string(blksize*endBlk-1);
+
+   for( auto i = startBlk ; i < endBlk ; ++i ) {
+     if ( ! is_base64_bit_set(bitString,i) ) {
+       return 0;
+     }
+   }
+
+   return start;
 }
 
+void
+FindTxnBlockPlugin::handleReadCacheLookupComplete(Transaction &txn)
+{
+  auto pstub = get_stub_hdrs(txn); // get (1) client-req ptr or (2) cached-stub ptr or nullptr
+
+  if ( ! pstub ) {
+    /// XXX delete old stub file in case of revalidate!
+    return; // main file made it through
+  }
+
+  // need client-response for all cases now
+  TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS);
+
+  if ( pstub != &_clntHdrs && have_avail_blocks(*pstub) ) {
+    _sendXform = std::make_unique<BlockSendXform>(txn,*this);
+    _sendXform->handleReadCacheLookupComplete(txn);
+    return; // insert cached block of data upon SEND_RESPONSE
+  }
+
+  // intercept data for new or updated stub version
+  _storeXform = std::make_unique<BlockStoreXform>(txn,*this);
+  _storeXform->handleReadCacheLookupComplete(txn);
+}
+
+//}
 
 // tsapi TSReturnCode TSBase64Decode(const char *str, size_t str_len, unsigned char *dst, size_t dst_size, size_t *length);
 // tsapi TSReturnCode TSBase64Encode(const char *str, size_t str_len, char *dst, size_t dst_size, size_t *length);
-
-  X_BLOCK_PRESENCE_TAG 
-}
-
 void
 TSPluginInit(int, const char **)
 {
