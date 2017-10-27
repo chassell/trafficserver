@@ -71,12 +71,13 @@ uint64_t FindTxnBlockPlugin::have_avail_blocks(Headers &stubHdrs)
    
    auto startBlk = static_cast<int>(start/blksize); // switch to suffix-of
    auto endBlk = static_cast<int>((end+blksize-1)/blksize); // switch to suffix-of
+   auto lastBlk = static_cast<int>((len+blksize-1) / blksize);
 
    if ( start >= 0 && ! end ) {
-     endBlk = static_cast<int>((len+blksize-1) / blksize);
+     endBlk = lastBlk;
    } else if ( start < 0 && end ) {
      startBlk = endBlk; // switch to suffix-style range
-     endBlk = static_cast<int>((len+blksize-1) / blksize);
+     endBlk = lastBlk;
    }
 
    _blkRange = std::to_string(blksize*startBlk) + "-" + std::to_string(blksize*endBlk-1);

@@ -28,6 +28,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
 
 #define CONTENT_ENCODING_INTERNAL "x-block-cache-range"
 
