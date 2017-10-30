@@ -35,7 +35,7 @@ constexpr int8_t base64_values[] = {
 
 inline bool is_base64_bit_set(const std::string &base64,unsigned i)
 {
-   return (1<<(i%6)) & base64_values[base64[i/6]+0];
+   return (1<<(i%6)) & base64_values[base64[i/6]-'+'];
 }
 
 
@@ -45,9 +45,9 @@ uint64_t FindTxnBlockPlugin::have_avail_blocks(Headers &stubHdrs)
      return -1;
    }
 
-   auto rangeFld = _clntRange; // to parse
+   auto rangeFld = _respRange; // to parse
    auto bitString = stubHdrs.value(X_BLOCK_PRESENCE_TAG);
-   auto len = std::stoll(stubHdrs.value(CONTENT_LENGTH_TAG));
+   auto contentLen = std::stoll(stubHdrs.value(CONTENT_LENGTH_TAG));
 
    // value of digit-string after last '=' 
    //    or 0 if no '=' 
@@ -62,25 +62,38 @@ uint64_t FindTxnBlockPlugin::have_avail_blocks(Headers &stubHdrs)
    //    or 0 if no '=' or leading 0
    auto end = - std::atoll( rangeFld.erase(0,rangeFld.rfind('-')).c_str());
 
-   auto blksize = INK_ALIGN(len/bitString.size(),4096*6); // re-use block size chosen
+   auto blksize = INK_ALIGN(contentLen/bitString.size(),4096*6); // re-use block size chosen
 
    // to inclusive start/end of valid blocks
    if ( start < 0 && ! end ) {
      return 0; // error!
-   } 
-   
-   auto startBlk = static_cast<int>(start/blksize); // switch to suffix-of
-   auto endBlk = static_cast<int>((end+blksize-1)/blksize); // switch to suffix-of
-   auto lastBlk = static_cast<int>((len+blksize-1) / blksize);
+   }
+
+   auto startBlk = static_cast<int>(start/blksize); // inclusive-start block
+   auto endBlk = static_cast<int>((end+1+blksize-1)/blksize); // exclusive-end block
+   auto lastBlk = static_cast<int>((contentLen+blksize-1) / blksize);
 
    if ( start >= 0 && ! end ) {
      endBlk = lastBlk;
-   } else if ( start < 0 && end ) {
-     startBlk = endBlk; // switch to suffix-style range
+     end = contentLen;
+   } else if ( start < 0 && -start == end ) {
      endBlk = lastBlk;
+     end = contentLen;
+     startBlk = endBlk; // switch to suffix-style range
+   } else {
+     ++end; // exclusive-end
    }
 
-   _blkRange = std::to_string(blksize*startBlk) + "-" + std::to_string(blksize*endBlk-1);
+   _firstBlkSkip = start - startBlk*blksize; // may be zero
+   _lastBlkTrunc = endBlk*blksize - end; // may be zero
+
+   ink_assert( contentLen == endblk*blksize - startBlk*blksize - _firstBlkSkip - lastBlkTrunc );
+
+   // store with inclusive end
+   _blkRange = "bytes=";
+   _blkRange += std::to_string(blksize*startBlk) + "-" + std::to_string(blksize*endBlk-1); 
+
+   _respRange = std::to_string(start) + "-" std::to_string(end-1) + "/" + std::to_string(contentLen);
 
    for( auto i = startBlk ; i < endBlk ; ++i ) {
      if ( ! is_base64_bit_set(bitString,i) ) {
@@ -101,18 +114,27 @@ FindTxnBlockPlugin::handleReadCacheLookupComplete(Transaction &txn)
     return; // main file made it through
   }
 
-  // need client-response for all cases now
+  // clean up stub-response to be a normal header
   TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS);
 
-  if ( pstub != &_clntHdrs && have_avail_blocks(*pstub) ) {
+  // perform correct transformation
+  if ( pstub == &_clntHdrs || ! have_avail_blocks(*pstub) ) {
+    _storeXform = std::make_unique<BlockStoreXform>(txn,*this);
+    _storeXform->handleReadCacheLookupComplete(txn);
+  } else {
+    // intercept data for new or updated stub version
     _sendXform = std::make_unique<BlockSendXform>(txn,*this);
     _sendXform->handleReadCacheLookupComplete(txn);
-    return; // insert cached block of data upon SEND_RESPONSE
   }
+}
 
-  // intercept data for new or updated stub version
-  _storeXform = std::make_unique<BlockStoreXform>(txn,*this);
-  _storeXform->handleReadCacheLookupComplete(txn);
+void
+BlockStoreXform::handleReadResponseHeaders(Transaction &txn)
+{
+    if ( ! _ctxt.blockRange().empty() ) {
+      _ctxt.clientHdrs().set(RANGE_TAG, _ctxt.blockRange()); // request a block-based range if knowable
+    }
+  // create and store a *new*
 }
 
 //}

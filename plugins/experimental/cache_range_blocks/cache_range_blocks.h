@@ -35,6 +35,7 @@
 #define CONTENT_ENCODING_TAG     "Content-Encoding"
 #define CONTENT_LENGTH_TAG       "Content-Length"
 #define RANGE_TAG                "Range"
+#define CONTENT_RANGE_TAG        "Content-Range"
 #define ACCEPT_ENCODING_TAG      "Accept-Encoding"
 #define X_BLOCK_PRESENCE_TAG     "X-Block-Presence"
 
@@ -53,13 +54,15 @@ public:
   FindTxnBlockPlugin(Transaction &txn)
      : TransactionPlugin(txn),
        _clntHdrs(txn.getClientRequest().getHeaders()),
-       _clntRange( _clntHdrs.values(RANGE_TAG) )
+       _respRange( _clntHdrs.values(RANGE_TAG) )
   {
   }
 
   ~FindTxnBlockPlugin() override {}
 
-  Headers &blockRange() { return _clntHdrs; }
+  Headers &clientHdrs() { return _clntHdrs; }
+  const std::string &clientRange() const { return _respRange; }
+  const std::string &blockRange() const { return _blkRange; }
 
 //////////////////////////////////////////
 //////////// in the Transaction phases
@@ -80,8 +83,13 @@ public:
   void
   handleSendResponseHeaders(Transaction &txn) override
   {
-    txn.getClientResponse().getHeaders().set(RANGE_TAG, _clntRange);
-    txn.getClientResponse().setStatusCode(HTTP_STATUS_PARTIAL_CONTENT);
+    auto &clntResp = getClientResponse().getHeaders();
+    // uses 206 as response status
+    txn.clntResp.set(CONTENT_RANGE_TAG, _respRange); // restore
+    txn.clntResp.erase("Warning"); // erase added proxy-added warning
+
+    // XXX erase only last field, with internal encoding
+    clntResp.erase(CONTENT_ENCODING_TAG);
     txn.resume();
   }
 
@@ -100,8 +108,11 @@ private:
   uint64_t have_avail_blocks(Headers &stubHdrs);
 
   Headers    &_clntHdrs;
-  std::string _clntRange;
+  std::string _respRange;
   std::string _blkRange;
+
+  int         _firstBlkSkip = 0; // negative if no blksize fit
+  int         _lastBlkTrunc = 0; // negative if no blksize fit
 
   std::vector<TSCacheKey>  _keysInRange; // in order with index
   std::vector<TSVConn>     _vcsToRead; // each with an index
@@ -112,13 +123,19 @@ private:
 };
 
 
+
+
 class BlockStoreXform : public TransformationPlugin
 {
  public:
   BlockStoreXform(Transaction &txn, FindTxnBlockPlugin &ctxt)
-     : TransformationPlugin(txn, RESONSE_TRANSFORMATION),
+     : TransformationPlugin(txn, REQUEST_TRANSFORMATION), 
+       // new manifest from result
        _ctxt(ctxt)
   {
+    // create new manifest file upon promise of data
+    TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // add block-range and clean up
+    TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // adjust headers to stub-file
   }
 
   ~BlockStoreXform() override {}
@@ -126,14 +143,28 @@ class BlockStoreXform : public TransformationPlugin
   void
   handleReadCacheLookupComplete(Transaction &txn)
   {
-    TSHttpTxnCacheLookupStatusSet(static_cast<TSHttpTxn>(txn.getAtsHandle()), TS_CACHE_LOOKUP_MISS);
-    if ( ! _ctxt.blockRange().empty() ) {
-      _ctxt.clientHdrs().set(RANGE_TAG, _ctxt.blockRange()); // request a block-based range if knowable
-    }
-    /// XXX open writes to all needed block keys
+    auto txnhdl = static_cast<TSHttpTxn>(txn.getAtsHandle());
+    // attempt to update storage with new headers
+    TSHttpTxnCacheLookupStatusSet(txnhdl, TS_CACHE_LOOKUP_HIT_STALE);
     txn.resume();
   }
 
+  void
+  handleSendRequestHeaders(Transaction &txn)
+  {
+    auto &proxyReq = txn.getServerRequest().getHeaders();
+    if ( ! _ctxt.blockRange().empty() ) {
+      proxyReq.set(RANGE_TAG,_ctxt.blockRange()); // get a useful size of data
+    }
+
+    // XXX erase only last field, with internal encoding
+    proxyReq.erase(ACCEPT_ENCODING_TAG);
+  }
+
+  // change to 200 and append stub-file headers...
+  void
+  handleReadResponseHeaders(Transaction &txn);
+  
 //////////////////////////////////////////
 //////////// in Response-Transformation phase 
 
@@ -151,8 +182,7 @@ class BlockStoreXform : public TransformationPlugin
   }
 
 private:
-  const FindTxnBlockPlugin &_ctxt;
-  const Header             &_stubHdrs;
+  FindTxnBlockPlugin &_ctxt;
 };
 
 
@@ -191,7 +221,7 @@ class BlockSendXform : public TransformationPlugin
     // setOutputComplete() will close downstream
   }
 private:
-  const FindTxnBlockPlugin &_ctxt;
+  FindTxnBlockPlugin &_ctxt;
 };
 
 
