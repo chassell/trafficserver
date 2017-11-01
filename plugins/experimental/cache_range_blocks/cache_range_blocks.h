@@ -19,10 +19,11 @@
 #include "ts/ink_align.h"
 #include "ts/ts.h"
 
-#include <atscppapi/GlobalPlugin.h>
+#include <atscppapi/Url.h>
 #include <atscppapi/Transaction.h>
 #include <atscppapi/TransactionPlugin.h>
 #include <atscppapi/TransformationPlugin.h>
+#include <atscppapi/GlobalPlugin.h>
 #include <atscppapi/PluginInit.h>
 
 #include <iostream>
@@ -44,21 +45,59 @@ using namespace atscppapi;
 //namespace
 //{
 
-class BlockStoreXform;
-class BlockSendXform;
+// object to request write/read into cache
+struct CacheKey {
 
-class FindTxnBlockPlugin : public TransactionPlugin
+  CacheKey() { }
+  
+  CacheKey(CacheKey &&url) : _key(url._key)
+  {
+    url._key = nullptr;
+  }
+
+  CacheKey(const Url &url, uint64_t offset)
+     : _key( TSCacheKeyCreate() ) 
+  {
+     auto str = url.getUrlString();
+     str.append(reinterpret_cast<char*>(&offset),sizeof(offset)); // append *unique* position bytes
+	 TSCacheKeyDigestSet(_key, str.data(), str.size() );
+	 auto host = url.getHost();
+	 TSCacheKeyHostNameSet(_key, host.data(), host.size()); 
+  }
+
+  ~CacheKey() { 
+    if ( _key ) { 
+      TSCacheKeyDestroy(_key); 
+      _key = nullptr;
+    }
+  }
+
+  CacheKey &operator=(CacheKey &&xfer) {
+    this->~CacheKey();
+    std::swap(xfer._key,_key);
+    return *this;
+  }
+
+  TSCacheKey _key = nullptr;
+};
+
+
+class BlockStoreXform;
+class BlockReadXform;
+
+class BlockSetAccess : public TransactionPlugin
 {
   using Txn_t = Transaction;
 public:
-  FindTxnBlockPlugin(Transaction &txn)
+  BlockSetAccess(Transaction &txn)
      : TransactionPlugin(txn),
        _clntHdrs(txn.getClientRequest().getHeaders()),
+       _url(txn.getClientRequest().getUrl()),
        _respRange( _clntHdrs.values(RANGE_TAG) )
   {
   }
 
-  ~FindTxnBlockPlugin() override {}
+  ~BlockSetAccess() override {}
 
   Headers &clientHdrs() { return _clntHdrs; }
   const std::string &clientRange() const { return _respRange; }
@@ -83,10 +122,10 @@ public:
   void
   handleSendResponseHeaders(Transaction &txn) override
   {
-    auto &clntResp = getClientResponse().getHeaders();
+    auto &clntResp = txn.getClientResponse().getHeaders();
     // uses 206 as response status
-    txn.clntResp.set(CONTENT_RANGE_TAG, _respRange); // restore
-    txn.clntResp.erase("Warning"); // erase added proxy-added warning
+    clntResp.set(CONTENT_RANGE_TAG, _respRange); // restore
+    clntResp.erase("Warning"); // erase added proxy-added warning
 
     // XXX erase only last field, with internal encoding
     clntResp.erase(CONTENT_ENCODING_TAG);
@@ -105,21 +144,22 @@ private:
      return ( i != std::string::npos ? &ccheHdrs : nullptr );
   }
 
-  uint64_t have_avail_blocks(Headers &stubHdrs);
+  uint64_t have_needed_blocks(Headers &stubHdrs);
 
   Headers    &_clntHdrs;
+  Url        &_url;
   std::string _respRange;
   std::string _blkRange;
 
   int         _firstBlkSkip = 0; // negative if no blksize fit
   int         _lastBlkTrunc = 0; // negative if no blksize fit
 
-  std::vector<TSCacheKey>  _keysInRange; // in order with index
+  std::vector<CacheKey>     _keysInRange; // in order with index
   std::vector<TSVConn>     _vcsToRead; // each with an index
   std::vector<TSVConn>     _vcsToWrite;
 
   std::unique_ptr<BlockStoreXform> _storeXform;
-  std::unique_ptr<BlockSendXform> _sendXform;
+  std::unique_ptr<BlockReadXform> _sendXform;
 };
 
 
@@ -128,7 +168,7 @@ private:
 class BlockStoreXform : public TransformationPlugin
 {
  public:
-  BlockStoreXform(Transaction &txn, FindTxnBlockPlugin &ctxt)
+  BlockStoreXform(Transaction &txn, BlockSetAccess &ctxt)
      : TransformationPlugin(txn, REQUEST_TRANSFORMATION), 
        // new manifest from result
        _ctxt(ctxt)
@@ -182,20 +222,20 @@ class BlockStoreXform : public TransformationPlugin
   }
 
 private:
-  FindTxnBlockPlugin &_ctxt;
+  BlockSetAccess &_ctxt;
 };
 
 
 
-class BlockSendXform : public TransformationPlugin
+class BlockReadXform : public TransformationPlugin
 {
  public:
-  BlockSendXform(Transaction &txn, FindTxnBlockPlugin &ctxt)
+  BlockReadXform(Transaction &txn, BlockSetAccess &ctxt)
      : TransformationPlugin(txn, RESPONSE_TRANSFORMATION),
        _ctxt(ctxt)
   {
   }
-  ~BlockSendXform() override {}
+  ~BlockReadXform() override {}
 
   void
   handleReadCacheLookupComplete(Transaction &txn) override;
@@ -221,15 +261,15 @@ class BlockSendXform : public TransformationPlugin
     // setOutputComplete() will close downstream
   }
 private:
-  FindTxnBlockPlugin &_ctxt;
+  BlockSetAccess &_ctxt;
 };
 
 
 
-class GlobalHookPlugin : public GlobalPlugin
+class RangeDetect : public GlobalPlugin
 {
 public:
-  GlobalHookPlugin() { 
+  RangeDetect() { 
     GlobalPlugin::registerHook(HOOK_READ_REQUEST_HEADERS_PRE_REMAP); 
   }
 
@@ -242,7 +282,7 @@ public:
       return; // only use single-range requests
     }
 
-    auto &txnPlugin = *new FindTxnBlockPlugin(txn); // plugin attach
+    auto &txnPlugin = *new BlockSetAccess(txn); // plugin attach
     // changes client header and prep
     txnPlugin.handleReadRequestHeadersPostRemap(txn);
   }

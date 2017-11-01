@@ -17,6 +17,8 @@
  */
 #include "cache_range_blocks.h"
 
+#include <set>
+
 //namespace
 //{
 std::shared_ptr<GlobalPlugin> plugin;
@@ -39,7 +41,7 @@ inline bool is_base64_bit_set(const std::string &base64,unsigned i)
 }
 
 
-uint64_t FindTxnBlockPlugin::have_avail_blocks(Headers &stubHdrs)
+uint64_t BlockSetAccess::have_needed_blocks(Headers &stubHdrs)
 {
    if ( ! _blkRange.empty() ) {
      return -1;
@@ -69,9 +71,9 @@ uint64_t FindTxnBlockPlugin::have_avail_blocks(Headers &stubHdrs)
      return 0; // error!
    }
 
-   auto startBlk = static_cast<int>(start/blksize); // inclusive-start block
-   auto endBlk = static_cast<int>((end+1+blksize-1)/blksize); // exclusive-end block
-   auto lastBlk = static_cast<int>((contentLen+blksize-1) / blksize);
+   auto startBlk = start/blksize; // inclusive-start block
+   auto endBlk = (end+1+blksize-1)/blksize; // exclusive-end block
+   auto lastBlk = (contentLen+blksize-1) / blksize;
 
    if ( start >= 0 && ! end ) {
      endBlk = lastBlk;
@@ -87,25 +89,42 @@ uint64_t FindTxnBlockPlugin::have_avail_blocks(Headers &stubHdrs)
    _firstBlkSkip = start - startBlk*blksize; // may be zero
    _lastBlkTrunc = endBlk*blksize - end; // may be zero
 
-   ink_assert( contentLen == endblk*blksize - startBlk*blksize - _firstBlkSkip - lastBlkTrunc );
+   ink_assert( contentLen == static_cast<int64_t>(( endBlk - startBlk )*blksize) - _firstBlkSkip - _lastBlkTrunc );
 
    // store with inclusive end
    _blkRange = "bytes=";
    _blkRange += std::to_string(blksize*startBlk) + "-" + std::to_string(blksize*endBlk-1); 
 
-   _respRange = std::to_string(start) + "-" std::to_string(end-1) + "/" + std::to_string(contentLen);
+   _respRange = std::to_string(start) + "-" + std::to_string(end-1) + "/" + std::to_string(contentLen);
 
-   for( auto i = startBlk ; i < endBlk ; ++i ) {
+   _keysInRange.resize( endBlk - startBlk );
+   _vcsToRead.resize( endBlk - startBlk );
+   _vcsToWrite.resize( endBlk - startBlk );
+
+   auto misses = 0;
+
+   for( auto i = startBlk ; i < endBlk ; ++i ) 
+   {
      if ( ! is_base64_bit_set(bitString,i) ) {
-       return 0;
+       _keysInRange[i-startBlk] = CacheKey(_url,i*blksize);
+       ++misses;
      }
+   }
+
+   if ( misses ) {
+     return 0; // don't have all of them
+   }
+
+   // do have all of them!
+   for( auto i = startBlk ; i < endBlk ; ++i ) {
+     _keysInRange[i-startBlk] = CacheKey(_url,i*blksize);
    }
 
    return start;
 }
 
 void
-FindTxnBlockPlugin::handleReadCacheLookupComplete(Transaction &txn)
+BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 {
   auto pstub = get_stub_hdrs(txn); // get (1) client-req ptr or (2) cached-stub ptr or nullptr
 
@@ -118,12 +137,12 @@ FindTxnBlockPlugin::handleReadCacheLookupComplete(Transaction &txn)
   TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS);
 
   // perform correct transformation
-  if ( pstub == &_clntHdrs || ! have_avail_blocks(*pstub) ) {
+  if ( pstub == &_clntHdrs || ! have_needed_blocks(*pstub) ) {
     _storeXform = std::make_unique<BlockStoreXform>(txn,*this);
     _storeXform->handleReadCacheLookupComplete(txn);
   } else {
     // intercept data for new or updated stub version
-    _sendXform = std::make_unique<BlockSendXform>(txn,*this);
+    _sendXform = std::make_unique<BlockReadXform>(txn,*this);
     _sendXform->handleReadCacheLookupComplete(txn);
   }
 }
@@ -131,9 +150,9 @@ FindTxnBlockPlugin::handleReadCacheLookupComplete(Transaction &txn)
 void
 BlockStoreXform::handleReadResponseHeaders(Transaction &txn)
 {
-    if ( ! _ctxt.blockRange().empty() ) {
-      _ctxt.clientHdrs().set(RANGE_TAG, _ctxt.blockRange()); // request a block-based range if knowable
-    }
+  if ( ! _ctxt.blockRange().empty() ) {
+    _ctxt.clientHdrs().set(RANGE_TAG, _ctxt.blockRange()); // request a block-based range if knowable
+  }
   // create and store a *new*
 }
 
@@ -145,5 +164,5 @@ void
 TSPluginInit(int, const char **)
 {
   RegisterGlobalPlugin("CPP_Example_TransactionHook", "apache", "dev@trafficserver.apache.org");
-  plugin = std::make_shared<GlobalHookPlugin>();
+  plugin = std::make_shared<RangeDetect>();
 }
