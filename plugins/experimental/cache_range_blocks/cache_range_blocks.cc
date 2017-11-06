@@ -19,8 +19,9 @@
 
 #include <set>
 
-//namespace
-//{
+// namespace
+// {
+
 std::shared_ptr<GlobalPlugin> plugin;
 
 constexpr int8_t base64_values[] = {
@@ -98,26 +99,25 @@ uint64_t BlockSetAccess::have_needed_blocks(Headers &stubHdrs)
    _respRange = std::to_string(start) + "-" + std::to_string(end-1) + "/" + std::to_string(contentLen);
 
    _keysInRange.resize( endBlk - startBlk );
-   _vcsToRead.resize( endBlk - startBlk );
-   _vcsToWrite.resize( endBlk - startBlk );
 
    auto misses = 0;
 
    for( auto i = startBlk ; i < endBlk ; ++i ) 
    {
      if ( ! is_base64_bit_set(bitString,i) ) {
-       _keysInRange[i-startBlk] = CacheKey(_url,i*blksize);
+       _keysInRange[i-startBlk] = APICacheKey(_url,i*blksize);
        ++misses;
      }
    }
 
+   // any missed
    if ( misses ) {
      return 0; // don't have all of them
    }
 
    // do have all of them!
    for( auto i = startBlk ; i < endBlk ; ++i ) {
-     _keysInRange[i-startBlk] = CacheKey(_url,i*blksize);
+     _keysInRange[i-startBlk] = APICacheKey(_url,i*blksize);
    }
 
    return start;
@@ -148,6 +148,50 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 }
 
 void
+BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
+{
+  auto &keys = _ctxt.keysInRange();
+  for( auto i = 0 ; i < keys.size() ; ++i ) {
+    if ( keys[i] ) {
+      TSCacheWrite(_writerReady[i],keys[i]); // start write init immediately
+    }
+  }
+
+  // attempt to update storage with new headers
+  auto txnhdl = static_cast<TSHttpTxn>(txn.getAtsHandle());
+  TSHttpTxnCacheLookupStatusSet(txnhdl, TS_CACHE_LOOKUP_HIT_STALE);
+  txn.resume(); // done 
+}
+
+void 
+BlockStoreXform::handleVConnWriteReady(TSEvent event, TSVConn vc, int i)
+{
+  switch (event)
+  {
+     // int nbytes = TSIOBufferWrite(bufp, value, length);
+     // TSVConnWrite(_writerReady, contp, readerp, nbytes);
+  }
+}
+
+void
+BlockReadXform::handleReadCacheLookupComplete(Transaction &txn)
+{
+  auto &keys = _ctxt.keysInRange();
+  for( auto i = 0 ; i < keys.size() ; ++i ) {
+    TSCacheRead(_readersReady[i],keys[i]);
+  }
+
+  // cannot continue txn until all accounted for
+}
+
+void 
+BlockReadXform::handleVConnReadReady(TSEvent event, TSVConn vc)
+{
+}
+
+
+
+void
 BlockStoreXform::handleReadResponseHeaders(Transaction &txn)
 {
   if ( ! _ctxt.blockRange().empty() ) {
@@ -156,7 +200,7 @@ BlockStoreXform::handleReadResponseHeaders(Transaction &txn)
   // create and store a *new*
 }
 
-//}
+// }
 
 // tsapi TSReturnCode TSBase64Decode(const char *str, size_t str_len, unsigned char *dst, size_t dst_size, size_t *length);
 // tsapi TSReturnCode TSBase64Encode(const char *str, size_t str_len, char *dst, size_t dst_size, size_t *length);

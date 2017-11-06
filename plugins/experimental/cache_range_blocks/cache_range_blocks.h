@@ -42,44 +42,101 @@
 
 using namespace atscppapi;
 
-//namespace
-//{
+// namespace {
 
-// object to request write/read into cache
-struct CacheKey {
+using TSCacheKey_t = std::unique_ptr<std::remove_pointer<TSCacheKey>::type>;
+using TSCont_t = std::unique_ptr<std::remove_pointer<TSCont>::type>;
+using TSMutex_t = std::unique_ptr<std::remove_pointer<TSMutex>::type>;
+using TSMBuffer_t = std::unique_ptr<std::remove_pointer<TSMBuffer>::type>;
+using TSIOBuffer_t = std::unique_ptr<std::remove_pointer<TSIOBuffer>::type>;
+using TSIOBufferReader_t = std::unique_ptr<std::remove_pointer<TSIOBufferReader>::type>;
 
-  CacheKey() { }
-  
-  CacheKey(CacheKey &&url) : _key(url._key)
-  {
-    url._key = nullptr;
-  }
+namespace std {
+// unique_ptr deletions
+template <> inline void default_delete<TSCacheKey_t::element_type>::operator()(TSCacheKey key) const 
+  { TSCacheKeyDestroy(key); }
+template <> inline void default_delete<TSCont_t::element_type>::operator()(TSCont cont) const 
+  { TSContDestroy(cont); }
+template <> inline void default_delete<TSMutex_t::element_type>::operator()(TSMutex mutex) const 
+  { TSMutexDestroy(mutex); }
+template <> inline void default_delete<TSMBuffer_t::element_type>::operator()(TSMBuffer buff) const 
+  { TSMBufferDestroy(buff); }
+template <> inline void default_delete<TSIOBuffer_t::element_type>::operator()(TSIOBuffer buff) const 
+  { TSIOBufferDestroy(buff); }
+template <> inline void default_delete<TSIOBufferReader_t::element_type>::operator()(TSIOBufferReader reader) const 
+  { TSIOBufferReaderFree(reader); }
+}
 
-  CacheKey(const Url &url, uint64_t offset)
-     : _key( TSCacheKeyCreate() ) 
+// unique-ref object for a cache-read or cache-write request
+struct APICacheKey : public TSCacheKey_t
+{
+  APICacheKey() = default; // nullptr by default
+
+  operator TSCacheKey() const { return get(); }
+
+  APICacheKey(const Url &url, uint64_t offset)
+     : TSCacheKey_t(TSCacheKeyCreate()) 
   {
      auto str = url.getUrlString();
      str.append(reinterpret_cast<char*>(&offset),sizeof(offset)); // append *unique* position bytes
-	 TSCacheKeyDigestSet(_key, str.data(), str.size() );
+	 TSCacheKeyDigestSet(get(), str.data(), str.size() );
 	 auto host = url.getHost();
-	 TSCacheKeyHostNameSet(_key, host.data(), host.size()); 
+	 TSCacheKeyHostNameSet(get(), host.data(), host.size()); 
   }
-
-  ~CacheKey() { 
-    if ( _key ) { 
-      TSCacheKeyDestroy(_key); 
-      _key = nullptr;
-    }
-  }
-
-  CacheKey &operator=(CacheKey &&xfer) {
-    this->~CacheKey();
-    std::swap(xfer._key,_key);
-    return *this;
-  }
-
-  TSCacheKey _key = nullptr;
 };
+
+// object to request write/read into cache
+struct APICont : public TSCont_t
+{
+  APICont() = default; // nullptr by default
+
+  operator TSCont() { return get(); }
+
+  static int handleEvent(TSCont cont, TSEvent event, void *data) {
+    APICont *self = static_cast<APICont*>(TSContDataGet(cont));
+    ink_assert(self->operator TSCont() == cont);
+    self->_userCB(event,data);
+    return 0;
+  }
+
+  template <class T_OBJ, typename T_DATA>
+  APICont(T_OBJ &obj, void(T_OBJ::*funcp)(TSEvent,TSHttpTxn,T_DATA), T_DATA cbdata)
+     : TSCont_t(TSContCreate(&APICont::handleEvent,TSMutexCreate())) 
+  {
+    // point back here
+    TSContDataSet(get(),this);
+    // memorize user data to forward on
+    _userCB = decltype(_userCB)([&obj,funcp,cbdata](TSEvent event, void *evtdata) 
+       {
+        (obj.*funcp)(event,static_cast<TSHttpTxn>(evtdata),cbdata);
+       });
+  }
+
+  // can get with TSVConnWrite(), TSVConnRead() :
+  //		VC_EVENT_WRITE_READY / VC_EVENT_READ_READY
+  //		VC_EVENT_WRITE_COMPLETE / VC_EVENT_READ_COMPLETE,
+  //							  [wr/rd] VC_EVENT_EOS, 
+  //							  [wr/rd] VC_EVENT_INACTIVITY_TIMEOUT,
+  //							  [wr/rd] VC_EVENT_ACTIVE_TIMEOUT
+  template <class T_OBJ>
+  APICont(T_OBJ &obj, void(T_OBJ::*funcp)(TSEvent,TSVIO), Transaction &txn)
+     : TSCont_t(TSTransformCreate(&APICont::handleEvent,txn.getAtsHandle()))
+  {
+    // point back here
+    TSContDataSet(get(),this);
+    // memorize user data to forward on
+    _userCB = decltype(_userCB)([&obj,funcp](TSEvent event, void *evtdata) 
+       {
+        (obj.*funcp)(event,static_cast<TSVIO>(evtdata));
+       });
+  }
+
+  // holds object and function pointer
+  std::function<void(TSEvent,void*)> _userCB;
+};
+
+
+
 
 
 class BlockStoreXform;
@@ -99,9 +156,10 @@ public:
 
   ~BlockSetAccess() override {}
 
-  Headers &clientHdrs() { return _clntHdrs; }
-  const std::string &clientRange() const { return _respRange; }
-  const std::string &blockRange() const { return _blkRange; }
+  Headers                     &clientHdrs() { return _clntHdrs; }
+  const std::string           &clientRange() const { return _respRange; }
+  const std::string           &blockRange() const { return _blkRange; }
+  const std::vector<APICacheKey> &keysInRange() const { return _keysInRange; }
 
 //////////////////////////////////////////
 //////////// in the Transaction phases
@@ -154,9 +212,7 @@ private:
   int         _firstBlkSkip = 0; // negative if no blksize fit
   int         _lastBlkTrunc = 0; // negative if no blksize fit
 
-  std::vector<CacheKey>     _keysInRange; // in order with index
-  std::vector<TSVConn>     _vcsToRead; // each with an index
-  std::vector<TSVConn>     _vcsToWrite;
+  std::vector<APICacheKey>     _keysInRange; // in order with index
 
   std::unique_ptr<BlockStoreXform> _storeXform;
   std::unique_ptr<BlockReadXform> _sendXform;
@@ -165,14 +221,15 @@ private:
 
 
 
-class BlockStoreXform : public TransformationPlugin
+class BlockStoreXform : public TransactionPlugin
 {
  public:
   BlockStoreXform(Transaction &txn, BlockSetAccess &ctxt)
-     : TransformationPlugin(txn, REQUEST_TRANSFORMATION), 
-       // new manifest from result
+     : TransactionPlugin(txn), 
        _ctxt(ctxt)
   {
+       // _writerReady(*this,&BlockStoreXform::handleVConnWriteReady)
+
     // create new manifest file upon promise of data
     TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // add block-range and clean up
     TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // adjust headers to stub-file
@@ -181,13 +238,10 @@ class BlockStoreXform : public TransformationPlugin
   ~BlockStoreXform() override {}
 
   void
-  handleReadCacheLookupComplete(Transaction &txn)
-  {
-    auto txnhdl = static_cast<TSHttpTxn>(txn.getAtsHandle());
-    // attempt to update storage with new headers
-    TSHttpTxnCacheLookupStatusSet(txnhdl, TS_CACHE_LOOKUP_HIT_STALE);
-    txn.resume();
-  }
+  handleReadCacheLookupComplete(Transaction &txn);
+
+  void 
+  handleVConnWriteReady(TSEvent event, TSVConn vc, int i);
 
   void
   handleSendRequestHeaders(Transaction &txn)
@@ -208,37 +262,35 @@ class BlockStoreXform : public TransformationPlugin
 //////////////////////////////////////////
 //////////// in Response-Transformation phase 
 
-  // upstream data in
-  void consume(const std::string &data) override
-  {
-    // produce() is how to pass onwards
-    // pause() gives a future for unblocking call
-  }
-
-  // after last receive
-  void handleInputComplete() override
-  {
-    // setOutputComplete() will close downstream
-  }
-
 private:
-  BlockSetAccess &_ctxt;
+  BlockSetAccess          &_ctxt;
+  std::vector<APICont>     _writerReady;
+  std::vector<TSVConn>     _vcsToWrite;
 };
 
 
 
-class BlockReadXform : public TransformationPlugin
+class BlockReadXform : public TransactionPlugin
 {
  public:
   BlockReadXform(Transaction &txn, BlockSetAccess &ctxt)
-     : TransformationPlugin(txn, RESPONSE_TRANSFORMATION),
+     : TransactionPlugin(txn),
        _ctxt(ctxt)
   {
+       // _readersReady(*this,&BlockReadXform::handleVConnReadReady)
+
+    // create new manifest file upon promise of data
+    TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // add block-range and clean up
+    TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // adjust headers to stub-file
   }
+
   ~BlockReadXform() override {}
 
   void
   handleReadCacheLookupComplete(Transaction &txn) override;
+
+  void 
+  handleVConnReadReady(TSEvent event, TSVConn vc);
 
   void
   handleSendResponseHeaders(Transaction &txn) override
@@ -248,20 +300,10 @@ class BlockReadXform : public TransformationPlugin
 //////////////////////////////////////////
 //////////// in Response-Transformation phase 
 
-  // upstream data in
-  void consume(const std::string &data) override
-  {
-    // produce() is how to pass onwards
-    // pause() gives a future for unblocking call
-  }
-
-  // after last receive
-  void handleInputComplete() override
-  {
-    // setOutputComplete() will close downstream
-  }
 private:
-  BlockSetAccess &_ctxt;
+  BlockSetAccess          &_ctxt;
+  std::vector<APICont>     _readersReady;
+  std::vector<TSVConn>     _vcsToRead; // each with an index
 };
 
 
@@ -290,3 +332,6 @@ public:
 private:
   std::string _random;
 };
+
+//}
+
