@@ -16,5 +16,7 @@
 
 pkglib_LTLIBRARIES += experimental/server_push_preload/server_push_preload.la
 
+experimental_server_push_preload_server_push_preload_la_LIBADD = $(libatscppapi)
+
 experimental_server_push_preload_server_push_preload_la_SOURCES = \
   experimental/server_push_preload/server_push_preload.cc

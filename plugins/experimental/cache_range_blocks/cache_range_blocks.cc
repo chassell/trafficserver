@@ -22,7 +22,8 @@
 // namespace
 // {
 
-std::shared_ptr<GlobalPlugin> plugin;
+GlobalPlugin *plugin;
+//std::shared_ptr<GlobalPlugin> pluginPtr;
 
 constexpr int8_t base64_values[] = {
   /*+*/ 62,
@@ -136,14 +137,16 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   // clean up stub-response to be a normal header
   TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS);
 
-  // perform correct transformation
+  // handle case with a full miss or blocks missing
   if ( pstub == &_clntHdrs || ! have_needed_blocks(*pstub) ) {
     _storeXform = std::make_unique<BlockStoreXform>(txn,*this);
     _storeXform->handleReadCacheLookupComplete(txn);
+    _sendXform.reset();
   } else {
     // intercept data for new or updated stub version
     _sendXform = std::make_unique<BlockReadXform>(txn,*this);
     _sendXform->handleReadCacheLookupComplete(txn);
+    _storeXform.reset();
   }
 }
 
@@ -151,51 +154,73 @@ void
 BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
 {
   auto &keys = _ctxt.keysInRange();
-  for( auto i = 0 ; i < keys.size() ; ++i ) {
+  for( auto i = 0U ; i < keys.size() ; ++i ) {
     if ( keys[i] ) {
-      TSCacheWrite(_writerReady[i],keys[i]); // start write init immediately
+      // prep for async write that inits into VConn-futures 
+      auto contp = APICont::create_future_cont(_vcsToWrite[i],nullptr);
+      TSCacheWrite(contp,keys[i]);
     }
   }
 
-  // attempt to update storage with new headers
+  // must update storage with new headers
   auto txnhdl = static_cast<TSHttpTxn>(txn.getAtsHandle());
   TSHttpTxnCacheLookupStatusSet(txnhdl, TS_CACHE_LOOKUP_HIT_STALE);
   txn.resume(); // done 
-}
-
-void 
-BlockStoreXform::handleVConnWriteReady(TSEvent event, TSVConn vc, int i)
-{
-  switch (event)
-  {
-     // int nbytes = TSIOBufferWrite(bufp, value, length);
-     // TSVConnWrite(_writerReady, contp, readerp, nbytes);
-  }
 }
 
 void
 BlockReadXform::handleReadCacheLookupComplete(Transaction &txn)
 {
   auto &keys = _ctxt.keysInRange();
-  for( auto i = 0 ; i < keys.size() ; ++i ) {
-    TSCacheRead(_readersReady[i],keys[i]);
+
+  auto n = 0U;
+
+  for( ; n < keys.size() 
+                && keys[n] 
+                && _vcsToRead[n].get_future().wait_for(std::chrono::seconds(0)) == std::future_status::ready 
+                && _vcsToRead[n].get_future().get() ; ++n ) {
+    // scan *all* keys and vconns 
+  }
+
+  if ( n == keys.size() ) {
+    txn.resume(); // blocks are looked up .. so we can continue...
+    return;
+  }
+
+  // nullptr returned for VConn?
+  if ( ! _vcsToRead[n].get_future().get() ) 
+  {
+    // should not fail
+    ink_assert( _vcsToRead[n].get_future().wait_for(std::chrono::seconds(0)) == std::future_status::ready );
+
+    // blocks were *not* found .. so must continue without writing anything
+    TSHttpTxnCacheLookupStatusSet(static_cast<TSHttpTxn>(txn.getAtsHandle()), TS_CACHE_LOOKUP_MISS);
+    // restart ... doing writes (none) instead of reads
+    _ctxt.handleReadCacheLookupComplete(txn);
+    return;
+  }
+
+  // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
+  auto readsIncomplete = std::shared_ptr<BlockReadXform>(this, [&txn](BlockReadXform *ptr) {
+             ptr->handleReadCacheLookupComplete(txn);  // call again...
+          });
+  for( auto i = 0U ; i < keys.size() ; ++i ) {
+    // prep for async reads that init into VConn-futures
+    auto contp = APICont::create_future_cont(_vcsToRead[i],readsIncomplete);
+    TSCacheRead(contp,keys[i]);
   }
 
   // cannot continue txn until all accounted for
 }
-
-void 
-BlockReadXform::handleVConnReadReady(TSEvent event, TSVConn vc)
-{
-}
-
-
 
 void
 BlockStoreXform::handleReadResponseHeaders(Transaction &txn)
 {
   if ( ! _ctxt.blockRange().empty() ) {
     _ctxt.clientHdrs().set(RANGE_TAG, _ctxt.blockRange()); // request a block-based range if knowable
+  } else {
+    // don't get the whole thing yet
+    _ctxt.clientHdrs().set(RANGE_TAG, _ctxt.clientRange()); // request a block-based range if knowable
   }
   // create and store a *new*
 }
@@ -208,5 +233,6 @@ void
 TSPluginInit(int, const char **)
 {
   RegisterGlobalPlugin("CPP_Example_TransactionHook", "apache", "dev@trafficserver.apache.org");
-  plugin = std::make_shared<RangeDetect>();
+//  pluginPtr =  std::make_shared<RangeDetect>();
+  plugin = new RangeDetect();
 }

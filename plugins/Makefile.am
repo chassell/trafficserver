@@ -23,6 +23,9 @@ check_PROGRAMS =
 noinst_LTLIBRARIES =
 pkglib_LTLIBRARIES =
 
+libatscppapi = $(top_builddir)/lib/cppapi/libatscppapi.la
+libtsconfig = $(top_builddir)/lib/tsconfig/libtsconfig.la
+
 SUBDIRS =
 
 AM_LDFLAGS = $(TS_PLUGIN_LD_FLAGS)

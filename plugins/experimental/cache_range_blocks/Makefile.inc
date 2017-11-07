@@ -16,5 +16,7 @@
 
 pkglib_LTLIBRARIES += experimental/cache_range_blocks/cache_range_blocks.la
 
+experimental_cache_range_blocks_cache_range_blocks_la_LIBADD = $(libatscppapi)
+
 experimental_cache_range_blocks_cache_range_blocks_la_SOURCES = \
   experimental/cache_range_blocks/cache_range_blocks.cc

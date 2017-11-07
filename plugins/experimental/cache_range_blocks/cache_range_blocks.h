@@ -30,6 +30,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <future>
 
 #define CONTENT_ENCODING_INTERNAL "x-block-cache-range"
 
@@ -92,13 +93,24 @@ struct APICont : public TSCont_t
 
   operator TSCont() { return get(); }
 
-  static int handleEvent(TSCont cont, TSEvent event, void *data) {
-    APICont *self = static_cast<APICont*>(TSContDataGet(cont));
-    ink_assert(self->operator TSCont() == cont);
-    self->_userCB(event,data);
-    return 0;
+  template <typename T_DATA, typename T_REFCOUNTED>
+  static TSCont create_future_cont(std::promise<T_DATA> &prom, T_REFCOUNTED counted)
+  {
+    std::function<void(TSEvent,void*)> stub;
+
+    // make stub-contp to move into lambda's ownership
+    std::unique_ptr<APICont> contp(new APICont(std::move(stub))); // empty usercb at first
+    auto &cont = *contp; // hold scoped-ref
+
+    cont._userCB = std::move( [&cont,&prom,counted](TSEvent evt, void *data) {
+                std::unique_ptr<APICont> contp(&cont); // hold in fxn until done
+                prom.set_value(static_cast<T_DATA>(data));
+            });
+
+    return *contp.release(); // now it owns itself (until callback)
   }
 
+  // accepts TSHttpTxn handler functions
   template <class T_OBJ, typename T_DATA>
   APICont(T_OBJ &obj, void(T_OBJ::*funcp)(TSEvent,TSHttpTxn,T_DATA), T_DATA cbdata)
      : TSCont_t(TSContCreate(&APICont::handleEvent,TSMutexCreate())) 
@@ -112,14 +124,13 @@ struct APICont : public TSCont_t
        });
   }
 
+  // callback is "cb(TSEvent, TSVIO, ntodo)"
   // can get with TSVConnWrite(), TSVConnRead() :
   //		VC_EVENT_WRITE_READY / VC_EVENT_READ_READY
   //		VC_EVENT_WRITE_COMPLETE / VC_EVENT_READ_COMPLETE,
-  //							  [wr/rd] VC_EVENT_EOS, 
-  //							  [wr/rd] VC_EVENT_INACTIVITY_TIMEOUT,
-  //							  [wr/rd] VC_EVENT_ACTIVE_TIMEOUT
+  //	[wr/rd] VC_EVENT_EOS, VC_EVENT_INACTIVITY_TIMEOUT, VC_EVENT_ACTIVE_TIMEOUT
   template <class T_OBJ>
-  APICont(T_OBJ &obj, void(T_OBJ::*funcp)(TSEvent,TSVIO), Transaction &txn)
+  APICont(T_OBJ &obj, void(T_OBJ::*funcp)(TSEvent,TSVIO,int64_t), Transaction &txn)
      : TSCont_t(TSTransformCreate(&APICont::handleEvent,txn.getAtsHandle()))
   {
     // point back here
@@ -127,8 +138,25 @@ struct APICont : public TSCont_t
     // memorize user data to forward on
     _userCB = decltype(_userCB)([&obj,funcp](TSEvent event, void *evtdata) 
        {
-        (obj.*funcp)(event,static_cast<TSVIO>(evtdata));
+         auto vio = static_cast<TSVIO>(evtdata);
+         (obj.*funcp)(event,vio,TSVIONTodoGet(vio));
        });
+  }
+
+private:
+  static int handleEvent(TSCont cont, TSEvent event, void *data) {
+    APICont *self = static_cast<APICont*>(TSContDataGet(cont));
+    ink_assert(self->operator TSCont() == cont);
+    self->_userCB(event,data);
+    return 0;
+  }
+
+  APICont(std::function<void(TSEvent,void*)> &&fxn)
+     : TSCont_t(TSContCreate(&APICont::handleEvent,nullptr)),
+       _userCB(fxn)
+  {
+    // point back here
+    TSContDataSet(get(),this);
   }
 
   // holds object and function pointer
@@ -253,6 +281,7 @@ class BlockStoreXform : public TransactionPlugin
 
     // XXX erase only last field, with internal encoding
     proxyReq.erase(ACCEPT_ENCODING_TAG);
+    txn.resume(); // just wait for result
   }
 
   // change to 200 and append stub-file headers...
@@ -263,9 +292,8 @@ class BlockStoreXform : public TransactionPlugin
 //////////// in Response-Transformation phase 
 
 private:
-  BlockSetAccess          &_ctxt;
-  std::vector<APICont>     _writerReady;
-  std::vector<TSVConn>     _vcsToWrite;
+  BlockSetAccess                          &_ctxt;
+  std::vector<std::promise<TSVConn>> _vcsToWrite; // indexed as keys
 };
 
 
@@ -301,9 +329,8 @@ class BlockReadXform : public TransactionPlugin
 //////////// in Response-Transformation phase 
 
 private:
-  BlockSetAccess          &_ctxt;
-  std::vector<APICont>     _readersReady;
-  std::vector<TSVConn>     _vcsToRead; // each with an index
+  BlockSetAccess                          &_ctxt;
+  std::vector<std::promise<TSVConn>> _vcsToRead; // indexed as keys
 };
 
 
@@ -312,7 +339,7 @@ class RangeDetect : public GlobalPlugin
 {
 public:
   RangeDetect() { 
-    GlobalPlugin::registerHook(HOOK_READ_REQUEST_HEADERS_PRE_REMAP); 
+    GlobalPlugin::registerHook(HOOK_READ_REQUEST_HEADERS_POST_REMAP); 
   }
 
   // add stub-allowing header if has a valid range
