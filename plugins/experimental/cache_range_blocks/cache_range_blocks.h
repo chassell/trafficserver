@@ -39,7 +39,7 @@
 #define RANGE_TAG                "Range"
 #define CONTENT_RANGE_TAG        "Content-Range"
 #define ACCEPT_ENCODING_TAG      "Accept-Encoding"
-#define X_BLOCK_PRESENCE_TAG     "X-Block-Presence"
+#define X_BLOCK_BITSET_TAG     "X-Block-Bitset"
 
 using namespace atscppapi;
 
@@ -94,13 +94,15 @@ struct APICont : public TSCont_t
   operator TSCont() { return get(); }
 
   template <typename T_DATA, typename T_REFCOUNTED>
-  static TSCont create_future_cont(std::promise<T_DATA> &prom, T_REFCOUNTED counted)
+  static TSCont create_temp_tscont(std::promise<T_DATA> &prom, T_REFCOUNTED counted)
   {
     std::function<void(TSEvent,void*)> stub;
 
     // make stub-contp to move into lambda's ownership
     std::unique_ptr<APICont> contp(new APICont(std::move(stub))); // empty usercb at first
     auto &cont = *contp; // hold scoped-ref
+
+    (void) counted;
 
     cont._userCB = std::move( [&cont,&prom,counted](TSEvent evt, void *data) {
                 std::unique_ptr<APICont> contp(&cont); // hold in fxn until done
@@ -130,8 +132,8 @@ struct APICont : public TSCont_t
   //		VC_EVENT_WRITE_COMPLETE / VC_EVENT_READ_COMPLETE,
   //	[wr/rd] VC_EVENT_EOS, VC_EVENT_INACTIVITY_TIMEOUT, VC_EVENT_ACTIVE_TIMEOUT
   template <class T_OBJ>
-  APICont(T_OBJ &obj, void(T_OBJ::*funcp)(TSEvent,TSVIO,int64_t), Transaction &txn)
-     : TSCont_t(TSTransformCreate(&APICont::handleEvent,txn.getAtsHandle()))
+  APICont(T_OBJ &obj, void(T_OBJ::*funcp)(TSEvent,TSVIO,int64_t), TSHttpTxn txnHndl)
+     : TSCont_t(TSTransformCreate(&APICont::handleEvent,txnHndl))
   {
     // point back here
     TSContDataSet(get(),this);
@@ -163,10 +165,6 @@ private:
   std::function<void(TSEvent,void*)> _userCB;
 };
 
-
-
-
-
 class BlockStoreXform;
 class BlockReadXform;
 
@@ -176,21 +174,27 @@ class BlockSetAccess : public TransactionPlugin
 public:
   BlockSetAccess(Transaction &txn)
      : TransactionPlugin(txn),
-       _clntHdrs(txn.getClientRequest().getHeaders()),
+       _atsTxn(static_cast<TSHttpTxn>(txn.getAtsHandle())),
        _url(txn.getClientRequest().getUrl()),
-       _respRange( _clntHdrs.values(RANGE_TAG) )
+       _clntHdrs(txn.getClientRequest().getHeaders()),
+       _clntRange(txn.getClientRequest().getHeaders().values(RANGE_TAG))
   {
   }
 
   ~BlockSetAccess() override {}
 
   Headers                     &clientHdrs() { return _clntHdrs; }
-  const std::string           &clientRange() const { return _respRange; }
+  const Url                   &clientUrl() const { return _url; }
+  const std::string           &clientRange() const { return _clntRange; }
   const std::string           &blockRange() const { return _blkRange; }
+  TSHttpTxn                   atsTxn() const { return _atsTxn; }
   const std::vector<APICacheKey> &keysInRange() const { return _keysInRange; }
 
-//////////////////////////////////////////
-//////////// in the Transaction phases
+  uint64_t                    blockSize() const { return _blkSize; }
+
+  void clean_server_request(Transaction &txn);
+  void clean_server_response(Transaction &txn);
+
   void
   handleReadRequestHeadersPostRemap(Transaction &txn) override
   {
@@ -202,25 +206,32 @@ public:
     txn.resume();
   }
 
+  // detect a manifest stub file
   void
-  handleReadCacheLookupComplete(Transaction &txn);
+  handleReadCacheLookupComplete(Transaction &txn) override;
 
   void
   handleSendResponseHeaders(Transaction &txn) override
   {
     auto &clntResp = txn.getClientResponse().getHeaders();
-    // uses 206 as response status
-    clntResp.set(CONTENT_RANGE_TAG, _respRange); // restore
+
+    // override block-style range
+    if ( ! _respRange.empty() ) {
+      clntResp.set(CONTENT_RANGE_TAG, _respRange); // restore
+    }
+
     clntResp.erase("Warning"); // erase added proxy-added warning
 
-    // XXX erase only last field, with internal encoding
+    // TODO erase only last field, with internal encoding
     clntResp.erase(CONTENT_ENCODING_TAG);
+    clntResp.erase(X_BLOCK_BITSET_TAG);
     txn.resume();
   }
 
 private:
   Headers *get_stub_hdrs(Transaction &txn) 
   {
+     // not even found?
      if (txn.getCacheStatus() != Txn_t::CACHE_LOOKUP_HIT_FRESH ) {
        return &_clntHdrs;
      }
@@ -230,35 +241,66 @@ private:
      return ( i != std::string::npos ? &ccheHdrs : nullptr );
   }
 
-  uint64_t have_needed_blocks(Headers &stubHdrs);
+  uint64_t have_needed_blocks();
 
-  Headers    &_clntHdrs;
-  Url        &_url;
-  std::string _respRange;
-  std::string _blkRange;
+  const TSHttpTxn     _atsTxn = nullptr;
+  Url                &_url;
+  Headers            &_clntHdrs;
+  std::string         _clntRange;
+
+  uint64_t            _assetLen = 0ULL; // if cached
+  uint64_t            _blkSize = 0ULL; // if cached
+  std::string         _b64BlkBitset; // if cached
+  std::string         _respRange; // from clnt req for resp
+  std::string         _blkRange; // from clnt req for serv req
 
   int         _firstBlkSkip = 0; // negative if no blksize fit
   int         _lastBlkTrunc = 0; // negative if no blksize fit
 
   std::vector<APICacheKey>     _keysInRange; // in order with index
 
-  std::unique_ptr<BlockStoreXform> _storeXform;
-  std::unique_ptr<BlockReadXform> _sendXform;
+  std::unique_ptr<Plugin> _xform;
 };
 
 
+class BlockInitXform : public TransactionPlugin
+{
+ public:
+  BlockInitXform(Transaction &txn, BlockSetAccess &ctxt)
+     : TransactionPlugin(txn), _ctxt(ctxt)
+  {
+    TSHttpTxnUntransformedRespCache(_ctxt.atsTxn(), 0);
+    TSHttpTxnTransformedRespCache(_ctxt.atsTxn(), 1);  // create mfest headers
+    TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // add user-range and clean up
+    TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // remember length to create new entry
+  }
+
+  void
+  handleSendRequestHeaders(Transaction &txn) override {
+    _ctxt.clean_server_request(txn); // request full blocks if possible
+    txn.resume();
+  }
+
+  // change to 200 and append stub-file headers...
+  void
+  handleReadResponseHeaders(Transaction &txn) override {
+    _ctxt.clean_server_response(txn); // request full blocks if possible
+    txn.resume();
+  }
+
+ private:
+  BlockSetAccess                    &_ctxt;
+};
 
 
 class BlockStoreXform : public TransactionPlugin
 {
  public:
   BlockStoreXform(Transaction &txn, BlockSetAccess &ctxt)
-     : TransactionPlugin(txn), 
-       _ctxt(ctxt)
+     : TransactionPlugin(txn), _ctxt(ctxt), _vcsToWrite(ctxt.keysInRange().size())
   {
-       // _writerReady(*this,&BlockStoreXform::handleVConnWriteReady)
-
-    // create new manifest file upon promise of data
+    TSHttpTxnUntransformedRespCache(_ctxt.atsTxn(), 0); 
+    TSHttpTxnTransformedRespCache(_ctxt.atsTxn(), 1);  // update mfest headers
     TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // add block-range and clean up
     TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // adjust headers to stub-file
   }
@@ -266,33 +308,23 @@ class BlockStoreXform : public TransactionPlugin
   ~BlockStoreXform() override {}
 
   void
-  handleReadCacheLookupComplete(Transaction &txn);
-
-  void 
-  handleVConnWriteReady(TSEvent event, TSVConn vc, int i);
+  handleReadCacheLookupComplete(Transaction &txn) override;
 
   void
-  handleSendRequestHeaders(Transaction &txn)
-  {
-    auto &proxyReq = txn.getServerRequest().getHeaders();
-    if ( ! _ctxt.blockRange().empty() ) {
-      proxyReq.set(RANGE_TAG,_ctxt.blockRange()); // get a useful size of data
-    }
-
-    // XXX erase only last field, with internal encoding
-    proxyReq.erase(ACCEPT_ENCODING_TAG);
-    txn.resume(); // just wait for result
+  handleSendRequestHeaders(Transaction &txn) override {
+    _ctxt.clean_server_request(txn); // request full blocks if possible
+    txn.resume();
   }
 
   // change to 200 and append stub-file headers...
   void
-  handleReadResponseHeaders(Transaction &txn);
-  
+  handleReadResponseHeaders(Transaction &txn) override;
+
 //////////////////////////////////////////
 //////////// in Response-Transformation phase 
 
 private:
-  BlockSetAccess                          &_ctxt;
+  BlockSetAccess                    &_ctxt;
   std::vector<std::promise<TSVConn>> _vcsToWrite; // indexed as keys
 };
 
@@ -305,8 +337,6 @@ class BlockReadXform : public TransactionPlugin
      : TransactionPlugin(txn),
        _ctxt(ctxt)
   {
-       // _readersReady(*this,&BlockReadXform::handleVConnReadReady)
-
     // create new manifest file upon promise of data
     TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // add block-range and clean up
     TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // adjust headers to stub-file
@@ -317,9 +347,6 @@ class BlockReadXform : public TransactionPlugin
   void
   handleReadCacheLookupComplete(Transaction &txn) override;
 
-  void 
-  handleVConnReadReady(TSEvent event, TSVConn vc);
-
   void
   handleSendResponseHeaders(Transaction &txn) override
   {
@@ -329,7 +356,7 @@ class BlockReadXform : public TransactionPlugin
 //////////// in Response-Transformation phase 
 
 private:
-  BlockSetAccess                          &_ctxt;
+  BlockSetAccess                    &_ctxt;
   std::vector<std::promise<TSVConn>> _vcsToRead; // indexed as keys
 };
 
