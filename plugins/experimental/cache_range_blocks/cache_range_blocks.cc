@@ -247,8 +247,6 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   // "stale" cache until all blocks proven ready
   TSHttpTxnCacheLookupStatusSet(atsTxn(), TS_CACHE_LOOKUP_HIT_STALE);
-  // all updates shouldn't be written with server 
-  TSHttpTxnServerRespNoStoreSet(atsTxn(), 1);
 
   // simply clean up stub-response to be a normal header
   TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS);
@@ -270,7 +268,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     return;
   }
 
-  _blkSize = INK_ALIGN(_assetLen/_b64BlkBitset.size(),MIN_BLOCK_STORED*6); // size set at start
+  _blkSize = INK_ALIGN((_assetLen>>10)|1,MIN_BLOCK_STORED);
 
   DEBUG_LOG("cache-resp: len=%llu set=%s",_assetLen,_b64BlkBitset.c_str());
 
@@ -313,8 +311,9 @@ BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
 void
 BlockStoreXform::handleReadResponseHeaders(Transaction &txn)
 {
-   DEBUG_LOG("updated cache-hdrs:\n%s\n------\n",txn.getCachedResponse().getHeaders().wireStr().c_str());
+   DEBUG_LOG("updated cache-hdrs:\n%s\n------\n",txn.updateCachedResponse().getHeaders().wireStr().c_str());
    _ctxt.clean_server_response(txn);
+   txn.resume();
 }
 
 // start read of all the blocks
