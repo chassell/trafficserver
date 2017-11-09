@@ -48,6 +48,7 @@ initTransactionHandles(Transaction &transaction, TSEvent event)
 {
   utils::internal::initTransactionCachedRequest(transaction, event);
   utils::internal::initTransactionCachedResponse(transaction, event);
+  utils::internal::initTransactionCachedUpdatedResponse(transaction, event);
   utils::internal::initTransactionServerRequest(transaction, event);
   utils::internal::initTransactionServerResponse(transaction, event);
   utils::internal::initTransactionClientResponse(transaction, event);

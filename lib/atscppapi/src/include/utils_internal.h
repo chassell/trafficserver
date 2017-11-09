@@ -102,6 +102,12 @@ namespace utils
       transaction.initCachedResponse(event);
     }
 
+    static void
+    initTransactionCachedUpdatedResponse(Transaction &transaction, TSEvent event)
+    {
+      transaction.initCachedUpdatedResponse(event);
+    }
+
     static const std::list<TransactionPlugin *> &
     getTransactionPlugins(const Transaction &transaction)
     {
