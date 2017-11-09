@@ -59,6 +59,7 @@ struct atscppapi::TransactionState : noncopyable {
   TSMBuffer cached_response_hdr_buf_;
   TSMLoc cached_response_hdr_loc_;
   Response cached_response_;
+  Response cached_response_updated_;
   TSMBuffer cached_request_hdr_buf_;
   TSMLoc cached_request_hdr_loc_;
   Request cached_request_;
@@ -503,11 +504,24 @@ Transaction::getCachedResponse()
   static initializeHandles initializeCachedResponseHandles(TSHttpTxnCachedRespGet);
   if (nullptr == state_->cached_response_hdr_buf_) {
     initializeCachedResponseHandles(state_->txn_, state_->cached_response_hdr_buf_, state_->cached_response_hdr_loc_,
-                                    "cached response");
+                                      "cached response updated");
     LOG_DEBUG("Initializing cached response, event %d", state_->event_);
     state_->cached_response_.init(state_->cached_response_hdr_buf_, state_->cached_response_hdr_loc_);
   }
   return state_->cached_response_;
+}
+
+Response &
+Transaction::updateCachedResponse()
+{
+  static initializeHandles initializeCachedResponseHandles(TSHttpTxnCachedRespModifiableGet);
+  if ( ! state_->cached_response_updated_.getStatusCode() ) {
+    initializeCachedResponseHandles(state_->txn_, state_->cached_response_hdr_buf_, state_->cached_response_hdr_loc_,
+                                    "cached response");
+    LOG_DEBUG("Initializing cached response, event %d", state_->event_);
+    state_->cached_response_updated_.init(state_->cached_response_hdr_buf_, state_->cached_response_hdr_loc_);
+  }
+  return state_->cached_response_updated_;
 }
 
 void

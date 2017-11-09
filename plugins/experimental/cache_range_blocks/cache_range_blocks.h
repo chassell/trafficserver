@@ -34,12 +34,16 @@
 
 #define CONTENT_ENCODING_INTERNAL "x-block-cache-range"
 
+#define IF_MODIFIED_SINCE_TAG    "If-Modified-Since"
+#define IF_NONE_MATCH_TAG        "If-None-Match"
 #define CONTENT_ENCODING_TAG     "Content-Encoding"
 #define CONTENT_LENGTH_TAG       "Content-Length"
 #define RANGE_TAG                "Range"
 #define CONTENT_RANGE_TAG        "Content-Range"
 #define ACCEPT_ENCODING_TAG      "Accept-Encoding"
 #define X_BLOCK_BITSET_TAG     "X-Block-Bitset"
+
+#define MIN_BLOCK_STORED       8192
 
 using namespace atscppapi;
 
@@ -51,6 +55,8 @@ using TSMutex_t = std::unique_ptr<std::remove_pointer<TSMutex>::type>;
 using TSMBuffer_t = std::unique_ptr<std::remove_pointer<TSMBuffer>::type>;
 using TSIOBuffer_t = std::unique_ptr<std::remove_pointer<TSIOBuffer>::type>;
 using TSIOBufferReader_t = std::unique_ptr<std::remove_pointer<TSIOBufferReader>::type>;
+
+using TSMutexPtr_t = std::shared_ptr<std::remove_pointer<TSMutex>::type>;
 
 namespace std {
 // unique_ptr deletions
@@ -99,7 +105,7 @@ struct APICont : public TSCont_t
     std::function<void(TSEvent,void*)> stub;
 
     // make stub-contp to move into lambda's ownership
-    std::unique_ptr<APICont> contp(new APICont(std::move(stub))); // empty usercb at first
+    std::unique_ptr<APICont> contp(new APICont(std::move(stub),TSMutexCreate())); // empty usercb at first
     auto &cont = *contp; // hold scoped-ref
 
     (void) counted;
@@ -153,8 +159,8 @@ private:
     return 0;
   }
 
-  APICont(std::function<void(TSEvent,void*)> &&fxn)
-     : TSCont_t(TSContCreate(&APICont::handleEvent,nullptr)),
+  APICont(std::function<void(TSEvent,void*)> &&fxn, TSMutex mutex=nullptr)
+     : TSCont_t(TSContCreate(&APICont::handleEvent,mutex)),
        _userCB(fxn)
   {
     // point back here
@@ -189,18 +195,19 @@ public:
   const std::string           &blockRange() const { return _blkRange; }
   TSHttpTxn                   atsTxn() const { return _atsTxn; }
   const std::vector<APICacheKey> &keysInRange() const { return _keysInRange; }
+  const std::string          &b64BlkBitset() const { return _b64BlkBitset; }
 
   uint64_t                    blockSize() const { return _blkSize; }
 
+  void clean_client_request();
   void clean_server_request(Transaction &txn);
   void clean_server_response(Transaction &txn);
+  void clean_client_response(Transaction &txn);
 
   void
   handleReadRequestHeadersPostRemap(Transaction &txn) override
   {
-    // allow to try using "stub" instead of a MISS
-    _clntHdrs.append(ACCEPT_ENCODING_TAG,CONTENT_ENCODING_INTERNAL ";q=0.001");
-
+    clean_client_request();
     // use stub-file as fail-over-hit with possible miss if block is missing
     TransactionPlugin::registerHook(HOOK_CACHE_LOOKUP_COMPLETE);
     txn.resume();
@@ -213,33 +220,12 @@ public:
   void
   handleSendResponseHeaders(Transaction &txn) override
   {
-    auto &clntResp = txn.getClientResponse().getHeaders();
-
-    // override block-style range
-    if ( ! _respRange.empty() ) {
-      clntResp.set(CONTENT_RANGE_TAG, _respRange); // restore
-    }
-
-    clntResp.erase("Warning"); // erase added proxy-added warning
-
-    // TODO erase only last field, with internal encoding
-    clntResp.erase(CONTENT_ENCODING_TAG);
-    clntResp.erase(X_BLOCK_BITSET_TAG);
+    clean_client_response(txn);
     txn.resume();
   }
 
 private:
-  Headers *get_stub_hdrs(Transaction &txn) 
-  {
-     // not even found?
-     if (txn.getCacheStatus() != Txn_t::CACHE_LOOKUP_HIT_FRESH ) {
-       return &_clntHdrs;
-     }
-
-     auto &ccheHdrs = txn.getCachedRequest().getHeaders();
-     auto i = ccheHdrs.values(CONTENT_ENCODING_TAG).find(CONTENT_ENCODING_INTERNAL);
-     return ( i != std::string::npos ? &ccheHdrs : nullptr );
-  }
+  Headers *get_stub_hdrs(Transaction &txn);
 
   uint64_t have_needed_blocks();
 

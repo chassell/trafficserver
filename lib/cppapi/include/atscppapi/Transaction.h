@@ -263,6 +263,13 @@ public:
   Response &getCachedResponse();
 
   /**
+   * Returns a Request object which is the cached request, to be rewritten when released.
+   *
+   * @return Request object
+   */
+  Response &updateCachedResponse();
+
+  /**
    * Returns the Effective URL for this transaction taking into account host.
    */
   std::string getEffectiveUrl();
