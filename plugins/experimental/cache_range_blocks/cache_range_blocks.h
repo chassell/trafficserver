@@ -176,15 +176,17 @@ class BlockReadXform;
 
 class BlockSetAccess : public TransactionPlugin
 {
+  friend BlockReadXform; // when it needs to change over
   using Txn_t = Transaction;
 public:
-  BlockSetAccess(Transaction &txn)
+  explicit BlockSetAccess(Transaction &txn)
      : TransactionPlugin(txn),
        _atsTxn(static_cast<TSHttpTxn>(txn.getAtsHandle())),
        _url(txn.getClientRequest().getUrl()),
        _clntHdrs(txn.getClientRequest().getHeaders()),
        _clntRange(txn.getClientRequest().getHeaders().values(RANGE_TAG))
   {
+    TransactionPlugin::registerHook(HOOK_CACHE_LOOKUP_COMPLETE);
   }
 
   ~BlockSetAccess() override {}
@@ -196,6 +198,7 @@ public:
   TSHttpTxn                   atsTxn() const { return _atsTxn; }
   const std::vector<APICacheKey> &keysInRange() const { return _keysInRange; }
   const std::string          &b64BlkBitset() const { return _b64BlkBitset; }
+  uint64_t                    assetLen() const { return _assetLen; }
 
   uint64_t                    blockSize() const { return _blkSize; }
 
@@ -205,13 +208,7 @@ public:
   void clean_client_response(Transaction &txn);
 
   void
-  handleReadRequestHeadersPostRemap(Transaction &txn) override
-  {
-    clean_client_request();
-    // use stub-file as fail-over-hit with possible miss if block is missing
-    TransactionPlugin::registerHook(HOOK_CACHE_LOOKUP_COMPLETE);
-    txn.resume();
-  }
+  handleReadRequestHeadersPostRemap(Transaction &txn) override;
 
   // detect a manifest stub file
   void
@@ -225,7 +222,7 @@ public:
   }
 
 private:
-  Headers *get_stub_hdrs(Transaction &txn);
+  Headers *get_trunc_hdrs(Transaction &txn);
 
   uint64_t have_needed_blocks();
 
@@ -285,8 +282,6 @@ class BlockStoreXform : public TransactionPlugin
   BlockStoreXform(Transaction &txn, BlockSetAccess &ctxt)
      : TransactionPlugin(txn), _ctxt(ctxt), _vcsToWrite(ctxt.keysInRange().size())
   {
-    TSHttpTxnUntransformedRespCache(_ctxt.atsTxn(), 0); 
-    TSHttpTxnTransformedRespCache(_ctxt.atsTxn(), 1);  // update mfest headers
     TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // add block-range and clean up
     TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // adjust headers to stub-file
   }
@@ -343,7 +338,8 @@ class BlockReadXform : public TransactionPlugin
 
 private:
   BlockSetAccess                    &_ctxt;
-  std::vector<std::promise<TSVConn>> _vcsToRead; // indexed as keys
+  std::vector<std::promise<TSVConn>> _vcsToReadP; // indexed as keys are
+  std::vector<std::future<TSVConn>> _vcsToRead; // indexed as keys
 };
 
 
@@ -357,17 +353,7 @@ public:
 
   // add stub-allowing header if has a valid range
   void
-  handleReadRequestHeadersPostRemap(Transaction &txn) override
-  {
-    auto &clntReq = txn.getClientRequest().getHeaders();
-    if ( clntReq.count(RANGE_TAG) != 1 ) {
-      return; // only use single-range requests
-    }
-
-    auto &txnPlugin = *new BlockSetAccess(txn); // plugin attach
-    // changes client header and prep
-    txnPlugin.handleReadRequestHeadersPostRemap(txn);
-  }
+  handleReadRequestHeadersPostRemap(Transaction &txn) override;
 
 private:
   std::string _random;

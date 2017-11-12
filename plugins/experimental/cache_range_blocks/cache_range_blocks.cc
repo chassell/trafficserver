@@ -16,13 +16,18 @@
   limitations under the License.
  */
 #include "cache_range_blocks.h"
+
 #include "atscppapi/HttpStatus.h"
+#include "ts/experimental.h"
+#include "ts/InkErrno.h"
 
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
 #define PLUGIN_NAME "cache_range_blocks"
 #define DEBUG_LOG(fmt, ...) TSDebug(PLUGIN_NAME, "[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
 #define ERROR_LOG(fmt, ...) TSError("[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
+
+static int parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_t &end);
 
 // namespace
 // {
@@ -56,18 +61,209 @@ static inline bool is_base64_bit_set(const std::string &base64,unsigned i)
    return (1<<(i%6)) & base64_values[base64[i/6]-'+'];
 }
 
+/////////////////////////////////////////
+void
+RangeDetect::handleReadRequestHeadersPostRemap(Transaction &txn)
+{
+  auto &clntReq = txn.getClientRequest().getHeaders();
+  if ( clntReq.count(RANGE_TAG) != 1 ) {
+    return; // only use single-range requests
+  }
+
+  // write on a miss ... to start the process
+  txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE,1);
+
+  auto &txnPlugin = *new BlockSetAccess(txn); // plugin attach
+  // changes client header and prep
+  txnPlugin.handleReadRequestHeadersPostRemap(txn);
+}
+
+void
+BlockSetAccess::handleReadRequestHeadersPostRemap(Transaction &txn)
+{
+  clean_client_request(); // [leave req as before]
+  // use stub-file as fail-over-hit with possible miss if block is missing
+  txn.resume();
+}
+
+void
+BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
+{
+  auto pstub = get_trunc_hdrs(txn); // get (1) client-req ptr or (2) cached-stub ptr or nullptr
+
+  if ( ! pstub ) {
+    /// TODO delete old stub file in case of revalidate!
+    return; // main file made it through
+  }
+
+  if ( pstub == &_clntHdrs ) {
+    DEBUG_LOG("cache-init: len=%lu set=%s",_assetLen,_b64BlkBitset.c_str());
+    _xform = std::unique_ptr<Plugin>(new BlockInitXform(txn,*this));
+    _xform->handleReadCacheLookupComplete(txn); // [default version]
+    return;
+  }
+
+  // "stale" cache until all blocks proven ready
+  TSHttpTxnCacheLookupStatusSet(atsTxn(), TS_CACHE_LOOKUP_HIT_STALE);
+
+  // simply clean up stub-response to be a normal header
+  TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS);
+
+  // see if valid stub headers
+  auto srvrRange = pstub->value(CONTENT_RANGE_TAG); // not in clnt hdrs
+
+  srvrRange.erase(0,srvrRange.find('/')).erase(0,1);
+  auto _assetLen = std::atoll(srvrRange.c_str());
+ 
+  _b64BlkBitset = pstub->value(X_BLOCK_BITSET_TAG);
+  auto chk = std::find_if(_b64BlkBitset.begin(),_b64BlkBitset.end(),[](char c) { return ! isalnum(c) && c != '+' && c !='/'; });
+
+  // invalid stub file... (or client headers instead)
+  if ( ! _assetLen || _b64BlkBitset.empty() || chk != _b64BlkBitset.end() ) {
+    DEBUG_LOG("cache-stub-fail: len=%llu set=%s",_assetLen,_b64BlkBitset.c_str());
+    _xform = std::unique_ptr<Plugin>(new BlockInitXform(txn,*this));
+    _xform->handleReadCacheLookupComplete(txn); // [default version]
+    return;
+  }
+
+  _blkSize = INK_ALIGN((_assetLen>>10)|1,MIN_BLOCK_STORED);
+
+  // all blocks [and keys for them] are valid to try reading?
+  if ( have_needed_blocks() && ! _keysInRange.empty() ) {
+    DEBUG_LOG("cache-resp-rd: len=%llu set=%s",_assetLen,_b64BlkBitset.c_str());
+    // first test that blocks are ready and correctly sized
+    _xform = std::unique_ptr<Plugin>(new BlockReadXform(txn,*this));
+    _xform->handleReadCacheLookupComplete(txn);
+    return;
+  }
+
+  DEBUG_LOG("cache-resp-wr: len=%llu set=%s",_assetLen,_b64BlkBitset.c_str());
+
+  // intercept data for new or updated stub version
+  _xform = std::unique_ptr<Plugin>(new BlockStoreXform(txn,*this));
+  _xform->handleReadCacheLookupComplete(txn);
+}
+
+void
+BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
+{
+  // [will override the server response for headers]
+  auto &cachhdrs = txn.updateCachedResponse().getHeaders();
+  auto b64Bitset = _ctxt.b64BlkBitset();
+
+  auto &keys = _ctxt.keysInRange();
+  for( auto i = 0U ; i < keys.size() ; ++i ) {
+    if ( keys[i] ) {
+      // prep for async write that inits into VConn-futures 
+      auto contp = APICont::create_temp_tscont(_vcsToWrite[i],nullptr);
+      TSCacheWrite(contp,keys[i]); // find room to store...
+      base64_bit_set(b64Bitset,i); // set a bit
+    }
+  }
+  cachhdrs.set(X_BLOCK_BITSET_TAG,b64Bitset); // attempt to erase/rewrite field in headers
+  DEBUG_LOG("updated bitset: %s",b64Bitset.c_str());
+  DEBUG_LOG("updated cache-hdrs:\n%s\n------\n",cachhdrs.wireStr().c_str());
+  DEBUG_LOG("updated cache-hdrs:\n%s\n------\n",txn.getCachedResponse().getHeaders().wireStr().c_str());
+
+  // time to act like it's fresh!
+  TSHttpTxnCacheLookupStatusSet(_ctxt.atsTxn(), TS_CACHE_LOOKUP_HIT_FRESH);
+  TSHttpTxnUpdateCachedObject(_ctxt.atsTxn());
+
+  txn.resume(); // done 
+}
+
+void
+BlockStoreXform::handleReadResponseHeaders(Transaction &txn)
+{
+   DEBUG_LOG("updated cache-hdrs:\n%s\n------\n",txn.updateCachedResponse().getHeaders().wireStr().c_str());
+   _ctxt.clean_server_response(txn);
+   txn.resume();
+}
+
+// start read of all the blocks
+void
+BlockReadXform::handleReadCacheLookupComplete(Transaction &txn)
+{
+  auto &keys = _ctxt.keysInRange();
+
+  if ( _vcsToRead.size() != keys.size() )
+  {
+    // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
+    auto barrierLock = std::shared_ptr<BlockReadXform>(this, [&txn](BlockReadXform *ptr) {
+             ptr->handleReadCacheLookupComplete(txn);  // recurse from last one
+          });
+    for( auto i = 0U ; i < keys.size() ; ++i ) {
+      _vcsToReadP.emplace_back();
+      _vcsToRead.emplace_back(_vcsToReadP.back().get_future());
+      // prep for async reads that init into VConn-futures
+      auto contp = APICont::create_temp_tscont(_vcsToReadP.back(),barrierLock);
+      TSCacheRead(contp,keys[i]);
+    }
+    return;
+  }
+
+  auto nrdy = 0U;
+  auto nvalid = 0U;
+
+  // scan *all* keys and vconns to check if ready
+  for( ; nvalid < _vcsToRead.size() ; ++nvalid ) 
+  {
+    if ( _vcsToRead[nvalid].wait_for(std::chrono::seconds(0)) != std::future_status::ready ) {
+      break;
+    }
+
+    ++nrdy; // value is ready
+
+    auto vconn = _vcsToRead[nvalid].get();
+    auto vconnErr = -reinterpret_cast<intptr_t>(vconn);
+    // block isn't ready
+    if ( ! vconn ) {
+      break;
+    }
+    // pointers don't look like this
+    if ( vconnErr >= CACHE_ERRNO && vconnErr < EHTTP_ERROR ) {
+      break;
+    }
+
+    // block is ready and of right size?
+    if ( TSVConnCacheObjectSizeGet(vconn) != static_cast<int64_t>(_ctxt.blockSize()) ) {
+      // TODO: delete block
+      break;
+    }
+  }
+
+  // ready to read from cache...
+  if ( nvalid < keys.size() ) {
+    DEBUG_LOG("cache-resp-wr: len=%lu set=%s",_ctxt.assetLen(),_ctxt.b64BlkBitset().c_str());
+
+    // intercept data for new or updated stub version
+    auto xform = std::unique_ptr<Plugin>(new BlockStoreXform(txn,_ctxt));
+    xform->handleReadCacheLookupComplete(txn);
+    // TODO: reset bits and go to write-based restart
+    _ctxt.handleReadCacheLookupComplete(txn); // resume there
+    return;
+  }
+
+  TSHttpTxnCacheLookupStatusSet(_ctxt.atsTxn(), TS_CACHE_LOOKUP_HIT_FRESH);
+  txn.resume(); // blocks are looked up .. so we can continue...
+}
+// }
+
+/////////////////////////////////////////////////////////////
+
 void BlockSetAccess::clean_client_request()
 {
   // allow to try using "stub" instead of a MISS
   _clntHdrs.append(ACCEPT_ENCODING_TAG,CONTENT_ENCODING_INTERNAL ";q=0.001");
-  _clntHdrs.erase(RANGE_TAG); // prep for stub
+//  _clntHdrs.append(ACCEPT_ENCODING_TAG,"*;q=1");
+//  _clntHdrs.erase(RANGE_TAG);
 }
 
 void BlockSetAccess::clean_server_request(Transaction &txn)
 {
   auto &proxyReq = txn.getServerRequest().getHeaders();
 
-  // TODO erase only last field, with internal encoding
+  // TODO: erase only last fields
   proxyReq.erase(ACCEPT_ENCODING_TAG);
   proxyReq.erase(IF_MODIFIED_SINCE_TAG); // revalidate must be done locally
   proxyReq.erase(IF_NONE_MATCH_TAG); // revalidate must be done locally
@@ -75,8 +271,8 @@ void BlockSetAccess::clean_server_request(Transaction &txn)
   // request a block-based range if knowable
   if ( ! blockRange().empty() ) {
      proxyReq.set(RANGE_TAG, blockRange()); 
-  } else {
-     proxyReq.set(RANGE_TAG, clientRange());
+//  } else {
+//     proxyReq.set(RANGE_TAG, clientRange());
   }
 }
 
@@ -98,14 +294,13 @@ void BlockSetAccess::clean_server_response(Transaction &txn)
 
   DEBUG_LOG("srvr-resp: len=%lld final=%s range=%s",currAssetLen,srvrRange.c_str(),srvrRangeCopy.c_str());
 
-  if ( currAssetLen != _assetLen ) {
+  if ( static_cast<uint64_t>(currAssetLen) != _assetLen ) {
     _blkSize = INK_ALIGN((currAssetLen>>10)|1,MIN_BLOCK_STORED);
     _b64BlkBitset = std::string( (currAssetLen+_blkSize*6-1 )/(_blkSize*6), 'A');
     DEBUG_LOG("srvr-bitset: blk=%lu %s",_blkSize,_b64BlkBitset.c_str());
   }
 
   proxyRespStatus.setStatusCode(HTTP_STATUS_OK);
-
   proxyResp.set(CONTENT_ENCODING_TAG,CONTENT_ENCODING_INTERNAL);
   proxyResp.set(X_BLOCK_BITSET_TAG, _b64BlkBitset); // TODO: not good enough for huge files!!
 
@@ -119,10 +314,12 @@ void BlockSetAccess::clean_client_response(Transaction &txn)
 
   // override block-style range
   if ( ! _respRange.empty() ) {
-    clntRespStatus.setStatusCode( HTTP_STATUS_PARTIAL_CONTENT );
     clntResp.set(CONTENT_RANGE_TAG, _respRange); // restore
   }
 
+  if ( ! _clntRange.empty() ) {
+    clntRespStatus.setStatusCode( HTTP_STATUS_PARTIAL_CONTENT );
+  }
   clntResp.erase("Warning"); // erase added proxy-added warning
 
   // TODO erase only last field, with internal encoding
@@ -163,7 +360,7 @@ parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_t &end)
 }
 
 Headers *
-BlockSetAccess::get_stub_hdrs(Transaction &txn) 
+BlockSetAccess::get_trunc_hdrs(Transaction &txn) 
 {
    // not even found?
    if (txn.getCacheStatus() < Txn_t::CACHE_LOOKUP_HIT_STALE ) {
@@ -228,153 +425,6 @@ BlockSetAccess::have_needed_blocks()
   return end;
 }
 
-void
-BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
-{
-  auto pstub = get_stub_hdrs(txn); // get (1) client-req ptr or (2) cached-stub ptr or nullptr
-
-  if ( ! pstub ) {
-    /// TODO delete old stub file in case of revalidate!
-    return; // main file made it through
-  }
-
-  if ( pstub == &_clntHdrs ) {
-    DEBUG_LOG("cache-init: len=%lu set=%s",_assetLen,_b64BlkBitset.c_str());
-    _xform = std::unique_ptr<Plugin>(new BlockInitXform(txn,*this));
-    _xform->handleReadCacheLookupComplete(txn); // [default version]
-    return;
-  }
-
-  // "stale" cache until all blocks proven ready
-  TSHttpTxnCacheLookupStatusSet(atsTxn(), TS_CACHE_LOOKUP_HIT_STALE);
-
-  // simply clean up stub-response to be a normal header
-  TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS);
-
-  // see if valid stub headers
-  auto srvrRange = pstub->value(CONTENT_RANGE_TAG); // not in clnt hdrs
-
-  srvrRange.erase(0,srvrRange.find('/')).erase(0,1);
-  auto _assetLen = std::atoll(srvrRange.c_str());
- 
-  _b64BlkBitset = pstub->value(X_BLOCK_BITSET_TAG);
-  auto chk = std::find_if(_b64BlkBitset.begin(),_b64BlkBitset.end(),[](char c) { return ! isalnum(c) && c != '+' && c !='/'; });
-
-  // invalid stub file... (or client headers instead)
-  if ( ! _assetLen || _b64BlkBitset.empty() || chk != _b64BlkBitset.end() ) {
-    DEBUG_LOG("cache-stub-fail: len=%llu set=%s",_assetLen,_b64BlkBitset.c_str());
-    _xform = std::unique_ptr<Plugin>(new BlockInitXform(txn,*this));
-    _xform->handleReadCacheLookupComplete(txn); // [default version]
-    return;
-  }
-
-  _blkSize = INK_ALIGN((_assetLen>>10)|1,MIN_BLOCK_STORED);
-
-  DEBUG_LOG("cache-resp: len=%llu set=%s",_assetLen,_b64BlkBitset.c_str());
-
-  // all blocks [and keys for them] are valid to try reading?
-  if ( have_needed_blocks() && ! _keysInRange.empty() ) {
-    _xform = std::unique_ptr<Plugin>(new BlockReadXform(txn,*this));
-    // first test that blocks are ready and correctly sized
-    _xform->handleReadCacheLookupComplete(txn);
-    return;
-  }
-
-  // intercept data for new or updated stub version
-  _xform = std::unique_ptr<Plugin>(new BlockStoreXform(txn,*this));
-  _xform->handleReadCacheLookupComplete(txn);
-}
-
-void
-BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
-{
-  // [will override the server response for headers]
-  auto &cachhdrs = txn.updateCachedResponse().getHeaders();
-  auto b64Bitset = _ctxt.b64BlkBitset();
-
-  auto &keys = _ctxt.keysInRange();
-  for( auto i = 0U ; i < keys.size() ; ++i ) {
-    if ( keys[i] ) {
-      // prep for async write that inits into VConn-futures 
-      auto contp = APICont::create_temp_tscont(_vcsToWrite[i],nullptr);
-      TSCacheWrite(contp,keys[i]); // find room to store...
-      base64_bit_set(b64Bitset,i); // set a bit
-    }
-  }
-  cachhdrs.set(X_BLOCK_BITSET_TAG,b64Bitset); // attempt to erase/rewrite field in headers
-  DEBUG_LOG("updated bitset: %s",b64Bitset.c_str());
-  DEBUG_LOG("updated cache-hdrs:\n%s\n------\n",cachhdrs.wireStr().c_str());
-  DEBUG_LOG("updated cache-hdrs:\n%s\n------\n",txn.getCachedResponse().getHeaders().wireStr().c_str());
-  txn.resume(); // done 
-}
-
-void
-BlockStoreXform::handleReadResponseHeaders(Transaction &txn)
-{
-   DEBUG_LOG("updated cache-hdrs:\n%s\n------\n",txn.updateCachedResponse().getHeaders().wireStr().c_str());
-   _ctxt.clean_server_response(txn);
-   txn.resume();
-}
-
-// start read of all the blocks
-void
-BlockReadXform::handleReadCacheLookupComplete(Transaction &txn)
-{
-  auto &keys = _ctxt.keysInRange();
-
-  if ( _vcsToRead.size() != keys.size() )
-  {
-    // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
-    auto barrierLock = std::shared_ptr<BlockReadXform>(this, [&txn](BlockReadXform *ptr) {
-             ptr->handleReadCacheLookupComplete(txn);  // recurse from last one
-          });
-    for( auto i = 0U ; i < keys.size() ; ++i ) {
-      _vcsToRead.emplace_back();
-      // prep for async reads that init into VConn-futures
-      auto contp = APICont::create_temp_tscont(_vcsToRead.back(),barrierLock);
-      TSCacheRead(contp,keys[i]);
-    }
-    return;
-  }
-
-  auto nrdy = 0U;
-  auto nvalid = 0U;
-
-  // scan *all* keys and vconns to check if ready
-  for( ; nvalid < _vcsToRead.size() ; ++nvalid ) 
-  {
-    if ( _vcsToRead[nvalid].get_future().wait_for(std::chrono::seconds(0)) != std::future_status::ready ) {
-      break;
-    }
-
-    ++nrdy; // value is ready
-
-    auto vconn = _vcsToRead[nvalid].get_future().get();
-    // block isn't ready
-    if ( ! vconn ) {
-      break;
-    }
-
-    // block is ready and of right size?
-    if ( TSVConnCacheObjectSizeGet(vconn) != static_cast<int64_t>(_ctxt.blockSize()) ) {
-      // TODO: delete block
-      break;
-    }
-  }
-
-  // ready to read from cache...
-  if ( nvalid < keys.size() ) {
-    // erase current stub and start from scratch
-    TSHttpTxnCacheLookupStatusSet(_ctxt.atsTxn(), TS_CACHE_LOOKUP_MISS);
-    // TODO: reset bits and go to write-based restart
-    _ctxt.handleReadCacheLookupComplete(txn); // resume there
-    return;
-  }
-
-  TSHttpTxnCacheLookupStatusSet(_ctxt.atsTxn(), TS_CACHE_LOOKUP_HIT_FRESH);
-  txn.resume(); // blocks are looked up .. so we can continue...
-}
-// }
 
 // tsapi TSReturnCode TSBase64Decode(const char *str, size_t str_len, unsigned char *dst, size_t dst_size, size_t *length);
 // tsapi TSReturnCode TSBase64Encode(const char *str, size_t str_len, char *dst, size_t dst_size, size_t *length);
