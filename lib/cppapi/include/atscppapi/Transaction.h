@@ -381,6 +381,7 @@ public:
 
 private:
   TransactionState *state_;          //!< The internal TransactionState object tied to the current Transaction
+
   friend class TransactionPlugin;    //!< TransactionPlugin is a friend so it can call addPlugin()
   friend class TransformationPlugin; //!< TransformationPlugin is a friend so it can call addPlugin()
 
@@ -415,6 +416,9 @@ private:
    * @return a std::list<TransactionPlugin *> which represents all TransactionPlugin bound to the current Transaction.
    */
   const std::list<TransactionPlugin *> &getPlugins() const;
+
+  template <TSReturnCode (*T_GETTER)(TSHttpTxn, TSMBuffer *, TSMLoc *), class T_INITOBJECT>
+  T_INITOBJECT &init_from_getter(TSHttpTxn txn, T_INITOBJECT &obj);
 
   friend class utils::internal;
 };
