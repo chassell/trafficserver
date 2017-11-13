@@ -176,6 +176,7 @@ class BlockReadXform;
 
 class BlockSetAccess : public TransactionPlugin
 {
+  friend BlockStoreXform; // when it needs to change over
   friend BlockReadXform; // when it needs to change over
   using Txn_t = Transaction;
 public:
@@ -237,8 +238,8 @@ private:
   std::string         _respRange; // from clnt req for resp
   std::string         _blkRange; // from clnt req for serv req
 
-  int         _firstBlkSkip = 0; // negative if no blksize fit
-  int         _lastBlkTrunc = 0; // negative if no blksize fit
+  int         _beginByte = 0; // negative if no blksize fit
+  int         _endByte = 0; // negative if no blksize fit
 
   std::vector<APICacheKey>     _keysInRange; // in order with index
 
@@ -252,8 +253,6 @@ class BlockInitXform : public TransactionPlugin
   BlockInitXform(Transaction &txn, BlockSetAccess &ctxt)
      : TransactionPlugin(txn), _ctxt(ctxt)
   {
-    TSHttpTxnUntransformedRespCache(_ctxt.atsTxn(), 0);
-    TSHttpTxnTransformedRespCache(_ctxt.atsTxn(), 1);  // create mfest headers
     TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // add user-range and clean up
     TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // remember length to create new entry
   }
@@ -280,7 +279,9 @@ class BlockStoreXform : public TransactionPlugin
 {
  public:
   BlockStoreXform(Transaction &txn, BlockSetAccess &ctxt)
-     : TransactionPlugin(txn), _ctxt(ctxt), _vcsToWrite(ctxt.keysInRange().size())
+     : TransactionPlugin(txn), _ctxt(ctxt), 
+        _vcsToWriteP(ctxt.keysInRange().size()),
+        _vcsToWrite(ctxt.keysInRange().size())
   {
     TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // add block-range and clean up
     TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // adjust headers to stub-file
@@ -292,10 +293,7 @@ class BlockStoreXform : public TransactionPlugin
   handleReadCacheLookupComplete(Transaction &txn) override;
 
   void
-  handleSendRequestHeaders(Transaction &txn) override {
-    _ctxt.clean_server_request(txn); // request full blocks if possible
-    txn.resume();
-  }
+  handleSendRequestHeaders(Transaction &txn) override;
 
   // change to 200 and append stub-file headers...
   void
@@ -306,9 +304,9 @@ class BlockStoreXform : public TransactionPlugin
 
 private:
   BlockSetAccess                    &_ctxt;
-  std::vector<std::promise<TSVConn>> _vcsToWrite; // indexed as keys
+  std::vector<std::promise<TSVConn>> _vcsToWriteP; // indexed as keys
+  std::vector<std::future<TSVConn>> _vcsToWrite; // indexed as keys
 };
-
 
 
 class BlockReadXform : public TransactionPlugin
@@ -318,20 +316,12 @@ class BlockReadXform : public TransactionPlugin
      : TransactionPlugin(txn),
        _ctxt(ctxt)
   {
-    // create new manifest file upon promise of data
-    TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // add block-range and clean up
-    TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // adjust headers to stub-file
   }
 
   ~BlockReadXform() override {}
 
   void
   handleReadCacheLookupComplete(Transaction &txn) override;
-
-  void
-  handleSendResponseHeaders(Transaction &txn) override
-  {
-  }
 
 //////////////////////////////////////////
 //////////// in Response-Transformation phase 
@@ -358,6 +348,26 @@ public:
 private:
   std::string _random;
 };
+
+extern const int8_t base64_values[];
+extern const char *const base64_chars;
+
+static inline void base64_bit_clr(std::string &base64,unsigned i)
+{
+   auto &c = base64[i/6];
+   c = base64_chars[~(1<<(i%6)) & base64_values[c -'+']];
+}
+
+static inline void base64_bit_set(std::string &base64,unsigned i)
+{
+   auto &c = base64[i/6];
+   c = base64_chars[(1<<(i%6)) | base64_values[c -'+']];
+}
+
+static inline bool is_base64_bit_set(const std::string &base64,unsigned i)
+{
+   return (1<<(i%6)) & base64_values[base64[i/6]-'+'];
+}
 
 //}
 
