@@ -1,0 +1,152 @@
+/**
+  Licensed to the Apache Software Foundation (ASF) under one
+  or more contributor license agreements.  See the NOTICE file
+  distributed with this work for additional information
+  regarding copyright ownership.  The ASF licenses this file
+  to you under the Apache License, Version 2.0 (the
+  "License"); you may not use this file except in compliance
+  with the License.  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+ */
+#include "cache_range_blocks.h"
+#include "atscppapi/HttpStatus.h"
+
+#define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
+
+#define PLUGIN_NAME "cache_range_blocks"
+#define DEBUG_LOG(fmt, ...) TSDebug(PLUGIN_NAME, "[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
+#define ERROR_LOG(fmt, ...) TSError("[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
+
+// namespace
+// {
+
+void
+firstTransformationPluginRead(vconn)
+{
+  _input_vio = TSVConnWriteVIOGet(vconn);
+  _input_reader = TSVIOReaderGet(_input_vio);
+
+  // after first write (ideally)
+  _output_vconn = TSTransformOutputVConnGet(vconn);
+  _output_buffer = TSIOBufferCreate();
+  _output_reader = TSIOBufferReaderAlloc(_output_buffer);
+  _output_vio = TSVConnWrite(output_vconn, vconn, _output_reader, INT64_MAX); // all da bytes
+
+  // make sure a write occurs
+  if (_output_vio) {
+    TSVIONDoneSet(_output_vio, 0);
+    TSVIOReenable(_output_vio); // Wake up the downstream vio
+  }
+}
+
+/*
+void readBufferChars(buffer)
+{
+  consumed = 0;
+  // assert-that (TSIOBufferReaderAvail(_reader) > 0) 
+  for( TSIOBufferBlock block = TSIOBufferReaderStart(_reader) ; block ; block=TSIOBufferBlockNext(block) ) {
+    char_data = TSIOBufferBlockReadStart(block, reader, &data_len); // char_data, data_len
+    consumed += data_len;
+  }
+
+  TSIOBufferReaderConsume(_reader, consumed);
+}
+
+size_t produceOutputChars(const std::string &data)
+{
+  // Finally we can copy this data into the output_buffer
+  int64_t len_written = TSIOBufferWrite(state_->output_buffer_, write_data, write_length);
+  _bytes_written += len_written;
+
+  if (! TSVConnClosedGet(_vconn)) {
+    TSVIOReenable(_output_vio); // Wake up the downstream vio
+  }
+}
+*/
+
+void
+upstream_event(event)
+{
+  if ( _input_vio || ! TSVIOContGet(_input_vio) || ! TSVIOBufferGet(_input_vio)) {
+    return;
+  }
+
+  if ( ! _input_complete && _input_complete++ ) {
+    return;
+  }
+  TSContCall(TSVIOContGet(_input_vio), static_cast<TSEvent>(), _input_vio);
+}
+
+int
+BlockStoreXform::handleTransformationPluginEvents(TSEvent event, TSVConn vconn)
+{
+  if (TSVConnClosedGet(vconn)) {
+    // closed connection_closed
+    return 0;
+  }
+
+  _input_vio = TSVConnWriteVIOGet(contp);
+  if ( ! _input_vio ) {
+    return; // became null!?!
+  }
+
+  switch ( event ) {
+    case TS_EVENT_VCONN_WRITE_COMPLETE:
+      TSVConnShutdown(_output_vconn, 0, 1); // The other end is done reading our output
+      break;
+    case TS_EVENT_ERROR:
+      upstream_event(TS_EVENT_ERROR);
+      break;
+    default:
+      if (TSVIONTodoGet(_input_vio) <= 0) {
+        upstream_event(TS_EVENT_VCONN_WRITE_COMPLETE);
+        break; // now done with reads
+      }
+
+      // cannot read anything?
+      avail = TSIOBufferReaderAvail(_input_reader);
+      if ( ! avail ) {
+        break;
+      }
+
+      //  to_read = TSIOBufferCopy(_buffer, _input_reader, std::min(avail,TSVIONTodoGet(_input_vio)), 0);
+      //  readChars(_buffer); // read what's in buffer now...
+      copied = TSIOBufferCopy(_output_buffer, _input_reader, std::min(avail,TSVIONTodoGet(_input_vio)), 0);
+      TSIOBufferReaderConsume(_input_reader, copied); // not to re-read
+      TSVIONDoneSet(_input_vio, TSVIONDoneGet(_input_vio) + copied); // decrement todo
+
+      if ( TSVIONTodoGet(_input_vio) <= 0 ) {
+        upstream_event(TS_EVENT_VCONN_WRITE_COMPLETE);
+        break; // now done with reads
+      }
+
+      TSVIOReenable(_input_vio);
+
+      upstream_event(TS_EVENT_VCONN_WRITE_READY);
+      break;
+  }
+}
+
+size_t
+close_output()
+{
+  ink_assert(_output_vio);
+
+  // one sign of a close exists?  not a race?
+  if ( TSVConnClosedGet(_vconn) || TSVConnClosedGet(_vconn) ) {
+    // LOG_ERROR("TransformationPlugin=%p tshttptxn=%p unable to reenable output_vio=%p connection was closed=%d.", this,
+    return _bytes_written; // nothing to do
+  }
+
+  // reset where we are...
+  TSVIONBytesSet(_output_vio, _bytes_written);
+  TSVIOReenable(_output_vio); // Wake up the downstream vio
+  return _bytes_written;
+}

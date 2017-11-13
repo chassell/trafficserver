@@ -125,124 +125,6 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   _xform->handleReadCacheLookupComplete(txn);
 }
 
-// start read of all the blocks
-void
-BlockReadXform::handleReadCacheLookupComplete(Transaction &txn)
-{
-  auto &keys = _ctxt.keysInRange();
-
-  if ( _vcsToRead.empty() || _vcsToRead.size() != keys.size() )
-  {
-    // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
-    auto barrierLock = std::shared_ptr<BlockReadXform>(this, [&txn](BlockReadXform *ptr) {
-             ptr->handleReadCacheLookupComplete(txn);  // recurse from last one
-          });
-    for( auto i = 0U ; i < keys.size() ; ++i ) {
-      _vcsToReadP.emplace_back();
-      _vcsToRead.emplace_back(_vcsToReadP.back().get_future());
-      // prep for async reads that init into VConn-futures
-      auto contp = APICont::create_temp_tscont(_vcsToReadP.back(),barrierLock);
-      TSCacheRead(contp,keys[i]);
-    }
-    return;
-  }
-
-  
-  auto nrdy = 0U;
-  auto firstBlk = _ctxt._beginByte/_ctxt._blkSize;
-
-  // scan *all* keys and vconns to check if ready
-  for( auto n = 0U ; n < _vcsToRead.size() ; ++n ) 
-  {
-    if ( _vcsToRead[n].wait_for(std::chrono::seconds(0)) != std::future_status::ready ) {
-      break;
-    }
-
-    // clear bit
-    base64_bit_clr(_ctxt._b64BlkBitset,firstBlk + n);
-
-    auto vconn = _vcsToRead[n].get();
-    auto vconnErr = -reinterpret_cast<intptr_t>(vconn); // block isn't ready
-    if ( ! vconn ) {
-      continue;
-    }
-    // pointers don't look like this
-    if ( vconnErr >= CACHE_ERRNO && vconnErr < EHTTP_ERROR ) {
-      continue;
-    }
-
-    // block is ready and of right size?
-    if ( TSVConnCacheObjectSizeGet(vconn) != static_cast<int64_t>(_ctxt.blockSize()) ) {
-      // TODO: delete block
-      continue;
-    }
-    
-    // successful!
-    ++nrdy;
-    base64_bit_set(_ctxt._b64BlkBitset,firstBlk + n); // set a bit
-  }
-
-  // ready to read from cache...
-  if ( nrdy < keys.size() ) {
-    DEBUG_LOG("cache-resp-wr: len=%lu set=%s",_ctxt.assetLen(),_ctxt.b64BlkBitset().c_str());
-
-    // intercept data for new or updated stub version
-    auto &ctxt = _ctxt; // keep a safe stack ref
-    ctxt._xform = std::unique_ptr<Plugin>(new BlockStoreXform(txn,_ctxt));  // DELETES THIS-OBJECT
-    ctxt._xform->handleReadCacheLookupComplete(txn);
-    return;
-  }
-
-  TSHttpTxnCacheLookupStatusSet(_ctxt.atsTxn(), TS_CACHE_LOOKUP_HIT_FRESH);
-
-  auto &cachhdrs = txn.updateCachedResponse().getHeaders();
-  cachhdrs.erase(CONTENT_RANGE_TAG); // erase to remove concerns
-  cachhdrs.set(X_BLOCK_BITSET_TAG,_ctxt._b64BlkBitset); // attempt to erase/rewrite field in headers
-
-  DEBUG_LOG("updated bitset: %s",_ctxt._b64BlkBitset.c_str());
-  DEBUG_LOG("updated cache-hdrs:\n%s\n------\n",cachhdrs.wireStr().c_str());
-
-  // change the cached header we're about to send out
-  TSHttpTxnUpdateCachedObject(_ctxt.atsTxn());
-
-  txn.resume(); // blocks are looked up .. so we can continue...
-}
-// }
-
-
-void
-BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
-{
-  // [will override the server response for headers]
-  auto &keys = _ctxt.keysInRange();
-  for( auto i = 0U ; i < keys.size() ; ++i ) {
-    if ( keys[i] ) {
-      // prep for async write that inits into VConn-futures 
-      auto contp = APICont::create_temp_tscont(_vcsToWriteP[i],nullptr);
-      _vcsToWrite[i] = _vcsToWriteP[i].get_future();
-      TSCacheWrite(contp,keys[i]); // find room to store...
-    }
-  }
-
-  DEBUG_LOG("srvr-lkup: len=%lu",_ctxt._assetLen);
-  txn.resume(); // wait for response
-}
-
-void
-BlockStoreXform::handleSendRequestHeaders(Transaction &txn) {
-  DEBUG_LOG("srvr-req: len=%lu",_ctxt._assetLen);
-  _ctxt.clean_server_request(txn); // request full blocks if possible
-  txn.resume();
-}
-
-void
-BlockStoreXform::handleReadResponseHeaders(Transaction &txn)
-{
-  DEBUG_LOG("srvr-resp: len=%lu",_ctxt._assetLen);
-   _ctxt.clean_server_response(txn);
-   txn.resume();
-}
-
 /////////////////////////////////////////////////////////////
 
 void BlockSetAccess::clean_client_request()
@@ -420,6 +302,7 @@ BlockSetAccess::have_needed_blocks()
   return end;
 }
 
+// }
 
 // tsapi TSReturnCode TSBase64Decode(const char *str, size_t str_len, unsigned char *dst, size_t dst_size, size_t *length);
 // tsapi TSReturnCode TSBase64Encode(const char *str, size_t str_len, char *dst, size_t dst_size, size_t *length);
