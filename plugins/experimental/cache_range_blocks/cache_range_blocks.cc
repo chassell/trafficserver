@@ -33,7 +33,7 @@ static int parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_
 // {
 
 GlobalPlugin *plugin;
-//std::shared_ptr<GlobalPlugin> pluginPtr;
+std::shared_ptr<GlobalPlugin> pluginPtr;
 
 const int8_t base64_values[] = {
   /*0x2b: +*/ 62, /*0x2c,2d,0x2e:*/ ~0,~0,~0, /*0x2f: / */ 63,
@@ -57,6 +57,7 @@ RangeDetect::handleReadRequestHeadersPostRemap(Transaction &txn)
   txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE,1);
 
   auto &txnPlugin = *new BlockSetAccess(txn); // plugin attach
+  txn.addPlugin(&txnPlugin);
   txnPlugin.handleReadRequestHeadersPostRemap(txn);
 }
 
@@ -197,7 +198,7 @@ void BlockSetAccess::clean_client_response(Transaction &txn)
     clntRespStatus.setStatusCode( HTTP_STATUS_PARTIAL_CONTENT );
   }
 
-  clntResp.erase("Warning"); // erase added proxy-added warning
+  // clntResp.erase("Warning"); // erase added proxy-added warning
 
   // TODO erase only last field, with internal encoding
   clntResp.erase(CONTENT_ENCODING_TAG);
@@ -310,6 +311,6 @@ void
 TSPluginInit(int, const char **)
 {
   RegisterGlobalPlugin("CPP_Example_TransactionHook", "apache", "dev@trafficserver.apache.org");
-//  pluginPtr =  std::make_shared<RangeDetect>();
+  pluginPtr =  std::make_shared<RangeDetect>();
   plugin = new RangeDetect();
 }
