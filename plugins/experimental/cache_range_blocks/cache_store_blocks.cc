@@ -27,6 +27,8 @@
 void
 BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
 {
+  DEBUG_LOG("xform-store: xhook:%p _ctxt:%p len=%lu",this,&_ctxt,_ctxt.assetLen());
+
   // [will override the server response for headers]
   auto &keys = _ctxt.keysInRange();
   for( auto i = 0U ; i < keys.size() ; ++i ) {
@@ -38,7 +40,7 @@ BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
     }
   }
 
-  DEBUG_LOG("srvr-lkup: len=%lu",_ctxt._assetLen);
+  DEBUG_LOG("xform-store: len=%lu",_ctxt._assetLen);
   txn.resume(); // wait for response
 }
 

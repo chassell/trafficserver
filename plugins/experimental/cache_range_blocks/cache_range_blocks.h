@@ -232,18 +232,17 @@ private:
   Headers            &_clntHdrs;
   std::string         _clntRange;
 
-  uint64_t            _assetLen = 0ULL; // if cached
-  uint64_t            _blkSize = 0ULL; // if cached
+  uint64_t            _assetLen = 0UL; // if cached
+  uint64_t            _blkSize = 0UL; // if cached
   std::string         _b64BlkBitset; // if cached
-  std::string         _respRange; // from clnt req for resp
   std::string         _blkRange; // from clnt req for serv req
 
-  int         _beginByte = 0; // negative if no blksize fit
-  int         _endByte = 0; // negative if no blksize fit
+  int64_t             _beginByte = 0L; // negative if no blksize fit
+  int64_t             _endByte = 0L; // negative if no blksize fit
 
   std::vector<APICacheKey>     _keysInRange; // in order with index
 
-  std::unique_ptr<Plugin> _xform;
+  std::unique_ptr<Plugin> _xform; // state-object ptr
 };
 
 
@@ -337,7 +336,7 @@ private:
 class RangeDetect : public GlobalPlugin
 {
 public:
-  RangeDetect() { 
+  void addHooks() { 
     GlobalPlugin::registerHook(HOOK_READ_REQUEST_HEADERS_POST_REMAP); 
   }
 

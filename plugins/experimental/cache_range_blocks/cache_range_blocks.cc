@@ -32,8 +32,7 @@ static int parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_
 // namespace
 // {
 
-GlobalPlugin *plugin;
-std::shared_ptr<GlobalPlugin> pluginPtr;
+std::shared_ptr<RangeDetect> pluginPtr;
 
 const int8_t base64_values[] = {
   /*0x2b: +*/ 62, /*0x2c,2d,0x2e:*/ ~0,~0,~0, /*0x2f: / */ 63,
@@ -48,6 +47,9 @@ const char *const base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrst
 void
 RangeDetect::handleReadRequestHeadersPostRemap(Transaction &txn)
 {
+  // must avoid the stub file *always* unless warranted
+  txn.configIntSet(TS_CONFIG_HTTP_CACHE_IGNORE_ACCEPT_ENCODING_MISMATCH,0);
+
   auto &clntReq = txn.getClientRequest().getHeaders();
   if ( clntReq.count(RANGE_TAG) != 1 ) {
     return; // only use single-range requests
@@ -57,7 +59,7 @@ RangeDetect::handleReadRequestHeadersPostRemap(Transaction &txn)
   txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE,1);
 
   auto &txnPlugin = *new BlockSetAccess(txn); // plugin attach
-  txn.addPlugin(&txnPlugin);
+  txn.addPlugin(&txnPlugin); // delete this when done
   txnPlugin.handleReadRequestHeadersPostRemap(txn);
 }
 
@@ -95,9 +97,13 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   auto srvrRange = pstub->value(CONTENT_RANGE_TAG); // not in clnt hdrs
 
   srvrRange.erase(0,srvrRange.find('/')).erase(0,1);
-  auto _assetLen = std::atol(srvrRange.c_str());
+  _assetLen = std::atol(srvrRange.c_str());
+
+  // test if range is readable
+  if ( parse_range(_clntRange, _assetLen, _beginByte, _endByte) >= 0 ) {
+    _b64BlkBitset = pstub->value(X_BLOCK_BITSET_TAG);
+  }
  
-  _b64BlkBitset = pstub->value(X_BLOCK_BITSET_TAG);
   auto chk = std::find_if(_b64BlkBitset.begin(),_b64BlkBitset.end(),[](char c) { return ! isalnum(c) && c != '+' && c !='/'; });
 
   // invalid stub file... (or client headers instead)
@@ -119,11 +125,14 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     return;
   }
 
-  DEBUG_LOG("cache-resp-wr: len=%lu set=%s",_assetLen,_b64BlkBitset.c_str());
+  DEBUG_LOG("cache-resp-wr: base:%p len=%lu len=%lu set=%s",this,assetLen(),_assetLen,_b64BlkBitset.c_str());
 
   // intercept data for new or updated stub version
   _xform = std::unique_ptr<Plugin>(new BlockStoreXform(txn,*this));
+
+  DEBUG_LOG("cache-resp-wr: base:%p xform:%p len=%lu len=%lu set=%s",this,_xform.get(),assetLen(),_assetLen,_b64BlkBitset.c_str());
   _xform->handleReadCacheLookupComplete(txn);
+  DEBUG_LOG("cache-resp-wr: base:%p xform:%p len=%lu len=%lu set=%s",this,_xform.get(),assetLen(),_assetLen,_b64BlkBitset.c_str());
 }
 
 /////////////////////////////////////////////////////////////
@@ -131,7 +140,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 void BlockSetAccess::clean_client_request()
 {
   _clntHdrs.append(ACCEPT_ENCODING_TAG,CONTENT_ENCODING_INTERNAL ";q=0.001");
-//  _clntHdrs.append(ACCEPT_ENCODING_TAG,"*;q=1");
+  _clntHdrs.append(ACCEPT_ENCODING_TAG,"*;q=1");
 }
 
 void BlockSetAccess::clean_server_request(Transaction &txn)
@@ -165,7 +174,7 @@ void BlockSetAccess::clean_server_response(Transaction &txn)
   srvrRange.erase(0,srvrRange.find('/')).erase(0,1);
   auto currAssetLen = std::atol(srvrRange.c_str());
 
-  DEBUG_LOG("srvr-resp: len=%ld final=%s range=%s",currAssetLen,srvrRange.c_str(),srvrRangeCopy.c_str());
+  DEBUG_LOG("srvr-resp: len=%ld olen=%lu final=%s range=%s",currAssetLen,_assetLen,srvrRange.c_str(),srvrRangeCopy.c_str());
 
   if ( static_cast<uint64_t>(currAssetLen) != _assetLen ) {
     _blkSize = INK_ALIGN((currAssetLen>>10)|1,MIN_BLOCK_STORED);
@@ -174,8 +183,8 @@ void BlockSetAccess::clean_server_response(Transaction &txn)
   }
 
   proxyRespStatus.setStatusCode(HTTP_STATUS_OK);
-  proxyResp.erase(CONTENT_RANGE_TAG); // erase to remove range worries
-  proxyResp.set(CONTENT_ENCODING_TAG,CONTENT_ENCODING_INTERNAL);
+//  proxyResp.erase(CONTENT_RANGE_TAG); // erase to remove range worries
+  proxyResp.set(CONTENT_ENCODING_TAG,CONTENT_ENCODING_INTERNAL); // promote matches
   proxyResp.set(X_BLOCK_BITSET_TAG, _b64BlkBitset); // TODO: not good enough for huge files!!
 
   DEBUG_LOG("srvr-hdrs:\n%s\n------\n",proxyResp.wireStr().c_str());
@@ -187,13 +196,11 @@ void BlockSetAccess::clean_client_response(Transaction &txn)
   auto &clntResp = txn.getClientResponse().getHeaders();
 
   // override block-style range
-  if ( ! _respRange.empty() ) {
-    clntResp.set(CONTENT_RANGE_TAG, _respRange); // restore
-  } else {
-    clntResp.set(CONTENT_RANGE_TAG,std::to_string(_beginByte) + "-" + std::to_string(_endByte-1) + "/" + std::to_string(_assetLen));
+  if ( _assetLen && _endByte ) {
+    clntResp.set(CONTENT_RANGE_TAG, std::to_string(_beginByte) + "-" + std::to_string(_endByte-1) + "/" + std::to_string(_assetLen));
   }
 
-  // don't cover up failures
+  // only change 200-case back to 206
   if ( clntRespStatus.getStatusCode() == HTTP_STATUS_OK ) { 
     clntRespStatus.setStatusCode( HTTP_STATUS_PARTIAL_CONTENT );
   }
@@ -256,20 +263,11 @@ BlockSetAccess::get_trunc_hdrs(Transaction &txn)
 uint64_t 
 BlockSetAccess::have_needed_blocks()
 {
-  int64_t start = 0;
-  int64_t end = 0;
-
-  if ( parse_range(_clntRange, _assetLen, start, end) < 0 ) {
-    return 0; // range is unreadable
-  }
-
-  _respRange = std::to_string(start) + "-" + std::to_string(end-1) + "/" + std::to_string(_assetLen);
+  int64_t start = _beginByte;
+  int64_t end = _endByte;
 
   auto startBlk = start /_blkSize; // inclusive-start block
   auto endBlk = (end+1+_blkSize-1)/_blkSize; // exclusive-end block
-
-  _beginByte = start;
-  _endByte = end;
 
 //  ink_assert( _contentLen == static_cast<int64_t>(( endBlk - startBlk )*_blkSize) - _beginByte - _endByte );
 
@@ -311,6 +309,8 @@ void
 TSPluginInit(int, const char **)
 {
   RegisterGlobalPlugin("CPP_Example_TransactionHook", "apache", "dev@trafficserver.apache.org");
-  pluginPtr =  std::make_shared<RangeDetect>();
-  plugin = new RangeDetect();
+  if ( ! pluginPtr ) {
+    pluginPtr = std::make_shared<RangeDetect>();
+    pluginPtr->addHooks();
+  }
 }
