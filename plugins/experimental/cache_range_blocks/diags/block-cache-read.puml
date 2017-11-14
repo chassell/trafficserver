@@ -1,0 +1,191 @@
+@startuml 
+title Range-Block Cache Plugin
+hide footbox
+
+'
+' first case: init
+'
+boundary Client as C
+create "Global Plugin" as GH1
+
+create "Client Request\n(TXN#3)" as TC3 #cyan
+activate TC3 #cyan
+C -// TC3: Client HTTP Request
+deactivate C
+
+TC3 -> GH1: READ_REQUEST_HDR
+deactivate TC3
+activate GH1
+create "Txn Plugin Obj" as TX3
+GH1 --> TX3: detected range req
+deactivate GH1
+activate TX3
+TC3 <- TX3: enable WRITE_RANGE option
+
+participant "Cached Response\n(TXN#1)" as CATC #cyan
+'
+' server and hooks
+participant "Txn Hook\nLOOKUP_COMPLETE" as TH2
+
+participant "TSCacheWrite()\nobjects" as CAWR #springgreen
+
+TX3 --> TH2: enable hook
+TX3 --> "Txn Hook\nSEND_RESPONSE_HDR" as TH5: enable hook
+TX3 -> TC3: add Accept-Encoding to req
+TC3 //- TX3: resume
+deactivate TX3
+activate TC3 #cyan
+
+TC3 -> TC3: perform lookup
+activate TC3 #cyan
+TC3 -> CATC: select alternate\n(match Accept-Encoding -->\n\tContent-Encoding)
+activate CATC #cyan
+TC3 /- CATC
+deactivate CATC
+
+TC3 -> TH2: LOOKUP_COMPLETE (HIT_FRESH)
+deactivate TC3
+deactivate TC3
+activate TH2
+'
+' do block lookups if possible
+'
+CATC -/o TX3: save asset size
+TH2 ->o TX3: compute block size
+TC3 -/o TX3: save new range request
+TH2 ->o TX3: compute block range
+
+TH2 -// CAWR: TSCacheRead() needed block objects
+TH2 -// CAWR: 
+deactivate TH2
+activate CAWR #springgreen
+...
+TH2 //- CAWR: 
+TH2 //- CAWR: All objects needed are found 
+deactivate CAWR
+activate TH2
+TH2 -> CATC: Add proven blocks to bitfield
+
+
+
+
+
+
+
+
+
+
+
+'
+' prepare for NO request
+'
+
+'create "Server Request\n(TXN#2)" as TQ2 #cyan
+'TC2 --/ TQ2
+'deactivate TC2
+
+'participant "Txn Hook\nSEND_REQUEST_HDR" as TH3
+
+'TH2 --> TH3: enable hook
+
+'
+' NO server and hooks
+
+
+'TH2 -> TH4: enable hook
+TC3 //- TH2: resume
+deactivate TH2
+activate TC3 #cyan
+'TQ2 -> TH3: SEND_REQUEST_HDR
+'activate TH3
+'deactivate TQ2
+'TQ2 <- TH3: erase Accept-Encoding
+'TQ2 <- TH3: erase IMS conditions
+'TQ2 //- TH3: resume
+'deactivate TH3
+'activate TQ2 #cyan
+
+'...
+'TQ2 -// S: HTTP Origin Range-Request
+'activate S #grey
+'deactivate TQ2
+'create "Server Response\n(TXN#2)" as TA2 #cyan
+'S -// TA2: HTTP Origin 206 Response
+'deactivate S
+'activate TA2 #cyan
+
+'participant "Txn Hook\nREAD_RESPONSE_HDR" as TH4
+
+'TA2 -> TH4: READ_RESPONSE_HDR
+'deactivate TA2
+'activate TH4
+'TX2 o/- TA2: save content-range field
+'TH4 -> TH4: compute block size
+'TH4 -> TA1: erase content-range field
+'TH4 -> TA1: reset status to 200 OK 
+'TH4 -> TA1: assign Content-Encoding
+'TH4 -> TA1: assign bitset metadata fields
+'TH4 -// TA2: resume
+
+'deactivate TH4
+'activate TA2 #cyan
+
+create "Client Response\n(TXN#3)" as TR3 #cyan
+CATC o-> TR3: served from cache
+
+deactivate TC3
+activate TR3 #cyan
+
+'create "Cached Response\n(TXN#1)" as TCR1 #cyan
+'TA1 --/ TCR1
+
+participant TH5
+
+TR3 -> TH5: SEND_RESPONSE_HDR
+deactivate TR3
+activate TH5
+TR3 /-o TX3: re-add content-range
+'TH5 -> TR1: reset status to 206 Partial Content
+TH5 -> TR3: erase Content-Encoding
+TH5 -> TR3: erase bitset metadata fields
+
+create "Txn Transform\nVConn Input" as TXIN
+TH5 -> TXIN
+
+TH5 //- TR3: resume
+deactivate TH5
+activate TR3 #cyan
+TR3 --// C: Client Http Response
+
+deactivate TR3
+CAWR --// TXIN: read first block
+activate CAWR #springgreen
+activate TXIN
+'TXIN --// CAWR: write full blocks to correct VConns
+'S --// TXIN: Http Body
+TXIN --// C: write partial first block to client output
+'TXIN --// CAWR: close after write
+'S --// TXIN: Http Body Cont'd
+CAWR --// TXIN: read full blocks to correct VConns
+TXIN --// C: write full blocks to client output
+CAWR --// TXIN: read last block
+'deactivate S
+'TXIN --// CAWR: close last block
+deactivate CAWR
+TXIN --// C: write partial block to client output
+deactivate TXIN
+deactivate C
+
+destroy TC3
+'destroy TQ2
+'destroy TA2
+destroy TR3
+destroy TX3
+destroy TH2
+'destroy TH3
+'destroy TH4
+destroy TH5
+destroy TXIN
+
+
+@enduml

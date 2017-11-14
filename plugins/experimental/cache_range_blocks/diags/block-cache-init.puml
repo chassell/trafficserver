@@ -1,0 +1,160 @@
+@startuml 
+title Range-Block Cache Plugin
+hide footbox
+
+'
+' first case: init
+'
+boundary Client as C
+create "Global Plugin" as GH1
+
+create "Client Request\n(TXN#1)" as TC1 #cyan
+activate TC1 #cyan
+C -// TC1: Client HTTP Request
+deactivate C
+
+TC1 -> GH1: READ_REQUEST_HDR
+deactivate TC1
+activate GH1
+create "Txn Plugin Obj" as TX1
+GH1 --> TX1: detected range req
+deactivate GH1
+activate TX1
+TC1 <- TX1: enable WRITE_RANGE option
+
+'participant "Cached Response\n(TXN#1)" as CATC #cyan
+'
+' server and hooks
+participant "Txn Hook\nLOOKUP_COMPLETE" as TH2
+
+'participant "TSCacheWrite()\nobjects" as CAWR #springgreen
+
+TX1 --> TH2: enable hook
+TX1 --> "Txn Hook\nSEND_RESPONSE_HDR" as TH5: enable hook
+TX1 -> TC1: add Accept-Encoding to req
+TC1 //- TX1: resume
+deactivate TX1
+activate TC1 #cyan
+
+TC1 -> TC1: perform lookup
+activate TC1 #cyan
+'TC1 -> CATC: select alternate\n(match Accept-Encoding -->\n\tContent-Encoding)
+'activate CATC #cyan
+'TC1 /- CATC
+'deactivate CATC
+
+TC1 -> TH2: LOOKUP_COMPLETE (MISS)
+deactivate TC1
+deactivate TC1
+activate TH2
+'
+' do block lookups if possible
+'
+'CATC -/o TX2: save asset size
+'TH1 ->o TX2: compute block size
+'TC1 -/o TX2: save new range request
+'TH1 ->o TX2: compute block range
+
+'
+' prepare for request
+'
+
+create "Server Request\n(TXN#1)" as TQ1 #cyan
+TC1 --/ TQ1
+'deactivate TC1
+
+participant "Txn Hook\nSEND_REQUEST_HDR" as TH3
+
+TH2 -> TH3: enable hook
+
+'
+' server and hooks
+entity "Origin Server" as S
+
+TH2 -> "Txn Hook\nREAD_RESPONSE_HDR" as TH4: enable hook
+TQ1 //- TH2: resume
+deactivate TH2
+activate TQ1 #cyan
+TQ1 -> TH3: SEND_REQUEST_HDR
+activate TH3
+deactivate TQ1
+TQ1 <- TH3: erase Accept-Encoding
+TQ1 <- TH3: erase IMS conditions
+TQ1 //- TH3: resume
+deactivate TH3
+activate TQ1 #cyan
+
+...
+TQ1 -// S: HTTP Origin Range-Request
+activate S #grey
+deactivate TQ1
+create "Server Response\n(TXN#1)" as TA1 #cyan
+S -// TA1: HTTP Origin 206 Response
+deactivate S
+activate TA1 #cyan
+
+participant TH4
+
+TA1 -> TH4: READ_RESPONSE_HDR
+deactivate TA1
+activate TH4
+TX1 o/- TA1: save content-range field
+TH4 -> TH4: compute block size
+TH4 -> TA1: erase content-range field
+TH4 -> TA1: reset status to 200 OK 
+TH4 -> TA1: assign Content-Encoding
+TH4 -> TA1: assign bitset metadata fields
+TH4 -// TA1: resume
+
+deactivate TH4
+activate TA1 #cyan
+
+create "Client Response\n(TXN#1)" as TR1 #cyan
+TA1 --/ TR1: newly copied
+
+deactivate TA1
+activate TR1 #cyan
+
+create "Cached Response\n(TXN#1)" as TCR1 #cyan
+TA1 --/ TCR1
+
+participant TH5
+
+TR1 -> TH5: SEND_RESPONSE_HDR
+deactivate TR1
+activate TH5
+TR1 /-o TX1: re-add content-range
+TH5 -> TR1: reset status to 206 Partial Content
+TH5 -> TR1: erase Content-Encoding
+TH5 -> TR1: erase bitset metadata fields
+
+'create "Txn Transform\nVConn Input" as TXIN
+'TH5 -> TXIN
+
+TH5 -// TR1: resume
+deactivate TH5
+activate TR1 #cyan
+TR1 --// C: Client Http Response
+
+'deactivate TR2
+'S --// TXIN: Http Body Start
+activate S #grey
+'activate TXIN
+
+S --// C: Http Tunnel Response Body
+deactivate S
+deactivate C
+
+destroy TC1
+destroy TQ1
+destroy TA1
+destroy TR1
+destroy TX1
+destroy TH2
+destroy TH3
+destroy TH4
+destroy TH5
+'destroy TXIN
+
+
+@enduml
