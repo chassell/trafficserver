@@ -31,12 +31,12 @@ BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
 
   // [will override the server response for headers]
   auto &keys = _ctxt.keysInRange();
+
   for( auto i = 0U ; i < keys.size() ; ++i ) {
     if ( keys[i] ) {
       // prep for async write that inits into VConn-futures 
-      auto contp = APICont::create_temp_tscont(_vcsToWriteP[i],nullptr);
-      _vcsToWrite[i] = _vcsToWriteP[i].get_future();
-      TSCacheWrite(contp,keys[i]); // find room to store...
+      auto contp = APICont::create_temp_tscont(_vcsToWrite[i],nullptr);
+      TSCacheWrite(contp,keys[i]); // find room to store each key...
     }
   }
 

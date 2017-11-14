@@ -33,17 +33,18 @@ BlockReadXform::handleReadCacheLookupComplete(Transaction &txn)
 {
   auto &keys = _ctxt.keysInRange();
 
+  // XXX: do in ctor or as static??
   if ( _vcsToRead.empty() || _vcsToRead.size() != keys.size() )
   {
+    _vcsToRead.resize( keys.size() );
     // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
     auto barrierLock = std::shared_ptr<BlockReadXform>(this, [&txn](BlockReadXform *ptr) {
              ptr->handleReadCacheLookupComplete(txn);  // recurse from last one
           });
     for( auto i = 0U ; i < keys.size() ; ++i ) {
-      _vcsToReadP.emplace_back();
-      _vcsToRead.emplace_back(_vcsToReadP.back().get_future());
       // prep for async reads that init into VConn-futures
-      auto contp = APICont::create_temp_tscont(_vcsToReadP.back(),barrierLock);
+      // XXX: pass a use-for-all lambda-ref instead???
+      auto contp = APICont::create_temp_tscont(_vcsToRead[i],barrierLock);
       TSCacheRead(contp,keys[i]);
     }
     return;

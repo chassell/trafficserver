@@ -27,6 +27,30 @@
 // namespace
 // {
 
+
+class BlockSinkXform 
+{
+ public:
+  BlockSinkXform(TSHttpTxn txn, TSVConn vconn)
+     : _input_vio( TSVConnWriteVIOGet(vconn) ),
+       _input_reader( TSVIOReaderGet(_input_vio) ),
+       _xformWrite(*this,&BlockSinkXform::writeEvent,txn)
+  {
+    TSTS_HTTP_RESPONSE_CLIENT_HOOK
+  }
+
+  int64_t writeEvent(TSEvent event, TSVIO input, int64_t off, int64_t size);
+
+  TSVIO            const _input_vio;
+  TSIOBufferReader const _input_reader;
+  APICont          const _firstHook;
+  APICont          const _xformWrite;
+};
+
+
+int64_t writeEvent(TSEvent event, TSVIO input, int64_t off, int64_t size);
+
+
 void
 firstTransformationPluginRead(vconn)
 {
@@ -35,44 +59,14 @@ firstTransformationPluginRead(vconn)
 
   // after first write (ideally)
   _output_vconn = TSTransformOutputVConnGet(vconn);
-  _output_buffer = TSIOBufferCreate();
+  _output_buffer = TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K);
   _output_reader = TSIOBufferReaderAlloc(_output_buffer);
   _output_vio = TSVConnWrite(output_vconn, vconn, _output_reader, INT64_MAX); // all da bytes
 
-  // make sure a write occurs
-  if (_output_vio) {
-    TSVIONDoneSet(_output_vio, 0);
-    TSVIOReenable(_output_vio); // Wake up the downstream vio
-  }
 }
-
-/*
-void readBufferChars(buffer)
-{
-  consumed = 0;
-  // assert-that (TSIOBufferReaderAvail(_reader) > 0) 
-  for( TSIOBufferBlock block = TSIOBufferReaderStart(_reader) ; block ; block=TSIOBufferBlockNext(block) ) {
-    char_data = TSIOBufferBlockReadStart(block, reader, &data_len); // char_data, data_len
-    consumed += data_len;
-  }
-
-  TSIOBufferReaderConsume(_reader, consumed);
-}
-
-size_t produceOutputChars(const std::string &data)
-{
-  // Finally we can copy this data into the output_buffer
-  int64_t len_written = TSIOBufferWrite(state_->output_buffer_, write_data, write_length);
-  _bytes_written += len_written;
-
-  if (! TSVConnClosedGet(_vconn)) {
-    TSVIOReenable(_output_vio); // Wake up the downstream vio
-  }
-}
-*/
 
 void
-upstream_event(event)
+BlockSinkXform::throw_event(event)
 {
   if ( _input_vio || ! TSVIOContGet(_input_vio) || ! TSVIOBufferGet(_input_vio)) {
     return;
@@ -92,8 +86,7 @@ BlockStoreXform::handleTransformationPluginEvents(TSEvent event, TSVConn vconn)
     return 0;
   }
 
-  _input_vio = TSVConnWriteVIOGet(contp);
-  if ( ! _input_vio ) {
+  if ( ! TSVConnWriteVIOGet(contp) ) {
     return; // became null!?!
   }
 
@@ -105,7 +98,7 @@ BlockStoreXform::handleTransformationPluginEvents(TSEvent event, TSVConn vconn)
       upstream_event(TS_EVENT_ERROR);
       break;
     default:
-      if (TSVIONTodoGet(_input_vio) <= 0) {
+      if (TSVIONBytesGet(_input_vio) <= TSVIONDoneGet(_input_vio)) {
         upstream_event(TS_EVENT_VCONN_WRITE_COMPLETE);
         break; // now done with reads
       }
@@ -144,9 +137,43 @@ close_output()
     // LOG_ERROR("TransformationPlugin=%p tshttptxn=%p unable to reenable output_vio=%p connection was closed=%d.", this,
     return _bytes_written; // nothing to do
   }
+ 
 
   // reset where we are...
   TSVIONBytesSet(_output_vio, _bytes_written);
   TSVIOReenable(_output_vio); // Wake up the downstream vio
   return _bytes_written;
 }
+
+shutdown_empty_downstream()
+{
+  // make sure a write occurs to signal the end
+  TSVIONDoneSet(_output_vio, 0);
+  TSVIOReenable(_output_vio); // Wake up the downstream vio
+}
+
+/*
+void readBufferChars(buffer)
+{
+  consumed = 0;
+  // assert-that (TSIOBufferReaderAvail(_reader) > 0) 
+  for( TSIOBufferBlock block = TSIOBufferReaderStart(_reader) ; block ; block=TSIOBufferBlockNext(block) ) {
+    char_data = TSIOBufferBlockReadStart(block, reader, &data_len); // char_data, data_len
+    consumed += data_len;
+  }
+
+  TSIOBufferReaderConsume(_reader, consumed);
+}
+
+size_t produceOutputChars(const std::string &data)
+{
+  // Finally we can copy this data into the output_buffer
+  int64_t len_written = TSIOBufferWrite(state_->output_buffer_, write_data, write_length);
+  _bytes_written += len_written;
+
+  if (! TSVConnClosedGet(_vconn)) {
+    TSVIOReenable(_output_vio); // Wake up the downstream vio
+  }
+}
+*/
+
