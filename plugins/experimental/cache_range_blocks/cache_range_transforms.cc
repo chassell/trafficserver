@@ -34,16 +34,19 @@ class BlockSinkXform
   BlockSinkXform(TSHttpTxn txn, TSVConn vconn)
      : _input_vio( TSVConnWriteVIOGet(vconn) ),
        _input_reader( TSVIOReaderGet(_input_vio) ),
+       _xformHook(*this,&initHook,nullptr),
        _xformWrite(*this,&BlockSinkXform::writeEvent,txn)
   {
-    TSTS_HTTP_RESPONSE_CLIENT_HOOK
+//    TSTS_HTTP_RESPONSE_CLIENT_HOOK
   }
+
+  int64_t initHook(TSEvent event, 
 
   int64_t writeEvent(TSEvent event, TSVIO input, int64_t off, int64_t size);
 
   TSVIO            const _input_vio;
   TSIOBufferReader const _input_reader;
-  APICont          const _firstHook;
+  APICont          const _xformHook;
   APICont          const _xformWrite;
 };
 
