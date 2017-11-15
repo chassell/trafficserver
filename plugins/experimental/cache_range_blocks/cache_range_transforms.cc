@@ -50,6 +50,48 @@ class BlockSinkXform
   APICont          const _xformWrite;
 };
 
+int64_t(TSEvent,TSVIO,int64_t,int64_t)
+  _userCB = decltype(_userCB)([func,cont](TSEvent event, void *) 
+     {
+       if ( TSVConnClosedGet(cont) ) {
+         (obj.*funcp)(TS_EVENT_VCONN_EOS,nullptr,-1,-1); // bytes "written" and bytes actually consumed
+         return;
+       }
+
+       auto input_vio = static_cast<TSVIO>( TSVConnWriteVIOGet(cont) );
+
+       auto r = 0;
+       auto ndone = TSVIONDoneGet(input_vio);
+
+       if ( event != TS_EVENT_VCONN_READ_READY && event != TS_EVENT_IMMEDIATE ) 
+       {
+         (obj.*funcp)(event,input_vio,ndone,-1); // bytes "written" and bytes actually consumed
+         return;
+       }
+
+       if ( ! TSVIOBufferGet(input_vio) ) {
+         return;
+       }
+
+       auto inreader = TSIOBufferReader(TSVIOReaderGet(input_vio));
+
+       // total amt left and amt available
+
+       auto avail = TSIOBufferReaderAvail(inreader);
+       avail = std::min(avail+0, TSVIONTodoGet(input_vio));
+
+       r = (obj.*funcp)(event,input_vio,ndone,avail); // bytes "written" and bytes actually consumed
+       if ( r <= 0 || r > avail ) {
+         return;
+       }
+
+       TSIOBufferReaderConsume(inreader,r); // consume data
+       TSVIONDoneSet(input_vio, ndone + r ); // inc offset
+
+       auto evt = ( TSVIONTodoGet(input_vio) > 0 ? TS_EVENT_VCONN_WRITE_READY
+                                                 : TS_EVENT_VCONN_WRITE_COMPLETE );
+       TSContCall(TSVIOContGet(input_vio), evt, input_vio);
+     });
 
 int64_t writeEvent(TSEvent event, TSVIO input, int64_t off, int64_t size);
 

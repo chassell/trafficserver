@@ -46,6 +46,8 @@ static inline bool is_base64_bit_set(const std::string &base64,unsigned i)
    return (1<<(i%6)) & base64_values[base64[i/6]-'+'];
 }
 
+class XformReader;
+
 // namespace {
 
 using TSCacheKey_t = std::unique_ptr<std::remove_pointer<TSCacheKey>::type>;
@@ -88,31 +90,43 @@ struct APICacheKey : public TSCacheKey_t
 // object to request write/read into cache
 struct APICont : public TSCont_t
 {
-  APICont() = default; // nullptr by default
-
-  operator TSCont() { return get(); }
-
+ public:
   template <typename T_DATA, typename T_REFCOUNTED>
   static TSCont create_temp_tscont(std::shared_future<T_DATA> &cbFuture, const T_REFCOUNTED &counted);
+
+ public:
+  APICont() = default; // nullptr by default
 
   // accepts TSHttpTxn handler functions
   template <class T_OBJ, typename T_DATA>
   APICont(T_OBJ &obj, void(T_OBJ::*funcp)(TSEvent,TSHttpTxn,T_DATA), T_DATA cbdata);
 
-  // callback is "cb(TSEvent, TSVIO, ntodo)"
-  // can get with TSVConnWrite(), TSVConnRead() :
-  //		VC_EVENT_WRITE_READY / VC_EVENT_READ_READY
-  //		VC_EVENT_WRITE_COMPLETE / VC_EVENT_READ_COMPLETE,
-  //	[wr/rd] VC_EVENT_EOS, VC_EVENT_INACTIVITY_TIMEOUT, VC_EVENT_ACTIVE_TIMEOUT
-  template <class T_OBJ>
-  APICont(T_OBJ &obj, int64_t(T_OBJ::*funcp)(TSEvent,TSVIO,int64_t,int64_t), TSHttpTxn txnHndl);
+  operator TSCont() { return get(); }
 
 private:
-  static int handleEvent(TSCont cont, TSEvent event, void *data);
+  static int handleTSEvent(TSCont cont, TSEvent event, void *data);
 
   APICont(std::function<void(TSEvent,void*)> &&fxn, TSMutex mutex=nullptr);
+
   // holds object and function pointer
   std::function<void(TSEvent,void*)> _userCB;
 };
+
+// object to request write/read into cache
+struct APIXformCont : public TSCont_t
+{
+ public:
+  APIXformCont() = default; // nullptr by default
+  APIXformCont(std::function<void(TSEvent,TSVConn)> &&fxn, TSHttpTxn txnHndl, TSHttpHookID xformType);
+
+  operator TSVConn() { return get(); }
+
+private:
+  static int handleXformTSEvent(TSCont cont, TSEvent event, void *data);
+
+  // holds object and function pointer
+  std::function<void(TSEvent,TSVConn)> _userXformCB;
+};
+
 
 //}
