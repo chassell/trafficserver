@@ -90,7 +90,7 @@ struct APICacheKey : public TSCacheKey_t
 // object to request write/read into cache
 struct APICont : public TSCont_t
 {
-  template <typename T, typename... Args>
+  template <class T, typename... Args>
   friend std::unique_ptr<T> std::make_unique(Args &&... args);
 
  public:
@@ -123,9 +123,13 @@ private:
 // object to request write/read into cache
 struct APIXformCont : public TSCont_t
 {
+  template <class T, typename... Args>
+  friend std::unique_ptr<T> std::make_unique(Args &&... args);
+
  public:
   APIXformCont() = default; // nullptr by default
-  APIXformCont(TSHttpTxn txnHndl, TSHttpHookID xformType);
+  APIXformCont(APIXformCont &&) = default;
+  APIXformCont(TSHttpTxn txnHndl, TSHttpHookID xformType, TSIOBuffer output=nullptr, int64_t bytes=INT64_MAX);
 
   operator TSVConn() { return get(); }
 
@@ -138,8 +142,11 @@ private:
   static int handleXformTSEvent(TSCont cont, TSEvent event, void *data);
 
   // holds object and function pointer
+  std::function<void(TSEvent,TSVConn)> _xformCB;
   std::function<void(TSEvent,TSVConn)> _userXformCB;
-  TSIOBuffer_t                         _commonOutput;
+  TSIOBuffer_t                         _outputHeld;
+  TSIOBuffer                           _outputBuff = nullptr;
+  TSIOBufferReader_t                   _outputRdr;
 };
 
 

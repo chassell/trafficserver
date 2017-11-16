@@ -26,104 +26,113 @@
 
 // namespace
 // {
+//
+void
+forward_vio_event(TSEvent event, TSVIO input_vio)
+{
+  if ( input_vio && TSVIOContGet(input_vio) && TSVIOBufferGet(input_vio)) {
+    TSContCall(TSVIOContGet(input_vio), event, input_vio);
+  }
+}
 
 
-class BlockSinkXform 
+class BlockTeeXform 
 {
  public:
-  BlockSinkXform(TSHttpTxn txn, TSVConn vconn)
-     : _input_vio( TSVConnWriteVIOGet(vconn) ),
-       _input_reader( TSVIOReaderGet(_input_vio) ),
-       _xformHook(*this,&initHook,nullptr),
-       _xformWrite(*this,&BlockSinkXform::writeEvent,txn)
+  BlockTeeXform(TSHttpTxn txn, TSVConn teeVconn, int64_t xformLen)
+     : _sharedOutput(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K) ), 
+       _teeReader( TSIOBufferReaderAlloc(this->_sharedOutput.get())),
+       _xformVConn(txn,TS_HTTP_RESPONSE_TRANSFORM_HOOK,this->_sharedOutput.get(), xformLen)
   {
-//    TSTS_HTTP_RESPONSE_CLIENT_HOOK
+     _teeOutputVIO = TSVConnWrite(teeVconn, _xformVConn, _teeReader.get(), INT64_MAX);
+
+     // get to method via callback
+     _xformVConn = [this](TSEvent evt, TSVConn vconn) { this->handleEvent(evt,vconn); };
   }
 
-  int64_t initHook(TSEvent event, 
+  void 
+  handleEvent(TSEvent event, TSVConn invconn);
 
-  int64_t writeEvent(TSEvent event, TSVIO input, int64_t off, int64_t size);
+  void
+  handleWrite(TSVIO invio, TSVIO outvio);
 
-  TSVIO            const _input_vio;
-  TSIOBufferReader const _input_reader;
-  APICont          const _xformHook;
-  APICont          const _xformWrite;
+  TSIOBuffer_t             _sharedOutput;
+  TSIOBufferReader_t       _teeReader;
+  TSVIO                    _teeOutputVIO;
+  APIXformCont             _xformVConn;
 };
 
-void
-throw_vio_event(TSEvent event, TSVIO input_vio)
+void BlockTeeXform::handleEvent(TSEvent event, TSVConn invconn)
 {
-  if ( input_vio || ! TSVIOContGet(input_vio) || ! TSVIOBufferGet(input_vio)) {
+   auto outvconn = TSTransformOutputVConnGet(invconn);
+
+   if ( TSVConnClosedGet(invconn) || ! outvconn ) {
+     return;
+   }
+
+   auto input_vio = TSVConnWriteVIOGet(invconn); // cannot be null
+
+   switch (event) 
+   {
+     case TS_EVENT_VCONN_WRITE_COMPLETE:
+       TSVConnShutdown(outvconn, 0, 1);
+       break;                                                 //// RETURN
+     case TS_EVENT_ERROR:
+       forward_vio_event(TS_EVENT_ERROR,input_vio);
+       break;                                                 //// RETURN
+     case TS_EVENT_VCONN_WRITE_READY:
+       handleWrite(input_vio, TSVConnWriteVIOGet(outvconn));
+       break; // okay .. so continue on..
+     default:
+       break;                                                 //// RETURN
+   }
+}
+
+void BlockTeeXform::handleWrite(TSVIO input_vio, TSVIO output_vio)
+{
+  // only if safe...
+  if ( ! TSVIOBufferGet(input_vio) ) {
     return;
   }
 
-  TSContCall(TSVIOContGet(input_vio), event, input_vio);
+  TSIOBufferReader inreader = TSVIOReaderGet(input_vio);
+  int64_t inavail = TSIOBufferReaderAvail(inreader);
+
+  // limit at end of input
+  inavail = std::min(inavail+0, TSVIONTodoGet(input_vio));
+
+  auto teeavail = TSIOBufferReaderAvail(_teeReader.get()); // check Tee
+  auto outavail = TSIOBufferReaderAvail(TSVIOReaderGet(output_vio)); // check Out
+  
+  // update from downstream values
+  teeavail = std::min(inavail+0, TSVIONTodoGet(_teeOutputVIO));
+  outavail = std::min(inavail+0, TSVIONTodoGet(output_vio));
+
+  // upstream is complete?
+  if ( ! teeavail && ! outavail ) {
+    forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE,input_vio);
+    TSVIOReenable(_teeOutputVIO); // intended to give zero bytes
+    TSVIOReenable(output_vio); // intended to give zero bytes
+    return;
+  }
+
+  // copy all available in
+  TSIOBufferCopy(_sharedOutput.get(), inreader, inavail, 0);
+  TSVIONDoneSet(input_vio, TSVIONDoneGet(input_vio) + inavail);
+  TSIOBufferReaderConsume(inreader,inavail);
+
+  if ( teeavail ) {
+    TSVIOReenable(_teeOutputVIO);
+  }
+
+  if ( outavail ) {
+    TSVIOReenable(output_vio);
+  }
+
+  // some data absorbed?
+  // XXX: flow control if downstream is limited!
+  forward_vio_event(TS_EVENT_VCONN_WRITE_READY, input_vio);
 }
-
-
-template <class T_OBJ>
-APIXformCont create_xform_tee(T_OBJ &obj, int64_t(T_OBJ::*funcp)(TSEvent,TSVIO,int64_t,int64_t), TSHttpTxn txnHndl)
-{
-  auto adaptor = [&obj,funcp](TSEvent event, TSVConn cont, TSVIO tee_vio) 
-     {
-       if ( TSVConnClosedGet(cont) ) {
-         (obj.*funcp)(TS_EVENT_VCONN_EOS,nullptr,-1,-1);
-         return;
-       }
-
-       auto input_vio = TSVConnWriteVIOGet(cont);
-
-       auto ndone = TSVIONDoneGet(input_vio);
-
-       if ( event != TS_EVENT_VCONN_WRITE_READY && event != TS_EVENT_IMMEDIATE ) {
-         (obj.*funcp)(event,input_vio,ndone,0); // pass error on
-         return;
-       }
-
-       // data event occurred 
-
-       // can't use it .. so close down quickly/!
-       if ( ! TSVIOBufferGet(input_vio) ) {
-         (obj.*funcp)(TS_EVENT_VCONN_EOS,nullptr,-1,-1);
-         return;
-       }
-
-       auto output_vio = TSVConnWriteVIOGet(TSTransformOutputVConnGet(cont));
-
-       auto inreader = TSIOBufferReader(TSVIOReaderGet(input_vio));
-       auto outreader = TSIOBufferReader(TSVIOReaderGet(output_vio));
-       auto teereader = TSIOBufferReader(TSVIOReaderGet(tee_vio));
-
-       if ( TSIOBufferReaderAvail(teereader) ) {
-          TSVIOReenable(tee_vio);
-          return;
-       }
-
-       // total amt left and amt available
-       if ( TSIOBufferReaderAvail(outreader) ) {
-          TSVIOReenable(output_vio);
-          return;
-       }
-
-       auto inavail = TSIOBufferReaderAvail(inreader);
-       inavail = std::min(inavail+0, TSVIONTodoGet(input_vio));
-
-       auto r = (obj.*funcp)(event,input_vio,ndone,avail);
-       if ( r <= 0 || r > avail ) {
-         return;
-       }
-
-       TSIOBufferReaderConsume(inreader,r); // consume data
-       TSVIONDoneSet(input_vio, ndone + r ); // inc offset
-
-       auto evt = ( TSVIONTodoGet(input_vio) > 0 ? TS_EVENT_VCONN_WRITE_READY
-                                                 : TS_EVENT_VCONN_WRITE_COMPLETE );
-       TSContCall(TSVIOContGet(input_vio), evt, input_vio);
-     };
-   return APIXformCont(adaptor,txnHndl,TS_HTTP_RESPONSE_CLIENT_HOOK);
-}
-
-int64_t writeEvent(TSEvent event, TSVIO input, int64_t off, int64_t size);
 
 /*
 void

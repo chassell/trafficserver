@@ -88,10 +88,24 @@ int APICont::handleTSEvent(TSCont cont, TSEvent event, void *data)
 }
 
 // Transform continuations
-APIXformCont::APIXformCont(TSHttpTxn txnHndl, TSHttpHookID xformType)
+APIXformCont::APIXformCont(TSHttpTxn txnHndl, TSHttpHookID xformType, TSIOBuffer output, int64_t bytes)
    : TSCont_t(TSTransformCreate(&APIXformCont::handleXformTSEvent,txnHndl)),
-     _commonOutput( TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K) )
+     _outputBuff(output)
 {
+  if ( ! _outputBuff ) {
+    _outputHeld.reset(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)); 
+    _outputBuff = _outputHeld.get();
+  }
+
+  _outputRdr.reset( TSIOBufferReaderAlloc(_outputBuff) ); // non-shared reader
+
+  // NOTE: delay for OutputVConnGet() to be valid ...
+  _xformCB = [this,bytes](TSEvent evt, TSVConn invconn) {
+    TSVConnWrite(TSTransformOutputVConnGet(invconn), invconn, this->_outputRdr.get(), bytes);
+    this->_xformCB = _userXformCB; // replace with users' now
+    this->_xformCB(evt,invconn); // continue on...
+  };
+
   // point back here
   TSContDataSet(get(),this);
   TSHttpTxnHookAdd(txnHndl, xformType, get());
@@ -101,7 +115,7 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *)
 {
   APIXformCont *self = static_cast<APIXformCont*>(TSContDataGet(cont));
   ink_assert(self->operator TSCont() == cont);
-  self->_userXformCB(event,static_cast<TSVConn>(cont));
+  self->_xformCB(event,static_cast<TSVConn>(cont));
   return 0;
 }
 
