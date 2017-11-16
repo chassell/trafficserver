@@ -50,37 +50,65 @@ class BlockSinkXform
   APICont          const _xformWrite;
 };
 
-int64_t(TSEvent,TSVIO,int64_t,int64_t)
-  _userCB = decltype(_userCB)([func,cont](TSEvent event, void *) 
+void
+throw_vio_event(TSEvent event, TSVIO input_vio)
+{
+  if ( input_vio || ! TSVIOContGet(input_vio) || ! TSVIOBufferGet(input_vio)) {
+    return;
+  }
+
+  TSContCall(TSVIOContGet(input_vio), event, input_vio);
+}
+
+
+template <class T_OBJ>
+APIXformCont create_xform_tee(T_OBJ &obj, int64_t(T_OBJ::*funcp)(TSEvent,TSVIO,int64_t,int64_t), TSHttpTxn txnHndl)
+{
+  auto adaptor = [&obj,funcp](TSEvent event, TSVConn cont, TSVIO tee_vio) 
      {
        if ( TSVConnClosedGet(cont) ) {
-         (obj.*funcp)(TS_EVENT_VCONN_EOS,nullptr,-1,-1); // bytes "written" and bytes actually consumed
+         (obj.*funcp)(TS_EVENT_VCONN_EOS,nullptr,-1,-1);
          return;
        }
 
-       auto input_vio = static_cast<TSVIO>( TSVConnWriteVIOGet(cont) );
+       auto input_vio = TSVConnWriteVIOGet(cont);
 
-       auto r = 0;
        auto ndone = TSVIONDoneGet(input_vio);
 
-       if ( event != TS_EVENT_VCONN_READ_READY && event != TS_EVENT_IMMEDIATE ) 
-       {
-         (obj.*funcp)(event,input_vio,ndone,-1); // bytes "written" and bytes actually consumed
+       if ( event != TS_EVENT_VCONN_WRITE_READY && event != TS_EVENT_IMMEDIATE ) {
+         (obj.*funcp)(event,input_vio,ndone,0); // pass error on
          return;
        }
 
+       // data event occurred 
+
+       // can't use it .. so close down quickly/!
        if ( ! TSVIOBufferGet(input_vio) ) {
+         (obj.*funcp)(TS_EVENT_VCONN_EOS,nullptr,-1,-1);
          return;
        }
+
+       auto output_vio = TSVConnWriteVIOGet(TSTransformOutputVConnGet(cont));
 
        auto inreader = TSIOBufferReader(TSVIOReaderGet(input_vio));
+       auto outreader = TSIOBufferReader(TSVIOReaderGet(output_vio));
+       auto teereader = TSIOBufferReader(TSVIOReaderGet(tee_vio));
+
+       if ( TSIOBufferReaderAvail(teereader) ) {
+          TSVIOReenable(tee_vio);
+          return;
+       }
 
        // total amt left and amt available
+       if ( TSIOBufferReaderAvail(outreader) ) {
+          TSVIOReenable(output_vio);
+          return;
+       }
 
-       auto avail = TSIOBufferReaderAvail(inreader);
-       avail = std::min(avail+0, TSVIONTodoGet(input_vio));
+       auto inavail = TSIOBufferReaderAvail(inreader);
+       inavail = std::min(inavail+0, TSVIONTodoGet(input_vio));
 
-       r = (obj.*funcp)(event,input_vio,ndone,avail); // bytes "written" and bytes actually consumed
+       auto r = (obj.*funcp)(event,input_vio,ndone,avail);
        if ( r <= 0 || r > avail ) {
          return;
        }
@@ -91,11 +119,13 @@ int64_t(TSEvent,TSVIO,int64_t,int64_t)
        auto evt = ( TSVIONTodoGet(input_vio) > 0 ? TS_EVENT_VCONN_WRITE_READY
                                                  : TS_EVENT_VCONN_WRITE_COMPLETE );
        TSContCall(TSVIOContGet(input_vio), evt, input_vio);
-     });
+     };
+   return APIXformCont(adaptor,txnHndl,TS_HTTP_RESPONSE_CLIENT_HOOK);
+}
 
 int64_t writeEvent(TSEvent event, TSVIO input, int64_t off, int64_t size);
 
-
+/*
 void
 firstTransformationPluginRead(vconn)
 {
@@ -108,19 +138,6 @@ firstTransformationPluginRead(vconn)
   _output_reader = TSIOBufferReaderAlloc(_output_buffer);
   _output_vio = TSVConnWrite(output_vconn, vconn, _output_reader, INT64_MAX); // all da bytes
 
-}
-
-void
-BlockSinkXform::throw_event(event)
-{
-  if ( _input_vio || ! TSVIOContGet(_input_vio) || ! TSVIOBufferGet(_input_vio)) {
-    return;
-  }
-
-  if ( ! _input_complete && _input_complete++ ) {
-    return;
-  }
-  TSContCall(TSVIOContGet(_input_vio), static_cast<TSEvent>(), _input_vio);
 }
 
 int
@@ -140,11 +157,11 @@ BlockStoreXform::handleTransformationPluginEvents(TSEvent event, TSVConn vconn)
       TSVConnShutdown(_output_vconn, 0, 1); // The other end is done reading our output
       break;
     case TS_EVENT_ERROR:
-      upstream_event(TS_EVENT_ERROR);
+      throw_vio_event(TS_EVENT_ERROR,input_vio);
       break;
     default:
       if (TSVIONBytesGet(_input_vio) <= TSVIONDoneGet(_input_vio)) {
-        upstream_event(TS_EVENT_VCONN_WRITE_COMPLETE);
+        throw_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE,input_vio);
         break; // now done with reads
       }
 
@@ -161,13 +178,12 @@ BlockStoreXform::handleTransformationPluginEvents(TSEvent event, TSVConn vconn)
       TSVIONDoneSet(_input_vio, TSVIONDoneGet(_input_vio) + copied); // decrement todo
 
       if ( TSVIONTodoGet(_input_vio) <= 0 ) {
-        upstream_event(TS_EVENT_VCONN_WRITE_COMPLETE);
+        throw_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE);
         break; // now done with reads
       }
 
       TSVIOReenable(_input_vio);
-
-      upstream_event(TS_EVENT_VCONN_WRITE_READY);
+      throw_vio_event(TS_EVENT_VCONN_WRITE_READY,input_vio);
       break;
   }
 }
@@ -196,6 +212,8 @@ shutdown_empty_downstream()
   TSVIONDoneSet(_output_vio, 0);
   TSVIOReenable(_output_vio); // Wake up the downstream vio
 }
+
+*/
 
 /*
 void readBufferChars(buffer)

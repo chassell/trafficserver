@@ -90,6 +90,9 @@ struct APICacheKey : public TSCacheKey_t
 // object to request write/read into cache
 struct APICont : public TSCont_t
 {
+  template <typename T, typename... Args>
+  friend std::unique_ptr<T> std::make_unique(Args &&... args);
+
  public:
   template <typename T_DATA, typename T_REFCOUNTED>
   static TSCont create_temp_tscont(std::shared_future<T_DATA> &cbFuture, const T_REFCOUNTED &counted);
@@ -103,10 +106,15 @@ struct APICont : public TSCont_t
 
   operator TSCont() { return get(); }
 
+  APICont &operator=(std::function<void(TSEvent,void*)> &&fxn) {
+    _userCB = fxn;
+    return *this;
+  }
+
 private:
   static int handleTSEvent(TSCont cont, TSEvent event, void *data);
 
-  APICont(std::function<void(TSEvent,void*)> &&fxn, TSMutex mutex=nullptr);
+  APICont(TSMutex mutex);
 
   // holds object and function pointer
   std::function<void(TSEvent,void*)> _userCB;
@@ -117,15 +125,21 @@ struct APIXformCont : public TSCont_t
 {
  public:
   APIXformCont() = default; // nullptr by default
-  APIXformCont(std::function<void(TSEvent,TSVConn)> &&fxn, TSHttpTxn txnHndl, TSHttpHookID xformType);
+  APIXformCont(TSHttpTxn txnHndl, TSHttpHookID xformType);
 
   operator TSVConn() { return get(); }
+
+  APIXformCont &operator=(std::function<void(TSEvent,TSVConn)> &&fxn) {
+    _userXformCB = fxn;
+    return *this;
+  }
 
 private:
   static int handleXformTSEvent(TSCont cont, TSEvent event, void *data);
 
   // holds object and function pointer
   std::function<void(TSEvent,TSVConn)> _userXformCB;
+  TSIOBuffer_t                         _commonOutput;
 };
 
 

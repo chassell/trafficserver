@@ -33,10 +33,8 @@ APICacheKey::APICacheKey(const atscppapi::Url &url, uint64_t offset)
 template <typename T_DATA, typename T_REFCOUNTED>
 TSCont APICont::create_temp_tscont(std::shared_future<T_DATA> &cbFuture, const T_REFCOUNTED &counted)
 {
-  std::function<void(TSEvent,void*)> stub;
-
   // alloc two objs to pass into lambda
-  auto contp = std::unique_ptr<APICont>(new APICont(std::move(stub),TSMutexCreate())); // uses empty stub-callback!!
+  auto contp = std::make_unique<APICont>(TSMutexCreate()); // uses empty stub-callback!!
   auto promp = std::make_unique<std::promise<T_DATA>>();
 
   auto &cont = *contp; // hold scoped-ref
@@ -44,13 +42,14 @@ TSCont APICont::create_temp_tscont(std::shared_future<T_DATA> &cbFuture, const T
 
   cbFuture = prom.get_future().share(); // link to promise
 
-  cont._userCB = std::move( [&cont,&prom,counted](TSEvent evt, void *data) {
+  // assign new handler
+  cont = [&cont,&prom,counted](TSEvent evt, void *data) {
               decltype(contp) contp(&cont); // free after this call
               decltype(promp) promp(&prom); // free after this call
 
               (void) counted; // "use" value here
               prom.set_value(static_cast<T_DATA>(data));
-          });
+          };
 
   contp.release(); // owned as ptr in lambda
   promp.release(); // owned as ptr in lambda
@@ -73,9 +72,8 @@ APICont::APICont(T_OBJ &obj, void(T_OBJ::*funcp)(TSEvent,TSHttpTxn,T_DATA), T_DA
 }
 
 // bare Continuation lambda adaptor
-APICont::APICont(std::function<void(TSEvent,void*)> &&fxn, TSMutex mutex)
-   : TSCont_t(TSContCreate(&APICont::handleTSEvent,mutex)),
-     _userCB(fxn)
+APICont::APICont(TSMutex mutex)
+   : TSCont_t(TSContCreate(&APICont::handleTSEvent,mutex))
 {
   // point back here
   TSContDataSet(get(),this);
@@ -90,9 +88,9 @@ int APICont::handleTSEvent(TSCont cont, TSEvent event, void *data)
 }
 
 // Transform continuations
-APIXformCont::APIXformCont(std::function<void(TSEvent,TSVConn)> &&fxn, TSHttpTxn txnHndl, TSHttpHookID xformType)
+APIXformCont::APIXformCont(TSHttpTxn txnHndl, TSHttpHookID xformType)
    : TSCont_t(TSTransformCreate(&APIXformCont::handleXformTSEvent,txnHndl)),
-     _userXformCB(fxn)
+     _commonOutput( TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K) )
 {
   // point back here
   TSContDataSet(get(),this);
@@ -106,7 +104,6 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *)
   self->_userXformCB(event,static_cast<TSVConn>(cont));
   return 0;
 }
-
 
 template TSCont APICont::create_temp_tscont(std::shared_future<TSVConn> &, const std::nullptr_t &);
 template TSCont APICont::create_temp_tscont(std::shared_future<TSVConn> &, const std::shared_ptr<class BlockReadXform>&);
