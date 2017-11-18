@@ -63,6 +63,17 @@ RangeDetect::handleReadRequestHeadersPostRemap(Transaction &txn)
   txnPlugin.handleReadRequestHeadersPostRemap(txn);
 }
 
+BlockSetAccess::BlockSetAccess(Transaction &txn)
+   : TransactionPlugin(txn),
+     _txn(txn),
+     _atsTxn(static_cast<TSHttpTxn>(txn.getAtsHandle())),
+     _url(txn.getClientRequest().getUrl()),
+     _clntHdrs(txn.getClientRequest().getHeaders()),
+     _clntRangeStr(txn.getClientRequest().getHeaders().values(RANGE_TAG))
+{
+  TransactionPlugin::registerHook(HOOK_CACHE_LOOKUP_COMPLETE);
+}
+
 void
 BlockSetAccess::handleReadRequestHeadersPostRemap(Transaction &txn)
 {
@@ -82,8 +93,8 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   if ( pstub == &_clntHdrs ) {
     DEBUG_LOG("cache-init: len=%lu set=%s",_assetLen,_b64BlkBitset.c_str());
-    _xform = std::unique_ptr<Plugin>(new BlockInitXform(txn,*this));
-    _xform->handleReadCacheLookupComplete(txn); // [default version]
+    _initXform = std::make_unique<BlockInitXform>(txn,*this);
+    _initXform->handleReadCacheLookupComplete(txn); // [default version]
     return;
   }
 
@@ -100,7 +111,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   _assetLen = std::atol(srvrRange.c_str());
 
   // test if range is readable
-  if ( parse_range(_clntRange, _assetLen, _beginByte, _endByte) >= 0 ) {
+  if ( parse_range(_clntRangeStr, _assetLen, _beginByte, _endByte) >= 0 ) {
     _b64BlkBitset = pstub->value(X_BLOCK_BITSET_TAG);
   }
  
@@ -109,30 +120,42 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   // invalid stub file... (or client headers instead)
   if ( ! _assetLen || _b64BlkBitset.empty() || chk != _b64BlkBitset.end() ) {
     DEBUG_LOG("cache-stub-fail: len=%lu set=%s",_assetLen,_b64BlkBitset.c_str());
-    _xform = std::unique_ptr<Plugin>(new BlockInitXform(txn,*this));
-    _xform->handleReadCacheLookupComplete(txn); // [default version]
+    _initXform = std::make_unique<BlockInitXform>(txn,*this);
+    _initXform->handleReadCacheLookupComplete(txn); // [default version]
     return;
   }
 
   _blkSize = INK_ALIGN((_assetLen>>10)|1,MIN_BLOCK_STORED);
 
   // all blocks [and keys for them] are valid to try reading?
-  if ( have_needed_blocks() && ! _keysInRange.empty() ) {
-    DEBUG_LOG("cache-resp-rd: len=%lu set=%s",_assetLen,_b64BlkBitset.c_str());
-    // first test that blocks are ready and correctly sized
-    _xform = std::unique_ptr<Plugin>(new BlockReadXform(txn,*this));
-    _xform->handleReadCacheLookupComplete(txn);
+  if ( ! have_needed_blocks() || _keysInRange.empty() ) {
+    DEBUG_LOG("cache-resp-wr: base:%p len=%lu len=%lu set=%s",this,assetLen(),_assetLen,_b64BlkBitset.c_str());
+
+    // intercept data for new or updated stub version
+    _storeXform = std::make_unique<BlockStoreXform>(txn,*this);
+    _storeXform->handleReadCacheLookupComplete(txn); // [default version]
     return;
   }
 
-  DEBUG_LOG("cache-resp-wr: base:%p len=%lu len=%lu set=%s",this,assetLen(),_assetLen,_b64BlkBitset.c_str());
+  DEBUG_LOG("cache-resp-rd: len=%lu set=%s",_assetLen,_b64BlkBitset.c_str());
+  _vcsToRead.resize( _keysInRange.size() );
 
-  // intercept data for new or updated stub version
-  _xform = std::unique_ptr<Plugin>(new BlockStoreXform(txn,*this));
+  // stateless callback as deleter...
+  using Deleter_t = void(*)(BlockSetAccess*);
+  static const Deleter_t deleter = [](BlockSetAccess *ptr) {
+     ptr->handleBlockTests();  // recurse from last one
+  };
 
-  DEBUG_LOG("cache-resp-wr: base:%p xform:%p len=%lu len=%lu set=%s",this,_xform.get(),assetLen(),_assetLen,_b64BlkBitset.c_str());
-  _xform->handleReadCacheLookupComplete(txn);
-  DEBUG_LOG("cache-resp-wr: base:%p xform:%p len=%lu len=%lu set=%s",this,_xform.get(),assetLen(),_assetLen,_b64BlkBitset.c_str());
+  // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
+  auto barrierLock = std::shared_ptr<BlockSetAccess>(this, deleter);
+  auto mutex = TSMutexCreate(); // one shared mutex across reads
+
+  for( auto i = 0U ; i < _keysInRange.size() ; ++i ) {
+    // prep for async reads that init into VConn-futures
+    // XXX: pass a use-for-all lambda-ref instead???
+    auto contp = APICont::create_temp_tscont(mutex, _vcsToRead[i], std::move(barrierLock));
+    TSCacheRead(contp,_keysInRange[i]);
+  }
 }
 
 /////////////////////////////////////////////////////////////
@@ -153,8 +176,8 @@ void BlockSetAccess::clean_server_request(Transaction &txn)
   proxyReq.erase(IF_NONE_MATCH_TAG); // actually getting data
 
   // replace with a block-based range if known
-  if ( ! blockRange().empty() ) {
-     proxyReq.set(RANGE_TAG, blockRange()); 
+  if ( ! blockRangeStr().empty() ) {
+     proxyReq.set(RANGE_TAG, blockRangeStr()); 
   }
 }
 
@@ -272,10 +295,8 @@ BlockSetAccess::have_needed_blocks()
 //  ink_assert( _contentLen == static_cast<int64_t>(( endBlk - startBlk )*_blkSize) - _beginByte - _endByte );
 
   // store with inclusive end
-  _blkRange = "bytes=";
-  _blkRange += std::to_string(_blkSize*startBlk) + "-" + std::to_string(_blkSize*endBlk-1); 
-
-  _keysInRange.resize( endBlk - startBlk );
+  _blkRangeStr = "bytes=";
+  _blkRangeStr += std::to_string(_blkSize*startBlk) + "-" + std::to_string(_blkSize*endBlk-1); 
 
   auto misses = 0;
 
@@ -283,7 +304,6 @@ BlockSetAccess::have_needed_blocks()
   {
     // fill keys only of set bits...
     if ( ! is_base64_bit_set(_b64BlkBitset,i) ) {
-      _keysInRange[i-startBlk] = APICacheKey(_url,i*_blkSize);
       ++misses;
     }
   }
@@ -291,11 +311,6 @@ BlockSetAccess::have_needed_blocks()
   // any missed
   if ( misses ) {
    return 0; // don't have all of them
-  }
-
-  // write all of them
-  for( auto i = startBlk ; i < endBlk ; ++i ) {
-   _keysInRange[i-startBlk] = APICacheKey(_url,i*_blkSize);
   }
 
   return end;

@@ -24,6 +24,16 @@
 #define DEBUG_LOG(fmt, ...) TSDebug(PLUGIN_NAME, "[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
 #define ERROR_LOG(fmt, ...) TSError("[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
 
+BlockStoreXform::BlockStoreXform(Transaction &txn, BlockSetAccess &ctxt)
+   : TransactionPlugin(txn), _ctxt(ctxt), 
+     _xform(ctxt.atsTxn(), [this](TSIOBufferReader r,int64_t pos,int64_t len) { return this->handleWrite(r,pos,len); }, 
+             ctxt.rangeLen()),
+     _vcsToWrite(ctxt.keysInRange().size())
+{
+  TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // add block-range and clean up
+  TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // adjust headers to stub-file
+}
+
 void
 BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
 {
@@ -32,10 +42,12 @@ BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
   // [will override the server response for headers]
   auto &keys = _ctxt.keysInRange();
 
+  auto mutex = TSMutexCreate();
+
   for( auto i = 0U ; i < keys.size() ; ++i ) {
     if ( keys[i] ) {
       // prep for async write that inits into VConn-futures 
-      auto contp = APICont::create_temp_tscont(_vcsToWrite[i],nullptr);
+      auto contp = APICont::create_temp_tscont(mutex,_vcsToWrite[i]);
       TSCacheWrite(contp,keys[i]); // find room to store each key...
     }
   }
@@ -57,4 +69,17 @@ BlockStoreXform::handleReadResponseHeaders(Transaction &txn)
   DEBUG_LOG("srvr-resp: len=%lu",_ctxt._assetLen);
    _ctxt.clean_server_response(txn);
    txn.resume();
+}
+
+int64_t BlockStoreXform::handleWrite(TSIOBufferReader r, int64_t pos, int64_t len)
+{
+  // XXX
+  return 0L;
+}
+
+BlockStoreXform::~BlockStoreXform() 
+{
+  for( auto &&i : _vcsToWrite ) {
+    TSVConnClose(i.get());
+  }
 }

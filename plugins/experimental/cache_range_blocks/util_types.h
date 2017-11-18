@@ -64,6 +64,7 @@ namespace std {
 // unique_ptr deletions
 template <> inline void default_delete<TSCacheKey_t::element_type>::operator()(TSCacheKey key) const 
   { TSCacheKeyDestroy(key); }
+// NOTE: may require TSVConnClose()!
 template <> inline void default_delete<TSCont_t::element_type>::operator()(TSCont cont) const 
   { TSContDestroy(cont); }
 template <> inline void default_delete<TSMutex_t::element_type>::operator()(TSMutex mutex) const 
@@ -94,8 +95,8 @@ struct APICont : public TSCont_t
   friend std::unique_ptr<T> std::make_unique(Args &&... args);
 
  public:
-  template <typename T_DATA, typename T_REFCOUNTED>
-  static TSCont create_temp_tscont(std::shared_future<T_DATA> &cbFuture, const T_REFCOUNTED &counted);
+  template <typename T_DATA>
+  static TSCont create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DATA> &cbFuture, std::shared_ptr<void> &&counted=std::move(std::shared_ptr<void>()));
 
  public:
   APICont() = default; // nullptr by default
@@ -129,11 +130,14 @@ struct APIXformCont : public TSCont_t
  public:
   APIXformCont() = default; // nullptr by default
   APIXformCont(APIXformCont &&) = default;
-  APIXformCont(TSHttpTxn txnHndl, TSHttpHookID xformType, TSIOBuffer output=nullptr, int64_t bytes=INT64_MAX);
+  APIXformCont(TSHttpTxn txnHndl, TSHttpHookID xformType, int64_t bytes=INT64_MAX);
 
   operator TSVConn() { return get(); }
+  
+  TSVConn output() const { return _outputVConn; }
+  TSIOBuffer outputBuffer() const { return _outputBuff.get(); }
 
-  APIXformCont &operator=(std::function<void(TSEvent,TSVConn)> &&fxn) {
+  APIXformCont &operator=(std::function<void(TSEvent,TSVIO)> &&fxn) {
     _userXformCB = fxn;
     return *this;
   }
@@ -142,11 +146,35 @@ private:
   static int handleXformTSEvent(TSCont cont, TSEvent event, void *data);
 
   // holds object and function pointer
-  std::function<void(TSEvent,TSVConn)> _xformCB;
-  std::function<void(TSEvent,TSVConn)> _userXformCB;
-  TSIOBuffer_t                         _outputHeld;
-  TSIOBuffer                           _outputBuff = nullptr;
+  std::function<void(TSEvent,TSVIO)>   _xformCB;
+  std::function<void(TSEvent,TSVIO)>   _userXformCB;
+  TSIOBuffer_t                         _outputBuff;
   TSIOBufferReader_t                   _outputRdr;
+  TSVConn                              _outputVConn = nullptr;
+};
+
+class BlockTeeXform : public APIXformCont
+{
+  using HookType = std::function<int64_t(TSIOBufferReader,int64_t,int64_t)>;
+
+ public:
+  BlockTeeXform(TSHttpTxn txn, HookType &&writeHook, int64_t xformLen)
+     : APIXformCont(txn,TS_HTTP_RESPONSE_TRANSFORM_HOOK,xformLen),
+       _writeHook(writeHook)
+  {
+     // get to method via callback
+     static_cast<APIXformCont&>(*this) = [this](TSEvent evt, TSVIO vio) { 
+       this->handleEvent(evt,vio); 
+     };
+  }
+
+  void 
+  handleEvent(TSEvent event, TSVIO vio);
+
+  void
+  handleWrite(TSVIO invio);
+
+  HookType                 _writeHook;
 };
 
 

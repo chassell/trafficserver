@@ -18,6 +18,7 @@
 #include "util_types.h"
 
 #include "ts/ts.h"
+#include "ts/InkErrno.h"
 
 APICacheKey::APICacheKey(const atscppapi::Url &url, uint64_t offset)
      : TSCacheKey_t(TSCacheKeyCreate()) 
@@ -30,15 +31,16 @@ APICacheKey::APICacheKey(const atscppapi::Url &url, uint64_t offset)
 }
 
 
-template <typename T_DATA, typename T_REFCOUNTED>
-TSCont APICont::create_temp_tscont(std::shared_future<T_DATA> &cbFuture, const T_REFCOUNTED &counted)
+template <typename T_DATA>
+TSCont APICont::create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DATA> &cbFuture, std::shared_ptr<void> &&countedRV)
 {
   // alloc two objs to pass into lambda
-  auto contp = std::make_unique<APICont>(TSMutexCreate()); // uses empty stub-callback!!
+  auto contp = std::make_unique<APICont>(shared_mutex); // uses empty stub-callback!!
   auto promp = std::make_unique<std::promise<T_DATA>>();
 
   auto &cont = *contp; // hold scoped-ref
   auto &prom = *promp; // hold scoped-ref
+  auto counted = countedRV;
 
   cbFuture = prom.get_future().share(); // link to promise
 
@@ -47,8 +49,16 @@ TSCont APICont::create_temp_tscont(std::shared_future<T_DATA> &cbFuture, const T
               decltype(contp) contp(&cont); // free after this call
               decltype(promp) promp(&prom); // free after this call
 
-              (void) counted; // "use" value here
-              prom.set_value(static_cast<T_DATA>(data));
+              prom.set_value(static_cast<T_DATA>(data)); // store correctly
+               
+              // bad ptr?  then call deleter on this!
+              auto ptrErr = -reinterpret_cast<intptr_t>(data);
+              if ( ptrErr >= 0 && ptrErr < INK_START_ERRNO+1000 ) {
+                auto deleter = std::get_deleter<void(*)(void*)>(counted);
+                if ( deleter ) {
+                  (*deleter)(counted.get());
+                }
+              }
           };
 
   contp.release(); // owned as ptr in lambda
@@ -88,22 +98,20 @@ int APICont::handleTSEvent(TSCont cont, TSEvent event, void *data)
 }
 
 // Transform continuations
-APIXformCont::APIXformCont(TSHttpTxn txnHndl, TSHttpHookID xformType, TSIOBuffer output, int64_t bytes)
+APIXformCont::APIXformCont(TSHttpTxn txnHndl, TSHttpHookID xformType, int64_t limit)
    : TSCont_t(TSTransformCreate(&APIXformCont::handleXformTSEvent,txnHndl)),
-     _outputBuff(output)
+     _outputBuff(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
+     _outputRdr( TSIOBufferReaderAlloc(this->_outputBuff.get()) )
 {
-  if ( ! _outputBuff ) {
-    _outputHeld.reset(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)); 
-    _outputBuff = _outputHeld.get();
-  }
-
-  _outputRdr.reset( TSIOBufferReaderAlloc(_outputBuff) ); // non-shared reader
 
   // NOTE: delay for OutputVConnGet() to be valid ...
-  _xformCB = [this,bytes](TSEvent evt, TSVConn invconn) {
-    TSVConnWrite(TSTransformOutputVConnGet(invconn), invconn, this->_outputRdr.get(), bytes);
+  _xformCB = [this,limit](TSEvent evt, TSVIO event_vio) {
+    TSVConn invconn = *this;
+    this->_outputVConn = TSTransformOutputVConnGet(invconn);
+    TSVConnWrite(this->output(), invconn, this->_outputRdr.get(), limit);
     this->_xformCB = _userXformCB; // replace with users' now
-    this->_xformCB(evt,invconn); // continue on...
+
+    this->_xformCB(evt,event_vio); // continue on...
   };
 
   // point back here
@@ -111,15 +119,15 @@ APIXformCont::APIXformCont(TSHttpTxn txnHndl, TSHttpHookID xformType, TSIOBuffer
   TSHttpTxnHookAdd(txnHndl, xformType, get());
 }
 
-int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *) 
+int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata) 
 {
   APIXformCont *self = static_cast<APIXformCont*>(TSContDataGet(cont));
-  ink_assert(self->operator TSCont() == cont);
-  self->_xformCB(event,static_cast<TSVConn>(cont));
+  ink_assert(self->operator TSVConn() == cont);
+
+  self->_xformCB(event,static_cast<TSVIO>(edata));
   return 0;
 }
 
-template TSCont APICont::create_temp_tscont(std::shared_future<TSVConn> &, const std::nullptr_t &);
-template TSCont APICont::create_temp_tscont(std::shared_future<TSVConn> &, const std::shared_ptr<class BlockReadXform>&);
+template TSCont APICont::create_temp_tscont(TSMutex,std::shared_future<TSVConn> &, std::shared_ptr<void> &&);
 
 //}
