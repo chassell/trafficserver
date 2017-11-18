@@ -170,11 +170,13 @@ class BlockStoreXform : public TransactionPlugin
 //////////////////////////////////////////
 //////////// in Response-Transformation phase 
 
-  int64_t handleWrite(TSIOBufferReader r, int64_t pos, int64_t len);
+  int64_t handleInput(TSIOBufferReader r, int64_t pos, int64_t len);
+  void handleWrite(TSEvent,TSHttpTxn,std::nullptr_t);
 
 private:
   BlockSetAccess                          &_ctxt;
   BlockTeeXform                            _xform;
+  APICont                                  _writeEvents;
   std::vector<std::shared_future<TSVConn>> _vcsToWrite; // indexed as the keys
 };
 

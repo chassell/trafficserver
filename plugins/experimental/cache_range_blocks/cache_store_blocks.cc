@@ -26,9 +26,10 @@
 
 BlockStoreXform::BlockStoreXform(Transaction &txn, BlockSetAccess &ctxt)
    : TransactionPlugin(txn), _ctxt(ctxt), 
-     _xform(ctxt.atsTxn(), [this](TSIOBufferReader r,int64_t pos,int64_t len) { return this->handleWrite(r,pos,len); }, 
+     _xform(ctxt.atsTxn(), [this](TSIOBufferReader r,int64_t pos,int64_t len) { return this->handleInput(r,pos,len); }, 
              ctxt.rangeLen()),
-     _vcsToWrite(ctxt.keysInRange().size())
+     _vcsToWrite(ctxt.keysInRange().size()),
+     _writeEvents(*this, &BlockStoreXform::handleWrite, nullptr)
 {
   TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // add block-range and clean up
   TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // adjust headers to stub-file
@@ -71,10 +72,16 @@ BlockStoreXform::handleReadResponseHeaders(Transaction &txn)
    txn.resume();
 }
 
-int64_t BlockStoreXform::handleWrite(TSIOBufferReader r, int64_t pos, int64_t len)
+int64_t BlockStoreXform::handleInput(TSIOBufferReader r, int64_t pos, int64_t len)
 {
-  // XXX
+  // begin write to handle new data if old is done/empty
+  // ignore if block is already coming down
   return 0L;
+}
+
+void BlockStoreXform::handleWrite(TSEvent evt, TSHttpTxn, std::nullptr_t)
+{
+  // event from TSVConnWrite -> WRITE_READY or WRITE_COMPLETE
 }
 
 BlockStoreXform::~BlockStoreXform() 
