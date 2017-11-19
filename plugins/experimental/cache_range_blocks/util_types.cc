@@ -128,6 +128,9 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
   return 0;
 }
 
+class BlockStoreXform;
+
+template APICont::APICont(BlockStoreXform &obj, void(BlockStoreXform::*funcp)(TSEvent,TSHttpTxn,decltype(nullptr)), decltype(nullptr));
 template TSCont APICont::create_temp_tscont(TSMutex,std::shared_future<TSVConn> &, std::shared_ptr<void> &&);
 
 //}

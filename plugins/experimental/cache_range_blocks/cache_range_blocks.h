@@ -104,8 +104,8 @@ private:
 
   uint64_t have_needed_blocks();
 
-  const TSHttpTxn     _atsTxn = nullptr;
   Transaction        &_txn;
+  const TSHttpTxn     _atsTxn = nullptr;
   Url                &_url;
   Headers            &_clntHdrs;
   std::string         _clntRangeStr;
@@ -176,8 +176,8 @@ class BlockStoreXform : public TransactionPlugin
 private:
   BlockSetAccess                          &_ctxt;
   BlockTeeXform                            _xform;
-  APICont                                  _writeEvents;
   std::vector<std::shared_future<TSVConn>> _vcsToWrite; // indexed as the keys
+  APICont                                  _writeEvents;
 };
 
 

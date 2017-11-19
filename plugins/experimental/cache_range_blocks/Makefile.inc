@@ -21,7 +21,8 @@ experimental_cache_range_blocks_cache_range_blocks_la_LIBADD = $(libatscppapi)
 experimental_cache_range_blocks_cache_range_blocks_la_SOURCES = \
   experimental/cache_range_blocks/cache_range_blocks.cc \
   experimental/cache_range_blocks/cache_store_blocks.cc \
-  experimental/cache_range_blocks/cache_read_blocks.cc
+  experimental/cache_range_blocks/cache_read_blocks.cc \
+  experimental/cache_range_blocks/cache_range_transforms.cc \
+  experimental/cache_range_blocks/util_types.cc
 
 
-#  experimental/cache_range_blocks/cache_range_transforms.cc
