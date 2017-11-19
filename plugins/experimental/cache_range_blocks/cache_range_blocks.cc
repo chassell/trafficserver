@@ -153,7 +153,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   for( auto i = 0U ; i < _keysInRange.size() ; ++i ) {
     // prep for async reads that init into VConn-futures
     // XXX: pass a use-for-all lambda-ref instead???
-    auto contp = APICont::create_temp_tscont(mutex, _vcsToRead[i], std::move(barrierLock));
+    auto contp = APICont::create_temp_tscont(mutex, _vcsToRead[i], barrierLock);
     TSCacheRead(contp,_keysInRange[i]);
   }
 }
