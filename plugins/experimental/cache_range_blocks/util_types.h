@@ -96,7 +96,7 @@ struct APICont : public TSCont_t
 
  public:
   template <typename T_DATA>
-  static TSCont create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DATA> &cbFuture, std::shared_ptr<void> &&counted=std::move(std::shared_ptr<void>()));
+  static TSCont create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DATA> &cbFuture, const std::shared_ptr<void> &counted=std::shared_ptr<void>());
 
  public:
   APICont() = default; // nullptr by default

@@ -32,7 +32,7 @@ APICacheKey::APICacheKey(const atscppapi::Url &url, uint64_t offset)
 
 
 template <typename T_DATA>
-TSCont APICont::create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DATA> &cbFuture, std::shared_ptr<void> &&countedRV)
+TSCont APICont::create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DATA> &cbFuture, const std::shared_ptr<void> &counted)
 {
   // alloc two objs to pass into lambda
   auto contp = std::make_unique<APICont>(shared_mutex); // uses empty stub-callback!!
@@ -40,7 +40,6 @@ TSCont APICont::create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DA
 
   auto &cont = *contp; // hold scoped-ref
   auto &prom = *promp; // hold scoped-ref
-  auto counted = countedRV;
 
   cbFuture = prom.get_future().share(); // link to promise
 
@@ -74,6 +73,8 @@ APICont::APICont(T_OBJ &obj, void(T_OBJ::*funcp)(TSEvent,TSHttpTxn,T_DATA), T_DA
 {
   // point back here
   TSContDataSet(get(),this);
+
+  static_cast<void>(cbdata);
   // memorize user data to forward on
   _userCB = decltype(_userCB)([&obj,funcp,cbdata](TSEvent event, void *evtdata) 
      {
@@ -131,6 +132,6 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
 class BlockStoreXform;
 
 template APICont::APICont(BlockStoreXform &obj, void(BlockStoreXform::*funcp)(TSEvent,TSHttpTxn,decltype(nullptr)), decltype(nullptr));
-template TSCont APICont::create_temp_tscont(TSMutex,std::shared_future<TSVConn> &, std::shared_ptr<void> &&);
+template TSCont APICont::create_temp_tscont(TSMutex,std::shared_future<TSVConn> &, const std::shared_ptr<void> &);
 
 //}
