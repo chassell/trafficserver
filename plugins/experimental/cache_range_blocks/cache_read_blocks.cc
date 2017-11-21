@@ -22,6 +22,8 @@
 #include "ts/experimental.h"
 #include "ts/InkErrno.h"
 
+#include <chrono>
+
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
 #define PLUGIN_NAME "cache_range_blocks"
@@ -34,6 +36,9 @@ using namespace atscppapi;
 void
 BlockSetAccess::handleBlockTests()
 {
+  using namespace std::chrono;
+  using std::future_status;
+
   //
   // mutex-protected check
   // 
@@ -51,7 +56,7 @@ BlockSetAccess::handleBlockTests()
     // clear bit
     base64_bit_clr(_b64BlkBitset,firstBlk + n);
 
-    if ( _vcsToRead[n].wait_for(std::chrono::seconds(0)) != std::future_status::ready ) {
+    if ( _vcsToRead[n].wait_for(seconds::zero()) != future_status::ready ) {
       continue;
     }
 
@@ -78,7 +83,7 @@ BlockSetAccess::handleBlockTests()
     DEBUG_LOG("cache-resp-wr: len=%lu set=%s",assetLen(),b64BlkBitset().c_str());
 
     // intercept data for new or updated stub version
-    _storeXform = std::make_unique<BlockStoreXform>(_txn,*this);
+    _storeXform = std::make_unique<BlockStoreXform>(*this);
     _storeXform->handleReadCacheLookupComplete(_txn);
     return;
   }

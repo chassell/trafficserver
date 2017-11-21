@@ -20,6 +20,12 @@
 #include "ts/ts.h"
 #include "ts/InkErrno.h"
 
+#define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
+
+#define PLUGIN_NAME "cache_range_blocks"
+#define DEBUG_LOG(fmt, ...) TSDebug(PLUGIN_NAME, "[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
+#define ERROR_LOG(fmt, ...) TSError("[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
+
 APICacheKey::APICacheKey(const atscppapi::Url &url, uint64_t offset)
      : TSCacheKey_t(TSCacheKeyCreate()) 
 {
@@ -68,7 +74,7 @@ TSCont APICont::create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DA
 
 // accepts TSHttpTxn handler functions
 template <class T_OBJ, typename T_DATA>
-APICont::APICont(T_OBJ &obj, void(T_OBJ::*funcp)(TSEvent,TSHttpTxn,T_DATA), T_DATA cbdata)
+APICont::APICont(T_OBJ &obj, void(T_OBJ::*funcp)(TSEvent,void*,T_DATA), T_DATA cbdata)
    : TSCont_t(TSContCreate(&APICont::handleTSEvent,TSMutexCreate())) 
 {
   // point back here
@@ -78,7 +84,7 @@ APICont::APICont(T_OBJ &obj, void(T_OBJ::*funcp)(TSEvent,TSHttpTxn,T_DATA), T_DA
   // memorize user data to forward on
   _userCB = decltype(_userCB)([&obj,funcp,cbdata](TSEvent event, void *evtdata) 
      {
-      (obj.*funcp)(event,static_cast<TSHttpTxn>(evtdata),cbdata);
+      (obj.*funcp)(event,evtdata,cbdata);
      });
 }
 
@@ -101,15 +107,15 @@ int APICont::handleTSEvent(TSCont cont, TSEvent event, void *data)
 // Transform continuations
 APIXformCont::APIXformCont(TSHttpTxn txnHndl, TSHttpHookID xformType, int64_t limit)
    : TSCont_t(TSTransformCreate(&APIXformCont::handleXformTSEvent,txnHndl)),
-     _outputBuff(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
-     _outputRdr( TSIOBufferReaderAlloc(this->_outputBuff.get()) )
+     _outputBuffer(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
+     _outputReader( TSIOBufferReaderAlloc(this->_outputBuffer.get()) )
 {
 
   // NOTE: delay for OutputVConnGet() to be valid ...
   _xformCB = [this,limit](TSEvent evt, TSVIO event_vio) {
     TSVConn invconn = *this;
     this->_outputVConn = TSTransformOutputVConnGet(invconn);
-    TSVConnWrite(this->output(), invconn, this->_outputRdr.get(), limit);
+    TSVConnWrite(this->output(), invconn, this->_outputReader.get(), limit);
     this->_xformCB = _userXformCB; // replace with users' now
 
     this->_xformCB(evt,event_vio); // continue on...
@@ -131,7 +137,7 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
 
 class BlockStoreXform;
 
-template APICont::APICont(BlockStoreXform &obj, void(BlockStoreXform::*funcp)(TSEvent,TSHttpTxn,decltype(nullptr)), decltype(nullptr));
+template APICont::APICont(BlockStoreXform &obj, void(BlockStoreXform::*funcp)(TSEvent,void*,decltype(nullptr)), decltype(nullptr));
 template TSCont APICont::create_temp_tscont(TSMutex,std::shared_future<TSVConn> &, const std::shared_ptr<void> &);
 
 //}

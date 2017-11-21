@@ -84,7 +84,7 @@ BlockSetAccess::handleReadRequestHeadersPostRemap(Transaction &txn)
 void
 BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 {
-  auto pstub = get_trunc_hdrs(txn); // get (1) client-req ptr or (2) cached-stub ptr or nullptr
+  auto pstub = get_trunc_hdrs(); // get (1) client-req ptr or (2) cached-stub ptr or nullptr
 
   if ( ! pstub ) {
     /// TODO delete old stub file in case of revalidate!
@@ -93,7 +93,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   if ( pstub == &_clntHdrs ) {
     DEBUG_LOG("cache-init: len=%lu set=%s",_assetLen,_b64BlkBitset.c_str());
-    _initXform = std::make_unique<BlockInitXform>(txn,*this);
+    _initXform = std::make_unique<BlockInitXform>(*this);
     _initXform->handleReadCacheLookupComplete(txn); // [default version]
     return;
   }
@@ -120,7 +120,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   // invalid stub file... (or client headers instead)
   if ( ! _assetLen || _b64BlkBitset.empty() || chk != _b64BlkBitset.end() ) {
     DEBUG_LOG("cache-stub-fail: len=%lu set=%s",_assetLen,_b64BlkBitset.c_str());
-    _initXform = std::make_unique<BlockInitXform>(txn,*this);
+    _initXform = std::make_unique<BlockInitXform>(*this);
     _initXform->handleReadCacheLookupComplete(txn); // [default version]
     return;
   }
@@ -132,7 +132,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     DEBUG_LOG("cache-resp-wr: base:%p len=%lu len=%lu set=%s",this,assetLen(),_assetLen,_b64BlkBitset.c_str());
 
     // intercept data for new or updated stub version
-    _storeXform = std::make_unique<BlockStoreXform>(txn,*this);
+    _storeXform = std::make_unique<BlockStoreXform>(*this);
     _storeXform->handleReadCacheLookupComplete(txn); // [default version]
     return;
   }
@@ -268,17 +268,17 @@ parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_t &end)
 }
 
 Headers *
-BlockSetAccess::get_trunc_hdrs(Transaction &txn) 
+BlockSetAccess::get_trunc_hdrs() 
 {
    // not even found?
-   if (txn.getCacheStatus() < Txn_t::CACHE_LOOKUP_HIT_STALE ) {
-     DEBUG_LOG(" unusable: %d",txn.getCacheStatus());
+   if (_txn.getCacheStatus() < Txn_t::CACHE_LOOKUP_HIT_STALE ) {
+     DEBUG_LOG(" unusable: %d",_txn.getCacheStatus());
      return &_clntHdrs;
    }
 
-   DEBUG_LOG("cache-hdrs:\n%s\n------\n",txn.getCachedResponse().getHeaders().wireStr().c_str());
+   DEBUG_LOG("cache-hdrs:\n%s\n------\n",_txn.getCachedResponse().getHeaders().wireStr().c_str());
 
-   auto &ccheHdrs = txn.getCachedResponse().getHeaders();
+   auto &ccheHdrs = _txn.getCachedResponse().getHeaders();
    auto i = ccheHdrs.values(CONTENT_ENCODING_TAG).find(CONTENT_ENCODING_INTERNAL);
    return ( i == std::string::npos ? nullptr : &ccheHdrs );
 }
@@ -298,18 +298,13 @@ BlockSetAccess::have_needed_blocks()
   _blkRangeStr = "bytes=";
   _blkRangeStr += std::to_string(_blkSize*startBlk) + "-" + std::to_string(_blkSize*endBlk-1); 
 
-  auto misses = 0;
+  auto i = startBlk;
 
-  for( auto i = startBlk ; i < endBlk ; ++i ) 
-  {
-    // fill keys only of set bits...
-    if ( ! is_base64_bit_set(_b64BlkBitset,i) ) {
-      ++misses;
-    }
+  for( ; i < endBlk && is_base64_bit_set(_b64BlkBitset,i) ; ++i ) {
   }
 
   // any missed
-  if ( misses ) {
+  if ( i < endBlk ) {
    return 0; // don't have all of them
   }
 

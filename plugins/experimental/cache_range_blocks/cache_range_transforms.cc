@@ -40,10 +40,11 @@ void BlockTeeXform::handleEvent(TSEvent event, TSVIO evtvio)
 {
    TSVConn invconn = *this;
 
-   ink_assert( TSVIOVConnGet(evtvio) == invconn );
+   // evtvio is TSVIO or Event
 
    if ( TSVConnClosedGet(invconn) ) {
      // one chance only from upstream
+     DEBUG_LOG("xform input-closed cutoff");
      return;
    }
 
@@ -52,16 +53,26 @@ void BlockTeeXform::handleEvent(TSEvent event, TSVIO evtvio)
    switch (event) 
    {
      case TS_EVENT_ERROR:
+       DEBUG_LOG("xform input error: %ld",TSVIONDoneGet(TSVConnWriteVIOGet(*this)));
        forward_vio_event(TS_EVENT_ERROR,invio);
        break;
 
      // sent by output only...
      case TS_EVENT_VCONN_WRITE_COMPLETE:
+       DEBUG_LOG("xform output complete: %ld",TSVIONDoneGet(TSVConnWriteVIOGet(*this)));
        TSVConnShutdown(this->output(), 0, 1); // no more writes to downstream
        break;
 
      case TS_EVENT_VCONN_WRITE_READY:
+       DEBUG_LOG("xform output ready down: %ld",TSVIONDoneGet(TSVConnWriteVIOGet(*this)));
+       handleWrite(invio);
+       break;
+     case TS_EVENT_IMMEDIATE:
+       DEBUG_LOG("xform output ready up: %ld",TSVIONDoneGet(TSVConnWriteVIOGet(*this)));
+       handleWrite(invio);
+       break;
      default:
+       DEBUG_LOG("xform output ready evt:%d %ld",event,TSVIONDoneGet(TSVConnWriteVIOGet(*this)));
        handleWrite(invio);
        break;
    }
@@ -69,57 +80,61 @@ void BlockTeeXform::handleEvent(TSEvent event, TSVIO evtvio)
 
 void BlockTeeXform::handleWrite(TSVIO invio)
 {
-  // only if safe...
+  // ignore input VIO if done ...
   if ( ! TSVIOBufferGet(invio) ) {
+    DEBUG_LOG("xform output shutdown");
     return;
   }
 
+  // detect limit on input amount ...
+  TSIOBufferReader inreader = TSVIOReaderGet(invio);
+  auto nbytesin = TSIOBufferReaderAvail(inreader);
+  auto obytesin = TSVIONDoneGet(invio);
+
+  // clamp to end if coming..
+  nbytesin = std::min(nbytesin+0, TSVIONTodoGet(invio));
+  auto nbytesthru = nbytesin;
+
   auto outvio = TSVConnWriteVIOGet(output());
-  if ( outvio && ! TSVIOBufferGet(outvio) ) {
+  if ( ! outvio || ! TSVIOBufferGet(outvio) ) {
     outvio = nullptr;
   }
 
-  // limit at end of input
-  TSIOBufferReader inreader = TSVIOReaderGet(invio);
-  auto inavail = TSIOBufferReaderAvail(inreader);
-  inavail = std::min(inavail+0, TSVIONTodoGet(invio));
+  DEBUG_LOG("xform state: oldin:%ld newin:%ld newth:%ld ovio:%p",obytesin,nbytesin,nbytesthru,outvio);
 
-  auto outavail = inavail;
+  // input is ending with output active?
+  if ( outvio && ! nbytesin ) { // disabled upstream?
+    TSVIONBytesSet(outvio, TSVIONDoneGet(outvio)); // mark for closing
+  // input is active with output active?
+  } else if ( outvio ) {
+    nbytesthru = std::min(nbytesthru+0, TSVIONTodoGet(outvio));
+  }
 
+  DEBUG_LOG("xform state: oldin:%ld newin:%ld newth:%ld ovio:%p",obytesin,nbytesin,nbytesthru,outvio);
+
+  // any real bytes in or close everything?
+  if ( nbytesthru || ! nbytesin ) {
+    TSIOBufferCopy(outputBuffer(), inreader, nbytesthru, 0); // copy them
+    TSIOBufferReaderConsume(inreader,nbytesthru); // advance input
+    TSVIONDoneSet(invio, obytesin + nbytesthru);  // advance to end
+
+    _writeHook(inreader,obytesin,nbytesthru); // show advance
+  }
+
+  DEBUG_LOG("xform state: oldin:%ld newin:%ld newth:%ld ovio:%p",obytesin,nbytesin,nbytesthru,outvio);
+
+  // deliver bytes or close to output
   if ( outvio ) {
-    // adjust to what's acceptable
-    outavail = std::min(outavail+0, TSVIONTodoGet(outvio));
-  } 
-
-  // disable from out write?
-  if ( inavail && ! outavail ) {
-    TSVIOReenable(outvio); // send zero-bytes on
-    return;
+    TSVIOReenable(outvio); // deliver change [maybe zero bytes]
   }
 
-  auto ndone = TSVIONDoneGet(invio);
-  // disable from input write only?
-  if ( ! inavail && outvio ) {
-    TSVIONBytesSet(outvio, ndone);
-    TSVIOReenable(outvio); // intended to give zero bytes
+  DEBUG_LOG("xform state: oldin:%ld newin:%ld newth:%ld ovio:%p",obytesin,nbytesin,nbytesthru,outvio);
+
+  if ( ! nbytesin ) {
+    forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE,invio); // complete upstream
+  } else { 
+    forward_vio_event(TS_EVENT_VCONN_WRITE_READY, invio);
   }
-
-  if ( ! inavail ) {
-    forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE,invio);
-    return;
-  }
-
-  _writeHook(inreader,ndone,outavail);
-
-  if ( outavail && outvio ) {
-    // copy all bytes available in
-    TSIOBufferCopy(TSVIOBufferGet(outvio), inreader, outavail, 0);
-  }
-
-  // keep it moving on ...
-  TSIOBufferReaderConsume(inreader,outavail);
-  TSVIONDoneSet(invio, ndone + outavail);
-  forward_vio_event(TS_EVENT_VCONN_WRITE_READY, invio);
 }
 
 /*

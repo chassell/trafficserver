@@ -103,7 +103,7 @@ struct APICont : public TSCont_t
 
   // accepts TSHttpTxn handler functions
   template <class T_OBJ, typename T_DATA>
-  APICont(T_OBJ &obj, void(T_OBJ::*funcp)(TSEvent,TSHttpTxn,T_DATA), T_DATA cbdata);
+  APICont(T_OBJ &obj, void(T_OBJ::*funcp)(TSEvent,void*,T_DATA), T_DATA cbdata);
 
   operator TSCont() { return get(); }
 
@@ -135,7 +135,7 @@ struct APIXformCont : public TSCont_t
   operator TSVConn() { return get(); }
   
   TSVConn output() const { return _outputVConn; }
-  TSIOBuffer outputBuffer() const { return _outputBuff.get(); }
+  TSIOBuffer outputBuffer() const { return _outputBuffer.get(); }
 
   APIXformCont &operator=(std::function<void(TSEvent,TSVIO)> &&fxn) {
     _userXformCB = fxn;
@@ -148,8 +148,8 @@ private:
   // holds object and function pointer
   std::function<void(TSEvent,TSVIO)>   _xformCB;
   std::function<void(TSEvent,TSVIO)>   _userXformCB;
-  TSIOBuffer_t                         _outputBuff;
-  TSIOBufferReader_t                   _outputRdr;
+  TSIOBuffer_t                         _outputBuffer;
+  TSIOBufferReader_t                   _outputReader;
   TSVConn                              _outputVConn = nullptr;
 };
 

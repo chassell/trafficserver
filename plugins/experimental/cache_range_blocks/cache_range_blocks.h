@@ -62,6 +62,7 @@ public:
 
   ~BlockSetAccess() override {}
 
+  Transaction                &txn() const { return _txn; }
   TSHttpTxn                   atsTxn() const { return _atsTxn; }
   Headers                     &clientHdrs() { return _clntHdrs; }
   const Url                   &clientUrl() const { return _url; }
@@ -100,7 +101,7 @@ public:
   void handleBlockTests();
 
 private:
-  Headers *get_trunc_hdrs(Transaction &txn);
+  Headers *get_trunc_hdrs();
 
   uint64_t have_needed_blocks();
 
@@ -132,8 +133,8 @@ private:
 class BlockInitXform : public TransactionPlugin
 {
  public:
-  BlockInitXform(Transaction &txn, BlockSetAccess &ctxt)
-     : TransactionPlugin(txn), _ctxt(ctxt)
+  BlockInitXform(BlockSetAccess &ctxt)
+     : TransactionPlugin(ctxt.txn()), _ctxt(ctxt)
   {
     TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // add user-range and clean up
     TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // remember length to create new entry
@@ -157,10 +158,11 @@ class BlockInitXform : public TransactionPlugin
 };
 
 
-class BlockStoreXform : public TransactionPlugin
+class BlockStoreXform : public TransactionPlugin,
+                        public BlockTeeXform
 {
  public:
-  BlockStoreXform(Transaction &txn, BlockSetAccess &ctxt);
+  BlockStoreXform(BlockSetAccess &ctxt);
   ~BlockStoreXform() override;
 
   void handleReadCacheLookupComplete(Transaction &txn) override;
@@ -169,14 +171,19 @@ class BlockStoreXform : public TransactionPlugin
 
 //////////////////////////////////////////
 //////////// in Response-Transformation phase 
+  int64_t next_valid_vconn(TSVConn &vconn, int64_t pos, int64_t len);
 
   int64_t handleInput(TSIOBufferReader r, int64_t pos, int64_t len);
-  void handleWrite(TSEvent,TSHttpTxn,std::nullptr_t);
+  void handleWrite(TSEvent,void *,std::nullptr_t);
+
+  TSVConn next_valid_vconn(int64_t pos, int64_t len);
 
 private:
   BlockSetAccess                          &_ctxt;
-  BlockTeeXform                            _xform;
   std::vector<std::shared_future<TSVConn>> _vcsToWrite; // indexed as the keys
+  TSIOBufferReader_t                       _writeReader;
+  TSIOBufferReader                         _xformReader = nullptr;
+  TSVIO                                    _currWrite = nullptr;
   APICont                                  _writeEvents;
 };
 
