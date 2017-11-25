@@ -17,9 +17,9 @@
  */
 #include "cache_range_blocks.h"
 
-#include "atscppapi/HttpStatus.h"
-#include "ts/experimental.h"
-#include "ts/InkErrno.h"
+#include <atscppapi/HttpStatus.h>
+#include <ts/experimental.h>
+#include <ts/InkErrno.h>
 
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
@@ -202,11 +202,10 @@ void BlockSetAccess::clean_server_response(Transaction &txn)
   if ( static_cast<uint64_t>(currAssetLen) != _assetLen ) {
     _blkSize = INK_ALIGN((currAssetLen>>10)|1,MIN_BLOCK_STORED);
     _b64BlkBitset = std::string( (currAssetLen+_blkSize*6-1 )/(_blkSize*6), 'A');
+    _assetLen = static_cast<uint64_t>(currAssetLen);
     DEBUG_LOG("srvr-bitset: blk=%lu %s",_blkSize,_b64BlkBitset.c_str());
   }
 
-  proxyRespStatus.setStatusCode(HTTP_STATUS_OK);
-//  proxyResp.erase(CONTENT_RANGE_TAG); // erase to remove range worries
   proxyResp.set(CONTENT_ENCODING_TAG,CONTENT_ENCODING_INTERNAL); // promote matches
   proxyResp.set(X_BLOCK_BITSET_TAG, _b64BlkBitset); // TODO: not good enough for huge files!!
 
@@ -218,17 +217,18 @@ void BlockSetAccess::clean_client_response(Transaction &txn)
   auto &clntRespStatus = txn.getClientResponse();
   auto &clntResp = txn.getClientResponse().getHeaders();
 
-  // override block-style range
-  if ( _assetLen && _endByte ) {
-    clntResp.set(CONTENT_RANGE_TAG, std::to_string(_beginByte) + "-" + std::to_string(_endByte-1) + "/" + std::to_string(_assetLen));
-  }
-
   // only change 200-case back to 206
   if ( clntRespStatus.getStatusCode() == HTTP_STATUS_OK ) { 
     clntRespStatus.setStatusCode( HTTP_STATUS_PARTIAL_CONTENT );
   }
 
-  // clntResp.erase("Warning"); // erase added proxy-added warning
+  // override block-style range
+  if ( _assetLen && _endByte ) {
+    // change into client-based range and content length
+    auto srvrRange = std::string() + "bytes " + std::to_string(_beginByte) + "-" + std::to_string(_endByte-1)  + "/" + std::to_string(_assetLen);
+    clntResp.set(CONTENT_RANGE_TAG,srvrRange); 
+    clntResp.set(CONTENT_LENGTH_TAG,std::to_string(_endByte - _beginByte)); 
+  }
 
   // TODO erase only last field, with internal encoding
   clntResp.erase(CONTENT_ENCODING_TAG);

@@ -19,12 +19,15 @@
 
 #include "ts/ts.h"
 #include "ts/InkErrno.h"
+#include "utils_internal.h"
 
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
 #define PLUGIN_NAME "cache_range_blocks"
 #define DEBUG_LOG(fmt, ...) TSDebug(PLUGIN_NAME, "[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
 #define ERROR_LOG(fmt, ...) TSError("[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
+
+void forward_vio_event(TSEvent event, TSVIO vio);
 
 APICacheKey::APICacheKey(const atscppapi::Url &url, uint64_t offset)
      : TSCacheKey_t(TSCacheKeyCreate()) 
@@ -75,65 +78,151 @@ TSCont APICont::create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DA
 // accepts TSHttpTxn handler functions
 template <class T_OBJ, typename T_DATA>
 APICont::APICont(T_OBJ &obj, void(T_OBJ::*funcp)(TSEvent,void*,T_DATA), T_DATA cbdata)
-   : TSCont_t(TSContCreate(&APICont::handleTSEvent,TSMutexCreate())) 
+   : TSCont_t(TSContCreate(&APICont::handleTSEventCB,TSMutexCreate())) 
 {
   // point back here
   TSContDataSet(get(),this);
 
   static_cast<void>(cbdata);
   // memorize user data to forward on
-  _userCB = decltype(_userCB)([&obj,funcp,cbdata](TSEvent event, void *evtdata) 
-     {
+  _userCB = decltype(_userCB)([&obj,funcp,cbdata](TSEvent event, void *evtdata) {
       (obj.*funcp)(event,evtdata,cbdata);
      });
 }
 
 // bare Continuation lambda adaptor
 APICont::APICont(TSMutex mutex)
-   : TSCont_t(TSContCreate(&APICont::handleTSEvent,mutex))
+   : TSCont_t(TSContCreate(&APICont::handleTSEventCB,mutex))
 {
   // point back here
   TSContDataSet(get(),this);
 }
 
-int APICont::handleTSEvent(TSCont cont, TSEvent event, void *data) 
-{
-  APICont *self = static_cast<APICont*>(TSContDataGet(cont));
-  ink_assert(self->operator TSCont() == cont);
-  self->_userCB(event,data);
-  return 0;
-}
 
 // Transform continuations
-APIXformCont::APIXformCont(TSHttpTxn txnHndl, TSHttpHookID xformType, int64_t limit)
-   : TSCont_t(TSTransformCreate(&APIXformCont::handleXformTSEvent,txnHndl)),
-     _outputBuffer(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
-     _outputReader( TSIOBufferReaderAlloc(this->_outputBuffer.get()) )
+APIXformCont::APIXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t len, int64_t offset)
+   : TSCont_t(TSTransformCreate(&APIXformCont::handleXformTSEventCB,static_cast<TSHttpTxn>(txn.getAtsHandle()))), 
+     _txn(txn), 
+     _atsTxn(static_cast<TSHttpTxn>(txn.getAtsHandle())),
+     _outBufferP(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
+     _outReaderP( TSIOBufferReaderAlloc(this->_outBufferP.get()))
 {
-
-  // NOTE: delay for OutputVConnGet() to be valid ...
-  _xformCB = [this,limit](TSEvent evt, TSVIO event_vio) {
-    TSVConn invconn = *this;
-    this->_outputVConn = TSTransformOutputVConnGet(invconn);
-    TSVConnWrite(this->output(), invconn, this->_outputReader.get(), limit);
-    this->_xformCB = _userXformCB; // replace with users' now
-
-    this->_xformCB(evt,event_vio); // continue on...
+  // #4) xform handler: skip trailing download from server
+  auto skipBodyEndFn = [this](TSEvent evt, TSVIO vio, int64_t left) { 
+    auto r = this->skip_next_len( this->call_body_handler(evt,vio,left) ); // last one...
+    return r;
   };
+
+  // #3) xform handler: copy body required by client from server
+  auto copyBodyFn = [this,len,skipBodyEndFn](TSEvent evt, TSVIO vio, int64_t left) { 
+    auto r = this->copy_next_len( this->call_body_handler(evt,vio,left) );
+    this->set_copy_handler(len,skipBodyEndFn);
+    return r;
+  };
+
+  // #2) xform handler: skip an offset of bytes from server
+  auto skipBodyOffsetFn = [this,offset,copyBodyFn](TSEvent evt, TSVIO vio, int64_t left) { 
+    auto r = this->skip_next_len( this->call_body_handler(evt,vio,left) );
+    this->set_copy_handler(offset,copyBodyFn);
+    return r;
+  };
+
+  // #1) xform handler: copy headers through
+  auto copyHeadersFn = [this,skipBodyOffsetFn](TSEvent evt, TSVIO vio, int64_t left) { 
+    // copy headers simply...
+    auto r = this->copy_next_len(left); 
+    this->set_copy_handler(_outHeaderLen,skipBodyOffsetFn);
+    return r;
+  };
+
+  // #0) handler: init values once
+  auto initFldsFn = [this,len,copyHeadersFn](TSEvent evt, TSVIO vio, int64_t left)
+  {
+    // finally know the length of resp-hdr (as is)
+    this->_outHeaderLen = this->_txn.getServerResponseHeaderSize();
+
+    TSVConn invconn = *this;
+    this->_inVIO = TSVConnWriteVIOGet(invconn);
+    this->_inReader = TSIOBufferReader(TSVIOBufferGet(this->_inVIO));
+
+    // finally initialize output write
+    this->_outVConn = TSTransformOutputVConnGet(invconn);
+    TSVConnWrite(this->_outVConn, invconn, this->_outReaderP.get(), this->_outHeaderLen + len);
+
+    this->set_copy_handler(this->_outHeaderLen, copyHeadersFn);
+    return 0;
+  };
+
+  set_copy_handler(0L, initFldsFn);
 
   // point back here
   TSContDataSet(get(),this);
-  TSHttpTxnHookAdd(txnHndl, xformType, get());
+  TSHttpTxnHookAdd(_atsTxn, xformType, get());
 }
 
-int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata) 
-{
-  APIXformCont *self = static_cast<APIXformCont*>(TSContDataGet(cont));
-  ink_assert(self->operator TSVConn() == cont);
 
-  self->_xformCB(event,static_cast<TSVIO>(edata));
+int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
+{
+  ink_assert(this->operator TSVConn() == cont);
+
+  // more rude shutdown
+  if ( TSVConnWriteVIOGet(*this) != _inVIO || ! TSVIOBufferGet(_inVIO) ) {
+    _xformCB(event, nullptr, 0);
+    return 0;
+  }
+
+  if ( TSVConnClosedGet(*this) ) {
+    _xformCB(event, nullptr, 0);
+    return 0;
+  }
+
+  // "ack" end-of-write completion [zero bytes] to upstream
+  if ( ! TSVIONTodoGet(_inVIO) ) {
+    forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE,_inVIO); // complete upstream
+    return 0;
+  }
+
+  auto pos = TSVIONDoneGet(_inVIO);
+  auto buffReady = TSIOBufferReaderAvail(_inReader);
+
+  if ( event == TS_EVENT_IMMEDIATE ) {
+    event = TS_EVENT_VCONN_WRITE_READY;
+  }
+
+  for(;;) {
+    buffReady = std::min(buffReady,_xformCBAbsLimit - pos);
+
+    /////////////
+    // perform real callback if data is ready
+    /////////////
+    
+    if ( event == TS_EVENT_VCONN_WRITE_READY && edata == _inVIO ) {
+      _xformCB(event, _inVIO, buffReady); // send bytes-left in segment
+    }
+
+    if ( pos < _xformCBAbsLimit || pos > _nextXformCBAbsLimit ) {
+      break;
+    }
+
+    if ( _xformCB.target<void(*)()>() == _nextXformCB.target<void(*)()>() ) {
+      break;
+    }
+
+    // go again...
+    _xformCB = _nextXformCB;
+    _xformCBAbsLimit = _nextXformCBAbsLimit;
+  }
+
+  auto buffLeft = TSIOBufferReaderAvail(_inReader);
+
+  // if done with this buffer ....
+  if ( buffReady && ! buffLeft ) {
+    forward_vio_event(TS_EVENT_VCONN_WRITE_READY, _inVIO);
+  }
+
   return 0;
 }
+
 
 class BlockStoreXform;
 

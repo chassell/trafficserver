@@ -17,8 +17,8 @@
  */
 #include "cache_range_blocks.h"
 
-#include "atscppapi/HttpStatus.h"
-#include "atscppapi/Mutex.h"
+#include <atscppapi/HttpStatus.h>
+#include <atscppapi/Mutex.h>
 
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
@@ -28,11 +28,10 @@
 
 BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt)
    : TransactionPlugin(ctxt.txn()), 
-     BlockTeeXform(ctxt.atsTxn(), [this](TSIOBufferReader r,int64_t pos,int64_t len) { return this->handleInput(r,pos,len); }, 
-                   ctxt.rangeLen()),
+     BlockTeeXform(ctxt.txn(), [this](TSIOBufferReader r,int64_t pos,int64_t len) { return this->handleInput(r,pos,len); }, 
+                               ctxt._beginByte, ctxt.rangeLen()),
      _ctxt(ctxt), 
      _vcsToWrite(ctxt.rangeLen()/ctxt.blockSize() + 1),
-     _writeReader( TSIOBufferReaderAlloc(this->outputBuffer()) ), // second reader for output buffer
      _writeEvents(*this, &BlockStoreXform::handleWrite, nullptr)
 {
   ctxt._keysInRange.resize( _vcsToWrite.size() );
@@ -118,47 +117,18 @@ int64_t BlockStoreXform::next_valid_vconn(TSVConn &vconn, int64_t pos, int64_t l
 //
 // called from writeHook
 //      -- after outputBuffer() was filled
-int64_t BlockStoreXform::handleInput(TSIOBufferReader inrdr, int64_t pos, int64_t len)
+int64_t BlockStoreXform::handleInput(TSIOBufferReader outrdr, int64_t pos, int64_t len)
 {
-  _xformReader = inrdr; // every time
-
   TSVConn nxtWrite = nullptr;
   auto dist = next_valid_vconn(nxtWrite,pos,len);
 
-  if ( ! _currWrite && ! nxtWrite ) {
-    DEBUG_LOG("xform input ignored pos:%ld len=%ld",pos,len);
-    // no data needed
-    TSIOBufferReaderConsume(_writeReader.get(), len); // skip reader past
-    return len;
-  }
-
   atscppapi::ScopedContinuationLock lock(_writeEvents);
+
+  if ( TSIOBufferReaderAvail(outrdr) > 0
 
   // data will be written to one...
 
-  auto lenCurr = ( _currWrite ? std::min(len+0,TSVIONTodoGet(_currWrite)) : dist );
-  auto lenNext = len - lenCurr;
-
-  TSIOBufferCopy(outputBuffer(), inrdr, lenCurr, 0);
-
-  if ( _currWrite ) {
-    DEBUG_LOG("xform copy-reenable pos:%ld len=%ld (lenCurr=%ld)",pos,len,lenCurr);
-    TSVIOReenable(_currWrite); // flush change down
-  }
-
-  if ( _currWrite && lenCurr && lenNext ) {
-    DEBUG_LOG("xform close-reenable pos:%ld len=%ld (lenNext=%ld)",pos,len,lenNext);
-    TSVIOReenable(_currWrite); // flush end-of-block down
-  }
-
-  TSIOBufferCopy(outputBuffer(), inrdr, lenNext, 0);
-
-  if ( nxtWrite ) {
-    DEBUG_LOG("xform new write pos:%ld len=%ld (lenNext=%ld)",pos,len,lenNext);
-    _currWrite = TSVConnWrite(nxtWrite, _writeEvents, _writeReader.get(), _ctxt.blockSize());
-  }
-
-  DEBUG_LOG("xform copied write pos:%ld len=%ld (lenNext=%ld)",pos,len,lenNext);
+  DEBUG_LOG("xform copied write pos:%ld len=%ld (lenNext=%ld)",pos,len,dist);
   return len;
 }
 

@@ -181,9 +181,6 @@ class BlockStoreXform : public TransactionPlugin,
 private:
   BlockSetAccess                          &_ctxt;
   std::vector<std::shared_future<TSVConn>> _vcsToWrite; // indexed as the keys
-  TSIOBufferReader_t                       _writeReader;
-  TSIOBufferReader                         _xformReader = nullptr;
-  TSVIO                                    _currWrite = nullptr;
   APICont                                  _writeEvents;
 };
 

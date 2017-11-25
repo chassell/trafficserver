@@ -1,5 +1,4 @@
-/**
-  Licensed to the Apache Software Foundation (ASF) under one
+/** Licensed to the Apache Software Foundation (ASF) under one
   or more contributor license agreements.  See the NOTICE file
   distributed with this work for additional information
   regarding copyright ownership.  The ASF licenses this file
@@ -20,6 +19,7 @@
 #include "ts/ts.h"
 
 #include <atscppapi/Url.h>
+#include <atscppapi/Transaction.h>
 
 #include <memory>
 #include <string>
@@ -113,7 +113,14 @@ struct APICont : public TSCont_t
   }
 
 private:
-  static int handleTSEvent(TSCont cont, TSEvent event, void *data);
+  static int handleTSEventCB(TSCont cont, TSEvent event, void *data)
+  {
+    APICont *self = static_cast<APICont*>(TSContDataGet(cont));
+    ink_assert(self->operator TSCont() == cont);
+    self->_userCB(event,data);
+    return 0;
+  }
+
 
   APICont(TSMutex mutex);
 
@@ -124,57 +131,101 @@ private:
 // object to request write/read into cache
 struct APIXformCont : public TSCont_t
 {
+  using XformCB_t = std::function<int64_t(TSEvent,TSVIO,int64_t)>;
   template <class T, typename... Args>
   friend std::unique_ptr<T> std::make_unique(Args &&... args);
 
  public:
-  APIXformCont() = default; // nullptr by default
-  APIXformCont(APIXformCont &&) = default;
-  APIXformCont(TSHttpTxn txnHndl, TSHttpHookID xformType, int64_t bytes=INT64_MAX);
+//  APIXformCont() = default; // nullptr by default
+//  APIXformCont(APIXformCont &&) = default;
+  APIXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t bytes=INT64_MAX, int64_t offset=0);
 
   operator TSVConn() { return get(); }
   
-  TSVConn output() const { return _outputVConn; }
-  TSIOBuffer outputBuffer() const { return _outputBuffer.get(); }
+  TSVConn output() const { return _outVConn; }
+  TSIOBuffer outputBuffer() const { return _outBufferP.get(); }
 
-  APIXformCont &operator=(std::function<void(TSEvent,TSVIO)> &&fxn) {
-    _userXformCB = fxn;
-    return *this;
+  void
+  set_body_handler(int64_t pos, XformCB_t &&fxn) {
+    _bodyXformCB = fxn;
+    _bodyXformCBAbsLimit = pos + _outHeaderLen;
   }
 
-private:
-  static int handleXformTSEvent(TSCont cont, TSEvent event, void *data);
+  void
+  set_copy_handler(int64_t len, XformCB_t &&fxn) {
+    _nextXformCB = fxn;
+    _nextXformCBAbsLimit = len + _xformCBAbsLimit; // relative position to prev. one
+  }
 
-  // holds object and function pointer
-  std::function<void(TSEvent,TSVIO)>   _xformCB;
-  std::function<void(TSEvent,TSVIO)>   _userXformCB;
-  TSIOBuffer_t                         _outputBuffer;
-  TSIOBufferReader_t                   _outputReader;
-  TSVConn                              _outputVConn = nullptr;
+  int64_t copy_next_len(int64_t);
+  int64_t skip_next_len(int64_t);
+
+private:
+  int handleXformTSEvent(TSCont cont, TSEvent event, void *data);
+
+  static int handleXformTSEventCB(TSCont cont, TSEvent event, void *data)
+  {
+    APIXformCont *self = static_cast<APIXformCont*>(TSContDataGet(cont));
+    return self->handleXformTSEvent(cont,event,data);
+  }
+
+  // called for 
+  int64_t 
+  call_body_handler(TSEvent evt,TSVIO vio,int64_t left)
+  {
+    // subtract later bytes if body-cb is nearer
+    left -= _xformCBAbsLimit - std::min(_bodyXformCBAbsLimit + _outHeaderLen, _xformCBAbsLimit);
+    return _bodyXformCB(evt,vio,left);
+  }
+
+  atscppapi::Transaction              &_txn;
+  TSHttpTxn                            _atsTxn;
+  XformCB_t                            _xformCB;
+  int64_t                              _xformCBAbsLimit = 0L;
+
+  XformCB_t                            _nextXformCB;
+  int64_t                              _nextXformCBAbsLimit = 0L;
+
+  XformCB_t                            _bodyXformCB;
+  int64_t                              _bodyXformCBAbsLimit = 0L;
+
+  TSVIO                                _inVIO = nullptr;
+  TSIOBufferReader                     _inReader = nullptr;
+
+  TSIOBuffer_t                         _outBufferP;
+  TSIOBufferReader_t                   _outReaderP;
+  int64_t                              _outHeaderLen = 0L;
+  TSVConn                              _outVConn = nullptr;
 };
 
 class BlockTeeXform : public APIXformCont
 {
-  using HookType = std::function<int64_t(TSIOBufferReader,int64_t,int64_t)>;
+  using HookType = std::function<int64_t(TSIOBufferReader,int64_t pos,int64_t len)>;
 
  public:
-  BlockTeeXform(TSHttpTxn txn, HookType &&writeHook, int64_t xformLen)
-     : APIXformCont(txn,TS_HTTP_RESPONSE_TRANSFORM_HOOK,xformLen),
-       _writeHook(writeHook)
+  BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, int64_t xformLen, int64_t xformOffset)
+     : APIXformCont(txn, TS_HTTP_RESPONSE_TRANSFORM_HOOK, xformLen, xformOffset),
+       _writeHook(writeHook),
+       _teeBufferP( TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K) ),
+       _teeReaderP( TSIOBufferReaderAlloc(this->_teeBufferP.get()) )
   {
-     // get to method via callback
-     static_cast<APIXformCont&>(*this) = [this](TSEvent evt, TSVIO vio) { 
-       this->handleEvent(evt,vio); 
-     };
+    // get to method via callback
+    set_body_handler(0,[this](TSEvent evt, TSVIO vio, int64_t left) 
+    {
+      if ( ! _inputReaderP ) {
+        _inputReaderP.reset( TSIOBufferReaderClone( TSVIOReaderGet(vio) ));
+      }
+      return this->handleEvent(evt,vio,left);
+    });
   }
 
-  void 
-  handleEvent(TSEvent event, TSVIO vio);
-
-  void
-  handleWrite(TSVIO invio);
+  int64_t 
+  handleEvent(TSEvent event, TSVIO vio, int64_t left);
 
   HookType                 _writeHook;
+  TSIOBufferReader_t       _inputReaderP;
+  TSIOBuffer_t             _teeBufferP;
+  TSIOBufferReader_t       _teeReaderP;
 };
 
 
