@@ -43,7 +43,7 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
 
   ink_assert(this->operator TSVConn() == cont);
 
-  // more rude shutdown
+  // check for rude shutdown
   if ( TSVConnWriteVIOGet(*this) != _inVIO || ! TSVIOBufferGet(_inVIO) ) 
   {
     if ( _xformCB ) {
@@ -52,12 +52,19 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
       return 0;
     }
 
-    // just for init
     _xformCB = _nextXformCB;
     _xformCBAbsLimit = _nextXformCBAbsLimit;
-    _xformCB(event, nullptr, 0);
+
+    // finally know the length of resp-hdr (as is)
+    _outHeaderLen = _txn.getServerResponseHeaderSize();
+
+    TSVConn invconn = *this;
+    _inVIO = TSVConnWriteVIOGet(invconn);
+    _outVConn = TSTransformOutputVConnGet(invconn);
+    // just for init
   }
 
+  // another possible shutdown
   if ( TSVConnClosedGet(*this) ) {
     _xformCB(event, nullptr, 0);
     DEBUG_LOG("xform-event closed: %d %p",event,edata);
@@ -71,9 +78,16 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
     return 0;
   }
 
+  // if output is done ... then shutdown 
+  if ( _outVIO && event == TS_EVENT_VCONN_WRITE_COMPLETE ) {
+    TSVConnShutdown(_outVConn, 0, 1); // no more events please
+    _outVIO = nullptr;
+    return 0; // nothing more for this event
+  }
+
   auto inrdr = TSVIOReaderGet(_inVIO); // reset if changed!
 
-  auto outpos = TSVIONDoneGet(_outVIO);
+  auto outpos = ( _outVIO ? TSVIONDoneGet(_outVIO) : 0 );
   auto pos = TSVIONDoneGet(_inVIO);
   auto opos = pos;
   auto inavail = TSIOBufferReaderAvail(inrdr);
@@ -115,7 +129,7 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
     DEBUG_LOG("xform advance cb: @%ld -> @%ld",pos,_xformCBAbsLimit);
   }
 
-  auto noutpos = TSVIONDoneGet(_outVIO);
+  auto noutpos = ( _outVIO ? TSVIONDoneGet(_outVIO) : 0 );
 
   if ( outpos != noutpos ) {
     DEBUG_LOG("xform reenable: @%ld -> @%ld",outpos,noutpos);
@@ -212,6 +226,7 @@ APIXformCont::init_body_range_handlers(int64_t len, int64_t offset)
   auto copyBodyFn = [this,len,skipBodyEndFn](TSEvent evt, TSVIO vio, int64_t left) { 
     this->_outVIO = TSVConnWrite(this->_outVConn, *this, this->_outReaderP.get(), len);
     auto r = this->copy_next_len( this->call_body_handler(evt,vio,left) );
+
     this->set_copy_handler(INT64_MAX>>1,skipBodyEndFn);
     auto pos = TSVIONDoneGet(_inVIO);
     DEBUG_LOG("xform copy-body: @%ld left=%+ld r=%+ld",pos,left,r);
@@ -221,47 +236,14 @@ APIXformCont::init_body_range_handlers(int64_t len, int64_t offset)
   // #2) xform handler: skip an offset of bytes from server
   auto skipBodyOffsetFn = [this,offset,len,copyBodyFn](TSEvent evt, TSVIO vio, int64_t left) { 
     auto r = this->skip_next_len( this->call_body_handler(evt,vio,left) );
-//    this->set_copy_handler(this->_outHeaderLen+offset+len,copyBodyFn);
+
     this->set_copy_handler(offset+len,copyBodyFn);
     auto pos = TSVIONDoneGet(_inVIO);
     DEBUG_LOG("xform skip-body: @%ld left=%+ld r=%+ld",pos,left,r);
     return r;
   };
 
-/*
-  // #1) xform handler: copy headers through
-  auto copyHeadersFn = [this,skipBodyOffsetFn,offset](TSEvent evt, TSVIO vio, int64_t left) { 
-    // copy headers simply...
-    auto r = this->copy_next_len(left); 
-//    this->set_copy_handler(_outHeaderLen+offset,skipBodyOffsetFn);
-    this->set_copy_handler(offset,skipBodyOffsetFn);
-    auto pos = TSVIONDoneGet(_inVIO);
-    DEBUG_LOG("xform copy-header: @%ld left=%+ld r=%+ld",pos,left,r);
-    return r;
-  };
-*/
-
-  // #0) handler: init values once
-  auto initFldsFn = [this,offset,len,skipBodyOffsetFn](TSEvent evt, TSVIO vio, int64_t left)
-  {
-    // finally know the length of resp-hdr (as is)
-    this->_outHeaderLen = this->_txn.getServerResponseHeaderSize();
-
-    TSVConn invconn = *this;
-    this->_inVIO = TSVConnWriteVIOGet(invconn);
-    // this->_inReader = TSIOBufferReader(TSVIOBufferGet(this->_inVIO));
-    // [changes!?!]
-
-    // finally initialize output write [body only?]
-    this->_outVConn = TSTransformOutputVConnGet(invconn);
-
-//    this->set_copy_handler(this->_outHeaderLen, skipBodyOffsetFn);
-    this->set_copy_handler(0, skipBodyOffsetFn);
-    DEBUG_LOG("xform stream-init complete: %ld+%ld",offset,len);
-    return 0;
-  };
-
-  set_copy_handler(0L, initFldsFn);
+  set_copy_handler(offset, skipBodyOffsetFn);
   DEBUG_LOG("xform init complete");
 }
 

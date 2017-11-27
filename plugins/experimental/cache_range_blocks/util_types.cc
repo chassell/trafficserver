@@ -114,7 +114,6 @@ APIXformCont::APIXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, 
   TSHttpTxnHookAdd(_atsTxn, xformType, get());
 }
 
-
 class BlockStoreXform;
 
 template APICont::APICont(BlockStoreXform &obj, void(BlockStoreXform::*funcp)(TSEvent,void*,decltype(nullptr)), decltype(nullptr));

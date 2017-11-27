@@ -179,27 +179,29 @@ int64_t BlockStoreXform::handleInput(TSIOBufferReader outrdr, int64_t pos, int64
   return len;
 }
 
-
-
 void BlockStoreXform::handleWrite(TSEvent evt, void*edata, std::nullptr_t)
 {
-  DEBUG_LOG("write event evt:%d",evt);
   TSVIO writeVIO = static_cast<TSVIO>(edata);
 
   atscppapi::ScopedContinuationLock lock(_writeEvents);
 
   if ( ! writeVIO ) {
+    DEBUG_LOG("empty edata evt:%d",evt);
     return;
   }
 
   switch (evt) {
     case TS_EVENT_VCONN_WRITE_COMPLETE:
+      DEBUG_LOG("write complete evt:%d",evt);
        TSVConnClose(TSVIOVConnGet(writeVIO));
        break;
     case TS_EVENT_VCONN_WRITE_READY:
+      DEBUG_LOG("write ready evt:%d",evt);
+      break;
        // should be started already
     default:
-       break;
+      DEBUG_LOG("write ready evt:%d",evt);
+      break;
   }
 }
 
