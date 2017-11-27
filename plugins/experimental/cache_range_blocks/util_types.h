@@ -144,17 +144,20 @@ struct APIXformCont : public TSCont_t
   
   TSVConn output() const { return _outVConn; }
   TSIOBuffer outputBuffer() const { return _outBufferP.get(); }
+  int64_t outHeaderLen() const { return _outHeaderLen; }
 
   void
   set_body_handler(int64_t pos, XformCB_t &&fxn) {
+    TSDebug("cache_range_block", "[%s:%d] %s(): limit=%ld", __FILE__, __LINE__, __func__, pos + _outHeaderLen);
     _bodyXformCB = fxn;
     _bodyXformCBAbsLimit = pos + _outHeaderLen;
   }
 
   void
-  set_copy_handler(int64_t len, XformCB_t &&fxn) {
+  set_copy_handler(int64_t pos, XformCB_t &&fxn) {
+    TSDebug("cache_range_block", "[%s:%d] %s(): limit=%ld", __FILE__, __LINE__, __func__, pos);
     _nextXformCB = fxn;
-    _nextXformCBAbsLimit = len + _xformCBAbsLimit; // relative position to prev. one
+    _nextXformCBAbsLimit = pos; // relative position to prev. one
   }
 
   int64_t copy_next_len(int64_t);
@@ -168,6 +171,8 @@ private:
     APIXformCont *self = static_cast<APIXformCont*>(TSContDataGet(cont));
     return self->handleXformTSEvent(cont,event,data);
   }
+
+  void init_body_range_handlers(int64_t len, int64_t offset);
 
   // called for 
   int64_t 
@@ -190,13 +195,14 @@ private:
   int64_t                              _bodyXformCBAbsLimit = 0L;
 
   TSVIO                                _inVIO = nullptr;
-  TSIOBufferReader                     _inReader = nullptr;
 
   TSIOBuffer_t                         _outBufferP;
   TSIOBufferReader_t                   _outReaderP;
   int64_t                              _outHeaderLen = 0L;
   TSVConn                              _outVConn = nullptr;
+  TSVIO                                _outVIO = nullptr;
 };
+
 
 class BlockTeeXform : public APIXformCont
 {
@@ -210,20 +216,14 @@ class BlockTeeXform : public APIXformCont
        _teeReaderP( TSIOBufferReaderAlloc(this->_teeBufferP.get()) )
   {
     // get to method via callback
-    set_body_handler(0,[this](TSEvent evt, TSVIO vio, int64_t left) 
-    {
-      if ( ! _inputReaderP ) {
-        _inputReaderP.reset( TSIOBufferReaderClone( TSVIOReaderGet(vio) ));
-      }
-      return this->handleEvent(evt,vio,left);
-    });
+    set_body_handler(INT64_MAX>>1,[this](TSEvent evt, TSVIO vio, int64_t left) 
+      { return this->handleEvent(evt,vio,left); });
   }
 
   int64_t 
   handleEvent(TSEvent event, TSVIO vio, int64_t left);
 
   HookType                 _writeHook;
-  TSIOBufferReader_t       _inputReaderP;
   TSIOBuffer_t             _teeBufferP;
   TSIOBufferReader_t       _teeReaderP;
 };

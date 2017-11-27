@@ -52,6 +52,8 @@ RangeDetect::handleReadRequestHeadersPostRemap(Transaction &txn)
 
   auto &clntReq = txn.getClientRequest().getHeaders();
   if ( clntReq.count(RANGE_TAG) != 1 ) {
+    DEBUG_LOG("improper range count");
+    ERROR_LOG("improper range count");
     return; // only use single-range requests
   }
 
@@ -99,7 +101,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   }
 
   // "stale" cache until all blocks proven ready
-  TSHttpTxnCacheLookupStatusSet(atsTxn(), TS_CACHE_LOOKUP_HIT_STALE);
+  TSHttpTxnCacheLookupStatusSet(atsTxn(), TS_CACHE_LOOKUP_MISS);
 
   // simply clean up stub-response to be a normal header
   TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS);
@@ -199,7 +201,7 @@ void BlockSetAccess::clean_server_response(Transaction &txn)
 
   DEBUG_LOG("srvr-resp: len=%ld olen=%lu final=%s range=%s",currAssetLen,_assetLen,srvrRange.c_str(),srvrRangeCopy.c_str());
 
-  if ( static_cast<uint64_t>(currAssetLen) != _assetLen ) {
+  if ( currAssetLen != _assetLen ) {
     _blkSize = INK_ALIGN((currAssetLen>>10)|1,MIN_BLOCK_STORED);
     _b64BlkBitset = std::string( (currAssetLen+_blkSize*6-1 )/(_blkSize*6), 'A');
     _assetLen = static_cast<uint64_t>(currAssetLen);
@@ -283,7 +285,7 @@ BlockSetAccess::get_trunc_hdrs()
    return ( i == std::string::npos ? nullptr : &ccheHdrs );
 }
 
-uint64_t 
+int64_t 
 BlockSetAccess::have_needed_blocks()
 {
   int64_t start = _beginByte;

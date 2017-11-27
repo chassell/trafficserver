@@ -107,18 +107,23 @@ BlockSetAccess::handleBlockTests()
 }
 
 BlockReadXform::BlockReadXform(BlockSetAccess &ctxt)
-   : APIXformCont(ctxt.atsTxn(), TS_HTTP_RESPONSE_TRANSFORM_HOOK, ctxt.rangeLen())
+   : APIXformCont(ctxt.txn(), TS_HTTP_RESPONSE_TRANSFORM_HOOK, ctxt.rangeLen())
 {
   std::transform( ctxt._vcsToRead.begin(), ctxt._vcsToRead.end(), std::back_inserter(_vconns), 
                     [](decltype(ctxt._vcsToRead.front()) &fut) { return fut.get(); }
                 );
   auto &xform = static_cast<APIXformCont&>(*this);
-  xform = [&ctxt,&xform](TSEvent event,TSVIO vio) {
+  xform.set_body_handler(0,[&ctxt,&xform](TSEvent evt, TSVIO vio, int64_t left) {
      // vio can be Xform-Output-VIO [write] --> reenable read-VIO
      // vio can be CacheVC-VIO [read] --> reenable output-VIO
 
+     // how many to allow in of copied bytes?
+     
+
      // READ_COMPLETE --> start new VIO 
      // WRITE_COMPLETE --> shutdown all
-  };
+
+     return 0L; // no copying from input->output
+  });
 }
 

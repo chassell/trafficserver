@@ -72,9 +72,9 @@ public:
   const std::vector<APICacheKey> &keysInRange() const { return _keysInRange; }
   const std::string          &b64BlkBitset() const { return _b64BlkBitset; }
 
-  uint64_t                    assetLen() const { return _assetLen; }
-  uint64_t                    rangeLen() const { return _endByte - _beginByte; }
-  uint64_t                    blockSize() const { return _blkSize; }
+  int64_t                     assetLen() const { return _assetLen; }
+  int64_t                     rangeLen() const { return _endByte - _beginByte; }
+  int64_t                     blockSize() const { return _blkSize; }
   // pos --> aligned *next* pos
   // pos --> VConn to read
 
@@ -103,7 +103,7 @@ public:
 private:
   Headers *get_trunc_hdrs();
 
-  uint64_t have_needed_blocks();
+  int64_t have_needed_blocks();
 
   Transaction        &_txn;
   const TSHttpTxn     _atsTxn = nullptr;
@@ -113,8 +113,8 @@ private:
   std::string         _blkRangeStr; // from clnt req for serv req
 
   std::string         _b64BlkBitset;   // if cached and found
-  uint64_t            _assetLen = 0UL; // if cached and found
-  uint64_t            _blkSize = 0UL;  // if cached and found
+  int64_t             _assetLen = 0L; // if cached and found
+  int64_t             _blkSize = 0L;  // if cached and found
 
   int64_t             _beginByte = -1L;
   int64_t             _endByte = -1L;
@@ -150,6 +150,7 @@ class BlockInitXform : public TransactionPlugin
   void
   handleReadResponseHeaders(Transaction &txn) override {
     _ctxt.clean_server_response(txn); // request full blocks if possible
+    txn.getServerResponse().setStatusCode(HTTP_STATUS_OK);
     txn.resume();
   }
 
