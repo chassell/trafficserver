@@ -53,7 +53,8 @@ RangeDetect::handleReadRequestHeadersPostRemap(Transaction &txn)
   auto &clntReq = txn.getClientRequest().getHeaders();
   if ( clntReq.count(RANGE_TAG) != 1 ) {
     DEBUG_LOG("improper range count");
-    ERROR_LOG("improper range count");
+    clntReq.append(ACCEPT_ENCODING_TAG,"identity;q=1.0, " CONTENT_ENCODING_INTERNAL ";q=0.0"); // accept normal!
+    txn.resume();
     return; // only use single-range requests
   }
 
@@ -90,6 +91,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   if ( ! pstub ) {
     /// TODO delete old stub file in case of revalidate!
+    txn.resume();
     return; // main file made it through
   }
 
@@ -124,6 +126,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     DEBUG_LOG("cache-stub-fail: len=%lu set=%s",_assetLen,_b64BlkBitset.c_str());
     _initXform = std::make_unique<BlockInitXform>(*this);
     _initXform->handleReadCacheLookupComplete(txn); // [default version]
+    // resume implied
     return;
   }
 
@@ -136,6 +139,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     // intercept data for new or updated stub version
     _storeXform = std::make_unique<BlockStoreXform>(*this);
     _storeXform->handleReadCacheLookupComplete(txn); // [default version]
+    // resume implied
     return;
   }
 
@@ -158,14 +162,15 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     auto contp = APICont::create_temp_tscont(mutex, _vcsToRead[i], barrierLock);
     TSCacheRead(contp,_keysInRange[i]);
   }
+
+  // do *not* release block
 }
 
 /////////////////////////////////////////////////////////////
 
 void BlockSetAccess::clean_client_request()
 {
-  _clntHdrs.append(ACCEPT_ENCODING_TAG,CONTENT_ENCODING_INTERNAL ";q=0.001");
-  _clntHdrs.append(ACCEPT_ENCODING_TAG,"*;q=1");
+  _clntHdrs.append(ACCEPT_ENCODING_TAG,"identity;q=1.0, " CONTENT_ENCODING_INTERNAL ";q=0.001"); // accept normal and cached
 }
 
 void BlockSetAccess::clean_server_request(Transaction &txn)
