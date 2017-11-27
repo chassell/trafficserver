@@ -245,9 +245,10 @@ APIXformCont::init_body_range_handlers(int64_t len, int64_t offset)
     // this->_inReader = TSIOBufferReader(TSVIOBufferGet(this->_inVIO));
     // [changes!?!]
 
-    // finally initialize output write
+    // finally initialize output write [body only?]
     this->_outVConn = TSTransformOutputVConnGet(invconn);
-    this->_outVIO = TSVConnWrite(this->_outVConn, invconn, this->_outReaderP.get(), this->_outHeaderLen + len);
+//    this->_outVIO = TSVConnWrite(this->_outVConn, invconn, this->_outReaderP.get(), this->_outHeaderLen + len);
+    this->_outVIO = TSVConnWrite(this->_outVConn, invconn, this->_outReaderP.get(), len);
 
     this->set_copy_handler(this->_outHeaderLen, copyHeadersFn);
     DEBUG_LOG("xform stream-init complete: %ld+%ld",this->_outHeaderLen,len);
@@ -270,13 +271,21 @@ int64_t BlockTeeXform::handleEvent(TSEvent event, TSVIO evtvio, int64_t left)
     return left;
   }
 
+  if ( evtvio == outputVIO() ) {
+    DEBUG_LOG("tee output event: #%d %+ld",event,left);
+  } else  if ( evtvio != inputVIO() ) {
+    DEBUG_LOG("unkn vio event: #%d %+ld %p",event,left,evtvio);
+  }
+
   // position *without* left new bytes...
-  auto pos = TSVIONDoneGet(evtvio);
+  auto pos = TSVIONDoneGet(inputVIO());
+  auto oavail = TSIOBufferReaderAvail(_teeReaderP.get());
 
-  DEBUG_LOG("tee copy left bytes: @%ld%+ld",pos,left);
-  TSIOBufferCopy(_teeBufferP.get(), TSVIOReaderGet(evtvio), left, 0);
+  DEBUG_LOG("tee buffer bytes pre-copy: @%ld%+ld%+ld",pos-oavail,oavail,left);
+  TSIOBufferCopy(_teeBufferP.get(), TSVIOReaderGet(inputVIO()), left, 0);
 
-  DEBUG_LOG("tee copy avail bytes: @%ld%+ld",pos,TSIOBufferReaderAvail(_teeReaderP.get()));
+  auto navail = TSIOBufferReaderAvail(_teeReaderP.get());
+  DEBUG_LOG("tee buffer bytes post-copy: @%ld%+ld [%+ld]",pos-(navail-left),navail,left);
 
   return _writeHook(_teeReaderP.get(), pos - outHeaderLen(), left); // show advance
 }

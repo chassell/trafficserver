@@ -90,9 +90,9 @@ int64_t BlockStoreXform::next_valid_vconn(TSVConn &vconn, int64_t pos, int64_t l
   vconn = nullptr;
 
   // find distance to next start point
-  int64_t dist = blksz-1 - ((pos + blksz-1) % blksz);
+  int64_t dist = ( ! pos ? 0 : blksz-1 - ((pos-1) % blksz) );
 
-  // no boundary here?
+  // no boundary within distance?
   if ( dist >= len ) {
     DEBUG_LOG("invalid block pos:%ld len=%ld",pos,len);
     return -1;
@@ -139,30 +139,34 @@ int64_t BlockStoreXform::handleInput(TSIOBufferReader outrdr, int64_t pos, int64
   auto blksz = static_cast<int64_t>(_ctxt.blockSize());
 
   // amount *includes* len
-  auto ready = TSIOBufferReaderAvail(outrdr);
-  auto bready = ready - len;
+  auto bready = TSIOBufferReaderAvail(outrdr) - len;
   auto bpos = pos - bready;
 
   // check unneeded bytes before next block
-  auto nextDist = next_valid_vconn(currBlock, bpos, ready);
+  auto nextDist = next_valid_vconn(currBlock, bpos, bready + len);
 
   // don't have enough to reach full block boundary?
   if ( nextDist < 0 ) {
     // no need to save these bytes?
-    TSIOBufferReaderConsume(outrdr,ready);
-    DEBUG_LOG("store skip all pos:%ld%+ld%+ld",bpos,bready,len);
+    TSIOBufferReaderConsume(outrdr,bready + len);
+    DEBUG_LOG("store **** skip current block pos:%ld%+ld%+ld",bpos,bready,len);
     return len;
   }
 
   // no need to save these bytes?
   TSIOBufferReaderConsume(outrdr,nextDist);
-  ready -= nextDist;
+  bready -= nextDist;
+  bpos += nextDist;
+
+  if ( nextDist ) {
+    DEBUG_LOG("store **** skipping to buffered pos:%ld%+ld%+ld",bpos,bready,len);
+  }
 
   // pos of buffer-empty is precisely on a block boundary
 
-  if ( ready < blksz ) {
-    DEBUG_LOG("store buffering more dist pos:%ld%+ld%+ld",bpos,bready,len);
-    return std::min(len+0,blksz-ready); // limit amt left by distance to a filled block
+  if ( bready + len < blksz ) {
+    DEBUG_LOG("store ++++ buffering more dist pos:%ld%+ld%+ld -> %+ld",bpos,bready,len,std::min(len+0,blksz-bready-len));
+    return std::min(len+0,blksz-bready-len); // limit amt left by distance to a filled block
     //////// RETURN
   }
 
@@ -171,7 +175,7 @@ int64_t BlockStoreXform::handleInput(TSIOBufferReader outrdr, int64_t pos, int64
   // should send a WRITE_COMPLETE rather quickly
   TSVConnWrite(currBlock, _writeEvents, outrdr, blksz);
 
-  DEBUG_LOG("store copied write pos:%ld%+ld%+ld",bpos,bready,len);
+  DEBUG_LOG("store ++++ performed write pos:%ld%+ld%+ld",bpos,bready,len);
   return len;
 }
 
