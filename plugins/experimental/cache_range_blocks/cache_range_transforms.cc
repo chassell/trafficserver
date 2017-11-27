@@ -154,15 +154,16 @@ APIXformCont::copy_next_len(int64_t left)
   auto ncopied = std::min(nbytesin+0, violimit);
 
   if ( ! ncopied ) {
-    DEBUG_LOG("copy-next-none : @%ld%+ld %+ld %+ld [%p]",viopos,left,nbytesin,violimit,inrdr);
+    DEBUG_LOG("!!! copy-next-none : @%ld%+ld %+ld %+ld [%p]",viopos,left,nbytesin,violimit,inrdr);
     return 0L;
   }
 
-  TSIOBufferCopy(outputBuffer(), inrdr, ncopied, 0); // copy them
+  ncopied = TSIOBufferCopy(outputBuffer(), inrdr, ncopied, 0); // copy them
   TSIOBufferReaderConsume(inrdr,ncopied); // advance input
-  TSVIONDoneSet(_inVIO, viopos + ncopied);  // advance toward end
+  viopos = TSVIONDoneGet(_inVIO);  // advance toward end
+  TSVIONDoneSet(_inVIO, TSVIONDoneGet(_inVIO) + ncopied);  // advance toward end
 
-  DEBUG_LOG("copy-next-reenable : @%ld%+ld %+ld %+ld [%p]",viopos,left,nbytesin,ncopied,inrdr);
+  DEBUG_LOG("!!! copy-next-reenable : @%ld%+ld %+ld %+ld [%p]",viopos,left,nbytesin,ncopied,inrdr);
   TSVIOReenable(_outVIO);
   return ncopied;
 }
@@ -184,14 +185,15 @@ APIXformCont::skip_next_len(int64_t left)
   auto ncopied = std::min(nbytesin+0, violimit);
 
   if ( ! ncopied ) {
-    DEBUG_LOG("skip-next-none : @%ld%+ld %+ld %+ld [%p]",viopos,left,nbytesin,violimit,inrdr);
+    DEBUG_LOG("!!! skip-next-none : @%ld%+ld %+ld %+ld [%p]",viopos,left,nbytesin,violimit,inrdr);
     return 0L;
   }
 
   // TSIOBufferCopy(outputBuffer(), _inReader, ncopied, 0); // copy them
   TSIOBufferReaderConsume(inrdr,ncopied); // advance input
-  TSVIONDoneSet(_inVIO, viopos + ncopied);  // advance toward end
-  DEBUG_LOG("skip-next-amount : @%ld%+ld %+ld %+ld [%p]",viopos,left,nbytesin,ncopied,inrdr);
+  TSVIONDoneSet(_inVIO, TSVIONDoneGet(_inVIO) + ncopied);  // advance toward end
+
+  DEBUG_LOG("!!! skip-next-amount : @%ld%+ld %+ld %+ld [%p]",viopos,left,nbytesin,ncopied,inrdr);
   return ncopied;
 }
 
@@ -207,7 +209,8 @@ APIXformCont::init_body_range_handlers(int64_t len, int64_t offset)
   };
 
   // #3) xform handler: copy body required by client from server
-  auto copyBodyFn = [this,skipBodyEndFn](TSEvent evt, TSVIO vio, int64_t left) { 
+  auto copyBodyFn = [this,len,skipBodyEndFn](TSEvent evt, TSVIO vio, int64_t left) { 
+    this->_outVIO = TSVConnWrite(this->_outVConn, *this, this->_outReaderP.get(), len);
     auto r = this->copy_next_len( this->call_body_handler(evt,vio,left) );
     this->set_copy_handler(INT64_MAX>>1,skipBodyEndFn);
     auto pos = TSVIONDoneGet(_inVIO);
@@ -218,24 +221,28 @@ APIXformCont::init_body_range_handlers(int64_t len, int64_t offset)
   // #2) xform handler: skip an offset of bytes from server
   auto skipBodyOffsetFn = [this,offset,len,copyBodyFn](TSEvent evt, TSVIO vio, int64_t left) { 
     auto r = this->skip_next_len( this->call_body_handler(evt,vio,left) );
-    this->set_copy_handler(this->_outHeaderLen+offset+len,copyBodyFn);
+//    this->set_copy_handler(this->_outHeaderLen+offset+len,copyBodyFn);
+    this->set_copy_handler(offset+len,copyBodyFn);
     auto pos = TSVIONDoneGet(_inVIO);
     DEBUG_LOG("xform skip-body: @%ld left=%+ld r=%+ld",pos,left,r);
     return r;
   };
 
+/*
   // #1) xform handler: copy headers through
   auto copyHeadersFn = [this,skipBodyOffsetFn,offset](TSEvent evt, TSVIO vio, int64_t left) { 
     // copy headers simply...
     auto r = this->copy_next_len(left); 
-    this->set_copy_handler(_outHeaderLen+offset,skipBodyOffsetFn);
+//    this->set_copy_handler(_outHeaderLen+offset,skipBodyOffsetFn);
+    this->set_copy_handler(offset,skipBodyOffsetFn);
     auto pos = TSVIONDoneGet(_inVIO);
     DEBUG_LOG("xform copy-header: @%ld left=%+ld r=%+ld",pos,left,r);
     return r;
   };
+*/
 
   // #0) handler: init values once
-  auto initFldsFn = [this,len,copyHeadersFn](TSEvent evt, TSVIO vio, int64_t left)
+  auto initFldsFn = [this,offset,len,skipBodyOffsetFn](TSEvent evt, TSVIO vio, int64_t left)
   {
     // finally know the length of resp-hdr (as is)
     this->_outHeaderLen = this->_txn.getServerResponseHeaderSize();
@@ -247,11 +254,10 @@ APIXformCont::init_body_range_handlers(int64_t len, int64_t offset)
 
     // finally initialize output write [body only?]
     this->_outVConn = TSTransformOutputVConnGet(invconn);
-//    this->_outVIO = TSVConnWrite(this->_outVConn, invconn, this->_outReaderP.get(), this->_outHeaderLen + len);
-    this->_outVIO = TSVConnWrite(this->_outVConn, invconn, this->_outReaderP.get(), len);
 
-    this->set_copy_handler(this->_outHeaderLen, copyHeadersFn);
-    DEBUG_LOG("xform stream-init complete: %ld+%ld",this->_outHeaderLen,len);
+//    this->set_copy_handler(this->_outHeaderLen, skipBodyOffsetFn);
+    this->set_copy_handler(0, skipBodyOffsetFn);
+    DEBUG_LOG("xform stream-init complete: %ld+%ld",offset,len);
     return 0;
   };
 
@@ -287,7 +293,8 @@ int64_t BlockTeeXform::handleEvent(TSEvent event, TSVIO evtvio, int64_t left)
   auto navail = TSIOBufferReaderAvail(_teeReaderP.get());
   DEBUG_LOG("tee buffer bytes post-copy: @%ld%+ld [%+ld]",pos-(navail-left),navail,left);
 
-  return _writeHook(_teeReaderP.get(), pos - outHeaderLen(), left); // show advance
+//  return _writeHook(_teeReaderP.get(), pos - outHeaderLen(), left); // show advance
+  return _writeHook(_teeReaderP.get(), pos, left); // show advance
 }
 
 /*

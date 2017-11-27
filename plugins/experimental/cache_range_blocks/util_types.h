@@ -152,9 +152,11 @@ struct APIXformCont : public TSCont_t
 
   void
   set_body_handler(int64_t pos, XformCB_t &&fxn) {
-    TSDebug("cache_range_block", "[%s:%d] %s(): limit=%ld", __FILE__, __LINE__, __func__, pos + _outHeaderLen);
+//    TSDebug("cache_range_block", "[%s:%d] %s(): limit=%ld", __FILE__, __LINE__, __func__, pos + _outHeaderLen);
+    TSDebug("cache_range_block", "[%s:%d] %s(): limit=%ld", __FILE__, __LINE__, __func__, pos);
     _bodyXformCB = fxn;
-    _bodyXformCBAbsLimit = pos + _outHeaderLen;
+//    _bodyXformCBAbsLimit = pos + _outHeaderLen;
+    _bodyXformCBAbsLimit = pos;
   }
 
   void
@@ -183,7 +185,8 @@ private:
   call_body_handler(TSEvent evt,TSVIO vio,int64_t left)
   {
     // subtract later bytes if body-cb is nearer
-    left -= _xformCBAbsLimit - std::min(_bodyXformCBAbsLimit + _outHeaderLen, _xformCBAbsLimit);
+//    left -= _xformCBAbsLimit - std::min(_bodyXformCBAbsLimit + _outHeaderLen, _xformCBAbsLimit);
+    left -= _xformCBAbsLimit - std::min(_bodyXformCBAbsLimit, _xformCBAbsLimit);
     return _bodyXformCB(evt,vio,left);
   }
 

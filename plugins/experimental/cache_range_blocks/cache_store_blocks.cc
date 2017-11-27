@@ -165,8 +165,8 @@ int64_t BlockStoreXform::handleInput(TSIOBufferReader outrdr, int64_t pos, int64
   // pos of buffer-empty is precisely on a block boundary
 
   if ( bready + len < blksz ) {
-    DEBUG_LOG("store ++++ buffering more dist pos:%ld%+ld%+ld -> %+ld",bpos,bready,len,std::min(len+0,blksz-bready-len));
-    return std::min(len+0,blksz-bready-len); // limit amt left by distance to a filled block
+    DEBUG_LOG("store ++++ buffering more dist pos:%ld%+ld%+ld -> %+ld",bpos,bready,len,std::min(len+0,blksz-bready));
+    return std::min(len+0,blksz-bready); // limit amt left by distance to a filled block
     //////// RETURN
   }
 
