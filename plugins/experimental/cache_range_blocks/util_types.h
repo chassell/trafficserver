@@ -148,6 +148,7 @@ struct APIXformCont : public TSCont_t
   TSVConn output() const { return _outVConn; }
   TSVIO outputVIO() const { return _outVIO; }
   TSIOBuffer outputBuffer() const { return _outBufferP.get(); }
+  TSIOBufferReader outputReader() const { return _outReaderP.get(); }
   int64_t outHeaderLen() const { return _outHeaderLen; }
 
   void

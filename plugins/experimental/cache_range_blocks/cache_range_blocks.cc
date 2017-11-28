@@ -132,6 +132,9 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   _blkSize = INK_ALIGN((_assetLen>>10)|1,MIN_BLOCK_STORED);
 
+  auto ready = select_needed_blocks();
+
+/*
   // all blocks [and keys for them] are valid to try reading?
   if ( ! have_needed_blocks() || _keysInRange.empty() ) {
     DEBUG_LOG("cache-resp-wr: base:%p len=%lu len=%lu set=%s",this,assetLen(),_assetLen,_b64BlkBitset.c_str());
@@ -142,9 +145,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     // resume implied
     return;
   }
-
-  DEBUG_LOG("cache-resp-rd: len=%lu set=%s",_assetLen,_b64BlkBitset.c_str());
-  _vcsToRead.resize( _keysInRange.size() );
+*/
 
   // stateless callback as deleter...
   using Deleter_t = void(*)(BlockSetAccess*);
@@ -155,15 +156,16 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
   auto barrierLock = std::shared_ptr<BlockSetAccess>(this, deleter);
   auto mutex = TSMutexCreate(); // one shared mutex across reads
+  auto blkNum = _beginByte/_blkSize;
 
-  for( auto i = 0U ; i < _keysInRange.size() ; ++i ) {
+  for( auto i = 0U ; i < _keysInRange.size() ; ++i,++blkNum ) {
     // prep for async reads that init into VConn-futures
-    // XXX: pass a use-for-all lambda-ref instead???
+    _keysInRange[i] = std::move(APICacheKey(clientUrl(),blkNum * _blkSize));
     auto contp = APICont::create_temp_tscont(mutex, _vcsToRead[i], barrierLock);
     TSCacheRead(contp,_keysInRange[i]);
   }
 
-  // do *not* release block
+  // do *not* release transaction
 }
 
 /////////////////////////////////////////////////////////////
@@ -291,13 +293,16 @@ BlockSetAccess::get_trunc_hdrs()
 }
 
 int64_t 
-BlockSetAccess::have_needed_blocks()
+BlockSetAccess::select_needed_blocks()
 {
   int64_t start = _beginByte;
   int64_t end = _endByte;
 
   auto startBlk = start /_blkSize; // inclusive-start block
   auto endBlk = (end+1+_blkSize-1)/_blkSize; // exclusive-end block
+
+  _keysInRange.resize(endBlk - startBlk); // start empty...
+  _vcsToRead.resize(endBlk - startBlk); // start empty...
 
 //  ink_assert( _contentLen == static_cast<int64_t>(( endBlk - startBlk )*_blkSize) - _beginByte - _endByte );
 
@@ -312,7 +317,7 @@ BlockSetAccess::have_needed_blocks()
 
   // any missed
   if ( i < endBlk ) {
-   return 0; // don't have all of them
+     return 0; // don't have all of them
   }
 
   return end;

@@ -103,7 +103,7 @@ public:
 private:
   Headers *get_trunc_hdrs();
 
-  int64_t have_needed_blocks();
+  int64_t select_needed_blocks();
 
   Transaction        &_txn;
   const TSHttpTxn     _atsTxn = nullptr;
@@ -172,6 +172,7 @@ class BlockStoreXform : public TransactionPlugin,
 
 //////////////////////////////////////////
 //////////// in Response-Transformation phase 
+ private:
   int64_t next_valid_vconn(TSVConn &vconn, int64_t pos, int64_t len);
 
   int64_t handleInput(TSIOBufferReader r, int64_t pos, int64_t len);
@@ -179,7 +180,7 @@ class BlockStoreXform : public TransactionPlugin,
 
   TSVConn next_valid_vconn(int64_t pos, int64_t len);
 
-private:
+ private:
   BlockSetAccess                          &_ctxt;
   std::vector<std::shared_future<TSVConn>> _vcsToWrite; // indexed as the keys
   APICont                                  _writeEvents;
@@ -189,9 +190,15 @@ private:
 class BlockReadXform : public APIXformCont
 {
  public:
-  BlockReadXform(BlockSetAccess &ctxt);
+  BlockReadXform(BlockSetAccess &ctxt, int64_t start);
+
  private:
+  void handleRead(TSEvent,void *,int64_t);
+
+ private:
+  BlockSetAccess      &_ctxt;
   std::vector<TSVConn> _vconns;
+  APICont              _readEvents;
 };
 
 
