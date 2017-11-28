@@ -115,8 +115,10 @@ APIXformCont::APIXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, 
 }
 
 class BlockStoreXform;
+class BlockReadXform;
 
 template APICont::APICont(BlockStoreXform &obj, void(BlockStoreXform::*funcp)(TSEvent,void*,decltype(nullptr)), decltype(nullptr));
+template APICont::APICont(BlockReadXform &obj, void(BlockReadXform::*funcp)(TSEvent,void*,int64_t), int64_t);
 template TSCont APICont::create_temp_tscont(TSMutex,std::shared_future<TSVConn> &, const std::shared_ptr<void> &);
 
 //}

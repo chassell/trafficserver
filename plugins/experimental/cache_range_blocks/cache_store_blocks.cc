@@ -207,7 +207,4 @@ void BlockStoreXform::handleWrite(TSEvent evt, void*edata, std::nullptr_t)
 
 BlockStoreXform::~BlockStoreXform() 
 {
-  for( auto &&i : _vcsToWrite ) {
-    TSVConnClose(i.get());
-  }
 }
