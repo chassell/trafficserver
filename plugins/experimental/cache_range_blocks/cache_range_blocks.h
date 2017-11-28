@@ -193,10 +193,12 @@ class BlockReadXform : public APIXformCont
   BlockReadXform(BlockSetAccess &ctxt, int64_t start);
 
  private:
-  void handleRead(TSEvent,void *,int64_t);
+  void handleRead(TSEvent,void *,std::nullptr_t);
 
  private:
   BlockSetAccess      &_ctxt;
+  int64_t              _startByte;
+  TSVIO                _outVIO = nullptr;
   std::vector<TSVConn> _vconns;
   APICont              _readEvents;
 };

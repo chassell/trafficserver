@@ -446,10 +446,11 @@ Response & Transaction::updateCachedResponse() {
 void
 Transaction::resetHandles()
 {
-  state_->client_request_.getHeaders().reset(nullptr,nullptr);
-  state_->server_request_.getHeaders().reset(nullptr,nullptr);
-  state_->server_response_.getHeaders().reset(nullptr,nullptr);
-  state_->client_response_.getHeaders().reset(nullptr,nullptr);
   state_->cached_response_.getHeaders().reset(nullptr,nullptr);
   state_->cached_request_.getHeaders().reset(nullptr,nullptr);
+
+  state_->client_response_.getHeaders().reset(nullptr,nullptr);
+
+  state_->server_request_.getHeaders().reset(nullptr,nullptr);
+  state_->server_response_.getHeaders().reset(nullptr,nullptr);
 }

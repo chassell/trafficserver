@@ -36,46 +36,57 @@ forward_vio_event(TSEvent event, TSVIO invio)
   }
 }
 
+int
+APIXformCont::check_completions(TSEvent event) 
+{
+  TSVConn invconn = *this;
+  auto invio = TSVConnWriteVIOGet(invconn);
+
+  // check for rude shutdown
+  if ( ! invio || ! TSVIOBufferGet(invio) ) {
+    DEBUG_LOG("xform-event shutdown: #%d",event);
+    return -1;
+  }
+
+  // another possible shutdown
+  if ( TSVConnClosedGet(invconn) ) {
+    _xformCB(event, nullptr, 0);
+    DEBUG_LOG("xform-event closed: #%d",event);
+    return -2;
+  }
+
+  // "ack" end-of-write completion [zero bytes] to upstream
+  if ( ! TSVIONTodoGet(invio) ) {
+    DEBUG_LOG("xform-event write-complete: #%d",event);
+    // can dealloc entire transaction!!
+    _xformCB(event, nullptr, 0);
+    forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE,invio); 
+    return -3;
+  }
+
+  return 0;
+}
+
 int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
 {
   DEBUG_LOG("xform-event CB: %d %p",event,edata);
-  atscppapi::ScopedContinuationLock lock(*this);
 
   ink_assert(this->operator TSVConn() == cont);
 
-  // check for rude shutdown
-  if ( TSVConnWriteVIOGet(*this) != _inVIO || ! TSVIOBufferGet(_inVIO) ) 
-  {
-    if ( _xformCB ) {
-      _xformCB(event, nullptr, 0); // may be an init!
-      DEBUG_LOG("xform-event shutdown: %d %p",event,edata);
-      return 0;
-    }
+  TSVConn invconn = *this;
+  if ( check_completions(event) ) {
+    return 0;
+  }
 
+  if ( ! _inVIO ) {
     _xformCB = _nextXformCB;
     _xformCBAbsLimit = _nextXformCBAbsLimit;
 
     // finally know the length of resp-hdr (as is)
     _outHeaderLen = _txn.getServerResponseHeaderSize();
 
-    TSVConn invconn = *this;
     _inVIO = TSVConnWriteVIOGet(invconn);
     _outVConn = TSTransformOutputVConnGet(invconn);
-    // just for init
-  }
-
-  // another possible shutdown
-  if ( TSVConnClosedGet(*this) ) {
-    _xformCB(event, nullptr, 0);
-    DEBUG_LOG("xform-event closed: %d %p",event,edata);
-    return 0;
-  }
-
-  // "ack" end-of-write completion [zero bytes] to upstream
-  if ( ! TSVIONTodoGet(_inVIO) ) {
-    forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE,_inVIO); // complete upstream
-    DEBUG_LOG("xform-event write-complete: %d %p",event,edata);
-    return 0;
   }
 
   // if output is done ... then shutdown 
@@ -85,6 +96,7 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
     return 0; // nothing more for this event
   }
 
+  // just for init
   auto inrdr = TSVIOReaderGet(_inVIO); // reset if changed!
 
   auto outpos = ( _outVIO ? TSVIONDoneGet(_outVIO) : 0 );
@@ -98,8 +110,13 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
     edata = _inVIO; // overwrite the Event*
   }
 
-  if ( event != TS_EVENT_VCONN_WRITE_READY || edata != _inVIO ) {
+  if ( event != TS_EVENT_VCONN_WRITE_READY && event != TS_EVENT_VCONN_WRITE_COMPLETE ) {
     DEBUG_LOG("xform-unkn-event : @%ld %+ld %+ld [%p][%p]",pos,inavail,inready,inrdr,edata);
+    return 0;
+  }
+
+  if ( edata != _inVIO ) {
+    DEBUG_LOG("xform-unkn-edata : @%ld %+ld %+ld [%p][%p]",pos,inavail,inready,inrdr,edata);
     return 0;
   }
 
@@ -136,9 +153,14 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
     TSVIOReenable(_outVIO);
   }
 
+  // nothing moved or reader has extra?
+  if ( opos == pos || TSIOBufferReaderAvail(inrdr) ) {
+    return 0;
+  }
+
   // if done with this buffer ....
-  if ( opos != pos && ! TSIOBufferReaderAvail(inrdr) ) {
-    DEBUG_LOG("xform input ready: @%ld -> @%ld",opos,pos);
+  DEBUG_LOG("xform input ready: @%ld -> @%ld",opos,pos);
+  if ( TSVIONTodoGet(_inVIO) ) {
     forward_vio_event(TS_EVENT_VCONN_WRITE_READY, _inVIO);
   }
 
@@ -148,6 +170,10 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
 int64_t
 APIXformCont::copy_next_len(int64_t left)
 {
+  if ( ! left ) {
+    return 0L;
+  }
+
   auto invio = TSVConnWriteVIOGet(*this);
   if ( ! invio || ! TSVIOBufferGet(invio) ) {
     DEBUG_LOG("lost buffer");
@@ -185,6 +211,10 @@ APIXformCont::copy_next_len(int64_t left)
 int64_t
 APIXformCont::skip_next_len(int64_t left)
 {
+  if ( ! left ) {
+    return 0L;
+  }
+
   // copy op defined by:
   //    0) input reader: prev. skipped bytes (consumed)
   //
@@ -215,29 +245,39 @@ void
 APIXformCont::init_body_range_handlers(int64_t len, int64_t offset)
 {
   // #4) xform handler: skip trailing download from server
-  auto skipBodyEndFn = [this](TSEvent evt, TSVIO vio, int64_t left) { 
-    auto r = this->skip_next_len( this->call_body_handler(evt,vio,left) ); // last one...
+  auto skipBodyEndFn = [this](TSEvent event, TSVIO vio, int64_t left) { 
+    auto r = skip_next_len( call_body_handler(event,vio,left) ); // last one...
     auto pos = TSVIONDoneGet(_inVIO);
     DEBUG_LOG("xform skip-end: @%ld left=%+ld r=+%ld",pos,left,r);
     return r;
   };
 
-  // #3) xform handler: copy body required by client from server
-  auto copyBodyFn = [this,len,skipBodyEndFn](TSEvent evt, TSVIO vio, int64_t left) { 
-    this->_outVIO = TSVConnWrite(this->_outVConn, *this, this->_outReaderP.get(), len);
-    auto r = this->copy_next_len( this->call_body_handler(evt,vio,left) );
+  if ( ! len ) {
+    set_copy_handler(INT64_MAX>>1,skipBodyEndFn);
+    DEBUG_LOG("xform init no-write complete");
+    return;
+  }
 
-    this->set_copy_handler(INT64_MAX>>1,skipBodyEndFn);
+  // #3) xform handler: copy body required by client from server
+  auto copyBodyFn = [this,len,skipBodyEndFn](TSEvent event, TSVIO vio, int64_t left) { 
+    _outVIO = TSVConnWrite(_outVConn, *this, _outReaderP.get(), len);
+    auto r = copy_next_len( call_body_handler(event,vio,left) );
+    set_copy_handler(INT64_MAX>>1,skipBodyEndFn);
     auto pos = TSVIONDoneGet(_inVIO);
     DEBUG_LOG("xform copy-body: @%ld left=%+ld r=%+ld",pos,left,r);
     return r;
   };
 
-  // #2) xform handler: skip an offset of bytes from server
-  auto skipBodyOffsetFn = [this,offset,len,copyBodyFn](TSEvent evt, TSVIO vio, int64_t left) { 
-    auto r = this->skip_next_len( this->call_body_handler(evt,vio,left) );
+  if ( ! offset ) {
+    set_copy_handler(len, copyBodyFn); // don't start a write
+    DEBUG_LOG("xform init no-skip complete");
+    return;
+  }
 
-    this->set_copy_handler(offset+len,copyBodyFn);
+  // #2) xform handler: skip an offset of bytes from server
+  auto skipBodyOffsetFn = [this,offset,len,copyBodyFn](TSEvent event, TSVIO vio, int64_t left) { 
+    auto r = skip_next_len( call_body_handler(event,vio,left) );
+    set_copy_handler(offset+len,copyBodyFn);
     auto pos = TSVIONDoneGet(_inVIO);
     DEBUG_LOG("xform skip-body: @%ld left=%+ld r=%+ld",pos,left,r);
     return r;

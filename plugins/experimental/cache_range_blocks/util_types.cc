@@ -98,6 +98,15 @@ APICont::APICont(TSMutex mutex)
   TSContDataSet(get(),this);
 }
 
+int APICont::handleTSEventCB(TSCont cont, TSEvent event, void *data)
+{
+  atscppapi::ScopedContinuationLock lock(cont);
+  APICont *self = static_cast<APICont*>(TSContDataGet(cont));
+  ink_assert(self->operator TSCont() == cont);
+  self->_userCB(event,data);
+  return 0;
+}
+
 
 // Transform continuations
 APIXformCont::APIXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t len, int64_t pos)
@@ -114,11 +123,30 @@ APIXformCont::APIXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, 
   TSHttpTxnHookAdd(_atsTxn, xformType, get());
 }
 
+int APIXformCont::handleXformTSEventCB(TSCont cont, TSEvent event, void *data)
+{
+  atscppapi::ScopedContinuationLock lock(cont);
+  APIXformCont *self = static_cast<APIXformCont*>(TSContDataGet(cont));
+  return self->handleXformTSEvent(cont,event,data);
+}
+
+BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, int64_t xformLen, int64_t xformOffset)
+   : APIXformCont(txn, TS_HTTP_RESPONSE_TRANSFORM_HOOK, xformLen, xformOffset),
+     _writeHook(writeHook),
+     _teeBufferP( TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K) ),
+     _teeReaderP( TSIOBufferReaderAlloc(this->_teeBufferP.get()) )
+{
+  // get to method via callback
+  set_body_handler([this](TSEvent evt, TSVIO vio, int64_t left) { 
+    return this->handleEvent(evt,vio,left); 
+  });
+}
+
 class BlockStoreXform;
 class BlockReadXform;
 
 template APICont::APICont(BlockStoreXform &obj, void(BlockStoreXform::*funcp)(TSEvent,void*,decltype(nullptr)), decltype(nullptr));
-template APICont::APICont(BlockReadXform &obj, void(BlockReadXform::*funcp)(TSEvent,void*,int64_t), int64_t);
+template APICont::APICont(BlockReadXform &obj, void(BlockReadXform::*funcp)(TSEvent,void*,decltype(nullptr)), decltype(nullptr));
 template TSCont APICont::create_temp_tscont(TSMutex,std::shared_future<TSVConn> &, const std::shared_ptr<void> &);
 
 //}

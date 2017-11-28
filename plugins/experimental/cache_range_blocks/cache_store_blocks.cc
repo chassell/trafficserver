@@ -34,6 +34,9 @@ BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt)
      _vcsToWrite(ctxt.rangeLen()/ctxt.blockSize() + 1),
      _writeEvents(*this, &BlockStoreXform::handleWrite, nullptr)
 {
+  // definitely need a remote write
+  TSHttpTxnCacheLookupStatusSet(ctxt.atsTxn(), TS_CACHE_LOOKUP_MISS);
+
   ctxt._keysInRange.resize( _vcsToWrite.size() );
 
   TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // add block-range and clean up
@@ -133,6 +136,11 @@ int64_t BlockStoreXform::next_valid_vconn(TSVConn &vconn, int64_t pos, int64_t l
 //      -- after outputBuffer() was filled
 int64_t BlockStoreXform::handleInput(TSIOBufferReader outrdr, int64_t pos, int64_t len)
 {
+  // input has closed down?
+  if ( ! outrdr ) {
+    DEBUG_LOG("store **** final call");
+    return 0;
+  }
   // position is distance within body *without* len...
 
   TSVConn currBlock = nullptr;
@@ -170,8 +178,6 @@ int64_t BlockStoreXform::handleInput(TSIOBufferReader outrdr, int64_t pos, int64
     //////// RETURN
   }
 
-  atscppapi::ScopedContinuationLock lock(_writeEvents);
-
   // should send a WRITE_COMPLETE rather quickly
   TSVConnWrite(currBlock, _writeEvents, outrdr, blksz);
 
@@ -179,30 +185,24 @@ int64_t BlockStoreXform::handleInput(TSIOBufferReader outrdr, int64_t pos, int64
   return len;
 }
 
-void BlockStoreXform::handleWrite(TSEvent evt, void*edata, std::nullptr_t)
+void BlockStoreXform::handleWrite(TSEvent event, void*edata, std::nullptr_t)
 {
   TSVIO writeVIO = static_cast<TSVIO>(edata);
 
-  atscppapi::ScopedContinuationLock lock(_writeEvents);
-
   if ( ! writeVIO ) {
-    DEBUG_LOG("empty edata evt:%d",evt);
+    DEBUG_LOG("empty edata event:%d",event);
     return;
   }
 
-  switch (evt) {
-    case TS_EVENT_VCONN_WRITE_COMPLETE:
-      DEBUG_LOG("write complete evt:%d",evt);
-       TSVConnClose(TSVIOVConnGet(writeVIO));
-       break;
-    case TS_EVENT_VCONN_WRITE_READY:
-      DEBUG_LOG("write ready evt:%d",evt);
-      break;
-       // should be started already
-    default:
-      DEBUG_LOG("write ready evt:%d",evt);
-      break;
+  if ( event != TS_EVENT_VCONN_WRITE_COMPLETE ) {
+    DEBUG_LOG("cache-write event:%d",event);
+    return;
   }
+
+  DEBUG_LOG("write complete event:%d",event);
+  TSVConnClose(TSVIOVConnGet(writeVIO));
+
+  TSVIOReenable(inputVIO()); // ??
 }
 
 BlockStoreXform::~BlockStoreXform() 

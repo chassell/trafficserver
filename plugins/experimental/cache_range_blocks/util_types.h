@@ -85,7 +85,7 @@ struct APICacheKey : public TSCacheKey_t
 
   operator TSCacheKey() const { return get(); }
 
-  APICacheKey(const atscppapi::Url &url, uint64_t offset);
+  APICacheKey(const atscppapi::Url &url, std::string const &etag, uint64_t offset);
 };
 
 // object to request write/read into cache
@@ -113,14 +113,7 @@ struct APICont : public TSCont_t
   }
 
 private:
-  static int handleTSEventCB(TSCont cont, TSEvent event, void *data)
-  {
-    APICont *self = static_cast<APICont*>(TSContDataGet(cont));
-    ink_assert(self->operator TSCont() == cont);
-    self->_userCB(event,data);
-    return 0;
-  }
-
+  static int handleTSEventCB(TSCont cont, TSEvent event, void *data);
 
   APICont(TSMutex mutex);
 
@@ -152,12 +145,9 @@ struct APIXformCont : public TSCont_t
   int64_t outHeaderLen() const { return _outHeaderLen; }
 
   void
-  set_body_handler(int64_t pos, XformCB_t &&fxn) {
-//    TSDebug("cache_range_block", "[%s:%d] %s(): limit=%ld", __FILE__, __LINE__, __func__, pos + _outHeaderLen);
-    TSDebug("cache_range_block", "[%s:%d] %s(): limit=%ld", __FILE__, __LINE__, __func__, pos);
+  set_body_handler(XformCB_t &&fxn) {
+    TSDebug("cache_range_block", "[%s:%d] %s()", __FILE__, __LINE__, __func__);
     _bodyXformCB = fxn;
-//    _bodyXformCBAbsLimit = pos + _outHeaderLen;
-    _bodyXformCBAbsLimit = pos;
   }
 
   void
@@ -171,13 +161,11 @@ struct APIXformCont : public TSCont_t
   int64_t skip_next_len(int64_t);
 
 private:
+  int check_completions(TSEvent event);
+
   int handleXformTSEvent(TSCont cont, TSEvent event, void *data);
 
-  static int handleXformTSEventCB(TSCont cont, TSEvent event, void *data)
-  {
-    APIXformCont *self = static_cast<APIXformCont*>(TSContDataGet(cont));
-    return self->handleXformTSEvent(cont,event,data);
-  }
+  static int handleXformTSEventCB(TSCont cont, TSEvent event, void *data);
 
   void init_body_range_handlers(int64_t len, int64_t offset);
 
@@ -185,10 +173,7 @@ private:
   int64_t 
   call_body_handler(TSEvent evt,TSVIO vio,int64_t left)
   {
-    // subtract later bytes if body-cb is nearer
-//    left -= _xformCBAbsLimit - std::min(_bodyXformCBAbsLimit + _outHeaderLen, _xformCBAbsLimit);
-    left -= _xformCBAbsLimit - std::min(_bodyXformCBAbsLimit, _xformCBAbsLimit);
-    return _bodyXformCB(evt,vio,left);
+    return _bodyXformCB ? _bodyXformCB(evt,vio,left) : left;
   }
 
   atscppapi::Transaction              &_txn;
@@ -200,7 +185,6 @@ private:
   int64_t                              _nextXformCBAbsLimit = 0L;
 
   XformCB_t                            _bodyXformCB;
-  int64_t                              _bodyXformCBAbsLimit = 0L;
 
   TSVIO                                _inVIO = nullptr;
 
@@ -217,16 +201,7 @@ class BlockTeeXform : public APIXformCont
   using HookType = std::function<int64_t(TSIOBufferReader,int64_t pos,int64_t len)>;
 
  public:
-  BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, int64_t xformLen, int64_t xformOffset)
-     : APIXformCont(txn, TS_HTTP_RESPONSE_TRANSFORM_HOOK, xformLen, xformOffset),
-       _writeHook(writeHook),
-       _teeBufferP( TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K) ),
-       _teeReaderP( TSIOBufferReaderAlloc(this->_teeBufferP.get()) )
-  {
-    // get to method via callback
-    set_body_handler(INT64_MAX>>1,[this](TSEvent evt, TSVIO vio, int64_t left) 
-      { return this->handleEvent(evt,vio,left); });
-  }
+  BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, int64_t xformLen, int64_t xformOffset);
 
   int64_t 
   handleEvent(TSEvent event, TSVIO vio, int64_t left);

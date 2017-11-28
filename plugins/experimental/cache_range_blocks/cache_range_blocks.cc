@@ -102,8 +102,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     return;
   }
 
-  // "stale" cache until all blocks proven ready
-  TSHttpTxnCacheLookupStatusSet(atsTxn(), TS_CACHE_LOOKUP_MISS);
+  _clntHdrs.erase(RANGE_TAG);
 
   // simply clean up stub-response to be a normal header
   TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS);
@@ -132,7 +131,9 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   _blkSize = INK_ALIGN((_assetLen>>10)|1,MIN_BLOCK_STORED);
 
-  auto ready = select_needed_blocks();
+  if ( select_needed_blocks() ) {
+    DEBUG_LOG("read guaranteed: len=%lu set=%s",_assetLen,_b64BlkBitset.c_str());
+  }
 
 /*
   // all blocks [and keys for them] are valid to try reading?
@@ -187,6 +188,8 @@ void BlockSetAccess::clean_server_request(Transaction &txn)
   // replace with a block-based range if known
   if ( ! blockRangeStr().empty() ) {
      proxyReq.set(RANGE_TAG, blockRangeStr()); 
+  } else {
+     proxyReq.set(RANGE_TAG, clientRangeStr()); // same as before
   }
 }
 
