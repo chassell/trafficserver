@@ -28,14 +28,18 @@
 
 BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt)
    : TransactionPlugin(ctxt.txn()), 
-     BlockTeeXform(ctxt.txn(), [this](TSIOBufferReader r,int64_t pos,int64_t len) { return this->handleInput(r,pos,len); }, 
-                               ctxt._beginByte, ctxt.rangeLen()),
+     BlockTeeXform(ctxt.txn(), [this](TSIOBufferReader r,int64_t inpos,int64_t len) { return this->handleInput(r,inpos,len); }, 
+                               ctxt._beginByte % ctxt.blockSize(), 
+                               ctxt.rangeLen()),
      _ctxt(ctxt), 
      _vcsToWrite(ctxt.rangeLen()/ctxt.blockSize() + 1),
      _writeEvents(*this, &BlockStoreXform::handleWrite, nullptr)
 {
   // definitely need a remote write
   TSHttpTxnCacheLookupStatusSet(ctxt.atsTxn(), TS_CACHE_LOOKUP_MISS);
+
+  TSHttpTxnUntransformedRespCache(ctxt.atsTxn(),0);
+  TSHttpTxnTransformedRespCache(ctxt.atsTxn(),0);
 
   ctxt._keysInRange.resize( _vcsToWrite.size() );
 
@@ -52,14 +56,12 @@ BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
   //
   auto &keys = _ctxt._keysInRange;
   auto mutex = TSMutexCreate();
-
-  auto pos = _ctxt._beginByte  - ( _ctxt._beginByte % _ctxt.blockSize() );
-  auto blkNum = pos / _ctxt.blockSize();
+  auto blkNum = _ctxt._beginByte / _ctxt.blockSize();
 
   for( auto i = 0U ; i < keys.size() ; ++i,++blkNum ) {
 	if ( ! is_base64_bit_set(_ctxt.b64BlkBitset(),blkNum) ) 
     {
-      keys[i] = std::move(APICacheKey(_ctxt.clientUrl(),blkNum * _ctxt.blockSize()));
+      keys[i] = std::move(APICacheKey(_ctxt.clientUrl(), _ctxt._etagStr, blkNum*_ctxt.blockSize()));
       auto contp = APICont::create_temp_tscont(mutex,_vcsToWrite[i]);
       TSCacheWrite(contp,keys[i]); // find room to store each key...
     }
@@ -84,7 +86,7 @@ BlockStoreXform::handleReadResponseHeaders(Transaction &txn)
    txn.resume();
 }
 
-int64_t BlockStoreXform::next_valid_vconn(TSVConn &vconn, int64_t pos, int64_t len)
+int64_t BlockStoreXform::next_valid_vconn(TSVConn &vconn, int64_t inpos, int64_t len)
 {
   auto blksz = static_cast<int64_t>(_ctxt.blockSize());
   using namespace std::chrono;
@@ -92,49 +94,48 @@ int64_t BlockStoreXform::next_valid_vconn(TSVConn &vconn, int64_t pos, int64_t l
 
   vconn = nullptr;
 
-  // find distance to next start point
-  int64_t dist = ( ! pos ? 0 : blksz-1 - ((pos-1) % blksz) );
+  // find distance to next start point (w/zero possible)
+  int64_t dist = ( ! inpos ? 0 : blksz-1 - ((inpos-1) % blksz) );
 
   // no boundary within distance?
   if ( dist >= len ) {
-    DEBUG_LOG("invalid block pos:%ld len=%ld",pos,len);
+    DEBUG_LOG("invalid data-block pos:%ld len=%ld",inpos,len);
     return -1;
   }
 
   // dist with length includes a block boundary
 
-  // index of base block in set
-  auto baseblk = _ctxt._beginByte / blksz;
+  auto absbase = _ctxt._beginByte / blksz; //
   // index of block in server download
-  auto blk = (pos + blksz-1) / blksz;
+  auto blk = inpos / blksz;
 
   // skip available blocks
-  for ( ; is_base64_bit_set(_ctxt.b64BlkBitset(),blk + baseblk) ; ++blk ) {
+  for ( ; is_base64_bit_set(_ctxt.b64BlkBitset(),absbase + blk) ; ++blk ) {
     dist += blksz; // jump forward a full block
   }
 
   // can't find a ready write waiting?
   if ( ! _vcsToWrite[blk].valid() ) {
-    DEBUG_LOG("invalid VConn future dist:%ld pos:%ld len=%ld",dist,pos,len);
+    DEBUG_LOG("invalid VConn future dist:%ld pos:%ld len=%ld",dist,inpos,len);
     return -1;
   }
 
   // can't find a ready write waiting?
   if ( _vcsToWrite[blk].wait_for(seconds::zero()) != future_status::ready ) {
-    DEBUG_LOG("unset VConn future dist:%ld pos:%ld len=%ld",dist,pos,len);
+    DEBUG_LOG("unset VConn future dist:%ld pos:%ld len=%ld",dist,inpos,len);
     return -1;
   }
 
   // found one ready to go...
   vconn = _vcsToWrite[blk].get();
-  DEBUG_LOG("ready VConn future dist:%ld pos:%ld len=%ld",dist,pos,len);
+  DEBUG_LOG("ready VConn future dist:%ld pos:%ld len=%ld",dist,inpos,len);
   return dist;
 }
 
 //
 // called from writeHook
 //      -- after outputBuffer() was filled
-int64_t BlockStoreXform::handleInput(TSIOBufferReader outrdr, int64_t pos, int64_t len)
+int64_t BlockStoreXform::handleInput(TSIOBufferReader outrdr, int64_t inpos, int64_t len)
 {
   // input has closed down?
   if ( ! outrdr ) {
@@ -147,41 +148,41 @@ int64_t BlockStoreXform::handleInput(TSIOBufferReader outrdr, int64_t pos, int64
   auto blksz = static_cast<int64_t>(_ctxt.blockSize());
 
   // amount *includes* len
-  auto bready = TSIOBufferReaderAvail(outrdr) - len;
-  auto bpos = pos - bready;
+  auto oavail = TSIOBufferReaderAvail(outrdr) - len;
+  auto odone = inpos - oavail;
 
   // check unneeded bytes before next block
-  auto nextDist = next_valid_vconn(currBlock, bpos, bready + len);
+  auto nextDist = next_valid_vconn(currBlock, odone, oavail + len);
 
   // don't have enough to reach full block boundary?
   if ( nextDist < 0 ) {
     // no need to save these bytes?
-    TSIOBufferReaderConsume(outrdr,bready + len);
-    DEBUG_LOG("store **** skip current block pos:%ld%+ld%+ld",bpos,bready,len);
+    TSIOBufferReaderConsume(outrdr,oavail + len);
+    DEBUG_LOG("store **** skip current block pos:%ld%+ld%+ld",odone,oavail,len);
     return len;
   }
 
   // no need to save these bytes?
   TSIOBufferReaderConsume(outrdr,nextDist);
-  bready -= nextDist;
-  bpos += nextDist;
+  oavail -= nextDist;
+  odone += nextDist;
 
   if ( nextDist ) {
-    DEBUG_LOG("store **** skipping to buffered pos:%ld%+ld%+ld",bpos,bready,len);
+    DEBUG_LOG("store **** skipping to buffered pos:%ld%+ld%+ld",odone,oavail,len);
   }
 
   // pos of buffer-empty is precisely on a block boundary
 
-  if ( bready + len < blksz ) {
-    DEBUG_LOG("store ++++ buffering more dist pos:%ld%+ld%+ld -> %+ld",bpos,bready,len,std::min(len+0,blksz-bready));
-    return std::min(len+0,blksz-bready); // limit amt left by distance to a filled block
+  if ( oavail + len < blksz ) {
+    DEBUG_LOG("store ++++ buffering more dist pos:%ld%+ld%+ld -> %+ld",odone,oavail,len,std::min(len+0,blksz-oavail));
+    return std::min(len+0,blksz-oavail); // limit amt left by distance to a filled block
     //////// RETURN
   }
 
   // should send a WRITE_COMPLETE rather quickly
   TSVConnWrite(currBlock, _writeEvents, outrdr, blksz);
 
-  DEBUG_LOG("store ++++ performed write pos:%ld%+ld%+ld",bpos,bready,len);
+  DEBUG_LOG("store ++++ performed write pos:%ld%+ld%+ld",odone,oavail,len);
   return len;
 }
 

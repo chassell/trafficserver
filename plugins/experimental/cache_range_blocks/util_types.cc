@@ -29,10 +29,11 @@
 
 void forward_vio_event(TSEvent event, TSVIO vio);
 
-APICacheKey::APICacheKey(const atscppapi::Url &url, uint64_t offset)
+APICacheKey::APICacheKey(const atscppapi::Url &url, std::string const &etag, uint64_t offset)
      : TSCacheKey_t(TSCacheKeyCreate()) 
 {
    auto str = url.getUrlString();
+   str.append(etag); // etag for version handling
    str.append(reinterpret_cast<char*>(&offset),sizeof(offset)); // append *unique* position bytes
    TSCacheKeyDigestSet(get(), str.data(), str.size() );
    auto host = url.getHost();

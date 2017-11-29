@@ -107,6 +107,8 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   // simply clean up stub-response to be a normal header
   TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS);
 
+  _etagStr = pstub->value(ETAG_TAG); // hold on for later
+
   // see if valid stub headers
   auto srvrRange = pstub->value(CONTENT_RANGE_TAG); // not in clnt hdrs
 
@@ -151,7 +153,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   // stateless callback as deleter...
   using Deleter_t = void(*)(BlockSetAccess*);
   static const Deleter_t deleter = [](BlockSetAccess *ptr) {
-     ptr->handleBlockTests();  // recurse from last one
+     ptr->handleBlockTests(); // recurse from last one
   };
 
   // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
@@ -161,7 +163,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   for( auto i = 0U ; i < _keysInRange.size() ; ++i,++blkNum ) {
     // prep for async reads that init into VConn-futures
-    _keysInRange[i] = std::move(APICacheKey(clientUrl(),blkNum * _blkSize));
+    _keysInRange[i] = std::move(APICacheKey(clientUrl(),_etagStr,blkNum * _blkSize));
     auto contp = APICont::create_temp_tscont(mutex, _vcsToRead[i], barrierLock);
     TSCacheRead(contp,_keysInRange[i]);
   }
@@ -239,7 +241,7 @@ void BlockSetAccess::clean_client_response(Transaction &txn)
     // change into client-based range and content length
     auto srvrRange = std::string() + "bytes " + std::to_string(_beginByte) + "-" + std::to_string(_endByte-1)  + "/" + std::to_string(_assetLen);
     clntResp.set(CONTENT_RANGE_TAG,srvrRange); 
-    clntResp.set(CONTENT_LENGTH_TAG,std::to_string(_endByte - _beginByte)); 
+    clntResp.set(CONTENT_LENGTH_TAG,std::to_string(rangeLen())); 
   }
 
   // TODO erase only last field, with internal encoding

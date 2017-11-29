@@ -35,6 +35,7 @@
 
 #define CONTENT_ENCODING_INTERNAL "x-block-cache-range"
 
+#define ETAG_TAG                 "ETag"
 #define IF_MODIFIED_SINCE_TAG    "If-Modified-Since"
 #define IF_NONE_MATCH_TAG        "If-None-Match"
 #define CONTENT_ENCODING_TAG     "Content-Encoding"
@@ -115,6 +116,7 @@ private:
   std::string         _b64BlkBitset;   // if cached and found
   int64_t             _assetLen = 0L; // if cached and found
   int64_t             _blkSize = 0L;  // if cached and found
+  std::string         _etagStr;  // if cached and found
 
   int64_t             _beginByte = -1L;
   int64_t             _endByte = -1L;

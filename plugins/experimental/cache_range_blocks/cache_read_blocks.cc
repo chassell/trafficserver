@@ -120,6 +120,9 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
   auto blkSize = ctxt.blockSize();
   auto &readVCs = ctxt._vcsToRead;
 
+  TSHttpTxnUntransformedRespCache(ctxt.atsTxn(),0);
+  TSHttpTxnTransformedRespCache(ctxt.atsTxn(),0);
+
   // move get()'s into _vconns vector
   std::transform( readVCs.begin(), readVCs.end(), std::back_inserter(_vconns), 
                     [](decltype(readVCs.front()) &fut) { return fut.get(); }
