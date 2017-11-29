@@ -95,6 +95,9 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     return; // main file made it through
   }
 
+  // simply clean up stub-response to be a normal header
+  TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS);
+
   if ( pstub == &_clntHdrs ) {
     DEBUG_LOG("cache-init: len=%lu set=%s",_assetLen,_b64BlkBitset.c_str());
     _initXform = std::make_unique<BlockInitXform>(*this);
@@ -103,9 +106,6 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   }
 
   _clntHdrs.erase(RANGE_TAG);
-
-  // simply clean up stub-response to be a normal header
-  TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS);
 
   _etagStr = pstub->value(ETAG_TAG); // hold on for later
 
@@ -237,7 +237,7 @@ void BlockSetAccess::clean_client_response(Transaction &txn)
   }
 
   // override block-style range
-  if ( _assetLen && _endByte ) {
+  if ( _assetLen && _beginByte >= 0 && _endByte > 0 ) {
     // change into client-based range and content length
     auto srvrRange = std::string() + "bytes " + std::to_string(_beginByte) + "-" + std::to_string(_endByte-1)  + "/" + std::to_string(_assetLen);
     clntResp.set(CONTENT_RANGE_TAG,srvrRange); 
