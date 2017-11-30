@@ -152,7 +152,7 @@ struct APIXformCont : public TSCont_t
 
   void
   set_copy_handler(int64_t pos, XformCB_t &&fxn) {
-    TSDebug("cache_range_block", "[%s:%d] %s(): limit=%ld", __FILE__, __LINE__, __func__, pos);
+    TSDebug("cache_range_block", "[%s:%d] %s(): limit=%#lx", __FILE__, __LINE__, __func__, pos);
     _nextXformCB = fxn;
     _nextXformCBAbsLimit = pos; // relative position to prev. one
   }

@@ -111,30 +111,29 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
   }
 
   if ( event != TS_EVENT_VCONN_WRITE_READY && event != TS_EVENT_VCONN_WRITE_COMPLETE ) {
-    DEBUG_LOG("xform-unkn-event : @%ld %+ld %+ld [%p][%p]",inpos,inavail,inready,inrdr,edata);
+    DEBUG_LOG("xform-unkn-event : @%#lx +%#lx +%#lx [%p][%p]",inpos,inavail,inready,inrdr,edata);
     return 0;
   }
 
   if ( edata != _inVIO ) {
-    DEBUG_LOG("xform-unkn-edata : @%ld %+ld %+ld [%p][%p]",inpos,inavail,inready,inrdr,edata);
-    return 0;
+    DEBUG_LOG("xform-unkn-edata : @%#lx +%#lx +%#lx [%p][%p]",inpos,inavail,inready,inrdr,edata);
   }
 
   for(;;) {
     inready = std::min(inready,_xformCBAbsLimit - inpos);
-    DEBUG_LOG(" ----------- xform-event cb-prep: @%ld in=%+ld inrdy=%+ld [%p]",inpos,inavail,inready,inrdr);
+    DEBUG_LOG(" ----------- xform-event cb-prep: @%#lx in=+%#lx inrdy=+%#lx [%p]",inpos,inavail,inready,inrdr);
 
     /////////////
     // perform real callback if data is ready
     /////////////
     
-    _xformCB(event, _inVIO, inready); // send bytes-left in segment
+    _xformCB(event, static_cast<TSVIO>(edata), inready); // send bytes-left in segment
 
     // reset new positions
     inrdr = TSVIOReaderGet(_inVIO); // reset if changed!
     inpos = TSVIONDoneGet(_inVIO);
     inready = TSIOBufferReaderAvail(inrdr); // start high again...
-    DEBUG_LOG("xform-event cb-after: @%ld oin=%+ld inrdy=%+ld [%p]",inpos,inavail,inready,inrdr);
+    DEBUG_LOG("xform-event cb-after: @%#lx oin=+%#lx inrdy=+%#lx [%p]",inpos,inavail,inready,inrdr);
 
     if ( inpos < _xformCBAbsLimit || inpos > _nextXformCBAbsLimit ) {
       break;
@@ -143,13 +142,13 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
     // go again...
     _xformCB = _nextXformCB;
     _xformCBAbsLimit = _nextXformCBAbsLimit;
-    DEBUG_LOG("xform advance cb: @%ld -> @%ld",inpos,_xformCBAbsLimit);
+    DEBUG_LOG("xform advance cb: @%#lx -> @%#lx",inpos,_xformCBAbsLimit);
   }
 
   auto noutpos = ( _outVIO ? TSVIONDoneGet(_outVIO) : 0 );
 
   if ( outpos != noutpos ) {
-    DEBUG_LOG("xform reenable: @%ld -> @%ld",outpos,noutpos);
+    DEBUG_LOG("xform reenable: @%#lx -> @%#lx",outpos,noutpos);
     TSVIOReenable(_outVIO);
   }
 
@@ -159,7 +158,7 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
   }
 
   // if done with this buffer ....
-  DEBUG_LOG("xform input ready: @%ld -> @%ld",odone,inpos);
+  DEBUG_LOG("xform input ready: @%#lx -> @%#lx",odone,inpos);
   if ( TSVIONTodoGet(_inVIO) ) {
     forward_vio_event(TS_EVENT_VCONN_WRITE_READY, _inVIO);
   }
@@ -194,7 +193,7 @@ APIXformCont::copy_next_len(int64_t left)
   auto ncopied = std::min(nbytesin+0, violimit);
 
   if ( ! ncopied ) {
-    DEBUG_LOG("!!! copy-next-none : @%ld%+ld %+ld %+ld [%p]",done,left,nbytesin,violimit,inrdr);
+    DEBUG_LOG("!!! copy-next-none : @%#lx+%#lx +%#lx +%#lx [%p]",done,left,nbytesin,violimit,inrdr);
     return 0L;
   }
 
@@ -203,7 +202,7 @@ APIXformCont::copy_next_len(int64_t left)
   done = TSVIONDoneGet(_inVIO);  // advance toward end
   TSVIONDoneSet(_inVIO, TSVIONDoneGet(_inVIO) + ncopied);  // advance toward end
 
-  DEBUG_LOG("!!! copy-next-reenable : @%ld%+ld %+ld %+ld [%p]",done,left,nbytesin,ncopied,inrdr);
+  DEBUG_LOG("!!! copy-next-reenable : @%#lx+%#lx +%#lx +%#lx [%p]",done,left,nbytesin,ncopied,inrdr);
   TSVIOReenable(_outVIO);
   return ncopied;
 }
@@ -229,7 +228,7 @@ APIXformCont::skip_next_len(int64_t left)
   auto ncopied = std::min(nbytesin+0, violimit);
 
   if ( ! ncopied ) {
-    DEBUG_LOG("!!! skip-next-none : @%ld%+ld %+ld %+ld [%p]",done,left,nbytesin,violimit,inrdr);
+    DEBUG_LOG("!!! skip-next-none : @%#lx+%#lx +%#lx +%#lx [%p]",done,left,nbytesin,violimit,inrdr);
     return 0L;
   }
 
@@ -237,7 +236,7 @@ APIXformCont::skip_next_len(int64_t left)
   TSIOBufferReaderConsume(inrdr,ncopied); // advance input
   TSVIONDoneSet(_inVIO, TSVIONDoneGet(_inVIO) + ncopied);  // advance toward end
 
-  DEBUG_LOG("!!! skip-next-amount : @%ld%+ld %+ld %+ld [%p]",done,left,nbytesin,ncopied,inrdr);
+  DEBUG_LOG("!!! skip-next-amount : @%#lx+%#lx +%#lx +%#lx [%p]",done,left,nbytesin,ncopied,inrdr);
   return ncopied;
 }
 
@@ -248,7 +247,7 @@ APIXformCont::init_body_range_handlers(int64_t len, int64_t offset)
   auto skipBodyEndFn = [this](TSEvent event, TSVIO vio, int64_t left) { 
     auto r = skip_next_len( call_body_handler(event,vio,left) ); // last one...
     auto done = TSVIONDoneGet(_inVIO);
-    DEBUG_LOG("xform skip-end: @%ld left=%+ld r=+%ld",done,left,r);
+    DEBUG_LOG("xform skip-end: @%#lx left=+%#lx r=+%#lx",done,left,r);
     return r;
   };
 
@@ -264,7 +263,7 @@ APIXformCont::init_body_range_handlers(int64_t len, int64_t offset)
     auto r = copy_next_len( call_body_handler(event,vio,left) );
     set_copy_handler(INT64_MAX>>1,skipBodyEndFn);
     auto done = TSVIONDoneGet(_inVIO);
-    DEBUG_LOG("xform copy-body: @%ld left=%+ld r=%+ld",done,left,r);
+    DEBUG_LOG("xform copy-body: @%#lx left=+%#lx r=+%#lx",done,left,r);
     return r;
   };
 
@@ -279,7 +278,7 @@ APIXformCont::init_body_range_handlers(int64_t len, int64_t offset)
     auto r = skip_next_len( call_body_handler(event,vio,left) );
     set_copy_handler(offset+len,copyBodyFn);
     auto done = TSVIONDoneGet(_inVIO);
-    DEBUG_LOG("xform skip-body: @%ld left=%+ld r=%+ld",done,left,r);
+    DEBUG_LOG("xform skip-body: @%#lx left=+%#lx r=+%#lx",done,left,r);
     return r;
   };
 
@@ -300,20 +299,20 @@ int64_t BlockTeeXform::handleEvent(TSEvent event, TSVIO evtvio, int64_t left)
   }
 
   if ( evtvio == outputVIO() ) {
-    DEBUG_LOG("tee output event: #%d %+ld",event,left);
+    DEBUG_LOG("tee output event: #%d +%#lx",event,left);
   } else  if ( evtvio != inputVIO() ) {
-    DEBUG_LOG("unkn vio event: #%d %+ld %p",event,left,evtvio);
+    DEBUG_LOG("unkn vio event: #%d +%#lx %p",event,left,evtvio);
   }
 
   // position *without* left new bytes...
   auto done = TSVIONDoneGet(inputVIO());
   auto oavail = TSIOBufferReaderAvail(_teeReaderP.get());
 
-  DEBUG_LOG("tee buffer bytes pre-copy: @%ld%+ld%+ld",done-oavail,oavail,left);
+  DEBUG_LOG("tee buffer bytes pre-copy: @%#lx+%#lx+%#lx",done-oavail,oavail,left);
   TSIOBufferCopy(_teeBufferP.get(), TSVIOReaderGet(inputVIO()), left, 0);
 
   auto navail = TSIOBufferReaderAvail(_teeReaderP.get());
-  DEBUG_LOG("tee buffer bytes post-copy: @%ld%+ld [%+ld]",done-(navail-left),navail,left);
+  DEBUG_LOG("tee buffer bytes post-copy: @%#lx+%#lx [+%#lx]",done-(navail-left),navail,left);
 
   return _writeHook(_teeReaderP.get(), done, left); // show advance
 }

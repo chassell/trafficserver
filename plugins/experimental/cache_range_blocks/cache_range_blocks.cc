@@ -99,7 +99,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS);
 
   if ( pstub == &_clntHdrs ) {
-    DEBUG_LOG("cache-init: len=%lu set=%s",_assetLen,_b64BlkBitset.c_str());
+    DEBUG_LOG("cache-init: len=%#lx set=%s",_assetLen,_b64BlkBitset.c_str());
     _initXform = std::make_unique<BlockInitXform>(*this);
     _initXform->handleReadCacheLookupComplete(txn); // [default version]
     return;
@@ -124,7 +124,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   // invalid stub file... (or client headers instead)
   if ( ! _assetLen || _b64BlkBitset.empty() || chk != _b64BlkBitset.end() ) {
-    DEBUG_LOG("cache-stub-fail: len=%lu set=%s",_assetLen,_b64BlkBitset.c_str());
+    DEBUG_LOG("cache-stub-fail: len=%#lx set=%s",_assetLen,_b64BlkBitset.c_str());
     _initXform = std::make_unique<BlockInitXform>(*this);
     _initXform->handleReadCacheLookupComplete(txn); // [default version]
     // resume implied
@@ -134,13 +134,13 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   _blkSize = INK_ALIGN((_assetLen>>10)|1,MIN_BLOCK_STORED);
 
   if ( select_needed_blocks() ) {
-    DEBUG_LOG("read guaranteed: len=%lu set=%s",_assetLen,_b64BlkBitset.c_str());
+    DEBUG_LOG("read guaranteed: len=%#lx set=%s",_assetLen,_b64BlkBitset.c_str());
   }
 
 /*
   // all blocks [and keys for them] are valid to try reading?
   if ( ! have_needed_blocks() || _keysInRange.empty() ) {
-    DEBUG_LOG("cache-resp-wr: base:%p len=%lu len=%lu set=%s",this,assetLen(),_assetLen,_b64BlkBitset.c_str());
+    DEBUG_LOG("cache-resp-wr: base:%p len=%#lx len=%#lx set=%s",this,assetLen(),_assetLen,_b64BlkBitset.c_str());
 
     // intercept data for new or updated stub version
     _storeXform = std::make_unique<BlockStoreXform>(*this);
@@ -211,13 +211,13 @@ void BlockSetAccess::clean_server_response(Transaction &txn)
   srvrRange.erase(0,srvrRange.find('/')).erase(0,1);
   auto currAssetLen = std::atol(srvrRange.c_str());
 
-  DEBUG_LOG("srvr-resp: len=%ld olen=%lu final=%s range=%s",currAssetLen,_assetLen,srvrRange.c_str(),srvrRangeCopy.c_str());
+  DEBUG_LOG("srvr-resp: len=%#lx olen=%#lx final=%s range=%s",currAssetLen,_assetLen,srvrRange.c_str(),srvrRangeCopy.c_str());
 
   if ( currAssetLen != _assetLen ) {
     _blkSize = INK_ALIGN((currAssetLen>>10)|1,MIN_BLOCK_STORED);
     _b64BlkBitset = std::string( (currAssetLen+_blkSize*6-1 )/(_blkSize*6), 'A');
     _assetLen = static_cast<uint64_t>(currAssetLen);
-    DEBUG_LOG("srvr-bitset: blk=%lu %s",_blkSize,_b64BlkBitset.c_str());
+    DEBUG_LOG("srvr-bitset: blk=%#lx %s",_blkSize,_b64BlkBitset.c_str());
   }
 
   proxyResp.set(CONTENT_ENCODING_TAG,CONTENT_ENCODING_INTERNAL); // promote matches
@@ -304,7 +304,7 @@ BlockSetAccess::select_needed_blocks()
   int64_t end = _endByte;
 
   auto startBlk = start /_blkSize; // inclusive-start block
-  auto endBlk = (end+1+_blkSize-1)/_blkSize; // exclusive-end block
+  auto endBlk = (end+_blkSize-1)/_blkSize; // exclusive-end block
 
   _keysInRange.resize(endBlk - startBlk); // start empty...
   _vcsToRead.resize(endBlk - startBlk); // start empty...

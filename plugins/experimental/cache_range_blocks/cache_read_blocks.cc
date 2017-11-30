@@ -57,7 +57,7 @@ BlockSetAccess::handleBlockTests()
     base64_bit_clr(_b64BlkBitset,firstBlk + n);
 
     if ( _vcsToRead[n].wait_for(seconds::zero()) != future_status::ready ) {
-      DEBUG_LOG("read isn't ready: #%ld",firstBlk + n);
+      DEBUG_LOG("read isn't ready: #%#lx",firstBlk + n);
       continue;
     }
 
@@ -65,13 +65,13 @@ BlockSetAccess::handleBlockTests()
     auto vconnErr = -reinterpret_cast<intptr_t>(vconn); // block isn't ready
     // valid pointers don't look like this
     if ( ! vconnErr || ( vconnErr >= CACHE_ERRNO && vconnErr < EHTTP_ERROR ) ) {
-      DEBUG_LOG("read returned non-pointer: #%ld",firstBlk + n);
+      DEBUG_LOG("read returned non-pointer: #%#lx == %ld",firstBlk + n, vconnErr);
       continue;
     }
 
     // block is ready and of right size?
     if ( TSVConnCacheObjectSizeGet(vconn) != static_cast<int64_t>(blockSize()) ) {
-      DEBUG_LOG("read returned wrong size: #%ld",firstBlk + n);
+      DEBUG_LOG("read returned wrong size: #%#lx",firstBlk + n);
       continue;
     }
 
@@ -86,7 +86,7 @@ BlockSetAccess::handleBlockTests()
   // ready to read from cache...
   if ( _vcsToRead.empty() || nrdy < _keysInRange.size() ) 
   {
-    DEBUG_LOG("cache-resp-wr: len=%lu set=%s",assetLen(),b64BlkBitset().c_str());
+    DEBUG_LOG("cache-resp-wr: len=%#lx set=%s",assetLen(),b64BlkBitset().c_str());
 
     // intercept data for new or updated stub version
     _storeXform = std::make_unique<BlockStoreXform>(*this);
@@ -135,20 +135,21 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
   set_body_handler([this](TSEvent event, TSVIO vio, int64_t left)
     {
       auto avail = TSIOBufferReaderAvail(outputReader());
+      // need a full block every time...
       if ( avail < _startByte ) {
-        DEBUG_LOG("read waiting: %ld < %ld",avail,_startByte);
+        DEBUG_LOG("read waiting: %#lx < %#lx",avail,_startByte);
         return 0L; // wait for data 
       }
 
       // write has buffered up?  flush.
       if ( _outVIO ) {
-        DEBUG_LOG("read vio flush: %ld >= %ld",avail,_startByte);
+        DEBUG_LOG("read vio flush: %#lx >= %#lx",avail,_startByte);
         TSVIOReenable(_outVIO);
         return 0L;
       }
 
       // start full write
-      DEBUG_LOG("read / write vio begin: %ld >= %ld: n=%ld",avail,_startByte,_ctxt.rangeLen());
+      DEBUG_LOG("read / write vio begin: %#lx >= %#lx: n=%#lx",avail,_startByte,_ctxt.rangeLen());
       TSIOBufferReaderConsume(outputReader(),_startByte);
       _outVIO = TSVConnWrite(output(), *this, outputReader(), _ctxt.rangeLen());
       return 0L;
@@ -157,34 +158,46 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
   // do not resume until first block is read in
 }
 
-void BlockReadXform::handleRead(TSEvent event, void *edata, std::nullptr_t)
+void BlockReadXform::handleRead(TSEvent event, void *, std::nullptr_t)
 {
-  // racey condition??
+  // gauge total read already
   if ( event != TS_EVENT_VCONN_READ_COMPLETE ) {
       DEBUG_LOG("read event: #%d",event);
      return;
   }
 
-  // some read ended ...
+  auto n = std::count(_vconns.begin(), _vconns.end(), nullptr);
 
-  if ( ! _outVIO ) {
+  // only first read ended ...
+  if ( n == 1 && ! _outVIO ) {
     _ctxt.txn().resume(); // continue w/data
     DEBUG_LOG("read of first block complete");
-    return;
   }
 
   auto blkSize = _ctxt.blockSize();
-  auto pos = _startByte + TSVIONDoneGet(_outVIO); // position in output stream
+  auto pos = _startByte; // position in output stream
   auto end = _startByte + _ctxt.rangeLen();
-  auto blkNum = pos / blkSize;
-  auto currRead = std::min( (blkNum + 1)*blkSize, end);
 
-  if ( ! _vconns[blkNum] ) {
-    DEBUG_LOG("read start was repeated: %ld-%ld #%ld",pos,currRead,blkNum);
-    return;
+  if ( _outVIO ) {
+    pos += TSVIONDoneGet(_outVIO);
   }
 
-  DEBUG_LOG("read start: %ld-%ld #%ld",pos,currRead,blkNum);
-  TSVConnRead(_vconns[blkNum], _readEvents, outputBuffer(), currRead - pos);
+  // get next to read
+  auto blkNum = (pos + blkSize-1) / blkSize;
+
+  while ( ! _vconns[blkNum] && blkNum < _vconns.size() ) {
+    ++blkNum;
+    pos += blkSize;
+  }
+
+  if ( blkNum == _vconns.size() ) {
+    return; // no more thanks
+  }
+
+  auto currRead = blkNum*blkSize;
+  auto currReadMax = std::min( (blkNum + 1)*blkSize, end);
+
+  DEBUG_LOG("read start: %#lx-%#lx #%#lx",currRead,currReadMax,blkNum);
+  TSVConnRead(_vconns[blkNum], _readEvents, outputBuffer(), currReadMax - currRead);
   _vconns[blkNum] = nullptr;
 }
