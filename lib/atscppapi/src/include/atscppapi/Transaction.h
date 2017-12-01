@@ -398,8 +398,10 @@ private:
    */
   const std::list<TransactionPlugin *> &getPlugins() const;
 
-  template <TSReturnCode (*T_GETTER)(TSHttpTxn, TSMBuffer *, TSMLoc *), class T_INITOBJECT>
-  T_INITOBJECT &init_from_getter(TSHttpTxn txn, T_INITOBJECT &obj);
+  template <typename T_TXN>
+  static Request &init_from_getter(T_TXN txn, Request &obj, TSReturnCode (*)(T_TXN, TSMBuffer *, TSMLoc *));
+  template <typename T_TXN>
+  static Response &init_from_getter(T_TXN txn, Response &obj, TSReturnCode (*)(T_TXN, TSMBuffer *, TSMLoc *));
 
   friend class utils::internal;
 };

@@ -228,20 +228,15 @@ utils::internal::invokePluginForEvent(GlobalPlugin *plugin, TSHttpTxn ats_txn_ha
 void
 utils::internal::invokePluginForEvent(GlobalPlugin *plugin, TSHttpAltInfo altinfo_handle, TSEvent event)
 {
-  TSMBuffer chdr_buf, ohdr_buf;
-  TSMLoc chdr_loc, ohdr_loc;
+  Request clientReq; 
+  Request cachedReq;
+  Response cachedResp;
 
   assert(event == TS_EVENT_HTTP_SELECT_ALT);
 
-  TSHttpAltInfoClientReqGet(altinfo_handle, &chdr_buf, &chdr_loc);
-  TSHttpAltInfoCachedReqGet(altinfo_handle, &ohdr_buf, &ohdr_loc);
-
-  const Request clientReq(chdr_buf, chdr_loc);
-  const Request cachedReq(ohdr_buf, ohdr_loc);
-  const Response cachedResp;
-
-  TSHttpAltInfoCachedRespGet(altinfo_handle, &ohdr_buf, &ohdr_loc);
-  const_cast<Response &>(cachedResp).init(ohdr_buf, ohdr_loc);
+  Transaction::init_from_getter(altinfo_handle, clientReq, TSHttpAltInfoClientReqGet);
+  Transaction::init_from_getter(altinfo_handle, cachedReq, TSHttpAltInfoCachedReqGet);
+  Transaction::init_from_getter(altinfo_handle, cachedResp, TSHttpAltInfoCachedRespGet);
 
   plugin->handleSelectAlt(clientReq, cachedReq, cachedResp);
 }

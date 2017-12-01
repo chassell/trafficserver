@@ -370,42 +370,6 @@ Transaction::redirectTo(std::string const &url)
   TSHttpTxnRedirectUrlSet(state_->txn_, s, url.length());
 }
 
-namespace
-{
-/**
- * initializeHandles is a convenience functor that takes a pointer to a TS Function that
- * will return the TSMBuffer and TSMLoc for a given server request/response or client/request response
- *
- * @param constructor takes a function pointer of type GetterFunction
- * @param txn a TSHttpTxn
- * @param hdr_buf the address where the hdr buf will be stored
- * @param hdr_loc the address where the mem loc will be storeds
- * @param name name of the entity - used for logging
- */
-class initializeHandles
-{
-public:
-  typedef TSReturnCode (*GetterFunction)(TSHttpTxn, TSMBuffer *, TSMLoc *);
-  initializeHandles(GetterFunction getter) : getter_(getter) {}
-  bool
-  operator()(TSHttpTxn txn, TSMBuffer &hdr_buf, TSMLoc &hdr_loc, const char *handles_name)
-  {
-    hdr_buf = NULL;
-    hdr_loc = NULL;
-    if (getter_(txn, &hdr_buf, &hdr_loc) == TS_SUCCESS) {
-      return true;
-    } else {
-      LOG_ERROR("Could not get %s", handles_name);
-    }
-    return false;
-  }
-
-private:
-  GetterFunction getter_;
-};
-
-} // anonymous namespace
-
 void
 Transaction::refreshHeaders()
 {
@@ -418,59 +382,73 @@ Transaction::refreshHeaders()
   state_->server_response_.getHeaders().reset(nullptr, nullptr);
 }
 
-template <TSReturnCode (*T_GETTER)(TSHttpTxn, TSMBuffer *, TSMLoc *), class T_INITOBJECT>
-T_INITOBJECT &
-Transaction::init_from_getter(TSHttpTxn txn, T_INITOBJECT &obj)
+
+template <typename T_TXN>
+Request &
+Transaction::init_from_getter(T_TXN txn, Request &obj, TSReturnCode (*getterFxn)(T_TXN, TSMBuffer *, TSMLoc *))
 {
-  if (obj.getHeaders().isInitialized()) {
-    return obj; // re-use
+  if (! obj.getHeaders().isInitialized() || obj.getMethod() == HTTP_METHOD_UNKNOWN) {
+    TSMBuffer buf;
+    TSMLoc loc;
+
+    if (getterFxn(txn, &buf, &loc) == TS_SUCCESS) {
+      obj.init(buf, loc);
+    }
   }
 
-  TSMBuffer buf;
-  TSMLoc loc;
-
-  if (T_GETTER(txn, &buf, &loc) != TS_SUCCESS) {
-    return obj; // failed to load
-  }
-
-  obj.init(buf, loc);
   return obj;
 }
+
+template <typename T_TXN>
+Response &
+Transaction::init_from_getter(T_TXN txn, Response &obj, TSReturnCode (*getterFxn)(T_TXN, TSMBuffer *, TSMLoc *))
+{
+  if (! obj.getHeaders().isInitialized() || obj.getStatusCode() == HTTP_STATUS_UNKNOWN) {
+    TSMBuffer buf;
+    TSMLoc loc;
+
+    if (getterFxn(txn, &buf, &loc) == TS_SUCCESS) {
+      obj.init(buf, loc);
+    }
+  }
+
+  return obj;
+}
+
 
 Request &
 Transaction::getServerRequest()
 {
-  return init_from_getter<TSHttpTxnServerReqGet>(state_->txn_, state_->server_request_);
+  return init_from_getter(state_->txn_, state_->server_request_, TSHttpTxnServerReqGet);
 }
 
 Response &
 Transaction::getServerResponse()
 {
-  return init_from_getter<TSHttpTxnServerRespGet>(state_->txn_, state_->server_response_);
+  return init_from_getter(state_->txn_, state_->server_response_, TSHttpTxnServerRespGet);
 }
 
 Response &
 Transaction::getClientResponse()
 {
-  return init_from_getter<TSHttpTxnClientRespGet>(state_->txn_, state_->client_response_);
+  return init_from_getter(state_->txn_, state_->client_response_, TSHttpTxnClientRespGet);
 }
 
 Request &
 Transaction::getCachedRequest()
 {
-  return init_from_getter<TSHttpTxnCachedReqGet>(state_->txn_, state_->cached_request_);
+  return init_from_getter(state_->txn_, state_->cached_request_, TSHttpTxnCachedReqGet);
 }
 
 Response &
 Transaction::getCachedResponse()
 {
-  return init_from_getter<TSHttpTxnCachedRespGet>(state_->txn_, state_->cached_response_);
+  return init_from_getter(state_->txn_, state_->cached_response_, TSHttpTxnCachedRespGet);
 }
 
 Response &
 Transaction::updateCachedResponse()
 {
   state_->cached_response_.getHeaders().reset(nullptr, nullptr); // re-get it
-  return init_from_getter<TSHttpTxnCachedRespModifiableGet>(state_->txn_, state_->cached_response_);
+  return init_from_getter(state_->txn_, state_->cached_response_, TSHttpTxnCachedRespModifiableGet);
 }
-
