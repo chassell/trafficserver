@@ -16,9 +16,11 @@
 
 include $(top_srcdir)/build/plugins.mk
 
+
 pkglib_LTLIBRARIES = cache_range_blocks.la
-cache_range_blocks_la_LIBADD = $(libatscppapi)
-cache_range_blocks_la_LDFLAGS = $(TS_PLUGIN_LDFLAGS)
+cache_range_blocks_la_LIBADD = -latscppapi
+cache_range_blocks_la_LDFLAGS = $(TS_PLUGIN_LDFLAGS) \
+		      -L$(top_builddir)/lib/atscppapi/src
 
 cache_range_blocks_la_SOURCES = \
   cache_range_blocks.cc \

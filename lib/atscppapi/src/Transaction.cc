@@ -415,6 +415,10 @@ Transaction::init_from_getter(T_TXN txn, Response &obj, TSReturnCode (*getterFxn
   return obj;
 }
 
+template Request &Transaction::init_from_getter(TSHttpTxn txn, Request &obj, TSReturnCode (*getterFxn)(TSHttpTxn, TSMBuffer *, TSMLoc *));
+template Request &Transaction::init_from_getter(TSHttpAltInfo txn, Request &obj, TSReturnCode (*getterFxn)(TSHttpAltInfo, TSMBuffer *, TSMLoc *));
+template Response &Transaction::init_from_getter(TSHttpTxn txn, Response &obj, TSReturnCode (*getterFxn)(TSHttpTxn, TSMBuffer *, TSMLoc *));
+template Response &Transaction::init_from_getter(TSHttpAltInfo txn, Response &obj, TSReturnCode (*getterFxn)(TSHttpAltInfo, TSMBuffer *, TSMLoc *));
 
 Request &
 Transaction::getServerRequest()
