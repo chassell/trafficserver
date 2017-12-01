@@ -135,23 +135,30 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
   set_body_handler([this](TSEvent event, TSVIO vio, int64_t left)
     {
       auto avail = TSIOBufferReaderAvail(outputReader());
-      // need a full block every time...
-      if ( avail < _startByte ) {
-        DEBUG_LOG("read waiting: %#lx < %#lx",avail,_startByte);
-        return 0L; // wait for data 
-      }
+      auto ndone = ( _bodyVIO ?  TSVIONDoneGet(_bodyVIO) : -1 );
 
-      // write has buffered up?  flush.
-      if ( _outVIO ) {
-        DEBUG_LOG("read vio flush: %#lx >= %#lx",avail,_startByte);
-        TSVIOReenable(_outVIO);
+      // write has buffered up?  flush down
+      if ( ! _bodyVIO && avail >= _startByte ) {
+        // start full write
+        DEBUG_LOG("read -> body vio begin: %#lx >= %#lx: n=%#lx",avail,_startByte,_ctxt.rangeLen());
+        TSIOBufferReaderConsume(outputReader(),_startByte);
+        _bodyVIO = TSVConnWrite(output(), *this, outputReader(), _ctxt.rangeLen());
         return 0L;
       }
 
-      // start full write
-      DEBUG_LOG("read / write vio begin: %#lx >= %#lx: n=%#lx",avail,_startByte,_ctxt.rangeLen());
-      TSIOBufferReaderConsume(outputReader(),_startByte);
-      _outVIO = TSVConnWrite(output(), *this, outputReader(), _ctxt.rangeLen());
+      if ( _bodyVIO && event == TS_EVENT_VCONN_WRITE_READY ) {
+        TSVIOReenable(_bodyVIO);
+        DEBUG_LOG("read write-vio flush: %#lx+%#lx >= %#lx",ndone,avail,_startByte);
+        return 0L;
+      }
+
+      if ( _bodyVIO && event == TS_EVENT_VCONN_WRITE_COMPLETE ) {
+        DEBUG_LOG("flushing close: #%d pos:%#lx / %#lx",event,ndone,avail);
+        TSVIOReenable(_bodyVIO);
+        return 0L;
+      }
+
+      DEBUG_LOG("read unkn event: #%d pos:%#lx / %#lx",event,ndone,avail);
       return 0L;
     });
 
@@ -169,7 +176,7 @@ void BlockReadXform::handleRead(TSEvent event, void *, std::nullptr_t)
   auto n = std::count(_vconns.begin(), _vconns.end(), nullptr);
 
   // only first read ended ...
-  if ( n == 1 && ! _outVIO ) {
+  if ( n == 1 && ! _bodyVIO ) {
     _ctxt.txn().resume(); // continue w/data
     DEBUG_LOG("read of first block complete");
   }
@@ -178,19 +185,20 @@ void BlockReadXform::handleRead(TSEvent event, void *, std::nullptr_t)
   auto pos = _startByte; // position in output stream
   auto end = _startByte + _ctxt.rangeLen();
 
-  if ( _outVIO ) {
-    pos += TSVIONDoneGet(_outVIO);
+  if ( _bodyVIO ) {
+    pos += TSVIONDoneGet(_bodyVIO);
   }
 
   // get next to read
   auto blkNum = (pos + blkSize-1) / blkSize;
+  int64_t blkMax = _vconns.size();
 
-  while ( ! _vconns[blkNum] && blkNum < _vconns.size() ) {
+  while ( ! _vconns[blkNum] && blkNum < blkMax ) {
     ++blkNum;
     pos += blkSize;
   }
 
-  if ( blkNum == _vconns.size() ) {
+  if ( blkNum >= blkMax ) {
     return; // no more thanks
   }
 

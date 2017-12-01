@@ -27,7 +27,18 @@
 #define DEBUG_LOG(fmt, ...) TSDebug(PLUGIN_NAME, "[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
 #define ERROR_LOG(fmt, ...) TSError("[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
 
-void forward_vio_event(TSEvent event, TSVIO vio);
+void
+forward_vio_event(TSEvent event, TSVIO invio)
+{
+//  if ( invio && TSVIOContGet(invio) && TSVIOBufferGet(invio)) {
+  if ( invio && TSVIOContGet(invio) ) {
+    DEBUG_LOG("delivered: #%d",event);
+    TSContCall(TSVIOContGet(invio), event, invio);
+  } else {
+    DEBUG_LOG("not delivered: #%d",event);
+  }
+}
+
 
 APICacheKey::APICacheKey(const atscppapi::Url &url, std::string const &etag, uint64_t offset)
      : TSCacheKey_t(TSCacheKeyCreate()) 

@@ -200,7 +200,7 @@ class BlockReadXform : public APIXformCont
  private:
   BlockSetAccess      &_ctxt;
   int64_t              _startByte;
-  TSVIO                _outVIO = nullptr;
+  TSVIO                _bodyVIO = nullptr;
   std::vector<TSVConn> _vconns;
   APICont              _readEvents;
 };

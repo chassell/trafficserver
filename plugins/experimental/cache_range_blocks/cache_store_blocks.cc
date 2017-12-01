@@ -32,7 +32,7 @@ BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt)
                                ctxt._beginByte % ctxt.blockSize(), 
                                ctxt.rangeLen()),
      _ctxt(ctxt), 
-     _vcsToWrite(ctxt.rangeLen()/ctxt.blockSize() + 1),
+     _vcsToWrite( (ctxt._endByte + ctxt.blockSize()-1 )/ctxt.blockSize() - ctxt._beginByte/ctxt.blockSize() ),
      _writeEvents(*this, &BlockStoreXform::handleWrite, nullptr)
 {
   // definitely need a remote write
@@ -99,19 +99,25 @@ int64_t BlockStoreXform::next_valid_vconn(TSVConn &vconn, int64_t inpos, int64_t
 
   // dist with length includes a block boundary
 
-  auto absbase = _ctxt._beginByte / blksz; //
-  auto absend = _ctxt._endByte / blksz;
+  auto absbase = _ctxt._beginByte / blksz;            // fall back to prev.
+  auto absend = ( _ctxt._endByte + blksz-1 ) / blksz; // forward to next block
   // index of block in server download
   auto blk = (inpos + dist) / blksz;
+  int64_t blks = _vcsToWrite.size();
 
   // skip available blocks
-  for ( ; absbase + blk < absend && blk < _vcsToWrite.size() && is_base64_bit_set(_ctxt.b64BlkBitset(),absbase + blk) ; ++blk ) {
+  for ( ; absbase + blk < absend && blk < blks && is_base64_bit_set(_ctxt.b64BlkBitset(),absbase + blk) ; ++blk ) {
     dist += blksz; // jump forward a full block
   }
 
-  if ( absbase + blk >= absend || blk >= _vcsToWrite.size() ) {
-    DEBUG_LOG("reached past end of file:%#lx -> %#lx len=%#lx",inpos,inpos + dist,len);
+  if ( blk >= blks ) {
+    DEBUG_LOG("beyond final block final block start dist:- blk%#lx,%#lx (tot %ld/%ld)",absbase+blk,absend,absend - absbase, blks);
     return -1;
+  }
+
+  if ( absbase + blk == absend ) {
+    DEBUG_LOG("at final block start dist:- blk%#lx,%#lx (tot %ld/%ld)",absbase+blk,absend,absend - absbase, blks);
+    dist = 0;
   }
 
   // no boundary within distance?
@@ -148,6 +154,10 @@ int64_t BlockStoreXform::handleInput(TSIOBufferReader outrdr, int64_t inpos, int
     DEBUG_LOG("store **** final call");
     return 0;
   }
+
+  // prevent multiple starts of a storage
+  atscppapi::ScopedContinuationLock lock(*this);
+
   // position is distance within body *without* len...
 
   TSVConn currBlock = nullptr;
@@ -185,10 +195,16 @@ int64_t BlockStoreXform::handleInput(TSIOBufferReader outrdr, int64_t inpos, int
     //////// RETURN
   }
 
+  auto &vcFuture = _vcsToWrite[ odone / blksz ]; // should be correct now...
+
+  ink_assert( vcFuture.get() == currBlock );
+
+  vcFuture = std::shared_future<TSVConn>(); // writing it now .. so zero it out
+
   // should send a WRITE_COMPLETE rather quickly
   TSVConnWrite(currBlock, _writeEvents, outrdr, blksz);
 
-  DEBUG_LOG("store ++++ performed write pos:%#lx+%#lx+%#lx",odone,oavail,len);
+  DEBUG_LOG("store ++++ performed write pos:%#lx+%#lx / +%#lx+%#lx",odone,blksz,oavail,len);
   return len;
 }
 
@@ -201,15 +217,25 @@ void BlockStoreXform::handleWrite(TSEvent event, void*edata, std::nullptr_t)
     return;
   }
 
-  if ( event != TS_EVENT_VCONN_WRITE_COMPLETE ) {
-    DEBUG_LOG("cache-write event:%d",event);
-    return;
+  switch (event) {
+    case TS_EVENT_VCONN_WRITE_READY:
+      DEBUG_LOG("cache-write flush:%d -> %ld? %ld?",event, TSVIONDoneGet(writeVIO), TSVIONBytesGet(writeVIO));
+      if ( TSIOBufferReaderAvail(outputReader()) ) {
+        TSVIOReenable(writeVIO);
+      }
+      break;
+    case TS_EVENT_VCONN_WRITE_COMPLETE:
+      DEBUG_LOG("write complete event:%d",event);
+      TSVConnClose(TSVIOVConnGet(writeVIO));
+      if ( ! TSVIONTodoGet(inputVIO()) ) {
+        TSVIOReenable(inputVIO()); // get full completion now
+      }
+      break;
+    default:
+      DEBUG_LOG("cache-write event:%d",event);
+      break;
   }
 
-  DEBUG_LOG("write complete event:%d",event);
-  TSVConnClose(TSVIOVConnGet(writeVIO));
-
-  TSVIOReenable(inputVIO()); // ??
 }
 
 BlockStoreXform::~BlockStoreXform() 

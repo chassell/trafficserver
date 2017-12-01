@@ -28,14 +28,6 @@
 // namespace
 // {
 //
-void
-forward_vio_event(TSEvent event, TSVIO invio)
-{
-  if ( invio && TSVIOContGet(invio) && TSVIOBufferGet(invio)) {
-    TSContCall(TSVIOContGet(invio), event, invio);
-  }
-}
-
 int
 APIXformCont::check_completions(TSEvent event) 
 {
@@ -60,6 +52,10 @@ APIXformCont::check_completions(TSEvent event)
     DEBUG_LOG("xform-event write-complete: #%d",event);
     // can dealloc entire transaction!!
     _xformCB(event, nullptr, 0);
+    TSVIONBytesSet(_outVIO, TSVIONBytesGet(_outVIO)); // define it as complete
+    TSVIOReenable(_outVIO);
+    TSVConnClose(_outVConn); // attempt faster close??
+    TSVConnShutdown(_outVConn,0,1); // attempt faster close??
     forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE,invio); 
     return -3;
   }
@@ -90,27 +86,27 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
   }
 
   // if output is done ... then shutdown 
-  if ( _outVIO && event == TS_EVENT_VCONN_WRITE_COMPLETE ) {
+  if ( event == TS_EVENT_VCONN_WRITE_COMPLETE ) {
+    TSVConnClose(_outVConn);
     TSVConnShutdown(_outVConn, 0, 1); // no more events please
     _outVIO = nullptr;
+    forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE,_inVIO); 
     return 0; // nothing more for this event
   }
 
   // just for init
   auto inrdr = TSVIOReaderGet(_inVIO); // reset if changed!
 
-  auto outpos = ( _outVIO ? TSVIONDoneGet(_outVIO) : 0 );
   auto inpos = TSVIONDoneGet(_inVIO);
   auto odone = inpos;
   auto inavail = TSIOBufferReaderAvail(inrdr);
   auto inready = inavail;
 
   if ( event == TS_EVENT_IMMEDIATE ) {
-    event = TS_EVENT_VCONN_WRITE_READY;
     edata = _inVIO; // overwrite the Event*
   }
 
-  if ( event != TS_EVENT_VCONN_WRITE_READY && event != TS_EVENT_VCONN_WRITE_COMPLETE ) {
+  if ( event != TS_EVENT_VCONN_WRITE_READY && event != TS_EVENT_VCONN_WRITE_COMPLETE && event != TS_EVENT_IMMEDIATE ) {
     DEBUG_LOG("xform-unkn-event : @%#lx +%#lx +%#lx [%p][%p]",inpos,inavail,inready,inrdr,edata);
     return 0;
   }
@@ -145,10 +141,8 @@ int APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
     DEBUG_LOG("xform advance cb: @%#lx -> @%#lx",inpos,_xformCBAbsLimit);
   }
 
-  auto noutpos = ( _outVIO ? TSVIONDoneGet(_outVIO) : 0 );
-
-  if ( outpos != noutpos ) {
-    DEBUG_LOG("xform reenable: @%#lx -> @%#lx",outpos,noutpos);
+  if ( event == TS_EVENT_VCONN_WRITE_READY && TSIOBufferReaderAvail(outputReader()) ) {
+    DEBUG_LOG("xform reenable: @%#lx avail",TSIOBufferReaderAvail(outputReader()));
     TSVIOReenable(_outVIO);
   }
 
@@ -202,8 +196,7 @@ APIXformCont::copy_next_len(int64_t left)
   done = TSVIONDoneGet(_inVIO);  // advance toward end
   TSVIONDoneSet(_inVIO, TSVIONDoneGet(_inVIO) + ncopied);  // advance toward end
 
-  DEBUG_LOG("!!! copy-next-reenable : @%#lx+%#lx +%#lx +%#lx [%p]",done,left,nbytesin,ncopied,inrdr);
-  TSVIOReenable(_outVIO);
+  DEBUG_LOG("!!! copy-next-copied : @%#lx+%#lx +%#lx +%#lx [%p]",done,left,nbytesin,ncopied,inrdr);
   return ncopied;
 }
 
@@ -247,7 +240,7 @@ APIXformCont::init_body_range_handlers(int64_t len, int64_t offset)
   auto skipBodyEndFn = [this](TSEvent event, TSVIO vio, int64_t left) { 
     auto r = skip_next_len( call_body_handler(event,vio,left) ); // last one...
     auto done = TSVIONDoneGet(_inVIO);
-    DEBUG_LOG("xform skip-end: @%#lx left=+%#lx r=+%#lx",done,left,r);
+    DEBUG_LOG("xform skip-end: @%#lx+%#lx left=+%#lx",done-r,r,left);
     return r;
   };
 
@@ -263,7 +256,7 @@ APIXformCont::init_body_range_handlers(int64_t len, int64_t offset)
     auto r = copy_next_len( call_body_handler(event,vio,left) );
     set_copy_handler(INT64_MAX>>1,skipBodyEndFn);
     auto done = TSVIONDoneGet(_inVIO);
-    DEBUG_LOG("xform copy-body: @%#lx left=+%#lx r=+%#lx",done,left,r);
+    DEBUG_LOG("xform copy-body: @%#lx+%#lx left=+%#lx",done-r,r,left);
     return r;
   };
 
@@ -278,7 +271,7 @@ APIXformCont::init_body_range_handlers(int64_t len, int64_t offset)
     auto r = skip_next_len( call_body_handler(event,vio,left) );
     set_copy_handler(offset+len,copyBodyFn);
     auto done = TSVIONDoneGet(_inVIO);
-    DEBUG_LOG("xform skip-body: @%#lx left=+%#lx r=+%#lx",done,left,r);
+    DEBUG_LOG("xform skip-body: @%#lx+%#lx left=+%#lx",done-r,r,left);
     return r;
   };
 

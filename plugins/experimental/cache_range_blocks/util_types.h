@@ -46,6 +46,8 @@ static inline bool is_base64_bit_set(const std::string &base64,unsigned i)
    return (1<<(i%6)) & base64_values[base64[i/6]-'+'];
 }
 
+void forward_vio_event(TSEvent event, TSVIO invio);
+
 class XformReader;
 
 // namespace {
