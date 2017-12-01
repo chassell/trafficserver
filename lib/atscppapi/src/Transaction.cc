@@ -20,20 +20,19 @@
  * @file Transaction.cc
  */
 
-#include <memory>
+#include "atscppapi/Transaction.h"
 #include <cstdlib>
 #include <cstring>
 #include <map>
 #include <string>
 #include <utility>
+#include <memory>
 
-#include "atscppapi/Transaction.h"
 #include "ts/ink_memory.h"
 #include "atscppapi/shared_ptr.h"
 #include "logging_internal.h"
 #include "utils_internal.h"
 #include "atscppapi/noncopyable.h"
-
 using std::map;
 using std::string;
 using namespace atscppapi;
@@ -43,7 +42,6 @@ using namespace atscppapi;
  */
 struct atscppapi::TransactionState : noncopyable {
   TSHttpTxn const txn_;
-  TSEvent event_; ///< Current event being dispatched.
   std::list<TransactionPlugin *> plugins_;
   ClientRequest client_request_;
   Request server_request_;
@@ -54,7 +52,7 @@ struct atscppapi::TransactionState : noncopyable {
   map<string, shared_ptr<Transaction::ContextValue>> context_values_;
 
   TransactionState(TSHttpTxn txn, TSMBuffer client_request_hdr_buf, TSMLoc client_request_hdr_loc)
-    : txn_(txn), event_(TS_EVENT_NONE), client_request_(txn, client_request_hdr_buf, client_request_hdr_loc)
+    : txn_(txn), client_request_(txn, client_request_hdr_buf, client_request_hdr_loc)
   {
   }
 };
@@ -367,9 +365,9 @@ Transaction::getCacheStatus()
 void
 Transaction::redirectTo(std::string const &url)
 {
-  std::string s = url;
+  char *s = ats_strdup(url.c_str());
   // Must re-alloc the string locally because ownership is transferred to the transaction.
-  TSHttpTxnRedirectUrlSet(state_->txn_, s.c_str(), url.length());
+  TSHttpTxnRedirectUrlSet(state_->txn_, s, url.length());
 }
 
 namespace
@@ -408,6 +406,18 @@ private:
 
 } // anonymous namespace
 
+void
+Transaction::refreshHeaders()
+{
+  state_->cached_response_.getHeaders().reset(nullptr, nullptr);
+  state_->cached_request_.getHeaders().reset(nullptr, nullptr);
+
+  state_->client_response_.getHeaders().reset(nullptr, nullptr);
+
+  state_->server_request_.getHeaders().reset(nullptr, nullptr);
+  state_->server_response_.getHeaders().reset(nullptr, nullptr);
+}
+
 template <TSReturnCode (*T_GETTER)(TSHttpTxn, TSMBuffer *, TSMLoc *), class T_INITOBJECT>
 T_INITOBJECT &
 Transaction::init_from_getter(TSHttpTxn txn, T_INITOBJECT &obj)
@@ -432,26 +442,31 @@ Transaction::getServerRequest()
 {
   return init_from_getter<TSHttpTxnServerReqGet>(state_->txn_, state_->server_request_);
 }
+
 Response &
 Transaction::getServerResponse()
 {
   return init_from_getter<TSHttpTxnServerRespGet>(state_->txn_, state_->server_response_);
 }
+
 Response &
 Transaction::getClientResponse()
 {
   return init_from_getter<TSHttpTxnClientRespGet>(state_->txn_, state_->client_response_);
 }
+
 Request &
 Transaction::getCachedRequest()
 {
   return init_from_getter<TSHttpTxnCachedReqGet>(state_->txn_, state_->cached_request_);
 }
+
 Response &
 Transaction::getCachedResponse()
 {
   return init_from_getter<TSHttpTxnCachedRespGet>(state_->txn_, state_->cached_response_);
 }
+
 Response &
 Transaction::updateCachedResponse()
 {
@@ -459,14 +474,3 @@ Transaction::updateCachedResponse()
   return init_from_getter<TSHttpTxnCachedRespModifiableGet>(state_->txn_, state_->cached_response_);
 }
 
-void
-Transaction::refreshHeaders()
-{
-  state_->cached_response_.getHeaders().reset(nullptr, nullptr);
-  state_->cached_request_.getHeaders().reset(nullptr, nullptr);
-
-  state_->client_response_.getHeaders().reset(nullptr, nullptr);
-
-  state_->server_request_.getHeaders().reset(nullptr, nullptr);
-  state_->server_response_.getHeaders().reset(nullptr, nullptr);
-}
