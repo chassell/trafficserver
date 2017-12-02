@@ -244,7 +244,7 @@ utils::internal::invokePluginForEvent(GlobalPlugin *plugin, TSHttpAltInfo altinf
   const Response cachedResp;
 
   TSHttpAltInfoCachedRespGet(altinfo_handle, &ohdr_buf, &ohdr_loc);
-  const_cast<Response&>(cachedResp).init(ohdr_buf,ohdr_loc);
+  const_cast<Response &>(cachedResp).init(ohdr_buf, ohdr_loc);
 
   plugin->handleSelectAlt(clientReq, cachedReq, cachedResp);
 }

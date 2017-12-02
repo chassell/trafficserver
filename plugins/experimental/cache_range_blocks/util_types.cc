@@ -30,30 +30,28 @@
 void
 forward_vio_event(TSEvent event, TSVIO invio)
 {
-//  if ( invio && TSVIOContGet(invio) && TSVIOBufferGet(invio)) {
-  if ( invio && TSVIOContGet(invio) ) {
-    DEBUG_LOG("delivered: #%d",event);
+  //  if ( invio && TSVIOContGet(invio) && TSVIOBufferGet(invio)) {
+  if (invio && TSVIOContGet(invio)) {
+    DEBUG_LOG("delivered: #%d", event);
     TSContCall(TSVIOContGet(invio), event, invio);
   } else {
-    DEBUG_LOG("not delivered: #%d",event);
+    DEBUG_LOG("not delivered: #%d", event);
   }
 }
 
-
-APICacheKey::APICacheKey(const atscppapi::Url &url, std::string const &etag, uint64_t offset)
-     : TSCacheKey_t(TSCacheKeyCreate()) 
+APICacheKey::APICacheKey(const atscppapi::Url &url, std::string const &etag, uint64_t offset) : TSCacheKey_t(TSCacheKeyCreate())
 {
-   auto str = url.getUrlString();
-   str.append(etag); // etag for version handling
-   str.append(reinterpret_cast<char*>(&offset),sizeof(offset)); // append *unique* position bytes
-   TSCacheKeyDigestSet(get(), str.data(), str.size() );
-   auto host = url.getHost();
-   TSCacheKeyHostNameSet(get(), host.data(), host.size()); 
+  auto str = url.getUrlString();
+  str.append(etag);                                              // etag for version handling
+  str.append(reinterpret_cast<char *>(&offset), sizeof(offset)); // append *unique* position bytes
+  TSCacheKeyDigestSet(get(), str.data(), str.size());
+  auto host = url.getHost();
+  TSCacheKeyHostNameSet(get(), host.data(), host.size());
 }
 
-
 template <typename T_DATA>
-TSCont APICont::create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DATA> &cbFuture, const std::shared_ptr<void> &counted)
+TSCont
+APICont::create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DATA> &cbFuture, const std::shared_ptr<void> &counted)
 {
   // alloc two objs to pass into lambda
   auto contp = std::make_unique<APICont>(shared_mutex); // uses empty stub-callback!!
@@ -65,21 +63,21 @@ TSCont APICont::create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DA
   cbFuture = prom.get_future().share(); // link to promise
 
   // assign new handler
-  cont = [&cont,&prom,counted](TSEvent evt, void *data) {
-              decltype(contp) contp(&cont); // free after this call
-              decltype(promp) promp(&prom); // free after this call
+  cont = [&cont, &prom, counted](TSEvent evt, void *data) {
+    decltype(contp) contp(&cont); // free after this call
+    decltype(promp) promp(&prom); // free after this call
 
-              prom.set_value(static_cast<T_DATA>(data)); // store correctly
-               
-              // bad ptr?  then call deleter on this!
-              auto ptrErr = -reinterpret_cast<intptr_t>(data);
-              if ( ptrErr >= 0 && ptrErr < INK_START_ERRNO+1000 ) {
-                auto deleter = std::get_deleter<void(*)(void*)>(counted);
-                if ( deleter ) {
-                  (*deleter)(counted.get());
-                }
-              }
-          };
+    prom.set_value(static_cast<T_DATA>(data)); // store correctly
+
+    // bad ptr?  then call deleter on this!
+    auto ptrErr = -reinterpret_cast<intptr_t>(data);
+    if (ptrErr >= 0 && ptrErr < INK_START_ERRNO + 1000) {
+      auto deleter = std::get_deleter<void (*)(void *)>(counted);
+      if (deleter) {
+        (*deleter)(counted.get());
+      }
+    }
+  };
 
   contp.release(); // owned as ptr in lambda
   promp.release(); // owned as ptr in lambda
@@ -89,76 +87,74 @@ TSCont APICont::create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DA
 
 // accepts TSHttpTxn handler functions
 template <class T_OBJ, typename T_DATA>
-APICont::APICont(T_OBJ &obj, void(T_OBJ::*funcp)(TSEvent,void*,T_DATA), T_DATA cbdata)
-   : TSCont_t(TSContCreate(&APICont::handleTSEventCB,TSMutexCreate())) 
+APICont::APICont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, T_DATA), T_DATA cbdata)
+  : TSCont_t(TSContCreate(&APICont::handleTSEventCB, TSMutexCreate()))
 {
   // point back here
-  TSContDataSet(get(),this);
+  TSContDataSet(get(), this);
 
   static_cast<void>(cbdata);
   // memorize user data to forward on
-  _userCB = decltype(_userCB)([&obj,funcp,cbdata](TSEvent event, void *evtdata) {
-      (obj.*funcp)(event,evtdata,cbdata);
-     });
+  _userCB = decltype(_userCB)([&obj, funcp, cbdata](TSEvent event, void *evtdata) { (obj.*funcp)(event, evtdata, cbdata); });
 }
 
 // bare Continuation lambda adaptor
-APICont::APICont(TSMutex mutex)
-   : TSCont_t(TSContCreate(&APICont::handleTSEventCB,mutex))
+APICont::APICont(TSMutex mutex) : TSCont_t(TSContCreate(&APICont::handleTSEventCB, mutex))
 {
   // point back here
-  TSContDataSet(get(),this);
+  TSContDataSet(get(), this);
 }
 
-int APICont::handleTSEventCB(TSCont cont, TSEvent event, void *data)
+int
+APICont::handleTSEventCB(TSCont cont, TSEvent event, void *data)
 {
   atscppapi::ScopedContinuationLock lock(cont);
-  APICont *self = static_cast<APICont*>(TSContDataGet(cont));
+  APICont *self = static_cast<APICont *>(TSContDataGet(cont));
   ink_assert(self->operator TSCont() == cont);
-  self->_userCB(event,data);
+  self->_userCB(event, data);
   return 0;
 }
 
-
 // Transform continuations
 APIXformCont::APIXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t len, int64_t pos)
-   : TSCont_t(TSTransformCreate(&APIXformCont::handleXformTSEventCB,static_cast<TSHttpTxn>(txn.getAtsHandle()))), 
-     _txn(txn), 
-     _atsTxn(static_cast<TSHttpTxn>(txn.getAtsHandle())),
-     _outBufferP(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
-     _outReaderP( TSIOBufferReaderAlloc(this->_outBufferP.get()))
+  : TSCont_t(TSTransformCreate(&APIXformCont::handleXformTSEventCB, static_cast<TSHttpTxn>(txn.getAtsHandle()))),
+    _txn(txn),
+    _atsTxn(static_cast<TSHttpTxn>(txn.getAtsHandle())),
+    _outBufferP(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
+    _outReaderP(TSIOBufferReaderAlloc(this->_outBufferP.get()))
 {
-  init_body_range_handlers(pos,len); // hdrs -> skip-pre-range -> range -> skip-post-range
+  init_body_range_handlers(pos, len); // hdrs -> skip-pre-range -> range -> skip-post-range
 
   // point back here
-  TSContDataSet(get(),this);
+  TSContDataSet(get(), this);
   TSHttpTxnHookAdd(_atsTxn, xformType, get());
 }
 
-int APIXformCont::handleXformTSEventCB(TSCont cont, TSEvent event, void *data)
+int
+APIXformCont::handleXformTSEventCB(TSCont cont, TSEvent event, void *data)
 {
   atscppapi::ScopedContinuationLock lock(cont);
-  APIXformCont *self = static_cast<APIXformCont*>(TSContDataGet(cont));
-  return self->handleXformTSEvent(cont,event,data);
+  APIXformCont *self = static_cast<APIXformCont *>(TSContDataGet(cont));
+  return self->handleXformTSEvent(cont, event, data);
 }
 
 BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, int64_t xformLen, int64_t xformOffset)
-   : APIXformCont(txn, TS_HTTP_RESPONSE_TRANSFORM_HOOK, xformLen, xformOffset),
-     _writeHook(writeHook),
-     _teeBufferP( TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K) ),
-     _teeReaderP( TSIOBufferReaderAlloc(this->_teeBufferP.get()) )
+  : APIXformCont(txn, TS_HTTP_RESPONSE_TRANSFORM_HOOK, xformLen, xformOffset),
+    _writeHook(writeHook),
+    _teeBufferP(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
+    _teeReaderP(TSIOBufferReaderAlloc(this->_teeBufferP.get()))
 {
   // get to method via callback
-  set_body_handler([this](TSEvent evt, TSVIO vio, int64_t left) { 
-    return this->handleEvent(evt,vio,left); 
-  });
+  set_body_handler([this](TSEvent evt, TSVIO vio, int64_t left) { return this->handleEvent(evt, vio, left); });
 }
 
 class BlockStoreXform;
 class BlockReadXform;
 
-template APICont::APICont(BlockStoreXform &obj, void(BlockStoreXform::*funcp)(TSEvent,void*,decltype(nullptr)), decltype(nullptr));
-template APICont::APICont(BlockReadXform &obj, void(BlockReadXform::*funcp)(TSEvent,void*,decltype(nullptr)), decltype(nullptr));
-template TSCont APICont::create_temp_tscont(TSMutex,std::shared_future<TSVConn> &, const std::shared_ptr<void> &);
+template APICont::APICont(BlockStoreXform &obj, void (BlockStoreXform::*funcp)(TSEvent, void *, decltype(nullptr)),
+                          decltype(nullptr));
+template APICont::APICont(BlockReadXform &obj, void (BlockReadXform::*funcp)(TSEvent, void *, decltype(nullptr)),
+                          decltype(nullptr));
+template TSCont APICont::create_temp_tscont(TSMutex, std::shared_future<TSVConn> &, const std::shared_ptr<void> &);
 
 //}
