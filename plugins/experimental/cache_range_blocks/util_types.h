@@ -53,6 +53,16 @@ void forward_vio_event(TSEvent event, TSVIO invio);
 
 class XformReader;
 
+namespace std
+{
+template <typename _Tp, typename... _Args>
+inline unique_ptr<_Tp>
+make_unique(_Args &&... __args)
+{
+  return unique_ptr<_Tp>(new _Tp(std::forward<_Args>(__args)...));
+}
+}
+
 // namespace {
 
 using TSCacheKey_t       = std::unique_ptr<std::remove_pointer<TSCacheKey>::type>;

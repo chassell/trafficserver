@@ -23,6 +23,7 @@
 #include <ts/InkErrno.h>
 
 #include <chrono>
+#include <algorithm>
 
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 

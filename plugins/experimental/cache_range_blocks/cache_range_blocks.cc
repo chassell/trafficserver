@@ -21,6 +21,8 @@
 #include <ts/experimental.h>
 #include <ts/InkErrno.h>
 
+#include <algorithm>
+
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
 #define PLUGIN_NAME "cache_range_blocks"
