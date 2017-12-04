@@ -26,6 +26,7 @@
 #include <atscppapi/TransformationPlugin.h>
 #include <atscppapi/GlobalPlugin.h>
 #include <atscppapi/PluginInit.h>
+#include <atscppapi/RemapPlugin.h>
 
 #include <iostream>
 #include <memory>
@@ -245,9 +246,11 @@ private:
   APICont _readEvents;
 };
 
-class RangeDetect : public GlobalPlugin
+class GlobalRangeDetect : public GlobalPlugin
 {
 public:
+  using GlobalPlugin::GlobalPlugin; // same ctors
+
   void
   addHooks()
   {
@@ -259,6 +262,15 @@ public:
 
 private:
   std::string _random;
+};
+
+class RemapRangeDetect : public RemapPlugin
+{
+public:
+  using RemapPlugin::RemapPlugin; // same ctors
+
+  Result
+  doRemap(const Url &, const Url &, Transaction &txn, bool &) override;
 };
 
 //}

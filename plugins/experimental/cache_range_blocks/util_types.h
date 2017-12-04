@@ -53,6 +53,7 @@ void forward_vio_event(TSEvent event, TSVIO invio);
 
 class XformReader;
 
+#if 0
 namespace std
 {
 template <typename _Tp, typename... _Args>
@@ -62,6 +63,7 @@ make_unique(_Args &&... __args)
   return unique_ptr<_Tp>(new _Tp(std::forward<_Args>(__args)...));
 }
 }
+#endif
 
 // namespace {
 

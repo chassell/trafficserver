@@ -34,8 +34,6 @@ static int parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_
 // namespace
 // {
 
-std::shared_ptr<RangeDetect> pluginPtr;
-
 const int8_t base64_values[] = {
   /*0x2b: +*/ 62,
   /*0x2c,2d,0x2e:*/ ~0,
@@ -119,9 +117,8 @@ const int8_t base64_values[] = {
 
 const char *const base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-/////////////////////////////////////////
 void
-RangeDetect::handleReadRequestHeadersPostRemap(Transaction &txn)
+detect_usable_txn(Transaction &txn) 
 {
   // must avoid the stub file *always* unless warranted
   txn.configIntSet(TS_CONFIG_HTTP_CACHE_IGNORE_ACCEPT_ENCODING_MISMATCH, 0);
@@ -411,14 +408,36 @@ BlockSetAccess::select_needed_blocks()
 
 // }
 
-// tsapi TSReturnCode TSBase64Decode(const char *str, size_t str_len, unsigned char *dst, size_t dst_size, size_t *length);
-// tsapi TSReturnCode TSBase64Encode(const char *str, size_t str_len, char *dst, size_t dst_size, size_t *length);
+/////////////////////////////////////////
+void
+GlobalRangeDetect::handleReadRequestHeadersPostRemap(Transaction &txn)
+{
+   detect_usable_txn(txn);  
+}
+
+RemapPlugin::Result
+RemapRangeDetect::doRemap(const Url &from, const Url &to, Transaction &txn, bool &)
+{
+   DEBUG_LOG("remap %s [%d] -> %s [%d]",from.getUrlString().c_str(), from.getPort(), to.getUrlString().c_str(), to.getPort() );
+   detect_usable_txn(txn);  
+   return RESULT_NO_REMAP; // don't veto it
+}
+
 void
 TSPluginInit(int, const char **)
 {
+  static std::shared_ptr<GlobalRangeDetect> pluginPtr;
+
   RegisterGlobalPlugin("CPP_Example_TransactionHook", "apache", "dev@trafficserver.apache.org");
   if (!pluginPtr) {
-    pluginPtr = std::make_shared<RangeDetect>();
+    pluginPtr = std::make_shared<GlobalRangeDetect>();
     pluginPtr->addHooks();
   }
+}
+
+TSReturnCode
+TSRemapNewInstance(int, char *[], void **inst, char *, int)
+{
+  new RemapRangeDetect(inst); // stored by ctor 
+  return TS_SUCCESS;
 }
