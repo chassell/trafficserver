@@ -134,6 +134,8 @@ detect_usable_txn(Transaction &txn)
   // allow a cache-write for this range request ... if needed
   txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1);
 
+  DEBUG_LOG("did attempt txn-adding");
+
   auto &txnPlugin = *new BlockSetAccess(txn); // plugin attach
   txn.addPlugin(&txnPlugin);                  // delete this when done
   txnPlugin.handleReadRequestHeadersPostRemap(txn);
@@ -418,16 +420,22 @@ GlobalRangeDetect::handleReadRequestHeadersPostRemap(Transaction &txn)
 RemapPlugin::Result
 RemapRangeDetect::doRemap(const Url &from, const Url &to, Transaction &txn, bool &)
 {
-   DEBUG_LOG("remap %s [%d] -> %s [%d]",from.getUrlString().c_str(), from.getPort(), to.getUrlString().c_str(), to.getPort() );
-   detect_usable_txn(txn);  
-   return RESULT_NO_REMAP; // don't veto it
+   auto &url = txn.getClientRequest().getUrl();
+   DEBUG_LOG("remap of %s [%d] -> %s [%d] ... with %s",from.getUrlString().c_str(), from.getPort(), to.getUrlString().c_str(), to.getPort(),
+                              url.getUrlString().c_str());
+   url.setHost(to.getHost());
+   if ( from.getPath().empty() && ! to.getPath().empty() ) {
+     url.setPath( to.getPath() + url.getPath() );
+   }
+
+   detect_usable_txn(txn);
+   return RESULT_DID_REMAP; // don't veto it
 }
 
 void
 TSPluginInit(int, const char **)
 {
   static std::shared_ptr<GlobalRangeDetect> pluginPtr;
-
   RegisterGlobalPlugin("CPP_Example_TransactionHook", "apache", "dev@trafficserver.apache.org");
   if (!pluginPtr) {
     pluginPtr = std::make_shared<GlobalRangeDetect>();
@@ -436,8 +444,9 @@ TSPluginInit(int, const char **)
 }
 
 TSReturnCode
-TSRemapNewInstance(int, char *[], void **inst, char *, int)
+TSRemapNewInstance(int argc, char *argv[], void **inst, char *, int)
 {
+  DEBUG_LOG("remap of %s -> %s",argv[0], argv[1]);
   new RemapRangeDetect(inst); // stored by ctor 
   return TS_SUCCESS;
 }
