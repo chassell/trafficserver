@@ -118,29 +118,23 @@ const int8_t base64_values[] = {
 
 const char *const base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-
-void
-prevent_txn_cacheing(Transaction &txn)
+/////////////////////////////////////////////////
+/////////////////////////////////////////////////
+class BlockInitXform : public TransactionPlugin
 {
-  // must avoid the stub file *always* unless warranted
-  txn.configIntSet(TS_CONFIG_HTTP_ACCEPT_ENCODING_FILTER_ENABLED, 1);
+public:
+  BlockInitXform(BlockSetAccess &ctxt) : TransactionPlugin(ctxt.txn()), _ctxt(ctxt)
+  {
+  }
 
-  auto &clntReq = txn.getClientRequest().getHeaders();
-  clntReq.append(ACCEPT_ENCODING_TAG, "identity;q=1.0, " CONTENT_ENCODING_INTERNAL ";q=0.0"); // accept normal!
-}
+  // change to 200 and append stub-file headers...
+private:
+  BlockSetAccess &_ctxt;
+};
 
-void
-init_txn_cacheing(Transaction &txn)
-{
-  // must avoid the stub file *always* unless warranted
-  txn.configIntSet(TS_CONFIG_HTTP_ACCEPT_ENCODING_FILTER_ENABLED, 1);
 
-  // allow a cache-write for this range request ... if needed
-  txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1);
-
-  new BlockSetAccess(txn); // registers itself
-}
-
+/////////////////////////////////////////////////
+/////////////////////////////////////////////////
 BlockSetAccess::BlockSetAccess(Transaction &txn)
   : TransactionPlugin(txn),
     _txn(txn),
@@ -158,12 +152,6 @@ BlockSetAccess::BlockSetAccess(Transaction &txn)
 void
 BlockSetAccess::handleReadRequestHeadersPostRemap(Transaction &txn)
 {
-  // must avoid the stub file *always* unless warranted
-  txn.configIntSet(TS_CONFIG_HTTP_ACCEPT_ENCODING_FILTER_ENABLED, 1);
-
-  // allow a cache-write for this range request ... if needed
-  txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1);
-
   clean_client_request(); // add allowance for stub-file's encoding
   txn.resume();
 }
@@ -180,12 +168,13 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   }
 
   // simply clean up stub-response to be a normal header
-  TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS);
+  TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS); // clean up headers from earlier
+  TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // clean up headers to be stub-file compatible
 
   if (pstub == &_clntHdrs) {
     DEBUG_LOG("cache-init: len=%#lx set=%s", _assetLen, _b64BlkBitset.c_str());
-    _initXform = std::make_unique<BlockInitXform>(*this);
-    _initXform->handleReadCacheLookupComplete(txn); // [default version]
+    reset_cached_stub(txn);
+    txn.resume();
     return;
   }
 
@@ -209,9 +198,8 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   // invalid stub file... (or client headers instead)
   if (!_assetLen || _b64BlkBitset.empty() || chk != _b64BlkBitset.end()) {
     DEBUG_LOG("cache-stub-fail: len=%#lx set=%s", _assetLen, _b64BlkBitset.c_str());
-    _initXform = std::make_unique<BlockInitXform>(*this);
-    _initXform->handleReadCacheLookupComplete(txn); // [default version]
-    // resume implied
+    reset_cached_stub(txn);
+    txn.resume();
     return;
   }
 
@@ -255,12 +243,54 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   // do *not* release transaction
 }
 
+// handled for init-only case
+void
+BlockSetAccess::handleSendRequestHeaders(Transaction &txn)
+{
+  clean_server_request(txn); // request full blocks if possible
+  txn.resume();
+}
+
+// handled for init-only case
+void
+BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
+{
+  auto &resp = txn.getServerResponse();
+  auto &respHdrs = resp.getHeaders();
+  if (resp.getStatusCode() != HTTP_STATUS_PARTIAL_CONTENT) {
+    TSHttpTxnServerRespNoStoreSet(atsTxn(),1);
+    return; // cannot use this for cache ...
+  }
+
+  auto contentEnc = respHdrs.values(CONTENT_ENCODING_TAG);
+
+  if ( ! contentEnc.empty() && contentEnc != "identity" )
+  {
+    TSHttpTxnServerRespNoStoreSet(atsTxn(),1);
+    return; // cannot use this for range block storage ...
+  }
+
+  prepare_cached_stub(txn); // request full blocks if possible
+  txn.resume();
+}
+
+void
+BlockSetAccess::handleSendResponseHeaders(Transaction &txn)
+{
+  clean_client_response(txn);
+  txn.resume();
+}
+
 /////////////////////////////////////////////////////////////
 
 void
 BlockSetAccess::clean_client_request()
 {
-  _clntHdrs.append(ACCEPT_ENCODING_TAG, "identity;q=1.0, " CONTENT_ENCODING_INTERNAL ";q=0.001"); // accept normal and cached
+  if ( _clntHdrs.values(ACCEPT_ENCODING_TAG).empty() ) {
+    _clntHdrs.append(ACCEPT_ENCODING_TAG, "identity;q=1.0"); // defer to full version
+  }
+  _clntHdrs.append(ACCEPT_ENCODING_TAG, CONTENT_ENCODING_INTERNAL ";q=0.001"); // but accept block-set too
+  _clntHdrs.set(ACCEPT_ENCODING_TAG, _clntHdrs.values(ACCEPT_ENCODING_TAG)); // on one line...
 }
 
 void
@@ -268,28 +298,33 @@ BlockSetAccess::clean_server_request(Transaction &txn)
 {
   auto &proxyReq = txn.getServerRequest().getHeaders();
 
-  // TODO: erase only last fields
-  proxyReq.erase(ACCEPT_ENCODING_TAG);
-  proxyReq.erase(IF_MODIFIED_SINCE_TAG); // actually getting data
-  proxyReq.erase(IF_NONE_MATCH_TAG);     // actually getting data
+  auto fields = proxyReq.values(ACCEPT_ENCODING_TAG);
+  fields = fields.substr(0,fields.rfind(',')); // erase after last comma
+  proxyReq.set(ACCEPT_ENCODING_TAG,fields);
+
+  if ( ! _clntHdrs.count(IF_MODIFIED_SINCE_TAG) ) {
+    proxyReq.erase(IF_MODIFIED_SINCE_TAG); // prevent 304 unless client wants it
+  }
+  if ( ! _clntHdrs.count(IF_NONE_MATCH_TAG) ) {
+    proxyReq.erase(IF_NONE_MATCH_TAG);     // prevent 304 unless client wants it
+  }
+  if ( ! _clntHdrs.count(IF_RANGE_TAG) ) {
+    proxyReq.erase(IF_RANGE_TAG);     // prevent full 200 unless client wants it
+  }
 
   // replace with a block-based range if known
   if (!blockRangeStr().empty()) {
-    proxyReq.set(RANGE_TAG, blockRangeStr());
+    proxyReq.set(RANGE_TAG, blockRangeStr());  // adjusted range string..
   } else {
-    proxyReq.set(RANGE_TAG, clientRangeStr()); // same as before
+    proxyReq.set(RANGE_TAG, clientRangeStr()); // restore as before..
   }
 }
 
 void
-BlockSetAccess::clean_server_response(Transaction &txn)
+BlockSetAccess::prepare_cached_stub(Transaction &txn)
 {
   auto &proxyRespStatus = txn.getServerResponse();
   auto &proxyResp       = txn.getServerResponse().getHeaders();
-
-  if (proxyRespStatus.getStatusCode() != HTTP_STATUS_PARTIAL_CONTENT) {
-    return; // cannot clean this up...
-  }
 
   // see if valid stub headers
   auto srvrRange     = proxyResp.value(CONTENT_RANGE_TAG); // not in clnt hdrs
@@ -309,8 +344,10 @@ BlockSetAccess::clean_server_response(Transaction &txn)
 
   proxyResp.set(CONTENT_ENCODING_TAG, CONTENT_ENCODING_INTERNAL); // promote matches
   proxyResp.set(X_BLOCK_BITSET_TAG, _b64BlkBitset);               // TODO: not good enough for huge files!!
+  proxyResp.append(VARY_TAG,ACCEPT_ENCODING_TAG); // please notice it!
+  proxyRespStatus.setStatusCode(HTTP_STATUS_OK);
 
-  DEBUG_LOG("srvr-hdrs:\n%s\n------\n", proxyResp.wireStr().c_str());
+  DEBUG_LOG("stub-hdrs:\n-------\n%s\n------\n", proxyResp.wireStr().c_str());
 }
 
 void
@@ -320,9 +357,11 @@ BlockSetAccess::clean_client_response(Transaction &txn)
   auto &clntResp       = txn.getClientResponse().getHeaders();
 
   // only change 200-case back to 206
-  if (clntRespStatus.getStatusCode() == HTTP_STATUS_OK) {
-    clntRespStatus.setStatusCode(HTTP_STATUS_PARTIAL_CONTENT);
+  if (clntRespStatus.getStatusCode() != HTTP_STATUS_OK) {
+    return; // cannot do more...
   }
+
+  clntRespStatus.setStatusCode(HTTP_STATUS_PARTIAL_CONTENT);
 
   // override block-style range
   if (_assetLen && _beginByte >= 0 && _endByte > 0) {
@@ -333,7 +372,6 @@ BlockSetAccess::clean_client_response(Transaction &txn)
     clntResp.set(CONTENT_LENGTH_TAG, std::to_string(rangeLen()));
   }
 
-  // TODO erase only last field, with internal encoding
   clntResp.erase(CONTENT_ENCODING_TAG);
   clntResp.erase(X_BLOCK_BITSET_TAG);
 }
@@ -417,17 +455,10 @@ BlockSetAccess::select_needed_blocks()
   return end;
 }
 
-class RemapRangeDetect : public RemapPlugin
+////////////////////////////////////////////////
+void default_remap(Url &clntUrl, const Url &from, const Url &to)
 {
-public:
-  using RemapPlugin::RemapPlugin; // same ctor
-
-  // add stub-allowing header if has a valid range
-  Result doRemap(const Url &from, const Url &to, Transaction &txn, bool &) override 
-  {
     // do default replacement..
-    auto &clnt = txn.getClientRequest();
-    auto &clntUrl = clnt.getUrl();
     clntUrl.setScheme( to.getScheme() );
     clntUrl.setHost( to.getHost() );
     clntUrl.setPort( to.getPort() );
@@ -436,36 +467,42 @@ public:
     if ( from.getPath().empty() && ! to.getPath().empty() ) {
       clntUrl.setPath( to.getPath() + clntUrl.getPath() );
     }
-    
-    auto &clntReq = clnt.getHeaders();
-    if (clntReq.count(RANGE_TAG) != 1) {
-      DEBUG_LOG("remap no-blocks hook with %s [using %s -> %s]",clntUrl.getUrlString().c_str(), from.getUrlString().c_str(), to.getUrlString().c_str());
-      prevent_txn_cacheing(txn);
-    } else {
-      DEBUG_LOG("remap blocks hook with %s [using %s -> %s]",clntUrl.getUrlString().c_str(), from.getUrlString().c_str(), to.getUrlString().c_str());
-      init_txn_cacheing(txn);
+}
+
+
+/////////////////////////////////////////////////////////////////////////
+class RemapRangeDetect : public RemapPlugin
+{
+public:
+  using RemapPlugin::RemapPlugin; // same ctor
+
+  // add stub-allowing header if has a valid range
+  Result doRemap(const Url &from, const Url &to, Transaction &txn, bool &) override 
+  {
+    auto &req = txn.getClientRequest();
+    auto &hdrs = req.getHeaders();
+
+    if (hdrs.count(RANGE_TAG) == 1) {
+      new BlockSetAccess(txn); // registers itself
     }
-    return RESULT_DID_REMAP;
+    return RESULT_NO_REMAP;
   }
 };
 
 class RangeDetect : public GlobalPlugin
 {
 public:
-  void
-  addHooks()
-  {
-    GlobalPlugin::registerHook(HOOK_READ_REQUEST_HEADERS_POST_REMAP);
-  }
+  void addHooks() { GlobalPlugin::registerHook(HOOK_READ_REQUEST_HEADERS_POST_REMAP); }
 
   // add stub-allowing header if has a valid range
   void handleReadRequestHeadersPostRemap(Transaction &txn) override 
   {
+    // *must* avoid the stub file 
+    txn.getClientRequest().getHeaders().append(VARY_TAG, CONTENT_ENCODING_INTERNAL); // need for correct
+
     auto &clntReq = txn.getClientRequest().getHeaders();
-    if (clntReq.count(RANGE_TAG) != 1) {
-      prevent_txn_cacheing(txn);
-    } else {
-      init_txn_cacheing(txn);
+    if (clntReq.count(RANGE_TAG) == 1) {
+      new BlockSetAccess(txn); // registers itself
     }
     txn.resume();
   }
@@ -474,7 +511,7 @@ public:
 TSReturnCode
 TSRemapNewInstance(int, char *[], void **hndl, char *, int)
 {
-  new RemapRangeDetect(hndl);
+  new RemapRangeDetect(hndl); // registers itself
   return TS_SUCCESS;
 }
 
@@ -483,7 +520,7 @@ TSPluginInit(int, const char **)
 {
   static std::shared_ptr<RangeDetect> pluginPtr;
 
-  RegisterGlobalPlugin("CPP_Example_TransactionHook", "apache", "dev@trafficserver.apache.org");
+  RegisterGlobalPlugin("CPP_Cache_Range_Block", "apache", "dev@trafficserver.apache.org");
   if (!pluginPtr) {
     pluginPtr = std::make_shared<RangeDetect>();
     pluginPtr->addHooks();

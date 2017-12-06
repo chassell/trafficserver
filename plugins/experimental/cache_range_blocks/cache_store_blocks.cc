@@ -69,22 +69,6 @@ BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
   txn.resume(); // wait for response
 }
 
-void
-BlockStoreXform::handleSendRequestHeaders(Transaction &txn)
-{
-  DEBUG_LOG("srvr-req: len=%#lx", _ctxt.assetLen());
-  _ctxt.clean_server_request(txn); // request full blocks if possible
-  txn.resume();
-}
-
-void
-BlockStoreXform::handleReadResponseHeaders(Transaction &txn)
-{
-  DEBUG_LOG("srvr-resp: len=%#lx", _ctxt.assetLen());
-  _ctxt.clean_server_response(txn);
-  txn.resume();
-}
-
 int64_t
 BlockStoreXform::next_valid_vconn(TSVConn &vconn, int64_t inpos, int64_t len)
 {

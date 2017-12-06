@@ -44,7 +44,7 @@ BlockSetAccess::handleBlockTests()
   // mutex-protected check
   //
 
-  if (_storeXform || _readXform || _initXform) {
+  if (_storeXform || _readXform) {
     return; // transform has already begun
   }
 
@@ -93,17 +93,34 @@ BlockSetAccess::handleBlockTests()
     return;
   }
 
-  //  TSHttpTxnCacheLookupStatusSet(atsTxn(), TS_CACHE_LOOKUP_HIT_FRESH);
+  // HIT_FRESH is the case currently...
 
-  auto &cachhdrs = _txn.updateCachedResponse().getHeaders();
+  Headers cachedHdr;
+  TSMBuffer bufp = nullptr;
+  TSMLoc offset = nullptr;
+
+  // no need to free these 
+  TSHttpTxnCachedRespModifiableGet(atsTxn(), &bufp, &offset);
+
+  cachedHdr.reset(bufp,offset); 
   //  cachhdrs.erase(CONTENT_RANGE_TAG); // erase to remove concerns
-  cachhdrs.set(X_BLOCK_BITSET_TAG, _b64BlkBitset); // attempt to erase/rewrite field in headers
+  cachedHdr.erase(X_BLOCK_BITSET_TAG); // attempt to erase/rewrite field in headers
+  cachedHdr.append(X_BLOCK_BITSET_TAG, _b64BlkBitset); // attempt to erase/rewrite field in headers
 
-  DEBUG_LOG("updated bitset: %s", _b64BlkBitset.c_str());
-  DEBUG_LOG("updated cache-hdrs:\n%s\n------\n", cachhdrs.wireStr().c_str());
+  auto r = TSHttpTxnUpdateCachedObject(atsTxn());
+
+  // re-read everything ...
+  TSHttpTxnCachedRespGet(atsTxn(), &bufp, &offset);
+  cachedHdr.reset(bufp,offset);
+
+  if ( r == TS_SUCCESS ) {
+    DEBUG_LOG("updated bitset: %s", _b64BlkBitset.c_str());
+    DEBUG_LOG("updated cache-hdrs:\n%s\n------\n", cachedHdr.wireStr().c_str());
+  } else if ( r == TS_ERROR ) {
+    DEBUG_LOG("failed to update cache-hdrs:\n%s\n------\n", cachedHdr.wireStr().c_str());
+  }
 
   // change the cached header we're about to send out
-  TSHttpTxnUpdateCachedObject(atsTxn());
 
   // adds hook for transform...
   _readXform = std::make_unique<BlockReadXform>(*this, _beginByte);

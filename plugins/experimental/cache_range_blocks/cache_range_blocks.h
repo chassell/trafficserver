@@ -37,9 +37,11 @@
 
 #define CONTENT_ENCODING_INTERNAL "x-block-cache-range"
 
+#define VARY_TAG "Vary"
 #define ETAG_TAG "ETag"
 #define IF_MODIFIED_SINCE_TAG "If-Modified-Since"
 #define IF_NONE_MATCH_TAG "If-None-Match"
+#define IF_RANGE_TAG "If-Range"
 #define CONTENT_ENCODING_TAG "Content-Encoding"
 #define CONTENT_LENGTH_TAG "Content-Length"
 #define RANGE_TAG "Range"
@@ -79,23 +81,33 @@ public:
   int64_t rangeLen() const { return _endByte - _beginByte; }
   int64_t blockSize() const { return _blkSize; }
 
-  void clean_client_request();
+  
+  void clean_client_request(); // allow secondary-accepting block-set match
+  
+  // clean up, increase range-request, avoid any 304/200 if client didn't request one
   void clean_server_request(Transaction &txn);
-  void clean_server_response(Transaction &txn);
+
+  void reset_cached_stub(Transaction &txn) {
+    txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1); // permit range in cached-request
+    TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS);  // adjust range for later ...
+    TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // handle reply for stub-file storage
+  }
+
+  void prepare_cached_stub(Transaction &txn);
   void clean_client_response(Transaction &txn);
 
-  // prep to match a block map file
+  // permit use of blocks if possible
   void handleReadRequestHeadersPostRemap(Transaction &txn) override;
 
-  // detect a block map file
+  // detect a block map file here
   void handleReadCacheLookupComplete(Transaction &txn) override;
 
-  void
-  handleSendResponseHeaders(Transaction &txn) override
-  {
-    clean_client_response(txn);
-    txn.resume();
-  }
+  // upon a new URL init .. add these only
+  void handleSendRequestHeaders(Transaction &txn) override;
+  void handleReadResponseHeaders(Transaction &txn) override;
+
+  // restore the request as before...
+  void handleSendResponseHeaders(Transaction &txn) override;
 
   void handleBlockTests();
 
@@ -124,40 +136,12 @@ private:
 
   // transform objects must be committed to, upon response
 
-  std::unique_ptr<BlockInitXform> _initXform;   // state-object ptr
   std::unique_ptr<BlockReadXform> _readXform;   // state-object ptr
   std::unique_ptr<BlockStoreXform> _storeXform; // state-object ptr
 };
 
-class BlockInitXform : public TransactionPlugin
-{
-public:
-  BlockInitXform(BlockSetAccess &ctxt) : TransactionPlugin(ctxt.txn()), _ctxt(ctxt)
-  {
-    TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS);  // add user-range and clean up
-    TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // remember length to create new entry
-  }
-
-  void
-  handleSendRequestHeaders(Transaction &txn) override
-  {
-    _ctxt.clean_server_request(txn); // request full blocks if possible
-    txn.resume();
-  }
-
-  // change to 200 and append stub-file headers...
-  void
-  handleReadResponseHeaders(Transaction &txn) override
-  {
-    _ctxt.clean_server_response(txn); // request full blocks if possible
-    txn.getServerResponse().setStatusCode(HTTP_STATUS_OK);
-    txn.resume();
-  }
-
-private:
-  BlockSetAccess &_ctxt;
-};
-
+/////////////////////////////////////////////////
+/////////////////////////////////////////////////
 class BlockStoreXform : public TransactionPlugin, public BlockTeeXform
 {
 public:
@@ -166,7 +150,6 @@ public:
 
   void handleReadCacheLookupComplete(Transaction &txn) override;
   void handleSendRequestHeaders(Transaction &txn) override;
-  void handleReadResponseHeaders(Transaction &txn) override;
 
   //////////////////////////////////////////
   //////////// in Response-Transformation phase
@@ -184,6 +167,8 @@ private:
   APICont _writeEvents;
 };
 
+/////////////////////////////////////////////////
+/////////////////////////////////////////////////
 class BlockReadXform : public APIXformCont
 {
 public:
