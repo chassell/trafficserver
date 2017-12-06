@@ -16,12 +16,16 @@
   limitations under the License.
  */
 #include "cache_range_blocks.h"
+#include "util_types.h"
 
 #include <atscppapi/HttpStatus.h>
+#include <atscppapi/RemapPlugin.h>
 #include <ts/experimental.h>
 #include <ts/InkErrno.h>
 
 #include <algorithm>
+
+#define PLUGIN_NAME "cache_range_blocks"
 
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
@@ -30,11 +34,6 @@
 #define ERROR_LOG(fmt, ...) TSError("[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
 
 static int parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_t &end);
-
-// namespace
-// {
-
-std::shared_ptr<RangeDetect> pluginPtr;
 
 const int8_t base64_values[] = {
   /*0x2b: +*/ 62,
@@ -119,27 +118,27 @@ const int8_t base64_values[] = {
 
 const char *const base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-/////////////////////////////////////////
+
 void
-RangeDetect::handleReadRequestHeadersPostRemap(Transaction &txn)
+prevent_txn_cacheing(Transaction &txn)
 {
   // must avoid the stub file *always* unless warranted
   txn.configIntSet(TS_CONFIG_HTTP_ACCEPT_ENCODING_FILTER_ENABLED, 1);
 
   auto &clntReq = txn.getClientRequest().getHeaders();
-  if (clntReq.count(RANGE_TAG) != 1) {
-    DEBUG_LOG("improper range count");
-    clntReq.append(ACCEPT_ENCODING_TAG, "identity;q=1.0, " CONTENT_ENCODING_INTERNAL ";q=0.0"); // accept normal!
-    txn.resume();
-    return; // only use single-range requests
-  }
+  clntReq.append(ACCEPT_ENCODING_TAG, "identity;q=1.0, " CONTENT_ENCODING_INTERNAL ";q=0.0"); // accept normal!
+}
+
+void
+init_txn_cacheing(Transaction &txn)
+{
+  // must avoid the stub file *always* unless warranted
+  txn.configIntSet(TS_CONFIG_HTTP_ACCEPT_ENCODING_FILTER_ENABLED, 1);
 
   // allow a cache-write for this range request ... if needed
   txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1);
 
-  auto &txnPlugin = *new BlockSetAccess(txn); // plugin attach
-  txn.addPlugin(&txnPlugin);                  // delete this when done
-  txnPlugin.handleReadRequestHeadersPostRemap(txn);
+  new BlockSetAccess(txn); // registers itself
 }
 
 BlockSetAccess::BlockSetAccess(Transaction &txn)
@@ -150,12 +149,21 @@ BlockSetAccess::BlockSetAccess(Transaction &txn)
     _clntHdrs(txn.getClientRequest().getHeaders()),
     _clntRangeStr(txn.getClientRequest().getHeaders().values(RANGE_TAG))
 {
+  DEBUG_LOG("using range detected: %s", _clntRangeStr.c_str());
+  TransactionPlugin::registerHook(HOOK_READ_REQUEST_HEADERS_POST_REMAP);
   TransactionPlugin::registerHook(HOOK_CACHE_LOOKUP_COMPLETE);
+  txn.addPlugin(this);                  // delete this when done
 }
 
 void
 BlockSetAccess::handleReadRequestHeadersPostRemap(Transaction &txn)
 {
+  // must avoid the stub file *always* unless warranted
+  txn.configIntSet(TS_CONFIG_HTTP_ACCEPT_ENCODING_FILTER_ENABLED, 1);
+
+  // allow a cache-write for this range request ... if needed
+  txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1);
+
   clean_client_request(); // add allowance for stub-file's encoding
   txn.resume();
 }
@@ -163,7 +171,7 @@ BlockSetAccess::handleReadRequestHeadersPostRemap(Transaction &txn)
 void
 BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 {
-  auto pstub = get_trunc_hdrs(); // get (1) client-req ptr or (2) cached-stub ptr or nullptr
+  auto pstub = get_stub_hdrs(); // get (1) client-req ptr or (2) cached-stub ptr or nullptr
 
   if (!pstub) {
     /// TODO delete old stub file in case of revalidate!
@@ -363,7 +371,7 @@ parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_t &end)
 }
 
 Headers *
-BlockSetAccess::get_trunc_hdrs()
+BlockSetAccess::get_stub_hdrs()
 {
   // not even found?
   if (_txn.getCacheStatus() < Txn_t::CACHE_LOOKUP_HIT_STALE) {
@@ -409,13 +417,72 @@ BlockSetAccess::select_needed_blocks()
   return end;
 }
 
-// }
+class RemapRangeDetect : public RemapPlugin
+{
+public:
+  using RemapPlugin::RemapPlugin; // same ctor
 
-// tsapi TSReturnCode TSBase64Decode(const char *str, size_t str_len, unsigned char *dst, size_t dst_size, size_t *length);
-// tsapi TSReturnCode TSBase64Encode(const char *str, size_t str_len, char *dst, size_t dst_size, size_t *length);
+  // add stub-allowing header if has a valid range
+  Result doRemap(const Url &from, const Url &to, Transaction &txn, bool &) override 
+  {
+    // do default replacement..
+    auto &clnt = txn.getClientRequest();
+    auto &clntUrl = clnt.getUrl();
+    clntUrl.setScheme( to.getScheme() );
+    clntUrl.setHost( to.getHost() );
+    clntUrl.setPort( to.getPort() );
+
+    // insert ahead... [otherwise leave path alone]
+    if ( from.getPath().empty() && ! to.getPath().empty() ) {
+      clntUrl.setPath( to.getPath() + clntUrl.getPath() );
+    }
+    
+    auto &clntReq = clnt.getHeaders();
+    if (clntReq.count(RANGE_TAG) != 1) {
+      DEBUG_LOG("remap no-blocks hook with %s [using %s -> %s]",clntUrl.getUrlString().c_str(), from.getUrlString().c_str(), to.getUrlString().c_str());
+      prevent_txn_cacheing(txn);
+    } else {
+      DEBUG_LOG("remap blocks hook with %s [using %s -> %s]",clntUrl.getUrlString().c_str(), from.getUrlString().c_str(), to.getUrlString().c_str());
+      init_txn_cacheing(txn);
+    }
+    return RESULT_DID_REMAP;
+  }
+};
+
+class RangeDetect : public GlobalPlugin
+{
+public:
+  void
+  addHooks()
+  {
+    GlobalPlugin::registerHook(HOOK_READ_REQUEST_HEADERS_POST_REMAP);
+  }
+
+  // add stub-allowing header if has a valid range
+  void handleReadRequestHeadersPostRemap(Transaction &txn) override 
+  {
+    auto &clntReq = txn.getClientRequest().getHeaders();
+    if (clntReq.count(RANGE_TAG) != 1) {
+      prevent_txn_cacheing(txn);
+    } else {
+      init_txn_cacheing(txn);
+    }
+    txn.resume();
+  }
+};
+
+TSReturnCode
+TSRemapNewInstance(int, char *[], void **hndl, char *, int)
+{
+  new RemapRangeDetect(hndl);
+  return TS_SUCCESS;
+}
+
 void
 TSPluginInit(int, const char **)
 {
+  static std::shared_ptr<RangeDetect> pluginPtr;
+
   RegisterGlobalPlugin("CPP_Example_TransactionHook", "apache", "dev@trafficserver.apache.org");
   if (!pluginPtr) {
     pluginPtr = std::make_shared<RangeDetect>();

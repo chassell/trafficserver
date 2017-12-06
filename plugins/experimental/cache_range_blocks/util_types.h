@@ -26,6 +26,8 @@
 #include <vector>
 #include <future>
 
+#pragma once
+
 extern const int8_t base64_values[];
 extern const char *const base64_chars;
 

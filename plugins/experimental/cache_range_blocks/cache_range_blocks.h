@@ -33,6 +33,8 @@
 #include <vector>
 #include <future>
 
+#pragma once
+
 #define CONTENT_ENCODING_INTERNAL "x-block-cache-range"
 
 #define ETAG_TAG "ETag"
@@ -63,65 +65,19 @@ public:
   explicit BlockSetAccess(Transaction &txn);
 
   ~BlockSetAccess() override {}
-  Transaction &
-  txn() const
-  {
-    return _txn;
-  }
-  TSHttpTxn
-  atsTxn() const
-  {
-    return _atsTxn;
-  }
-  Headers &
-  clientHdrs()
-  {
-    return _clntHdrs;
-  }
-  const Url &
-  clientUrl() const
-  {
-    return _url;
-  }
-  const std::string &
-  clientRangeStr() const
-  {
-    return _clntRangeStr;
-  }
-  const std::string &
-  blockRangeStr() const
-  {
-    return _blkRangeStr;
-  }
+  Transaction & txn() const { return _txn; }
+  TSHttpTxn atsTxn() const { return _atsTxn; }
+  Headers & clientHdrs() { return _clntHdrs; }
+  const Url & clientUrl() const { return _url; }
+  const std::string & clientRangeStr() const { return _clntRangeStr; }
+  const std::string & blockRangeStr() const { return _blkRangeStr; }
 
-  const std::vector<APICacheKey> &
-  keysInRange() const
-  {
-    return _keysInRange;
-  }
-  const std::string &
-  b64BlkBitset() const
-  {
-    return _b64BlkBitset;
-  }
+  const std::vector<APICacheKey> & keysInRange() const { return _keysInRange; }
+  const std::string & b64BlkBitset() const { return _b64BlkBitset; }
 
-  int64_t
-  assetLen() const
-  {
-    return _assetLen;
-  }
-  int64_t
-  rangeLen() const
-  {
-    return _endByte - _beginByte;
-  }
-  int64_t
-  blockSize() const
-  {
-    return _blkSize;
-  }
-  // pos --> aligned *next* pos
-  // pos --> VConn to read
+  int64_t assetLen() const { return _assetLen; }
+  int64_t rangeLen() const { return _endByte - _beginByte; }
+  int64_t blockSize() const { return _blkSize; }
 
   void clean_client_request();
   void clean_server_request(Transaction &txn);
@@ -144,7 +100,7 @@ public:
   void handleBlockTests();
 
 private:
-  Headers *get_trunc_hdrs();
+  Headers *get_stub_hdrs();
 
   int64_t select_needed_blocks();
 
@@ -242,22 +198,6 @@ private:
   TSVIO _bodyVIO = nullptr;
   std::vector<TSVConn> _vconns;
   APICont _readEvents;
-};
-
-class RangeDetect : public GlobalPlugin
-{
-public:
-  void
-  addHooks()
-  {
-    GlobalPlugin::registerHook(HOOK_READ_REQUEST_HEADERS_POST_REMAP);
-  }
-
-  // add stub-allowing header if has a valid range
-  void handleReadRequestHeadersPostRemap(Transaction &txn) override;
-
-private:
-  std::string _random;
 };
 
 //}
