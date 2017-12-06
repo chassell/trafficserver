@@ -46,7 +46,12 @@ const int TRANSACTION_STORAGE_INDEX = MAX_TXN_ARG;
 void
 initTransactionHandles(Transaction &transaction, TSEvent event)
 {
-  transaction.refreshHeaders();
+  utils::internal::initTransactionCachedRequest(transaction, event);
+  utils::internal::initTransactionCachedResponse(transaction, event);
+  utils::internal::initTransactionServerRequest(transaction, event);
+  utils::internal::initTransactionServerResponse(transaction, event);
+  utils::internal::initTransactionClientResponse(transaction, event);
+
   return;
 }
 
@@ -140,6 +145,10 @@ void inline invokePluginForEvent(Plugin *plugin, TSHttpTxn ats_txn_handle, TSEve
   case TS_EVENT_HTTP_CACHE_LOOKUP_COMPLETE:
     plugin->handleReadCacheLookupComplete(transaction);
     break;
+  case TS_EVENT_HTTP_SELECT_ALT:
+    plugin->handleSelectAlt(transaction);
+    break;
+
   default:
     assert(false); /* we should never get here */
     break;
@@ -223,22 +232,6 @@ void
 utils::internal::invokePluginForEvent(GlobalPlugin *plugin, TSHttpTxn ats_txn_handle, TSEvent event)
 {
   ::invokePluginForEvent(static_cast<Plugin *>(plugin), ats_txn_handle, event);
-}
-
-void
-utils::internal::invokePluginForEvent(GlobalPlugin *plugin, TSHttpAltInfo altinfo_handle, TSEvent event)
-{
-  Request clientReq; 
-  Request cachedReq;
-  Response cachedResp;
-
-  assert(event == TS_EVENT_HTTP_SELECT_ALT);
-
-  Transaction::init_from_getter(altinfo_handle, clientReq, TSHttpAltInfoClientReqGet);
-  Transaction::init_from_getter(altinfo_handle, cachedReq, TSHttpAltInfoCachedReqGet);
-  Transaction::init_from_getter(altinfo_handle, cachedResp, TSHttpAltInfoCachedRespGet);
-
-  plugin->handleSelectAlt(clientReq, cachedReq, cachedResp);
 }
 
 std::string
