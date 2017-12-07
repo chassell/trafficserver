@@ -65,7 +65,7 @@ BlockSetAccess::handleBlockTests()
     auto vconnErr = -reinterpret_cast<intptr_t>(vconn); // block isn't ready
     // valid pointers don't look like this
     if (!vconnErr || (vconnErr >= CACHE_ERRNO && vconnErr < EHTTP_ERROR)) {
-      DEBUG_LOG("read returned non-pointer: 1<<#%#lx == %ld", firstBlk + n, vconnErr, _b64BlkBitset.c_str());
+      DEBUG_LOG("read returned non-pointer: 1<<#%#lx == %ld: %s", firstBlk + n, vconnErr, _b64BlkBitset.c_str());
       continue;
     }
 
@@ -110,14 +110,13 @@ BlockSetAccess::handleBlockTests()
   auto r = TSHttpTxnUpdateCachedObject(atsTxn());
 
   // re-read everything ...
-  TSHttpTxnCachedRespGet(atsTxn(), &bufp, &offset);
   cachedHdr.reset(bufp,offset);
 
   if ( r == TS_SUCCESS ) {
     DEBUG_LOG("updated bitset: %s", _b64BlkBitset.c_str());
-    DEBUG_LOG("updated cache-hdrs:\n%s\n------\n", cachedHdr.wireStr().c_str());
+    DEBUG_LOG("updated cache-hdrs:\n-----\n%s\n------\n", cachedHdr.wireStr().c_str());
   } else if ( r == TS_ERROR ) {
-    DEBUG_LOG("failed to update cache-hdrs:\n%s\n------\n", cachedHdr.wireStr().c_str());
+    DEBUG_LOG("failed to update cache-hdrs:\n-----\n%s\n------\n", cachedHdr.wireStr().c_str());
   }
 
   // change the cached header we're about to send out
