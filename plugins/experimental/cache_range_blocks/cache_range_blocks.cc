@@ -35,88 +35,16 @@
 
 static int parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_t &end);
 
-const int8_t base64_values[] = {
-  /*0x2b: +*/ 62,
-  /*0x2c,2d,0x2e:*/ ~0,
-  ~0,
-  ~0,
-  /*0x2f: / */ 63,
-  /*0x30-0x39: 0-9*/ 52,
-  53,
-  54,
-  55,
-  56,
-  57,
-  58,
-  59,
-  60,
-  61,
-  ~0,
-  ~0,
-  ~0,
-  ~0,
-  ~0,
-  ~0,
-  ~0,
-  /*0x41-0x5a: A-Z*/ 0,
-  1,
-  2,
-  3,
-  4,
-  5,
-  6,
-  7,
-  8,
-  9,
-  10,
-  11,
-  12,
-  13,
-  14,
-  15,
-  16,
-  17,
-  18,
-  19,
-  20,
-  21,
-  23,
-  24,
-  25,
-  ~0,
-  ~0,
-  ~0,
-  ~0,
-  ~0,
-  ~0,
-  /*0x61-0x6a: a-z*/ 26,
-  27,
-  28,
-  29,
-  30,
-  31,
-  32,
-  33,
-  34,
-  35,
-  36,
-  37,
-  38,
-  39,
-  40,
-  41,
-  42,
-  43,
-  44,
-  45,
-  46,
-  47,
-  48,
-  49,
-  50,
-  51};
+const int8_t base64_values[80] = {
+  /* 0-4 */ /*0x2b: +*/ 62, /*0x2c,2d,0x2e:*/ ~0, ~0, ~0, /*0x2f: / */ 63,
+  /* 5-14 */  /*0x30-0x39: 0-9*/ 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 
+  /* 15-21 */   ~0, ~0, ~0, ~0, ~0, ~0, ~0,
+  /* 22-47 */ /*0x41-0x5a: A-Z*/ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+  /* 48-53 */   ~0, ~0, ~0, ~0, ~0, ~0,
+  /* 54-79 */ /*0x61-0x6a: a-z*/ 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51
+}; 
 
-const char *const base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const char base64_chars[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /////////////////////////////////////////////////
 /////////////////////////////////////////////////
@@ -161,18 +89,18 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 {
   auto pstub = get_stub_hdrs(); // get (1) client-req ptr or (2) cached-stub ptr or nullptr
 
+  // file was found?!
   if (!pstub) {
-    /// TODO delete old stub file in case of revalidate!
     txn.resume();
     return; // main file made it through
   }
 
   // simply clean up stub-response to be a normal header
+  TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // clean up headers from request
   TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS); // clean up headers from earlier
-  TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // clean up headers to be stub-file compatible
 
   if (pstub == &_clntHdrs) {
-    DEBUG_LOG("cache-init: len=%#lx set=%s", _assetLen, _b64BlkBitset.c_str());
+    DEBUG_LOG("stub-init only");
     reset_cached_stub(txn);
     txn.resume();
     return;
@@ -197,7 +125,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   // invalid stub file... (or client headers instead)
   if (!_assetLen || _b64BlkBitset.empty() || chk != _b64BlkBitset.end()) {
-    DEBUG_LOG("cache-stub-fail: len=%#lx set=%s", _assetLen, _b64BlkBitset.c_str());
+    DEBUG_LOG("stub-failed: len=%#lx set=%s", _assetLen, _b64BlkBitset.c_str());
     reset_cached_stub(txn);
     txn.resume();
     return;
@@ -240,7 +168,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     TSCacheRead(contp, _keysInRange[i]);
   }
 
-  // do *not* release transaction
+  // *no* txn.resume()
 }
 
 // handled for init-only case
@@ -258,7 +186,9 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
   auto &resp = txn.getServerResponse();
   auto &respHdrs = resp.getHeaders();
   if (resp.getStatusCode() != HTTP_STATUS_PARTIAL_CONTENT) {
+    DEBUG_LOG("rejecting due to unusable status: %d",resp.getStatusCode());
     TSHttpTxnServerRespNoStoreSet(atsTxn(),1);
+    txn.resume();
     return; // cannot use this for cache ...
   }
 
@@ -266,7 +196,9 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
 
   if ( ! contentEnc.empty() && contentEnc != "identity" )
   {
+    DEBUG_LOG("rejecting due to unusable encoding: %s",contentEnc.c_str());
     TSHttpTxnServerRespNoStoreSet(atsTxn(),1);
+    txn.resume();
     return; // cannot use this for range block storage ...
   }
 
@@ -342,10 +274,10 @@ BlockSetAccess::prepare_cached_stub(Transaction &txn)
     DEBUG_LOG("srvr-bitset: blk=%#lx %s", _blkSize, _b64BlkBitset.c_str());
   }
 
-  proxyResp.set(CONTENT_ENCODING_TAG, CONTENT_ENCODING_INTERNAL); // promote matches
-  proxyResp.set(X_BLOCK_BITSET_TAG, _b64BlkBitset);               // TODO: not good enough for huge files!!
-  proxyResp.append(VARY_TAG,ACCEPT_ENCODING_TAG); // please notice it!
   proxyRespStatus.setStatusCode(HTTP_STATUS_OK);
+  proxyResp.set(CONTENT_ENCODING_TAG, CONTENT_ENCODING_INTERNAL); // promote matches
+  proxyResp.append(VARY_TAG,ACCEPT_ENCODING_TAG); // please notice it!
+  proxyResp.set(X_BLOCK_BITSET_TAG, _b64BlkBitset); // keep as *last* field
 
   DEBUG_LOG("stub-hdrs:\n-------\n%s\n------\n", proxyResp.wireStr().c_str());
 }
@@ -362,6 +294,8 @@ BlockSetAccess::clean_client_response(Transaction &txn)
   }
 
   clntRespStatus.setStatusCode(HTTP_STATUS_PARTIAL_CONTENT);
+  clntResp.erase(X_BLOCK_BITSET_TAG);
+  clntResp.erase(CONTENT_ENCODING_TAG);
 
   // override block-style range
   if (_assetLen && _beginByte >= 0 && _endByte > 0) {
@@ -371,9 +305,6 @@ BlockSetAccess::clean_client_response(Transaction &txn)
     clntResp.set(CONTENT_RANGE_TAG, srvrRange);
     clntResp.set(CONTENT_LENGTH_TAG, std::to_string(rangeLen()));
   }
-
-  clntResp.erase(CONTENT_ENCODING_TAG);
-  clntResp.erase(X_BLOCK_BITSET_TAG);
 }
 
 static int
@@ -413,7 +344,7 @@ BlockSetAccess::get_stub_hdrs()
 {
   // not even found?
   if (_txn.getCacheStatus() < Txn_t::CACHE_LOOKUP_HIT_STALE) {
-    DEBUG_LOG(" unusable: %d", _txn.getCacheStatus());
+    DEBUG_LOG(" unusable cache status: %d", _txn.getCacheStatus());
     return &_clntHdrs;
   }
 
@@ -507,6 +438,13 @@ public:
     txn.resume();
   }
 };
+
+struct GlobalInit : public GlobalPlugin
+{
+ public:
+  GlobalInit() : GlobalPlugin(true) { }
+} __global_init__;
+
 
 TSReturnCode
 TSRemapNewInstance(int, char *[], void **hndl, char *, int)

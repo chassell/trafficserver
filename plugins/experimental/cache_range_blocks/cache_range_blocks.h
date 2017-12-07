@@ -89,7 +89,6 @@ public:
 
   void reset_cached_stub(Transaction &txn) {
     txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1); // permit range in cached-request
-    TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS);  // adjust range for later ...
     TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // handle reply for stub-file storage
   }
 
@@ -149,7 +148,6 @@ public:
   ~BlockStoreXform() override;
 
   void handleReadCacheLookupComplete(Transaction &txn) override;
-  void handleSendRequestHeaders(Transaction &txn) override;
 
   //////////////////////////////////////////
   //////////// in Response-Transformation phase

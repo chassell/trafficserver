@@ -65,7 +65,7 @@ BlockSetAccess::handleBlockTests()
     auto vconnErr = -reinterpret_cast<intptr_t>(vconn); // block isn't ready
     // valid pointers don't look like this
     if (!vconnErr || (vconnErr >= CACHE_ERRNO && vconnErr < EHTTP_ERROR)) {
-      DEBUG_LOG("read returned non-pointer: #%#lx == %ld", firstBlk + n, vconnErr);
+      DEBUG_LOG("read returned non-pointer: 1<<#%#lx == %ld", firstBlk + n, vconnErr, _b64BlkBitset.c_str());
       continue;
     }
 
@@ -80,7 +80,7 @@ BlockSetAccess::handleBlockTests()
     // successful!
     ++nrdy;
     base64_bit_set(_b64BlkBitset, firstBlk + n); // set a bit
-    DEBUG_LOG("read successful bitset: %s", _b64BlkBitset.c_str());
+    DEBUG_LOG("read successful bitset: + 1<<#%ld %s", firstBlk + n, _b64BlkBitset.c_str());
   }
 
   // ready to read from cache...

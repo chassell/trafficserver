@@ -28,21 +28,23 @@
 
 #pragma once
 
-extern const int8_t base64_values[];
-extern const char *const base64_chars;
+extern const int8_t base64_values[80];
+extern const char base64_chars[65];
 
 static inline void
 base64_bit_clr(std::string &base64, unsigned i)
 {
-  auto &c = base64[i / 6];
-  c       = base64_chars[~(1 << (i % 6)) & base64_values[c - '+']];
+  char &c = base64[i / 6];
+  auto v = ~(1 << (i % 6)) & base64_values[c - '+'];
+  c       = base64_chars[v & 0x3f];
 }
 
 static inline void
 base64_bit_set(std::string &base64, unsigned i)
 {
-  auto &c = base64[i / 6];
-  c       = base64_chars[(1 << (i % 6)) | base64_values[c - '+']];
+  char &c = base64[i / 6];
+  auto v = (1 << (i % 6)) | base64_values[c - '+'];
+  c       = base64_chars[v];
 }
 
 static inline bool
