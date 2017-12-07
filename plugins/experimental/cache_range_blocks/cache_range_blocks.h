@@ -62,6 +62,8 @@ class BlockSetAccess : public TransactionPlugin
   friend BlockStoreXform; // when it needs to change over
   friend BlockReadXform;  // when it needs to change over
   using Txn_t = Transaction;
+public:
+  static void start_if_range_present(Transaction &txn);
 
 public:
   explicit BlockSetAccess(Transaction &txn);

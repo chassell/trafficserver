@@ -35,31 +35,23 @@
 
 static int parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_t &end);
 
-const int8_t base64_values[80] = {
-  /* 0-4 */ /*0x2b: +*/ 62, /*0x2c,2d,0x2e:*/ ~0, ~0, ~0, /*0x2f: / */ 63,
-  /* 5-14 */  /*0x30-0x39: 0-9*/ 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 
-  /* 15-21 */   ~0, ~0, ~0, ~0, ~0, ~0, ~0,
-  /* 22-47 */ /*0x41-0x5a: A-Z*/ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-  /* 48-53 */   ~0, ~0, ~0, ~0, ~0, ~0,
-  /* 54-79 */ /*0x61-0x6a: a-z*/ 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51
-}; 
+void BlockSetAccess::start_if_range_present(Transaction &txn) {
+  auto &req = txn.getClientRequest();
+  auto &hdrs = req.getHeaders();
 
-const char base64_chars[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  auto encodings = hdrs.values(ACCEPT_ENCODING_TAG);
+  auto ranges = hdrs.count(RANGE_TAG);
 
-/////////////////////////////////////////////////
-/////////////////////////////////////////////////
-class BlockInitXform : public TransactionPlugin
-{
-public:
-  BlockInitXform(BlockSetAccess &ctxt) : TransactionPlugin(ctxt.txn()), _ctxt(ctxt)
-  {
+  if ( ranges != 1 ) { 
+    return;
   }
 
-  // change to 200 and append stub-file headers...
-private:
-  BlockSetAccess &_ctxt;
-};
+  if ( ! encodings.empty() && encodings.find("identity") == encodings.npos ) {
+    return; // cannot apply blocks to non-identity encodings
+  }
 
+  new BlockSetAccess(txn); // registers itself
+}
 
 /////////////////////////////////////////////////
 /////////////////////////////////////////////////
@@ -80,7 +72,7 @@ BlockSetAccess::BlockSetAccess(Transaction &txn)
 void
 BlockSetAccess::handleReadRequestHeadersPostRemap(Transaction &txn)
 {
-  clean_client_request(); // add allowance for stub-file's encoding
+  clean_client_request(); // permit match to a stub-file [disallowed by default]
   txn.resume();
 }
 
@@ -231,8 +223,11 @@ BlockSetAccess::clean_server_request(Transaction &txn)
   auto &proxyReq = txn.getServerRequest().getHeaders();
 
   auto fields = proxyReq.values(ACCEPT_ENCODING_TAG);
-  fields = fields.substr(0,fields.rfind(',')); // erase after last comma
-  proxyReq.set(ACCEPT_ENCODING_TAG,fields);
+  // is stub-encoding field found?
+  if ( fields.find(CONTENT_ENCODING_INTERNAL, fields.rfind(',')) != fields.npos ) {
+    fields = fields.substr(0,fields.rfind(',')); // erase after last comma
+    proxyReq.set(ACCEPT_ENCODING_TAG,fields);
+  }
 
   if ( ! _clntHdrs.count(IF_MODIFIED_SINCE_TAG) ) {
     proxyReq.erase(IF_MODIFIED_SINCE_TAG); // prevent 304 unless client wants it
@@ -355,6 +350,7 @@ BlockSetAccess::get_stub_hdrs()
   return (i == std::string::npos ? nullptr : &ccheHdrs);
 }
 
+
 int64_t
 BlockSetAccess::select_needed_blocks()
 {
@@ -400,7 +396,8 @@ void default_remap(Url &clntUrl, const Url &from, const Url &to)
     }
 }
 
-
+/////////////////////////////////////////////////////////////////////////
+/// hooks to activate block access
 /////////////////////////////////////////////////////////////////////////
 class RemapRangeDetect : public RemapPlugin
 {
@@ -410,12 +407,7 @@ public:
   // add stub-allowing header if has a valid range
   Result doRemap(const Url &from, const Url &to, Transaction &txn, bool &) override 
   {
-    auto &req = txn.getClientRequest();
-    auto &hdrs = req.getHeaders();
-
-    if (hdrs.count(RANGE_TAG) == 1) {
-      new BlockSetAccess(txn); // registers itself
-    }
+    BlockSetAccess::start_if_range_present(txn);
     return RESULT_NO_REMAP;
   }
 };
@@ -428,28 +420,20 @@ public:
   // add stub-allowing header if has a valid range
   void handleReadRequestHeadersPostRemap(Transaction &txn) override 
   {
-    // *must* avoid the stub file 
-    txn.getClientRequest().getHeaders().append(VARY_TAG, CONTENT_ENCODING_INTERNAL); // need for correct
-
-    auto &clntReq = txn.getClientRequest().getHeaders();
-    if (clntReq.count(RANGE_TAG) == 1) {
-      new BlockSetAccess(txn); // registers itself
-    }
+    BlockSetAccess::start_if_range_present(txn);
     txn.resume();
   }
 };
 
-struct GlobalInit : public GlobalPlugin
-{
- public:
-  GlobalInit() : GlobalPlugin(true) { }
-} __global_init__;
-
+//
+// NOTE: needed to start automatic Transaction-obj handling / freeing!!
+//
+struct GlobalInit : public GlobalPlugin { } __global_init__;
 
 TSReturnCode
 TSRemapNewInstance(int, char *[], void **hndl, char *, int)
 {
-  new RemapRangeDetect(hndl); // registers itself
+  new RemapRangeDetect(hndl); // for this remap line
   return TS_SUCCESS;
 }
 
@@ -461,6 +445,6 @@ TSPluginInit(int, const char **)
   RegisterGlobalPlugin("CPP_Cache_Range_Block", "apache", "dev@trafficserver.apache.org");
   if (!pluginPtr) {
     pluginPtr = std::make_shared<RangeDetect>();
-    pluginPtr->addHooks();
+    pluginPtr->addHooks(); // hook for all transactions
   }
 }
