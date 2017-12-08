@@ -69,6 +69,21 @@ BlockSetAccess::BlockSetAccess(Transaction &txn)
   txn.addPlugin(this);                  // delete this when done
 }
 
+BlockSetAccess::~BlockSetAccess() 
+{
+  using namespace std::chrono;
+  using std::future_status;
+
+  for( auto &&p : _vcsToRead ) {
+    if ( p.valid() && p.wait_for(seconds::zero()) == future_status::ready ) {
+      auto ptrErr = reinterpret_cast<intptr_t>(p.get());
+      if ( ptrErr > 0 || ptrErr < -INK_START_ERRNO - 1000) {
+        TSVConnClose(p.get());
+      }
+    }
+  }
+}
+
 void
 BlockSetAccess::handleReadRequestHeadersPostRemap(Transaction &txn)
 {
@@ -125,41 +140,11 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   _blkSize = INK_ALIGN((_assetLen >> 10) | 1, MIN_BLOCK_STORED);
 
-  if (select_needed_blocks()) {
-    DEBUG_LOG("read guaranteed: len=%#lx set=%s", _assetLen, _b64BlkBitset.c_str());
+  if (!select_needed_blocks()) {
+    DEBUG_LOG("write is likely needed: len=%#lx set=%s", _assetLen, _b64BlkBitset.c_str());
   }
 
-  /*
-    // all blocks [and keys for them] are valid to try reading?
-    if ( ! have_needed_blocks() || _keysInRange.empty() ) {
-      DEBUG_LOG("cache-resp-wr: base:%p len=%#lx len=%#lx set=%s",this,assetLen(),_assetLen,_b64BlkBitset.c_str());
-
-      // intercept data for new or updated stub version
-      _storeXform = std::make_unique<BlockStoreXform>(*this);
-      _storeXform->handleReadCacheLookupComplete(txn); // [default version]
-      // resume implied
-      return;
-    }
-  */
-
-  // stateless callback as deleter...
-  using Deleter_t                = void (*)(BlockSetAccess *);
-  static const Deleter_t deleter = [](BlockSetAccess *ptr) {
-    ptr->handleBlockTests(); // recurse from last one
-  };
-
-  // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
-  auto barrierLock = std::shared_ptr<BlockSetAccess>(this, deleter);
-  auto mutex       = TSMutexCreate(); // one shared mutex across reads
-  auto blkNum      = _beginByte / _blkSize;
-
-  for (auto i = 0U; i < _keysInRange.size(); ++i, ++blkNum) {
-    // prep for async reads that init into VConn-futures
-    _keysInRange[i] = std::move(APICacheKey(clientUrl(), _etagStr, blkNum * _blkSize));
-    auto contp      = APICont::create_temp_tscont(mutex, _vcsToRead[i], barrierLock);
-    TSCacheRead(contp, _keysInRange[i]);
-  }
-
+  launch_block_tests();
   // *no* txn.resume()
 }
 

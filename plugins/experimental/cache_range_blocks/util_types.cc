@@ -98,8 +98,8 @@ APICont::create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DATA> &cb
 
 // accepts TSHttpTxn handler functions
 template <class T_OBJ, typename T_DATA>
-APICont::APICont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, T_DATA), T_DATA cbdata)
-  : TSCont_t(TSContCreate(&APICont::handleTSEventCB, TSMutexCreate()))
+APICont::APICont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, T_DATA), T_DATA cbdata, TSMutex mutex)
+  : TSCont_t(TSContCreate(&APICont::handleTSEventCB, mutex))
 {
   // point back here
   TSContDataSet(get(), this);
@@ -162,10 +162,8 @@ BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, 
 class BlockStoreXform;
 class BlockReadXform;
 
-template APICont::APICont(BlockStoreXform &obj, void (BlockStoreXform::*funcp)(TSEvent, void *, decltype(nullptr)),
-                          decltype(nullptr));
-template APICont::APICont(BlockReadXform &obj, void (BlockReadXform::*funcp)(TSEvent, void *, decltype(nullptr)),
-                          decltype(nullptr));
+template APICont::APICont(BlockStoreXform &obj, void (BlockStoreXform::*funcp)(TSEvent, void *, decltype(nullptr)), decltype(nullptr),TSMutex);
+template APICont::APICont(BlockReadXform &obj, void (BlockReadXform::*funcp)(TSEvent, void *, decltype(nullptr)), decltype(nullptr),TSMutex);
 template TSCont APICont::create_temp_tscont(TSMutex, std::shared_future<TSVConn> &, const std::shared_ptr<void> &);
 
 //}

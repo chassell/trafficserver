@@ -67,8 +67,8 @@ public:
 
 public:
   explicit BlockSetAccess(Transaction &txn);
+  ~BlockSetAccess() override;
 
-  ~BlockSetAccess() override {}
   Transaction & txn() const { return _txn; }
   TSHttpTxn atsTxn() const { return _atsTxn; }
   Headers & clientHdrs() { return _clntHdrs; }
@@ -82,7 +82,6 @@ public:
   int64_t assetLen() const { return _assetLen; }
   int64_t rangeLen() const { return _endByte - _beginByte; }
   int64_t blockSize() const { return _blkSize; }
-
   
   void clean_client_request(); // allow secondary-accepting block-set match
   
@@ -110,13 +109,18 @@ public:
   // restore the request as before...
   void handleSendResponseHeaders(Transaction &txn) override;
 
-  void handleBlockTests();
+  void launch_block_tests();
+  void handle_block_tests();
 
 private:
   Headers *get_stub_hdrs();
 
   int64_t select_needed_blocks();
 
+  void start_cache_miss(int64_t firstBlk, int64_t endBlk);
+  void start_cache_hit(int64_t rangeStart);
+
+private:
   Transaction &_txn;
   const TSHttpTxn _atsTxn = nullptr;
   Url &_url;
@@ -145,44 +149,57 @@ private:
 /////////////////////////////////////////////////
 class BlockStoreXform : public TransactionPlugin, public BlockTeeXform
 {
+  template <typename _Tp, typename... _Args>
+  friend unique_ptr<_Tp> std::make_unique(_Args &&... __args); // when it needs to change over
 public:
-  BlockStoreXform(BlockSetAccess &ctxt);
   ~BlockStoreXform() override;
+
+private:
+  BlockStoreXform(BlockSetAccess &ctxt, int blockCount);
 
   void handleReadCacheLookupComplete(Transaction &txn) override;
 
-  //////////////////////////////////////////
-  //////////// in Response-Transformation phase
-private:
   int64_t next_valid_vconn(TSVConn &vconn, int64_t pos, int64_t len);
 
-  int64_t handleInput(TSIOBufferReader r, int64_t pos, int64_t len);
-  void handleWrite(TSEvent, void *, std::nullptr_t);
-
-  TSVConn next_valid_vconn(int64_t pos, int64_t len);
+  int64_t handleBodyRead(TSIOBufferReader r, int64_t pos, int64_t len);
+  void handleBlockWrite(TSEvent, void *, std::nullptr_t);
 
 private:
   BlockSetAccess &_ctxt;
   std::vector<std::shared_future<TSVConn>> _vcsToWrite; // indexed as the keys
   APICont _writeEvents;
+
+  TSVIO _cacheWrVIO = nullptr;
+  TSEvent _cacheWrVIOWaiting = TS_EVENT_NONE; // event if cache-write is blocked
+  TSEvent _blockVIOWaiting = TS_EVENT_NONE; // event if body-read is blocked
 };
 
 /////////////////////////////////////////////////
 /////////////////////////////////////////////////
 class BlockReadXform : public APIXformCont
 {
+  template <typename _Tp, typename... _Args>
+  friend unique_ptr<_Tp> std::make_unique(_Args &&... __args); // when it needs to change over
+
 public:
-  BlockReadXform(BlockSetAccess &ctxt, int64_t start);
 
 private:
+  BlockReadXform(BlockSetAccess &ctxt, int64_t start);
   void handleRead(TSEvent, void *, std::nullptr_t);
+
+  void launch_block_reads();
+  void set_cache_hit_bitset();
 
 private:
   BlockSetAccess &_ctxt;
-  int64_t _startByte;
-  TSVIO _bodyVIO = nullptr;
+  int64_t _startSkip;
+
   std::vector<TSVConn> _vconns;
   APICont _readEvents;
+
+  TSVIO _blockCopyVIO = nullptr;
+  TSEvent _blockCopyVIOWaiting = TS_EVENT_NONE; // last event
+  TSVIO _cacheRdVIO = nullptr;
 };
 
 //}

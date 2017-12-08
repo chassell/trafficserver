@@ -141,9 +141,12 @@ public:
   APICont() = default; // nullptr by default
 
   // accepts TSHttpTxn handler functions
-  template <class T_OBJ, typename T_DATA> APICont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, T_DATA), T_DATA cbdata);
+  template <class T_OBJ, typename T_DATA> 
+  APICont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, T_DATA), T_DATA cbdata, TSMutex mutex=TSMutexCreate());
 
-  operator TSCont() { return get(); }
+public:
+  operator TSCont() const { return get(); }
+
   APICont &
   operator=(std::function<void(TSEvent, void *)> &&fxn)
   {
@@ -171,42 +174,13 @@ public:
   APIXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t bytes = INT64_MAX, int64_t offset = 0);
 
   operator TSVConn() { return get(); }
-  TSVConn
-  input() const
-  {
-    return get();
-  }
-  TSVIO
-  inputVIO() const
-  {
-    return _inVIO;
-  }
-
-  TSVConn
-  output() const
-  {
-    return _outVConn;
-  }
-  TSVIO
-  outputVIO() const
-  {
-    return _outVIO;
-  }
-  TSIOBuffer
-  outputBuffer() const
-  {
-    return _outBufferP.get();
-  }
-  TSIOBufferReader
-  outputReader() const
-  {
-    return _outReaderP.get();
-  }
-  int64_t
-  outHeaderLen() const
-  {
-    return _outHeaderLen;
-  }
+  TSVConn input() const { return get(); }
+  TSVIO inputVIO() const { return _inVIO; }
+  TSVConn output() const { return _outVConn; }
+  TSVIO outputVIO() const { return _outVIO; }
+  TSIOBuffer outputBuffer() const { return _outBufferP.get(); }
+  TSIOBufferReader outputReader() const { return _outReaderP.get(); }
+  int64_t outHeaderLen() const { return _outHeaderLen; }
 
   void
   set_body_handler(XformCB_t &&fxn)
