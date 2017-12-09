@@ -138,7 +138,7 @@ public:
                                    const std::shared_ptr<void> &counted = std::shared_ptr<void>());
 
 public:
-  APICont() = default; // nullptr by default
+  explicit APICont(TSMutex mutex=TSMutexCreate()); // no handler
 
   // accepts TSHttpTxn handler functions
   template <class T_OBJ, typename T_DATA> 
@@ -157,14 +157,13 @@ public:
 private:
   static int handleTSEventCB(TSCont cont, TSEvent event, void *data);
 
-  APICont(TSMutex mutex);
-
   // holds object and function pointer
   std::function<void(TSEvent, void *)> _userCB;
 };
 
 // object to request write/read into cache
 struct APIXformCont : public TSCont_t {
+  using XformCBFxn_t = int64_t(TSEvent, TSVIO, int64_t);
   using XformCB_t = std::function<int64_t(TSEvent, TSVIO, int64_t)>;
   template <class T, typename... Args> friend std::unique_ptr<T> std::make_unique(Args &&... args);
 
@@ -180,21 +179,23 @@ public:
   TSVIO outputVIO() const { return _outVIO; }
   TSIOBuffer outputBuffer() const { return _outBufferP.get(); }
   TSIOBufferReader outputReader() const { return _outReaderP.get(); }
-  int64_t outHeaderLen() const { return _outHeaderLen; }
 
   void
   set_body_handler(XformCB_t &&fxn)
   {
-    TSDebug("cache_range_block", "[%s:%d] %s()", __FILE__, __LINE__, __func__);
     _bodyXformCB = fxn;
+    TSDebug("cache_range_block", "%s: %p",__func__,_bodyXformCB.target<XformCBFxn_t>());
   }
 
   void
   set_copy_handler(int64_t pos, XformCB_t &&fxn)
   {
-    TSDebug("cache_range_block", "[%s:%d] %s(): limit=%#lx", __FILE__, __LINE__, __func__, pos);
+    if ( pos == _nextXformCBAbsLimit ) {
+      return;
+    }
     _nextXformCB         = fxn;
     _nextXformCBAbsLimit = pos; // relative position to prev. one
+    TSDebug("cache_range_block", "%s: %p limit=%#lx", __func__ ,_nextXformCB.target<XformCBFxn_t>(), pos);
   }
 
   int64_t copy_next_len(int64_t);
@@ -227,13 +228,18 @@ private:
   XformCB_t _bodyXformCB;
 
   TSVIO _inVIO = nullptr;
+  TSEvent _inVIOWaiting = TS_EVENT_NONE;
 
   TSIOBuffer_t _outBufferP;
   TSIOBufferReader_t _outReaderP;
-  int64_t _outHeaderLen = 0L;
+
   TSVConn _outVConn     = nullptr;
   TSVIO _outVIO         = nullptr;
+  // for if WRITE_READY when _outVIO ran out...
+  TSEvent _outVIOWaiting = TS_EVENT_NONE;
 };
+
+
 
 class BlockTeeXform : public APIXformCont
 {
@@ -242,6 +248,9 @@ class BlockTeeXform : public APIXformCont
 public:
   BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, int64_t xformLen, int64_t xformOffset);
 
+  TSIOBufferReader teeReader() const { return _teeReaderP.get(); }
+
+public:
   int64_t handleEvent(TSEvent event, TSVIO vio, int64_t left);
 
   HookType _writeHook;

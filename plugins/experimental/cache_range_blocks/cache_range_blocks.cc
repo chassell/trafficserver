@@ -74,11 +74,20 @@ BlockSetAccess::~BlockSetAccess()
   using namespace std::chrono;
   using std::future_status;
 
+  atscppapi::ScopedContinuationLock lock(_txnCont); // to close
+
+  _storeXform.reset(); // clear first
+  _readXform.reset(); // clear next
+
   for( auto &&p : _vcsToRead ) {
+    auto i = &p - &_vcsToRead.front();
     if ( p.valid() && p.wait_for(seconds::zero()) == future_status::ready ) {
       auto ptrErr = reinterpret_cast<intptr_t>(p.get());
-      if ( ptrErr > 0 || ptrErr < -INK_START_ERRNO - 1000) {
+      if ( ptrErr < -INK_START_ERRNO - 1000 || ptrErr > 0 ) {
         TSVConnClose(p.get());
+        DEBUG_LOG("closed successful cache-read: #%ld %p",i,p.get());
+      } else {
+        DEBUG_LOG("pass failed cache-read: #%ld %p",i,p.get());
       }
     }
   }
@@ -144,8 +153,8 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     DEBUG_LOG("write is likely needed: len=%#lx set=%s", _assetLen, _b64BlkBitset.c_str());
   }
 
+  // nothing handled until handle_block_tests is done...
   launch_block_tests();
-  // *no* txn.resume()
 }
 
 // handled for init-only case

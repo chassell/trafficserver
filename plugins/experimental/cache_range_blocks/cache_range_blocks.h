@@ -53,7 +53,6 @@
 
 using namespace atscppapi;
 
-class BlockInitXform;
 class BlockStoreXform;
 class BlockReadXform;
 
@@ -96,6 +95,7 @@ public:
   void prepare_cached_stub(Transaction &txn);
   void clean_client_response(Transaction &txn);
 
+public:
   // permit use of blocks if possible
   void handleReadRequestHeadersPostRemap(Transaction &txn) override;
 
@@ -108,6 +108,7 @@ public:
 
   // restore the request as before...
   void handleSendResponseHeaders(Transaction &txn) override;
+private:
 
   void launch_block_tests();
   void handle_block_tests();
@@ -136,6 +137,8 @@ private:
   int64_t _beginByte = -1L;
   int64_t _endByte   = -1L;
 
+  APICont _txnCont = APICont{};
+
   std::vector<APICacheKey> _keysInRange;               // in order with index
   std::vector<std::shared_future<TSVConn>> _vcsToRead; // indexed as the keys
 
@@ -154,10 +157,12 @@ class BlockStoreXform : public TransactionPlugin, public BlockTeeXform
 public:
   ~BlockStoreXform() override;
 
+public:
+  // starting point if created from lookup hook
+  void handleReadCacheLookupComplete(Transaction &txn) override; 
+
 private:
   BlockStoreXform(BlockSetAccess &ctxt, int blockCount);
-
-  void handleReadCacheLookupComplete(Transaction &txn) override;
 
   int64_t next_valid_vconn(TSVConn &vconn, int64_t pos, int64_t len);
 
@@ -182,14 +187,16 @@ class BlockReadXform : public APIXformCont
   friend unique_ptr<_Tp> std::make_unique(_Args &&... __args); // when it needs to change over
 
 public:
+  // starting point if created from lookup hook
+  void handleReadCacheLookupComplete(Transaction &txn);
 
 private:
   BlockReadXform(BlockSetAccess &ctxt, int64_t start);
-  void handleRead(TSEvent, void *, std::nullptr_t);
 
-  void launch_block_reads();
-  void set_cache_hit_bitset();
+  void launch_block_reads(); // from constructor
+  void set_cache_hit_bitset(); // from constructor
 
+  void handleRead(TSEvent, void *, std::nullptr_t); // for read events
 private:
   BlockSetAccess &_ctxt;
   int64_t _startSkip;

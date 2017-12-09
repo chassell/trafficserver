@@ -43,10 +43,10 @@ forward_vio_event(TSEvent event, TSVIO invio)
 {
   //  if ( invio && TSVIOContGet(invio) && TSVIOBufferGet(invio)) {
   if (invio && TSVIOContGet(invio)) {
-    DEBUG_LOG("delivered: #%d", event);
+    DEBUG_LOG("delivered: e#%d", event);
     TSContCall(TSVIOContGet(invio), event, invio);
   } else {
-    DEBUG_LOG("not delivered: #%d", event);
+    DEBUG_LOG("not delivered: e#%d", event);
   }
 }
 
