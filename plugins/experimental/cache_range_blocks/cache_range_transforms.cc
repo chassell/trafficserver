@@ -47,6 +47,24 @@ APIXformCont::check_completions(TSEvent event)
     return -2;
   }
 
+  // "ack" end-of-write completion [zero bytes] to upstream
+  if (!TSVIONTodoGet(invio) && !_outVIO ) {
+    DEBUG_LOG("xform-event write-complete: #%d", event);
+    // can dealloc entire transaction!!
+    _xformCB(event, nullptr, 0);
+    forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE, invio);
+    return -3; // no further...
+  }
+
+  if ( !TSVIONTodoGet(invio) ) {
+    TSVIONBytesSet(_outVIO, TSVIONBytesGet(_outVIO)); // define it as complete
+    TSVIOReenable(_outVIO);
+    TSVConnClose(_outVConn);          // attempt faster close??
+    TSVConnShutdown(_outVConn, 0, 1); // attempt faster close??
+    _outVIO = nullptr;
+    return -4;
+  }
+
   return 0;
 }
 
@@ -72,22 +90,12 @@ APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
 
   switch ( event ) {
     // can delay the end!
-    case TS_EVENT_VCONN_WRITE_COMPLETE:
     case TS_EVENT_ERROR:
-      if ( edata == _outVIO ) {
-        DEBUG_LOG("xform-event write-complete# e#%d", event);
-      } else if (edata == _inVIO) {
-        DEBUG_LOG("xform-write-complete from inVIO");
-      } else {
+    case TS_EVENT_VCONN_WRITE_COMPLETE:
+      if (edata != _inVIO) {
         DEBUG_LOG("xform-write-complete from other source: %p",edata);
-        return 0L; /// cannot use it!
+        return 0L;
       }
-      _xformCB(event, nullptr, 0);
-      TSVIONBytesSet(_outVIO, TSVIONBytesGet(_outVIO)); // define write as complete [if not]
-      TSVIOReenable(_outVIO);
-      TSVConnClose(_outVConn); // if in or out are done ... then shutdown
-      TSVConnShutdown(_outVConn, 0, 1); // no more events please
-      _outVIO = nullptr;
       forward_vio_event(event, _inVIO); // upstream needs to know..
       return 0;
       /// RETURN
@@ -182,7 +190,7 @@ APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
 
   if ( ! TSVIONTodoGet(_inVIO) ) {
     DEBUG_LOG("xform input-exhausted: @%#lx -> @%#lx", odone, inpos);
-    _inVIOWaiting = TS_EVENT_NONE;
+    check_completions(event);
   } else if ( _inVIOWaiting ) {
     DEBUG_LOG("xform input-flushing: @%#lx -> @%#lx", odone, inpos);
     forward_vio_event(TS_EVENT_VCONN_WRITE_READY, _inVIO);
@@ -275,10 +283,11 @@ APIXformCont::init_body_range_handlers(int64_t len, int64_t offset)
 {
   // #4) xform handler: skip trailing download from server
   auto skipBodyEndFn = [this](TSEvent event, TSVIO vio, int64_t left) {
-    auto r    = skip_next_len(call_body_handler(event, vio, left)); // last one...
+    auto r = call_body_handler(event, vio, left);
+    r = skip_next_len(r);
     auto done = TSVIONDoneGet(_inVIO);
     DEBUG_LOG("xform skip-end: @%#lx+%#lx left=+%#lx", done - r, r, left);
-    return 0; // do not progress forward
+    return r;
   };
 
   if (!len) {

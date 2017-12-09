@@ -202,7 +202,7 @@ BlockReadXform::launch_block_reads()
     }
 
     // no VIO and enough is available...
-    DEBUG_LOG("read -> body vio begin: %#lx >= %#lx: n=%#lx", avail, _startSkip, _ctxt.rangeLen());
+    DEBUG_LOG("read -> body vio begin: %#lx: %#lx-%#lx", avail, _startSkip, _startSkip + _ctxt.rangeLen());
     set_body_handler(blockBodyHandler); // don't call this lambda again..
 
     handleRead(TS_EVENT_VCONN_WRITE_READY, nullptr, nullptr);
@@ -239,8 +239,12 @@ BlockReadXform::handleRead(TSEvent event, void *edata, std::nullptr_t)
       return; /// RETURN
 
     case TS_EVENT_VCONN_WRITE_READY:
+      if ( _blockCopyVIO ) {
+        DEBUG_LOG("write-ready event for reenable: e#%d", event);
+        TSVIOReenable(_blockCopyVIO);
+        return; // 
+      }
       DEBUG_LOG("read to begin body write: e#%d", event);
-      ink_assert( ! _blockCopyVIO );
       break; /// ....
     case TS_EVENT_VCONN_READ_COMPLETE:
       break; /// ....
@@ -250,7 +254,8 @@ BlockReadXform::handleRead(TSEvent event, void *edata, std::nullptr_t)
   auto nxt = std::find_if(_vconns.begin(), _vconns.end(), [](TSVConn vc) { return vc != nullptr; } ) - _vconns.begin();
 
   auto blkSize = _ctxt.blockSize();
-  auto posin   = nxt * blkSize + TSIOBufferReaderAvail(outputReader()); // last ready byte in buffer..
+  auto avail   = TSIOBufferReaderAvail(outputReader()); // last ready byte in buffer..
+  auto posin   = nxt * blkSize; // last ready byte in buffer..
   auto endout  = _startSkip + _ctxt.rangeLen();
 
   if ( _blockCopyVIO && _blockCopyVIOWaiting ) {
@@ -260,7 +265,7 @@ BlockReadXform::handleRead(TSEvent event, void *edata, std::nullptr_t)
   }
 
   // start the transform write?
-  if ( ! _blockCopyVIO && output() && posin >= _startSkip ) {
+  if ( ! _blockCopyVIO && output() && avail >= _startSkip ) {
     DEBUG_LOG("write-body start: %#lx-%#lx endblk#%#lx", _startSkip, _ctxt.rangeLen(), nxt);
     TSIOBufferReaderConsume(outputReader(), _startSkip);
     // start the write up correctly now..

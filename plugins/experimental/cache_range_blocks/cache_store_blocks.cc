@@ -58,7 +58,7 @@ BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
     BlockTeeXform(ctxt.txn(), 
                   [this](TSIOBufferReader r, int64_t inpos, int64_t len) { return this->handleBodyRead(r, inpos, len); },
                   ctxt._beginByte % ctxt.blockSize(), 
-                  ctxt.rangeLen() + ctxt.blockSize() - ctxt._endByte % ctxt.blockSize() ), // padded length...
+                  ctxt.rangeLen()),
     _ctxt(ctxt),
     _vcsToWrite(blockCount),
     _writeEvents(*this, &BlockStoreXform::handleBlockWrite, nullptr, TSContMutexGet(*this))
