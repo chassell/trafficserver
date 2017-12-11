@@ -71,6 +71,9 @@ BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
 void
 BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
 {
+  using namespace std::chrono;
+  using std::future_status;
+
   DEBUG_LOG("store: xhook:%p _ctxt:%p len=%#lx [blk:%ldK]", this, &_ctxt, _ctxt.assetLen(), _ctxt.blockSize()/1024);
 
   // [will override the server response for headers]
@@ -87,7 +90,7 @@ BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
 
     auto contp = APICont::create_temp_tscont(mutex, _vcsToWrite[i]);
     _vcsActions[i] = TSCacheWrite(contp, keys[i]); // find room to store each key...
-    if ( TSActionDone(_vcsActions[i]) ) {
+    if ( TSActionDone(_vcsActions[i]) && _vcsToWrite[i].wait_for(seconds::zero()) != future_status::ready) {
       _vcsActions[i] = nullptr;
     }
   }
@@ -111,15 +114,15 @@ BlockStoreXform::next_valid_vconn(TSVConn &vconn, int64_t inpos, int64_t len)
 
   // find distance to next start point (w/zero possible)
 
-  auto fwdDist = (inpos + blksz - 1) % blksz + 1; // between 1 and blksz
+  auto fwdDist = ((inpos + blksz - 1) % blksz) + 1; // between 1 and blksz
   int64_t revDist = blksz - fwdDist;              // between zero and blksz-1
   auto nxtPos = inpos + revDist;
 
   // skip available or unstorable blocks
-  for ( ; nxtPos < inpos + len ; nxtPos += blksz ) {
+  for ( ; nxtPos <= inpos + len ; nxtPos += blksz ) {
     auto blk     = nxtPos / blksz;
 
-    if (blk >= _vcsToWrite.size()) {
+    if (blk >= static_cast<int64_t>(_vcsToWrite.size())) {
       DEBUG_LOG("beyond final block final block start revDist:- blk%#lx,%#lx n=%ld)", absBlk + blk, absEnd, absEnd - absBlk);
       return -1;
     }
@@ -131,14 +134,14 @@ BlockStoreXform::next_valid_vconn(TSVConn &vconn, int64_t inpos, int64_t len)
     // can't find a ready write waiting?
     if (!_vcsToWrite[blk].valid()) {
       DEBUG_LOG("invalid VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, _ctxt.blockSize()/1024);
-      TSActionCancel(_vcsActions[blk]);
+      TSActionCancel(_vcsActions[blk]); // ??
       _vcsActions[blk] = nullptr;
       continue;
     }
 
     // can't find a ready write waiting?
     if (_vcsToWrite[blk].wait_for(seconds::zero()) != future_status::ready) {
-      DEBUG_LOG("failed VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, _ctxt.blockSize()/1024);
+      DEBUG_LOG("slow VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, _ctxt.blockSize()/1024);
       TSActionCancel(_vcsActions[blk]);
       _vcsActions[blk] = nullptr;
       _vcsToWrite[blk] = std::shared_future<TSVConn>(); // no more waiting
@@ -146,6 +149,12 @@ BlockStoreXform::next_valid_vconn(TSVConn &vconn, int64_t inpos, int64_t len)
     }
 
     // found one ready to go...
+    auto ptrErr = reinterpret_cast<intptr_t>(_vcsToWrite[blk].get());
+    if ( ptrErr >= -INK_START_ERRNO - 1000 && ptrErr <= 0 ) {
+      DEBUG_LOG("pass failed cache-write: #%ld [%ld]",blk,-ptrErr);
+      continue;
+    }
+
     vconn = _vcsToWrite[blk].get();
     DEBUG_LOG("ready VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, _ctxt.blockSize()/1024);
     return nxtPos - inpos;
@@ -259,7 +268,7 @@ BlockStoreXform::handleBlockWrite(TSEvent event, void *edata, std::nullptr_t)
     } else {
       DEBUG_LOG("cache-write block: e#%d -> %ld? %ld?", event, TSVIONDoneGet(blkWriteVIO), TSVIONBytesGet(blkWriteVIO));
     }
-    TSVConnClose(TSVIOVConnGet(blkWriteVIO));
+    TSVConnClose(TSVIOVConnGet(blkWriteVIO)); // flush to make available quick...
     break;
   default:
     DEBUG_LOG("cache-write event: e#%d", event);
@@ -271,6 +280,8 @@ BlockStoreXform::~BlockStoreXform()
 {
   using namespace std::chrono;
   using std::future_status;
+
+  DEBUG_LOG("destruct started");
 
   atscppapi::ScopedContinuationLock lock(*this);
 
@@ -294,12 +305,7 @@ BlockStoreXform::~BlockStoreXform()
       continue;
     }
     
-    if ( TSVConnClosedGet(p.get()) ) {
-      DEBUG_LOG("pre-closed successful cache-write: #%ld %p",i,p.get());
-      continue;
-    }
-
     DEBUG_LOG("close successful cache-write: #%ld %p",i,p.get());
-    TSVConnClose(p.get());
+    // TSVConnClose(p.get());
   }
 }

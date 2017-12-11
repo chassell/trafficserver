@@ -137,7 +137,7 @@ private:
   int64_t _beginByte = -1L;
   int64_t _endByte   = -1L;
 
-  APICont _txnCont = APICont{};
+  APICont _txnCont;
 
   std::vector<APICacheKey> _keysInRange;               // in order with index
   std::vector<std::shared_future<TSVConn>> _vcsToRead; // indexed as the keys
@@ -190,6 +190,8 @@ class BlockReadXform : public APIXformCont
 public:
   // starting point if created from lookup hook
   void handleReadCacheLookupComplete(Transaction &txn);
+
+  ~BlockReadXform() override;
 
 private:
   BlockReadXform(BlockSetAccess &ctxt, int64_t start);

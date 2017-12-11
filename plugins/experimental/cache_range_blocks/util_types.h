@@ -139,6 +139,7 @@ public:
 
 public:
   explicit APICont(TSMutex mutex=TSMutexCreate()); // no handler
+  virtual ~APICont() = default;
 
   // accepts TSHttpTxn handler functions
   template <class T_OBJ, typename T_DATA> 
@@ -171,6 +172,7 @@ public:
   //  APIXformCont() = default; // nullptr by default
   //  APIXformCont(APIXformCont &&) = default;
   APIXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t bytes = INT64_MAX, int64_t offset = 0);
+  virtual ~APIXformCont() = default;
 
   operator TSVConn() { return get(); }
   TSVConn input() const { return get(); }
@@ -181,14 +183,14 @@ public:
   TSIOBufferReader outputReader() const { return _outReaderP.get(); }
 
   void
-  set_body_handler(XformCB_t &&fxn)
+  set_body_handler(const XformCB_t &fxn)
   {
     _bodyXformCB = fxn;
     TSDebug("cache_range_block", "%s: %p",__func__,_bodyXformCB.target<XformCBFxn_t>());
   }
 
   void
-  set_copy_handler(int64_t pos, XformCB_t &&fxn)
+  set_copy_handler(int64_t pos, const XformCB_t &fxn)
   {
     if ( pos == _nextXformCBAbsLimit ) {
       return;
@@ -247,6 +249,7 @@ class BlockTeeXform : public APIXformCont
 
 public:
   BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, int64_t xformLen, int64_t xformOffset);
+  virtual ~BlockTeeXform() = default;
 
   TSIOBufferReader teeReader() const { return _teeReaderP.get(); }
 

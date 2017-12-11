@@ -202,10 +202,10 @@ BlockReadXform::launch_block_reads()
     }
 
     // no VIO and enough is available...
-    DEBUG_LOG("read -> body vio begin: %#lx: %#lx-%#lx", avail, _startSkip, _startSkip + _ctxt.rangeLen());
-    set_body_handler(blockBodyHandler); // don't call this lambda again..
-
+    DEBUG_LOG("read -> body vio begin: %#lx: %#lx-%#lx [%p]", avail, _startSkip, _startSkip + _ctxt.rangeLen(), _blockCopyVIO);
     handleRead(TS_EVENT_VCONN_WRITE_READY, nullptr, nullptr);
+
+    set_body_handler(blockBodyHandler); // NOTE: destructs active lambda
     return 0L;
   });
 
@@ -279,6 +279,7 @@ BlockReadXform::handleRead(TSEvent event, void *edata, std::nullptr_t)
   }
 
   if ( event == TS_EVENT_VCONN_WRITE_READY ) {
+    DEBUG_LOG("explicit write-body start completed: %#lx-%#lx endblk#%#lx", _startSkip, _ctxt.rangeLen(), nxt);
     return; // cannot do more ...
   }
 
@@ -319,4 +320,9 @@ BlockReadXform::set_cache_hit_bitset()
   } else if ( r == TS_ERROR ) {
     DEBUG_LOG("failed to update cache-hdrs:\n-----\n%s\n------\n", cachedHdr.wireStr().c_str());
   }
+}
+
+BlockReadXform::~BlockReadXform()
+{
+  DEBUG_LOG("destruct started");
 }
