@@ -61,6 +61,7 @@ BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
                   ctxt.rangeLen()),
     _ctxt(ctxt),
     _vcsToWrite(blockCount),
+    _vcsActions(blockCount),
     _writeEvents(*this, &BlockStoreXform::handleBlockWrite, nullptr, TSContMutexGet(*this))
 {
   TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS);  // add block-range and clean up
@@ -78,10 +79,16 @@ BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
   auto mutex  = TSContMutexGet(*this);
   auto blkNum = _ctxt._beginByte / _ctxt.blockSize();
 
-  for (auto i = 0U; i < keys.size(); ++i, ++blkNum) {
-    if (keys[i]) {
-      auto contp = APICont::create_temp_tscont(mutex, _vcsToWrite[i]);
-      TSCacheWrite(contp, keys[i]); // find room to store each key...
+  for (auto i = 0U; i < keys.size(); ++i, ++blkNum) 
+  {
+    if ( ! keys[i] || is_base64_bit_set(_ctxt.b64BlkBitset(), blkNum) ) {
+      continue;
+    }
+
+    auto contp = APICont::create_temp_tscont(mutex, _vcsToWrite[i]);
+    _vcsActions[i] = TSCacheWrite(contp, keys[i]); // find room to store each key...
+    if ( TSActionDone(_vcsActions[i]) ) {
+      _vcsActions[i] = nullptr;
     }
   }
 
@@ -99,55 +106,54 @@ BlockStoreXform::next_valid_vconn(TSVConn &vconn, int64_t inpos, int64_t len)
 
   vconn = nullptr;
 
+  auto absBlk = _ctxt._beginByte / blksz;
+  auto absEnd = ( _ctxt._endByte + blksz-1 ) / blksz;
+
   // find distance to next start point (w/zero possible)
-  int64_t dist = (!inpos ? 0 : blksz - 1 - ((inpos - 1) % blksz));
 
-  // dist with length includes a block boundary
+  auto fwdDist = (inpos + blksz - 1) % blksz + 1; // between 1 and blksz
+  int64_t revDist = blksz - fwdDist;              // between zero and blksz-1
+  auto nxtPos = inpos + revDist;
 
-  auto absbase = _ctxt._beginByte / blksz;             // fall back to prev.
-  auto absend  = (_ctxt._endByte + blksz - 1) / blksz; // forward to next block
-  // index of block in server download
-  auto blk     = (inpos + dist) / blksz;
-  int64_t blks = _vcsToWrite.size();
+  // skip available or unstorable blocks
+  for ( ; nxtPos < inpos + len ; nxtPos += blksz ) {
+    auto blk     = nxtPos / blksz;
 
-  // skip available blocks
-  for (; absbase + blk < absend && blk < blks && is_base64_bit_set(_ctxt.b64BlkBitset(), absbase + blk); ++blk) {
-    dist += blksz; // jump forward a full block
-  }
+    if (blk >= _vcsToWrite.size()) {
+      DEBUG_LOG("beyond final block final block start revDist:- blk%#lx,%#lx n=%ld)", absBlk + blk, absEnd, absEnd - absBlk);
+      return -1;
+    }
+   
+    if ( ! _vcsActions[blk] ) {
+      continue;
+    }
 
-  if (blk >= blks) {
-    DEBUG_LOG("beyond final block final block start dist:- blk%#lx,%#lx (tot %ld/%ld)", absbase + blk, absend, absend - absbase,
-              blks);
-    return -1;
-  }
+    // can't find a ready write waiting?
+    if (!_vcsToWrite[blk].valid()) {
+      DEBUG_LOG("invalid VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, _ctxt.blockSize()/1024);
+      TSActionCancel(_vcsActions[blk]);
+      _vcsActions[blk] = nullptr;
+      continue;
+    }
 
-  if (absbase + blk == absend) {
-    DEBUG_LOG("at final block start dist:- blk%#lx,%#lx (tot %ld/%ld) [blk:%ldK]", absbase + blk, absend, absend - absbase, blks, _ctxt.blockSize()/1024);
-    dist = 0;
+    // can't find a ready write waiting?
+    if (_vcsToWrite[blk].wait_for(seconds::zero()) != future_status::ready) {
+      DEBUG_LOG("failed VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, _ctxt.blockSize()/1024);
+      TSActionCancel(_vcsActions[blk]);
+      _vcsActions[blk] = nullptr;
+      _vcsToWrite[blk] = std::shared_future<TSVConn>(); // no more waiting
+      continue;
+    }
+
+    // found one ready to go...
+    vconn = _vcsToWrite[blk].get();
+    DEBUG_LOG("ready VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, _ctxt.blockSize()/1024);
+    return nxtPos - inpos;
   }
 
   // no boundary within distance?
-  if (dist >= len) {
-    DEBUG_LOG("skip required pos:%#lx -> %#lx len=%#lx [blk:%ldK]", inpos, inpos + dist, len, _ctxt.blockSize()/1024);
-    return -1;
-  }
-
-  // can't find a ready write waiting?
-  if (!_vcsToWrite[blk].valid()) {
-    DEBUG_LOG("invalid VConn future dist:%#lx pos:%#lx len=%#lx [blk:%ldK]", dist, inpos, len, _ctxt.blockSize()/1024);
-    return -1;
-  }
-
-  // can't find a ready write waiting?
-  if (_vcsToWrite[blk].wait_for(seconds::zero()) != future_status::ready) {
-    DEBUG_LOG("failed VConn future dist:%#lx pos:%#lx len=%#lx [blk:%ldK]", dist, inpos, len, _ctxt.blockSize()/1024);
-    return -1;
-  }
-
-  // found one ready to go...
-  vconn = _vcsToWrite[blk].get();
-  DEBUG_LOG("ready VConn future dist:%#lx pos:%#lx len=%#lx [blk:%ldK]", dist, inpos, len, _ctxt.blockSize()/1024);
-  return dist;
+  DEBUG_LOG("skip required pos:%#lx -> %#lx len=%#lx [blk:%ldK]", inpos, nxtPos, len, _ctxt.blockSize()/1024);
+  return -1;
 }
 
 //
@@ -213,13 +219,15 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
   }
 
   auto &vcFuture = _vcsToWrite[buffpos / blksz]; // should be correct now...
+  auto &vcAction = _vcsActions[buffpos / blksz];
 
-  ink_assert(vcFuture.get() == currBlock);
+  ink_assert(vcFuture.get() == currBlock && vcAction );
 
 //  vcFuture = std::shared_future<TSVConn>(); // writing it now .. so zero block out
 
   // should send a WRITE_COMPLETE rather quickly
   _cacheWrVIO = TSVConnWrite(currBlock, _writeEvents, teerdr, wrlen);
+  vcAction = nullptr; // don't search again..
 
   DEBUG_LOG("store ++++ performed write [%p] pos:%#lx+%#lx / +%#lx+%#lx", _cacheWrVIO, buffpos, wrlen, oavail, len);
   return len;
@@ -268,12 +276,15 @@ BlockStoreXform::~BlockStoreXform()
 
   for( auto &&p : _vcsToWrite ) {
     auto i = &p - &_vcsToWrite.front();
-    if ( ! p.valid() ) {
+
+    if ( ! p.valid() || ! _vcsActions[i] ) {
       DEBUG_LOG("ignore invalid cache-write: #%ld",i);
       continue;
     } 
-    if ( p.wait_for(seconds::zero()) == future_status::ready ) {
+
+    if ( p.wait_for(seconds::zero()) != future_status::ready ) {
       DEBUG_LOG("toss late/delayed cache-write: #%ld",i);
+      TSActionCancel(_vcsActions[i]); // can't tolerate a late event!
       continue;
     } 
     
@@ -288,8 +299,7 @@ BlockStoreXform::~BlockStoreXform()
       continue;
     }
 
-    DEBUG_LOG("closed successful cache-write: #%ld %p",i,p.get());
+    DEBUG_LOG("close successful cache-write: #%ld %p",i,p.get());
     TSVConnClose(p.get());
-    p = std::shared_future<TSVConn>(); // make invalid
   }
 }

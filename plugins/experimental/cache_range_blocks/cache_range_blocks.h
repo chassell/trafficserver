@@ -172,6 +172,7 @@ private:
 private:
   BlockSetAccess &_ctxt;
   std::vector<std::shared_future<TSVConn>> _vcsToWrite; // indexed as the keys
+  std::vector<TSAction> _vcsActions; // indexed as the keys
   APICont _writeEvents;
 
   TSVIO _cacheWrVIO = nullptr;
