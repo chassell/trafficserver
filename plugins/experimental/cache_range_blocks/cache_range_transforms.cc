@@ -49,15 +49,15 @@ APIXformCont::check_completions(TSEvent event)
 
   // "ack" end-of-write completion [zero bytes] to upstream
   if (!TSVIONTodoGet(invio) && !_outVIO ) {
-    DEBUG_LOG("xform-event write-complete: #%d", event);
+    DEBUG_LOG("xform-event write-complete: e#%d", event);
     // can dealloc entire transaction!!
-    _xformCB(event, nullptr, 0);
     forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE, invio);
     return -3; // no further...
   }
 
-  if ( !TSVIONTodoGet(invio) ) {
-    TSVIONBytesSet(_outVIO, TSVIONBytesGet(_outVIO)); // define it as complete
+  if ( !TSVIONTodoGet(invio) && !TSVIONTodoGet(_outVIO) ) {
+    DEBUG_LOG("xform-event dual write-complete: e#%d", event);
+    _xformCB(event, nullptr, 0);
     TSVIOReenable(_outVIO);
     TSVConnClose(_outVConn);          // attempt faster close??
     TSVConnShutdown(_outVConn, 0, 1); // attempt faster close??
@@ -88,48 +88,42 @@ APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
     _outVConn = TSTransformOutputVConnGet(invconn);
   }
 
+  // handle output-complete 
+  if ( event == TS_EVENT_VCONN_WRITE_COMPLETE && _outVIO && edata == _outVIO ) {
+    TSVIONBytesSet(_outVIO, TSVIONBytesGet(_outVIO)); // define it as complete
+    return 0;
+  }
+
+  // handle output-flush block...
+  if ( event == TS_EVENT_VCONN_WRITE_READY && edata && edata == _outVIO ) {
+    auto usable = TSIOBufferReaderAvail(outputReader());
+    if ( ! usable ) {
+      DEBUG_LOG(" xform-downstream wait: %ld", usable);
+      _outVIOWaiting = event; // call reenable later!
+    } else {
+      DEBUG_LOG(" xform-downstream flush: %ld", usable);
+      TSVIOReenable(_outVIO); // chew on that now!
+    }
+    return 0;
+  }
+
+  if ( event != TS_EVENT_IMMEDIATE && edata && edata != _inVIO ) {
+    DEBUG_LOG("event from other source: e#%d %p",event,edata);
+    return 0L;
+  }
+
+  // edata is _inVIO or from it ...
+
   switch ( event ) {
     // can delay the end!
     case TS_EVENT_ERROR:
     case TS_EVENT_VCONN_WRITE_COMPLETE:
-      if (edata != _inVIO) {
-        DEBUG_LOG("xform-write-complete from other source: %p",edata);
-        return 0L;
-      }
-      forward_vio_event(event, _inVIO); // upstream needs to know..
+      forward_vio_event(event, _inVIO); // upstream needs full shutdown now ...
       return 0;
       /// RETURN
-
-    case TS_EVENT_VCONN_WRITE_READY:
-    {
-      if ( edata == _outVIO ) {
-      } else if (edata == _inVIO) {
-        DEBUG_LOG("xform-write-ready from inVIO");
-      } else {
-        DEBUG_LOG("xform-write-ready from other source: %p",edata);
-        return 0L; /// cannot use it!
-      }
-
-      auto usable = TSIOBufferReaderAvail(outputReader());
-      if ( usable ) {
-        DEBUG_LOG(" xform-downstream flush: %ld", usable);
-        TSVIOReenable(_outVIO); // chew on that now!
-      } else {
-        DEBUG_LOG(" xform-downstream wait: %ld", usable);
-        _outVIOWaiting = event; // call reenable later!
-      }
-      return 0;
-      /// RETURN
-    }
 
     default:
-      if ( edata == _outVIO ) {
-        DEBUG_LOG("xform-unkn-event from outVIO e#%d",event);
-      } else if (edata == _inVIO) {
-        DEBUG_LOG("xform-unkn-event from inVIO e#%d",event);
-      } else {
-        DEBUG_LOG("xform-unkn-event from other source: e#%d %p",event,edata);
-      }
+      DEBUG_LOG("xform-unkn-event from inVIO e#%d",event);
       return 0;
       /// RETURN
 
@@ -160,12 +154,13 @@ APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
     inrdr   = TSVIOReaderGet(_inVIO); // reset if changed!
     inpos   = TSVIONDoneGet(_inVIO);
     inavail = TSIOBufferReaderAvail(inrdr);
-    inready = std::min(inready,inavail); // check if drained down...
     DEBUG_LOG(" ^^^^^^^^^^^ cb-event: @%#lx buff=+%#lx rdy=+%#lx [%p]", inpos, inavail, inready, inrdr);
 
     if (inpos < _xformCBAbsLimit || inpos > _nextXformCBAbsLimit) {
       break;
     }
+
+    inready = inavail; // reset for next callback ...
 
     // go again...
     _xformCB         = _nextXformCB;
@@ -173,33 +168,43 @@ APIXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
     DEBUG_LOG("xform next cb: @%#lx -> @%#lx", inpos, _xformCBAbsLimit);
   }
 
-  if ( inavail == inready && _outVIOWaiting != TS_EVENT_NONE && TSIOBufferReaderAvail(outputReader()) ) {
-    DEBUG_LOG("xform reenable: @%#lx w/avail", TSIOBufferReaderAvail(outputReader()));
+  auto outready = TSIOBufferReaderAvail(outputReader());
+
+  // we're unblocked now?  flush and continue on...
+  if ( _outVIOWaiting && outready ) {
+    DEBUG_LOG("xform flush reenable: @%#lx w/avail", outready);
     TSVIOReenable(_outVIO);
     _outVIOWaiting = TS_EVENT_NONE; // flushed new data...
   }
 
+  // no change at all and ready to go?
+  if ( ! inavail && odone == inpos ) {
+    DEBUG_LOG("xform input waiting: @%#lx w/no change", inpos);
+    forward_vio_event(TS_EVENT_VCONN_WRITE_READY, _inVIO);
+    return 0;
+  }
+
   // input is not moved or a reader is waiting?
-  if (odone == inpos || TSIOBufferReaderAvail(inrdr)) {
-    DEBUG_LOG("xform input waiting: @%#lx w/no change", TSIOBufferReaderAvail(inrdr));
+  if ( inavail ) {
+    DEBUG_LOG("xform input buffer left: buff=%#lx", TSIOBufferReaderAvail(inrdr));
     _inVIOWaiting = event;
     return 0; // something prevented writing further
   }
 
-  // if done with this buffer ....
+  // buffer was fully consumed...
 
-  if ( ! TSVIONTodoGet(_inVIO) ) {
-    DEBUG_LOG("xform input-exhausted: @%#lx -> @%#lx", odone, inpos);
-    check_completions(event);
-  } else if ( _inVIOWaiting ) {
+  if (check_completions(event)) {
+    return 0; //
+  }
+
+  if ( _inVIOWaiting ) {
     DEBUG_LOG("xform input-flushing: @%#lx -> @%#lx", odone, inpos);
-    forward_vio_event(TS_EVENT_VCONN_WRITE_READY, _inVIO);
-    // no bytes left and we've moved forward
-    _inVIOWaiting = TS_EVENT_NONE;
   } else {
     DEBUG_LOG("xform input-continuing: @%#lx -> @%#lx", odone, inpos);
-    forward_vio_event(TS_EVENT_VCONN_WRITE_READY, _inVIO);
   }
+
+  _inVIOWaiting = TS_EVENT_NONE;
+  forward_vio_event(TS_EVENT_VCONN_WRITE_READY, _inVIO);
 
   return 0;
 }
@@ -350,12 +355,11 @@ BlockTeeXform::handleEvent(TSEvent event, TSVIO evtvio, int64_t left)
   // position *without* left new bytes...
   auto done   = TSVIONDoneGet(inputVIO());
   auto oavail = TSIOBufferReaderAvail(_teeReaderP.get());
-
   DEBUG_LOG("tee buffer bytes pre-copy: @%#lx+%#lx+%#lx", done - oavail, oavail, left);
-  TSIOBufferCopy(_teeBufferP.get(), TSVIOReaderGet(inputVIO()), left, 0);
+  left = TSIOBufferCopy(_teeBufferP.get(), TSVIOReaderGet(inputVIO()), left, 0);
 
   auto navail = TSIOBufferReaderAvail(_teeReaderP.get());
-  DEBUG_LOG("tee buffer bytes post-copy: @%#lx+%#lx [+%#lx]", done - (navail - left), navail, left);
+  DEBUG_LOG("tee buffer bytes post-copy: @%#lx+%#lx [+%#lx]", done - oavail, navail, left);
 
   return _writeHook(_teeReaderP.get(), done, left); // show advance
 }

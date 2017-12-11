@@ -141,7 +141,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   // invalid stub file... (or client headers instead)
   if (!_assetLen || _b64BlkBitset.empty() || chk != _b64BlkBitset.end()) {
-    DEBUG_LOG("stub-failed: len=%#lx set=%s", _assetLen, _b64BlkBitset.c_str());
+    DEBUG_LOG("stub-failed: len=%#lx [blk:%ldK] set=%s", _assetLen, _blkSize/1024, _b64BlkBitset.c_str());
     reset_cached_stub(txn);
     txn.resume();
     return;
@@ -150,7 +150,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   _blkSize = INK_ALIGN((_assetLen >> 10) | 1, MIN_BLOCK_STORED);
 
   if (!select_needed_blocks()) {
-    DEBUG_LOG("write is likely needed: len=%#lx set=%s", _assetLen, _b64BlkBitset.c_str());
+    DEBUG_LOG("write is likely needed: len=%#lx [blk:%ldK] set=%s", _assetLen, _blkSize/1024, _b64BlkBitset.c_str());
   }
 
   // nothing handled until handle_block_tests is done...
