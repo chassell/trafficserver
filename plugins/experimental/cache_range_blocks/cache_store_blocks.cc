@@ -27,6 +27,7 @@
 #define DEBUG_LOG(fmt, ...) TSDebug(PLUGIN_NAME, "[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
 #define ERROR_LOG(fmt, ...) TSError("[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
 
+void close_all_vcs(BlockStoreXform::WriteVCs_t &vect);
 
 void
 BlockSetAccess::start_cache_miss(int64_t firstBlk, int64_t endBlk)
@@ -52,7 +53,6 @@ BlockSetAccess::start_cache_miss(int64_t firstBlk, int64_t endBlk)
   _storeXform->handleReadCacheLookupComplete(txn()); // may have txn.resume()
 }
 
-
 BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
   : TransactionPlugin(ctxt.txn()),
     BlockTeeXform(ctxt.txn(), 
@@ -60,12 +60,15 @@ BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
                   ctxt._beginByte % ctxt.blockSize(), 
                   ctxt.rangeLen()),
     _ctxt(ctxt),
-    _vcsToWrite(blockCount),
-    _vcsActions(blockCount),
+    // must handle late late returns for TSCacheWrite
+    _vcsToWriteP( new WriteVCs_t(blockCount), []( WriteVCs_t *ptr ){ close_all_vcs(*ptr); } ),
+    _vcsToWrite(*_vcsToWriteP),
     _writeEvents(*this, &BlockStoreXform::handleBlockWrite, nullptr, TSContMutexGet(*this))
 {
   TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS);  // add block-range and clean up
   TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // adjust headers to stub-file
+
+
 }
 
 void
@@ -88,11 +91,8 @@ BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
       continue;
     }
 
-    auto contp = APICont::create_temp_tscont(mutex, _vcsToWrite[i]);
-    _vcsActions[i] = TSCacheWrite(contp, keys[i]); // find room to store each key...
-    if ( TSActionDone(_vcsActions[i]) && _vcsToWrite[i].wait_for(seconds::zero()) != future_status::ready) {
-      _vcsActions[i] = nullptr;
-    }
+    auto contp = APICont::create_temp_tscont(mutex, _vcsToWrite[i], _vcsToWriteP);
+    TSCacheWrite(contp, keys[i]); // find room to store each key...
   }
 
   DEBUG_LOG("store: len=%#lx [blk:%ldK, %#lx bytes]", _ctxt._assetLen, _ctxt.blockSize(), _ctxt.blockSize());
@@ -127,23 +127,15 @@ BlockStoreXform::next_valid_vconn(TSVConn &vconn, int64_t inpos, int64_t len)
       return -1;
     }
    
-    if ( ! _vcsActions[blk] ) {
-      continue;
-    }
-
     // can't find a ready write waiting?
     if (!_vcsToWrite[blk].valid()) {
       DEBUG_LOG("invalid VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, _ctxt.blockSize()/1024);
-      TSActionCancel(_vcsActions[blk]); // ??
-      _vcsActions[blk] = nullptr;
       continue;
     }
 
     // can't find a ready write waiting?
     if (_vcsToWrite[blk].wait_for(seconds::zero()) != future_status::ready) {
       DEBUG_LOG("slow VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, _ctxt.blockSize()/1024);
-      TSActionCancel(_vcsActions[blk]);
-      _vcsActions[blk] = nullptr;
       _vcsToWrite[blk] = std::shared_future<TSVConn>(); // no more waiting
       continue;
     }
@@ -152,6 +144,7 @@ BlockStoreXform::next_valid_vconn(TSVConn &vconn, int64_t inpos, int64_t len)
     auto ptrErr = reinterpret_cast<intptr_t>(_vcsToWrite[blk].get());
     if ( ptrErr >= -INK_START_ERRNO - 1000 && ptrErr <= 0 ) {
       DEBUG_LOG("pass failed cache-write: #%ld [%ld]",blk,-ptrErr);
+      _vcsToWrite[blk] = std::shared_future<TSVConn>(); // no more waiting
       continue;
     }
 
@@ -228,15 +221,13 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
   }
 
   auto &vcFuture = _vcsToWrite[buffpos / blksz]; // should be correct now...
-  auto &vcAction = _vcsActions[buffpos / blksz];
 
-  ink_assert(vcFuture.get() == currBlock && vcAction );
+  ink_assert(vcFuture.get() == currBlock);
 
 //  vcFuture = std::shared_future<TSVConn>(); // writing it now .. so zero block out
 
   // should send a WRITE_COMPLETE rather quickly
   _cacheWrVIO = TSVConnWrite(currBlock, _writeEvents, teerdr, wrlen);
-  vcAction = nullptr; // don't search again..
 
   DEBUG_LOG("store ++++ performed write [%p] pos:%#lx+%#lx / +%#lx+%#lx", _cacheWrVIO, buffpos, wrlen, oavail, len);
   return len;
@@ -268,7 +259,7 @@ BlockStoreXform::handleBlockWrite(TSEvent event, void *edata, std::nullptr_t)
     } else {
       DEBUG_LOG("cache-write block: e#%d -> %ld? %ld?", event, TSVIONDoneGet(blkWriteVIO), TSVIONBytesGet(blkWriteVIO));
     }
-    TSVConnClose(TSVIOVConnGet(blkWriteVIO)); // flush to make available quick...
+    // TSVConnClose(TSVIOVConnGet(blkWriteVIO)); // flush to make available quick...
     break;
   default:
     DEBUG_LOG("cache-write event: e#%d", event);
@@ -276,26 +267,24 @@ BlockStoreXform::handleBlockWrite(TSEvent event, void *edata, std::nullptr_t)
   }
 }
 
-BlockStoreXform::~BlockStoreXform()
+void
+close_all_vcs(BlockStoreXform::WriteVCs_t &vect)
 {
   using namespace std::chrono;
   using std::future_status;
 
-  DEBUG_LOG("destruct started");
+  DEBUG_LOG("vcs destruct started");
 
-  atscppapi::ScopedContinuationLock lock(*this);
+  for( auto &&p : vect ) {
+    auto i = &p - &vect.front();
 
-  for( auto &&p : _vcsToWrite ) {
-    auto i = &p - &_vcsToWrite.front();
-
-    if ( ! p.valid() || ! _vcsActions[i] ) {
+    if ( ! p.valid() ) {
       DEBUG_LOG("ignore invalid cache-write: #%ld",i);
       continue;
     } 
 
     if ( p.wait_for(seconds::zero()) != future_status::ready ) {
       DEBUG_LOG("toss late/delayed cache-write: #%ld",i);
-      TSActionCancel(_vcsActions[i]); // can't tolerate a late event!
       continue;
     } 
     
@@ -306,6 +295,6 @@ BlockStoreXform::~BlockStoreXform()
     }
     
     DEBUG_LOG("close successful cache-write: #%ld %p",i,p.get());
-    // TSVConnClose(p.get());
+    TSVConnClose(p.get());
   }
 }

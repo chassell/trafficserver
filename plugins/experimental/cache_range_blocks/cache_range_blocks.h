@@ -144,26 +144,25 @@ private:
 
   // transform objects must be committed to, upon response
 
-  std::unique_ptr<BlockReadXform> _readXform;   // state-object ptr
-  std::unique_ptr<BlockStoreXform> _storeXform; // state-object ptr
+  std::unique_ptr<BlockReadXform> _readXform;   // state-object ptr [registers Transforms/Continuations]
+  std::unique_ptr<BlockStoreXform> _storeXform; // state-object ptr [registers Transforms/Continuations]
 };
 
 /////////////////////////////////////////////////
 /////////////////////////////////////////////////
 class BlockStoreXform : public TransactionPlugin, public BlockTeeXform
 {
-  template <typename _Tp, typename... _Args>
-  friend unique_ptr<_Tp> std::make_unique(_Args &&... __args); // when it needs to change over
 public:
-  ~BlockStoreXform() override;
+  using WriteVCs_t = std::vector<std::shared_future<TSVConn>>;
 
 public:
+  BlockStoreXform(BlockSetAccess &ctxt, int blockCount);
+  ~BlockStoreXform() override { }
+
   // starting point if created from lookup hook
   void handleReadCacheLookupComplete(Transaction &txn) override; 
 
 private:
-  BlockStoreXform(BlockSetAccess &ctxt, int blockCount);
-
   int64_t next_valid_vconn(TSVConn &vconn, int64_t pos, int64_t len);
 
   int64_t handleBodyRead(TSIOBufferReader r, int64_t pos, int64_t len);
@@ -171,7 +170,10 @@ private:
 
 private:
   BlockSetAccess &_ctxt;
-  std::vector<std::shared_future<TSVConn>> _vcsToWrite; // indexed as the keys
+
+  std::shared_ptr<WriteVCs_t> _vcsToWriteP;
+  WriteVCs_t &_vcsToWrite; // indexed as the keys
+
   std::vector<TSAction> _vcsActions; // indexed as the keys
   APICont _writeEvents;
 
@@ -191,7 +193,7 @@ public:
   // starting point if created from lookup hook
   void handleReadCacheLookupComplete(Transaction &txn);
 
-  ~BlockReadXform() override;
+  ~BlockReadXform() override { }
 
 private:
   BlockReadXform(BlockSetAccess &ctxt, int64_t start);

@@ -321,8 +321,3 @@ BlockReadXform::set_cache_hit_bitset()
     DEBUG_LOG("failed to update cache-hdrs:\n-----\n%s\n------\n", cachedHdr.wireStr().c_str());
   }
 }
-
-BlockReadXform::~BlockReadXform()
-{
-  DEBUG_LOG("destruct started");
-}
