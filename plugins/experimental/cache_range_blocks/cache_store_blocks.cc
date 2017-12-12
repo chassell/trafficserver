@@ -57,8 +57,8 @@ BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
   : TransactionPlugin(ctxt.txn()),
     BlockTeeXform(ctxt.txn(), 
                   [this](TSIOBufferReader r, int64_t inpos, int64_t len) { return this->handleBodyRead(r, inpos, len); },
-                  ctxt._beginByte % ctxt.blockSize(), 
-                  ctxt.rangeLen()),
+                  ctxt.rangeLen(),
+                  ctxt._beginByte % ctxt.blockSize()),
     _ctxt(ctxt),
     // must handle late late returns for TSCacheWrite
     _vcsToWriteP( new WriteVCs_t(blockCount), []( WriteVCs_t *ptr ){ close_all_vcs(*ptr); delete ptr; } ),

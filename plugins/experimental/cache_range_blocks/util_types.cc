@@ -127,14 +127,14 @@ APICont::handleTSEventCB(TSCont cont, TSEvent event, void *data)
 }
 
 // Transform continuations
-APIXformCont::APIXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t len, int64_t pos)
+APIXformCont::APIXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t len, int64_t offset)
   : TSCont_t(TSTransformCreate(&APIXformCont::handleXformTSEventCB, static_cast<TSHttpTxn>(txn.getAtsHandle()))),
     _txn(txn),
     _atsTxn(static_cast<TSHttpTxn>(txn.getAtsHandle())),
     _outBufferP(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
     _outReaderP(TSIOBufferReaderAlloc(this->_outBufferP.get()))
 {
-  init_body_range_handlers(pos, len); // hdrs -> skip-pre-range -> range -> skip-post-range
+  init_body_range_handlers(len, offset); // hdrs -> skip-pre-range -> range -> skip-post-range
 
   // point back here
   TSContDataSet(get(), this);

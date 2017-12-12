@@ -152,7 +152,7 @@ BlockSetAccess::start_cache_hit(int64_t rangeStart)
 }
 
 BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
-  : APIXformCont(ctxt.txn(), TS_HTTP_RESPONSE_TRANSFORM_HOOK, 0),
+  : APIXformCont(ctxt.txn(), TS_HTTP_RESPONSE_TRANSFORM_HOOK, 0), // zero bytes length, zero bytes offset...
     _ctxt(ctxt),
     _startSkip(start % ctxt.blockSize()),
     _readEvents(*this, &BlockReadXform::handleRead, nullptr, TSContMutexGet(*this)) // shared mutex
