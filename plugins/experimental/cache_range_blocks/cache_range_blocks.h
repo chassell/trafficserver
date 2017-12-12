@@ -120,6 +120,7 @@ private:
 
   void start_cache_miss(int64_t firstBlk, int64_t endBlk);
   void start_cache_hit(int64_t rangeStart);
+  void set_cache_hit_bitset();
 
 private:
   Transaction &_txn;
@@ -199,8 +200,6 @@ private:
   BlockReadXform(BlockSetAccess &ctxt, int64_t start);
 
   void launch_block_reads(); // from constructor
-  void set_cache_hit_bitset(); // from constructor
-
   void handleRead(TSEvent, void *, std::nullptr_t); // for read events
 private:
   BlockSetAccess &_ctxt;

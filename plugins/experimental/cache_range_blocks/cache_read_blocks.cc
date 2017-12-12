@@ -79,11 +79,12 @@ BlockSetAccess::handle_block_tests()
   // scan *all* keys and vconns to check if ready
   for (auto n = 0U; n < _vcsToRead.size(); ++n) {
     if ( ! _keysInRange[n] ) {
+      base64_bit_set(_b64BlkBitset, firstBlk + n); // set a bit
       continue; // known present..
     }
 
     if (_vcsToRead[n].wait_for(seconds::zero()) != future_status::ready) {
-      DEBUG_LOG("read isn't ready: #%#lx", firstBlk + n);
+      DEBUG_LOG("read isn't ready: 1<<%ld", firstBlk + n);
       continue;
     }
 
@@ -93,7 +94,7 @@ BlockSetAccess::handle_block_tests()
     if (!vconnErr || (vconnErr >= CACHE_ERRNO && vconnErr < EHTTP_ERROR)) {
       // clear bit
       base64_bit_clr(_b64BlkBitset, firstBlk + n);
-      DEBUG_LOG("read returned non-pointer: 1<<#%#lx == %ld: %s", firstBlk + n, vconnErr, _b64BlkBitset.c_str());
+      DEBUG_LOG("read returned non-pointer: 1<<%ld == %ld: %s", firstBlk + n, vconnErr, _b64BlkBitset.c_str());
       continue;
     }
 
@@ -112,7 +113,7 @@ BlockSetAccess::handle_block_tests()
     // successful!
     ++nrdy;
     base64_bit_set(_b64BlkBitset, firstBlk + n); // set a bit
-    DEBUG_LOG("read successful bitset: + 1<<#%ld %s", firstBlk + n, _b64BlkBitset.c_str());
+    DEBUG_LOG("read successful bitset: + 1<<%ld %s", firstBlk + n, _b64BlkBitset.c_str());
   }
 
   // ready to read from cache...
@@ -139,6 +140,7 @@ BlockSetAccess::handle_block_tests()
     p = std::shared_future<TSVConn>(); // make invalid
   }
 
+  set_cache_hit_bitset();
   start_cache_miss(firstBlk, endBlk);
 }
 
@@ -168,7 +170,7 @@ void
 BlockReadXform::handleReadCacheLookupComplete(Transaction &txn)
 {
   launch_block_reads();
-  set_cache_hit_bitset();
+  _ctxt.set_cache_hit_bitset();
   txn.resume();
 }
 
@@ -293,7 +295,7 @@ BlockReadXform::handleRead(TSEvent event, void *edata, std::nullptr_t)
 }
 
 void
-BlockReadXform::set_cache_hit_bitset()
+BlockSetAccess::set_cache_hit_bitset()
 {
   // HIT_FRESH is the case currently...
 
@@ -302,20 +304,20 @@ BlockReadXform::set_cache_hit_bitset()
   TSMLoc offset = nullptr;
 
   // no need to free these 
-  TSHttpTxnCachedRespModifiableGet(_ctxt.atsTxn(), &bufp, &offset);
+  TSHttpTxnCachedRespModifiableGet(atsTxn(), &bufp, &offset);
 
   cachedHdr.reset(bufp,offset); 
   //  cachhdrs.erase(CONTENT_RANGE_TAG); // erase to remove concerns
   cachedHdr.erase(X_BLOCK_BITSET_TAG); // attempt to erase/rewrite field in headers
-  cachedHdr.append(X_BLOCK_BITSET_TAG, _ctxt.b64BlkBitset()); // attempt to erase/rewrite field in headers
+  cachedHdr.append(X_BLOCK_BITSET_TAG, b64BlkBitset()); // attempt to erase/rewrite field in headers
 
-  auto r = TSHttpTxnUpdateCachedObject(_ctxt.atsTxn());
+  auto r = TSHttpTxnUpdateCachedObject(atsTxn());
 
   // re-read everything ...
   cachedHdr.reset(bufp,offset);
 
   if ( r == TS_SUCCESS ) {
-    DEBUG_LOG("updated bitset: %s", _ctxt.b64BlkBitset().c_str());
+    DEBUG_LOG("updated bitset: %s", b64BlkBitset().c_str());
     DEBUG_LOG("updated cache-hdrs:\n-----\n%s\n------\n", cachedHdr.wireStr().c_str());
   } else if ( r == TS_ERROR ) {
     DEBUG_LOG("failed to update cache-hdrs:\n-----\n%s\n------\n", cachedHdr.wireStr().c_str());

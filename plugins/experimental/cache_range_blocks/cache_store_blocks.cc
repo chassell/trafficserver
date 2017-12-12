@@ -61,7 +61,7 @@ BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
                   ctxt.rangeLen()),
     _ctxt(ctxt),
     // must handle late late returns for TSCacheWrite
-    _vcsToWriteP( new WriteVCs_t(blockCount), []( WriteVCs_t *ptr ){ close_all_vcs(*ptr); } ),
+    _vcsToWriteP( new WriteVCs_t(blockCount), []( WriteVCs_t *ptr ){ close_all_vcs(*ptr); delete ptr; } ),
     _vcsToWrite(*_vcsToWriteP),
     _writeEvents(*this, &BlockStoreXform::handleBlockWrite, nullptr, TSContMutexGet(*this))
 {
