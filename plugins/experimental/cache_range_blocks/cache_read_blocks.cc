@@ -158,8 +158,10 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
   TSHttpTxnUntransformedRespCache(ctxt.atsTxn(), 0);
   TSHttpTxnTransformedRespCache(ctxt.atsTxn(), 0);
 
-  // move get()'s into _vconns vector
-  auto &readVCs = ctxt._vcsToRead;
+  // make a stack-stored version ...
+  decltype(ctxt._vcsToRead) readVCs;
+
+  readVCs.swap(ctxt._vcsToRead); // grab away from BlockSetAccess
   std::transform(readVCs.begin(), readVCs.end(), std::back_inserter(_vconns),
                  [](decltype(readVCs.front()) &fut) { return fut.get(); });
 }
