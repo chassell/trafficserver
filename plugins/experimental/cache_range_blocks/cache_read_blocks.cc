@@ -78,8 +78,9 @@ BlockSetAccess::handle_block_tests()
 
   // scan *all* keys and vconns to check if ready
   for (auto n = 0U; n < _vcsToRead.size(); ++n) {
+    base64_bit_clr(_b64BlkBitset, firstBlk + n);
+
     if ( ! _keysInRange[n] ) {
-      base64_bit_set(_b64BlkBitset, firstBlk + n); // set a bit
       continue; // known present..
     }
 
@@ -93,7 +94,6 @@ BlockSetAccess::handle_block_tests()
     // valid pointers don't look like this
     if (!vconnErr || (vconnErr >= CACHE_ERRNO && vconnErr < EHTTP_ERROR)) {
       // clear bit
-      base64_bit_clr(_b64BlkBitset, firstBlk + n);
       DEBUG_LOG("read returned non-pointer: 1<<%ld == %ld: %s", firstBlk + n, vconnErr, _b64BlkBitset.c_str());
       continue;
     }
@@ -103,7 +103,6 @@ BlockSetAccess::handle_block_tests()
     // block is ready and of right size?
     if ( TSVConnCacheObjectSizeGet(vconn) != blkLen ) {
       // clear bit
-      base64_bit_clr(_b64BlkBitset, firstBlk + n);
       DEBUG_LOG("read returned wrong size: #%#lx", firstBlk + n);
       continue;
     }
@@ -140,7 +139,6 @@ BlockSetAccess::handle_block_tests()
     p = std::shared_future<TSVConn>(); // make invalid
   }
 
-  set_cache_hit_bitset();
   start_cache_miss(firstBlk, endBlk);
 }
 

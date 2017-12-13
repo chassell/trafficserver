@@ -67,8 +67,6 @@ BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
 {
   TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS);  // add block-range and clean up
   TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // adjust headers to stub-file
-
-
 }
 
 void
