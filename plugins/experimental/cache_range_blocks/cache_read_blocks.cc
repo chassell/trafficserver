@@ -241,17 +241,21 @@ BlockReadXform::handleRead(TSEvent event, void *edata, std::nullptr_t)
     case TS_EVENT_VCONN_WRITE_COMPLETE:
       if ( vio == _bodyCopyVIO && outputVIO() ) {
         DEBUG_LOG("completion with outputvio: e#%d", event);
-        TSVIONDoneSet( outputVIO(), TSVIONDoneGet(outputVIO()) );
-        TSVIOReenable(outputVIO()); // cut short normal transform
-        TSVConnClose(output()); 
-        TSVConnShutdown(output(),0,1); 
-      } else if ( vio == _bodyCopyVIO ) {
-        DEBUG_LOG("completion with zeroed outputvio: e#%d", event);
-        TSVConnClose(output()); 
-        TSVConnShutdown(output(),0,1); 
-      } else {
-        DEBUG_LOG("completion of unkn vio: e#%d", event);
+        TSVIONDoneSet(outputVIO(), TSVIONDoneGet(outputVIO()) );
+        TSVIOReenable(outputVIO()); // deliver end to main transform...
+        return;
       }
+
+      if ( vio == _bodyCopyVIO ) {
+        // must forward external events to main transform...
+        DEBUG_LOG("completion with zeroed outputvio: e#%d", event);
+        TSVConnClose(output());
+        TSVConnShutdown(output(),0,1); 
+        forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE, inputVIO()); // to make sure..
+        return;
+      }
+
+      DEBUG_LOG("completion of unkn vio: e#%d", event);
       return; /// RETURN
 
     case TS_EVENT_VCONN_WRITE_READY:
