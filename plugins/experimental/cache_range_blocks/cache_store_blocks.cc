@@ -246,20 +246,13 @@ BlockStoreXform::handleBlockWrite(TSEvent event, void *edata, std::nullptr_t)
   switch (event) {
   case TS_EVENT_VCONN_WRITE_READY:
     // didn't detect enough bytes in buffer to complete?
-    if (TSIOBufferReaderAvail(teeReader())) {
-      DEBUG_LOG("cache-write flush e#%d -> %ld? %ld?", event, TSVIONDoneGet(blkWriteVIO), TSVIONBytesGet(blkWriteVIO));
-      TSVIOReenable(blkWriteVIO);
-    } else {
-      DEBUG_LOG("cache-write nothing to flush: e#%d -> %ld? %ld?", event, TSVIONDoneGet(blkWriteVIO), TSVIONBytesGet(blkWriteVIO));
+    if (! TSIOBufferReaderAvail(teeReader())) {
+      break; // surprising!
     }
+    DEBUG_LOG("cache-write flush e#%d -> %ld? %ld?", event, TSVIONDoneGet(blkWriteVIO), TSVIONBytesGet(blkWriteVIO));
+    TSVIOReenable(blkWriteVIO);
     break;
   case TS_EVENT_VCONN_WRITE_COMPLETE:
-    if (!TSVIONTodoGet(inputVIO())) {
-      DEBUG_LOG("cache-write final reenables: e#%d", event);
-    } else {
-      DEBUG_LOG("cache-write block: e#%d -> %ld? %ld?", event, TSVIONDoneGet(blkWriteVIO), TSVIONBytesGet(blkWriteVIO));
-    }
-    // TSVConnClose(TSVIOVConnGet(blkWriteVIO)); // flush to make available quick...
     break;
   default:
     DEBUG_LOG("cache-write event: e#%d", event);

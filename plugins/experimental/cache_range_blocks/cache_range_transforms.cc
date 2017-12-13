@@ -36,7 +36,6 @@ APIXformCont::check_completions(TSEvent event)
 
   // check for rude shutdown
   if (!invio || !TSVIOBufferGet(invio)) {
-    DEBUG_LOG("xform-event shutdown: e#%d", event);
     return -1;
   }
 
@@ -47,23 +46,27 @@ APIXformCont::check_completions(TSEvent event)
     return -2;
   }
 
-  // "ack" end-of-write completion [zero bytes] to upstream
-  if (!TSVIONTodoGet(invio) && !_outVIO ) {
-    DEBUG_LOG("xform-event write-complete: e#%d", event);
-    // can dealloc entire transaction!!
-    forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE, invio);
-    return -3; // no further...
-  }
+  if ( !TSVIONTodoGet(invio) ) 
+  {
+    if ( _outVIO && !TSVIONTodoGet(_outVIO) ) {
+      DEBUG_LOG("xform-event dual write-complete: e#%d", event);
+      _xformCB(event, nullptr, 0);
+      TSVIOReenable(_outVIO);
+      _outVIO = nullptr;
+    } else if ( _outVIO ) {
+      // can dealloc entire transaction!!
+      DEBUG_LOG("xform-event input-only complete: e#%d", event);
+    }
 
-  if ( !TSVIONTodoGet(invio) && !TSVIONTodoGet(_outVIO) ) {
-    DEBUG_LOG("xform-event dual write-complete: e#%d", event);
-    _xformCB(event, nullptr, 0);
-    TSVIOReenable(_outVIO);
-    TSVConnClose(_outVConn);          // attempt faster close??
-    TSVConnShutdown(_outVConn, 0, 1); // attempt faster close??
-    _outVIO = nullptr;
-    forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE, invio); // to make sure..
-    return -4;
+    if ( _outVConn && ! _outVIO ) 
+    {
+      DEBUG_LOG("xform-event dual transform-complete: e#%d", event);
+      TSVConnClose(_outVConn);          // attempt faster close??
+      TSVConnShutdown(_outVConn, 0, 1); // attempt faster close??
+      _outVConn = nullptr;
+      forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE, invio); // to make sure..
+    }
+    return -3;
   }
 
   return 0;

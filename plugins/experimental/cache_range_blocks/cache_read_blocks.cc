@@ -166,6 +166,17 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
                  [](decltype(readVCs.front()) &fut) { return fut.get(); });
 }
 
+BlockReadXform::~BlockReadXform()
+{
+  for( auto &&vc : _vconns ) {
+    if ( vc ) {
+      auto i = &vc - &_vconns.front();
+      DEBUG_LOG("close successful cache-read: #%ld %p",i,vc);
+      TSVConnClose(vc); 
+    }
+  }
+}
+
 void
 BlockReadXform::handleReadCacheLookupComplete(Transaction &txn)
 {
@@ -184,12 +195,12 @@ BlockReadXform::launch_block_reads()
     auto avail = TSIOBufferReaderAvail(outputReader());
 
     if ( avail || event != TS_EVENT_VCONN_WRITE_READY) {
-      TSVIOReenable(_blockCopyVIO); // retried by the write op
+      TSVIOReenable(_bodyCopyVIO); // retried by the write op
       return 0L;
     }
 
-    DEBUG_LOG("read write-vio flush-wait: %#lx+%#lx >= %#lx", TSVIONDoneGet(_blockCopyVIO), avail, _startSkip);
-    _blockCopyVIOWaiting = event;
+    DEBUG_LOG("read write-vio flush-wait: %#lx+%#lx >= %#lx", TSVIONDoneGet(_bodyCopyVIO), avail, _startSkip);
+    _bodyCopyVIOWaiting = event;
     return 0L;
   };
 
@@ -197,14 +208,14 @@ BlockReadXform::launch_block_reads()
   set_body_handler([this,blockBodyHandler](TSEvent event, TSVIO vio, int64_t left) {
     auto avail = TSIOBufferReaderAvail(outputReader());
 
-    _blockCopyVIOWaiting = event; // save the event...
+    _bodyCopyVIOWaiting = event; // save the event...
 
-    if ( _blockCopyVIO || avail < _startSkip ) {
+    if ( _bodyCopyVIO || avail < _startSkip ) {
       return 0L; // already requested callback...
     }
 
     // no VIO and enough is available...
-    DEBUG_LOG("read -> body vio begin: %#lx: %#lx-%#lx [%p]", avail, _startSkip, _startSkip + _ctxt.rangeLen(), _blockCopyVIO);
+    DEBUG_LOG("read -> body vio begin: %#lx: %#lx-%#lx [%p]", avail, _startSkip, _startSkip + _ctxt.rangeLen(), _bodyCopyVIO);
     handleRead(TS_EVENT_VCONN_WRITE_READY, nullptr, nullptr);
 
     set_body_handler(blockBodyHandler); // NOTE: destructs active lambda
@@ -230,25 +241,34 @@ BlockReadXform::handleRead(TSEvent event, void *edata, std::nullptr_t)
       return; /// RETURN
 
     case TS_EVENT_VCONN_WRITE_COMPLETE:
-      if ( vio == _blockCopyVIO && outputVIO() ) {
+      if ( vio == _bodyCopyVIO && outputVIO() ) {
+        DEBUG_LOG("completion with outputvio: e#%d", event);
         TSVIONDoneSet( outputVIO(), TSVIONDoneGet(outputVIO()) );
         TSVIOReenable(outputVIO()); // cut short normal transform
-      } else if ( vio == _blockCopyVIO ) {
         TSVConnClose(output()); 
+        TSVConnShutdown(output(),0,1); 
+      } else if ( vio == _bodyCopyVIO ) {
+        DEBUG_LOG("completion with zeroed outputvio: e#%d", event);
+        TSVConnClose(output()); 
+        TSVConnShutdown(output(),0,1); 
       } else {
         DEBUG_LOG("completion of unkn vio: e#%d", event);
       }
       return; /// RETURN
 
     case TS_EVENT_VCONN_WRITE_READY:
-      if ( _blockCopyVIO ) {
+      if ( _bodyCopyVIO ) {
         DEBUG_LOG("write-ready event for reenable: e#%d", event);
-        TSVIOReenable(_blockCopyVIO);
+        TSVIOReenable(_bodyCopyVIO);
         return; // 
       }
       DEBUG_LOG("read to begin body write: e#%d", event);
       break; /// ....
     case TS_EVENT_VCONN_READ_COMPLETE:
+      if ( vio && TSVIOVConnGet(vio) ) {
+        DEBUG_LOG("close of cache-read: e#%d", event);
+        TSVConnClose(TSVIOVConnGet(vio)); 
+      }
       break; /// ....
   }
 
@@ -260,19 +280,19 @@ BlockReadXform::handleRead(TSEvent event, void *edata, std::nullptr_t)
   auto posin   = nxt * blkSize; // last ready byte in buffer..
   auto endout  = _startSkip + _ctxt.rangeLen();
 
-  if ( _blockCopyVIO && _blockCopyVIOWaiting ) {
+  if ( _bodyCopyVIO && _bodyCopyVIOWaiting ) {
     DEBUG_LOG("flush: @%ld",posin);
-    TSVIOReenable(_blockCopyVIO); // give it a retry now..
-    _blockCopyVIOWaiting = TS_EVENT_NONE; // back to zero
+    TSVIOReenable(_bodyCopyVIO); // give it a retry now..
+    _bodyCopyVIOWaiting = TS_EVENT_NONE; // back to zero
   }
 
   // start the transform write?
-  if ( ! _blockCopyVIO && output() && avail >= _startSkip ) {
+  if ( ! _bodyCopyVIO && output() && avail >= _startSkip ) {
     DEBUG_LOG("write-body start: %#lx-%#lx endblk#%#lx", _startSkip, _ctxt.rangeLen(), nxt);
     TSIOBufferReaderConsume(outputReader(), _startSkip);
     // start the write up correctly now..
-    _blockCopyVIO = TSVConnWrite(output(), _readEvents, outputReader(), _ctxt.rangeLen());
-    _blockCopyVIOWaiting = TS_EVENT_VCONN_WRITE_READY;
+    _bodyCopyVIO = TSVConnWrite(output(), _readEvents, outputReader(), _ctxt.rangeLen());
+    _bodyCopyVIOWaiting = TS_EVENT_VCONN_WRITE_READY;
   }
   
   if ( posin > endout ) {
@@ -323,3 +343,4 @@ BlockSetAccess::set_cache_hit_bitset()
     DEBUG_LOG("failed to update cache-hdrs:\n-----\n%s\n------\n", cachedHdr.wireStr().c_str());
   }
 }
+

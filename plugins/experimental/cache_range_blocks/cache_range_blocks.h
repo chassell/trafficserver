@@ -194,7 +194,7 @@ public:
   // starting point if created from lookup hook
   void handleReadCacheLookupComplete(Transaction &txn);
 
-  ~BlockReadXform() override { }
+  ~BlockReadXform() override;
 
 private:
   BlockReadXform(BlockSetAccess &ctxt, int64_t start);
@@ -208,8 +208,8 @@ private:
   std::vector<TSVConn> _vconns;
   APICont _readEvents;
 
-  TSVIO _blockCopyVIO = nullptr;
-  TSEvent _blockCopyVIOWaiting = TS_EVENT_NONE; // last event
+  TSVIO _bodyCopyVIO = nullptr;
+  TSEvent _bodyCopyVIOWaiting = TS_EVENT_NONE; // last event
   TSVIO _cacheRdVIO = nullptr;
 };
 
