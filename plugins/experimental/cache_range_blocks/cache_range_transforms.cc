@@ -62,6 +62,7 @@ APIXformCont::check_completions(TSEvent event)
     TSVConnClose(_outVConn);          // attempt faster close??
     TSVConnShutdown(_outVConn, 0, 1); // attempt faster close??
     _outVIO = nullptr;
+    forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE, invio); // to make sure..
     return -4;
   }
 
