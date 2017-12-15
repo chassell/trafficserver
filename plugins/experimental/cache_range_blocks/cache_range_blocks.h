@@ -75,7 +75,7 @@ public:
   const std::string & clientRangeStr() const { return _clntRangeStr; }
   const std::string & blockRangeStr() const { return _blkRangeStr; }
 
-  const std::vector<APICacheKey> & keysInRange() const { return _keysInRange; }
+  const std::vector<ATSCacheKey> & keysInRange() const { return _keysInRange; }
   const std::string & b64BlkBitset() const { return _b64BlkBitset; }
 
   int64_t assetLen() const { return _assetLen; }
@@ -138,10 +138,10 @@ private:
   int64_t _beginByte = -1L;
   int64_t _endByte   = -1L;
 
-  APICont _txnCont;
+  ATSCont _txnCont;
 
-  std::vector<APICacheKey> _keysInRange;               // in order with index
-  std::vector<std::shared_future<TSVConn>> _vcsToRead; // indexed as the keys
+  std::vector<ATSCacheKey> _keysInRange;               // in order with index
+  std::vector<ATSVConnFuture> _vcsToRead; // indexed as the keys
 
   // transform objects must be committed to, upon response
 
@@ -154,7 +154,7 @@ private:
 class BlockStoreXform : public TransactionPlugin, public BlockTeeXform
 {
 public:
-  using WriteVCs_t = std::vector<std::shared_future<TSVConn>>;
+  using WriteVCs_t = std::vector<ATSVConnFuture>;
 
 public:
   BlockStoreXform(BlockSetAccess &ctxt, int blockCount);
@@ -172,11 +172,10 @@ private:
 private:
   BlockSetAccess &_ctxt;
 
-  std::shared_ptr<WriteVCs_t> _vcsToWriteP;
+  std::shared_ptr<WriteVCs_t> _vcsToWriteP; 
   WriteVCs_t &_vcsToWrite; // indexed as the keys
 
-  std::vector<TSAction> _vcsActions; // indexed as the keys
-  APICont _writeEvents;
+  ATSCont _writeEvents;
 
   TSVIO _cacheWrVIO = nullptr;
   TSEvent _cacheWrVIOWaiting = TS_EVENT_NONE; // event if cache-write is blocked
@@ -185,7 +184,7 @@ private:
 
 /////////////////////////////////////////////////
 /////////////////////////////////////////////////
-class BlockReadXform : public APIXformCont
+class BlockReadXform : public ATSXformCont
 {
   template <typename _Tp, typename... _Args>
   friend unique_ptr<_Tp> std::make_unique(_Args &&... __args); // when it needs to change over
@@ -205,8 +204,8 @@ private:
   BlockSetAccess &_ctxt;
   int64_t _startSkip;
 
-  std::vector<TSVConn> _vconns;
-  APICont _readEvents;
+  std::vector<ATSVConnFuture> &_vconns;
+  ATSCont _readEvents;
 
   TSVIO _bodyCopyVIO = nullptr;
   TSEvent _bodyCopyVIOWaiting = TS_EVENT_NONE; // last event

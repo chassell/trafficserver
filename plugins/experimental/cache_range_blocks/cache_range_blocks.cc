@@ -36,6 +36,13 @@
 static int parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_t &end);
 
 void BlockSetAccess::start_if_range_present(Transaction &txn) {
+
+  int i = 0;
+  TSCacheReady(&i);
+  if ( ! i ) {
+    return; // cannot handle new blocks 
+  }
+
   auto &req = txn.getClientRequest();
   auto &hdrs = req.getHeaders();
 
@@ -80,19 +87,6 @@ BlockSetAccess::~BlockSetAccess()
 
   _storeXform.reset(); // clear first
   _readXform.reset(); // clear next
-
-  for( auto &&p : _vcsToRead ) {
-    auto i = &p - &_vcsToRead.front();
-    if ( p.valid() && p.wait_for(seconds::zero()) == future_status::ready ) {
-      auto ptrErr = reinterpret_cast<intptr_t>(p.get());
-      if ( ptrErr >= -INK_START_ERRNO - 1000 && ptrErr < 0 ) {
-        DEBUG_LOG("pass failed cache-read: #%ld %p",i,p.get());
-        continue;
-      }
-      TSVConnClose(p.get());
-      DEBUG_LOG("closed successful cache-read: #%ld %p",i,p.get());
-    }
-  }
 }
 
 void

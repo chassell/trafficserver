@@ -27,8 +27,6 @@
 #define DEBUG_LOG(fmt, ...) TSDebug(PLUGIN_NAME, "[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
 #define ERROR_LOG(fmt, ...) TSError("[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
 
-void close_all_vcs(BlockStoreXform::WriteVCs_t &vect);
-
 void
 BlockSetAccess::start_cache_miss(int64_t firstBlk, int64_t endBlk)
 {
@@ -45,7 +43,7 @@ BlockSetAccess::start_cache_miss(int64_t firstBlk, int64_t endBlk)
   // react to genuine misses above...
   for (auto i = 0U; i < endBlk - firstBlk; ++i) {
     if (!is_base64_bit_set(_b64BlkBitset, firstBlk + i)) {
-      _keysInRange[i]    = std::move(APICacheKey(clientUrl(), _etagStr, (firstBlk + i) * _blkSize));
+      _keysInRange[i]    = std::move(ATSCacheKey(clientUrl(), _etagStr, (firstBlk + i) * _blkSize));
     }
   }
 
@@ -61,9 +59,9 @@ BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
                   ctxt._beginByte % ctxt.blockSize()),
     _ctxt(ctxt),
     // must handle late late returns for TSCacheWrite
-    _vcsToWriteP( new WriteVCs_t(blockCount), []( WriteVCs_t *ptr ){ close_all_vcs(*ptr); delete ptr; } ),
+    _vcsToWriteP( new WriteVCs_t(blockCount), []( WriteVCs_t *ptr ){ delete ptr; } ),
     _vcsToWrite(*_vcsToWriteP),
-    _writeEvents(*this, &BlockStoreXform::handleBlockWrite, nullptr, TSContMutexGet(*this))
+    _writeEvents(*this, &BlockStoreXform::handleBlockWrite, nullptr, *this)
 {
   TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS);  // add block-range and clean up
   TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // adjust headers to stub-file
@@ -80,7 +78,6 @@ BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
   // [will override the server response for headers]
   //
   auto &keys  = _ctxt._keysInRange;
-  auto mutex  = TSContMutexGet(*this);
   auto blkNum = _ctxt._beginByte / _ctxt.blockSize();
 
   for (auto i = 0U; i < keys.size(); ++i, ++blkNum) 
@@ -89,7 +86,7 @@ BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
       continue;
     }
 
-    auto contp = APICont::create_temp_tscont(mutex, _vcsToWrite[i], _vcsToWriteP);
+    auto contp = ATSCont::create_temp_tscont(*this, _vcsToWrite[i], _vcsToWriteP);
     TSCacheWrite(contp, keys[i]); // find room to store each key...
   }
 
@@ -125,28 +122,13 @@ BlockStoreXform::next_valid_vconn(TSVConn &vconn, int64_t inpos, int64_t len)
       return -1;
     }
    
-    // can't find a ready write waiting?
-    if (!_vcsToWrite[blk].valid()) {
-      DEBUG_LOG("invalid VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, _ctxt.blockSize()/1024);
-      continue;
-    }
-
-    // can't find a ready write waiting?
-    if (_vcsToWrite[blk].wait_for(seconds::zero()) != future_status::ready) {
-      DEBUG_LOG("slow VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, _ctxt.blockSize()/1024);
-      _vcsToWrite[blk] = std::shared_future<TSVConn>(); // no more waiting
-      continue;
-    }
-
-    // found one ready to go...
-    auto ptrErr = reinterpret_cast<intptr_t>(_vcsToWrite[blk].get());
-    if ( ptrErr >= -INK_START_ERRNO - 1000 && ptrErr <= 0 ) {
-      DEBUG_LOG("pass failed cache-write: #%ld [%ld]",blk,-ptrErr);
-      _vcsToWrite[blk] = std::shared_future<TSVConn>(); // no more waiting
-      continue;
-    }
-
     vconn = _vcsToWrite[blk].get();
+    // can't find a ready write waiting?
+    if (!vconn) {
+      DEBUG_LOG("non-valid VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, _ctxt.blockSize()/1024);
+      continue;
+    }
+
     DEBUG_LOG("ready VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, _ctxt.blockSize()/1024);
     return nxtPos - inpos;
   }
@@ -265,27 +247,4 @@ close_all_vcs(BlockStoreXform::WriteVCs_t &vect)
   using std::future_status;
 
   DEBUG_LOG("vcs destruct started");
-
-  for( auto &&p : vect ) {
-    auto i = &p - &vect.front();
-
-    if ( ! p.valid() ) {
-      DEBUG_LOG("ignore invalid cache-write: #%ld",i);
-      continue;
-    } 
-
-    if ( p.wait_for(seconds::zero()) != future_status::ready ) {
-      DEBUG_LOG("toss late/delayed cache-write: #%ld",i);
-      continue;
-    } 
-    
-    auto ptrErr = reinterpret_cast<intptr_t>(p.get());
-    if ( ptrErr >= -INK_START_ERRNO - 1000 && ptrErr <= 0 ) {
-      DEBUG_LOG("pass failed cache-write: #%ld %p",i,p.get());
-      continue;
-    }
-    
-    DEBUG_LOG("close successful cache-write: #%ld %p",i,p.get());
-    TSVConnClose(p.get());
-  }
 }
