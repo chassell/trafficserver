@@ -170,12 +170,21 @@ BlockReadXform::launch_block_reads()
     auto avail = TSIOBufferReaderAvail(*_xformOutU);
 
     if ( avail || event != TS_EVENT_VCONN_WRITE_READY) {
+<<<<<<< Updated upstream
       TSVIOReenable(*_xformOutU); // retried by the write op
       return 0L;
     }
 
     DEBUG_LOG("read write-vio flush-wait: %#lx+%#lx >= %#lx", TSVIONDoneGet(*_xformOutU), avail, _startSkip);
     _xformOutWaiting = event;
+=======
+      TSVIOReenable(outputVIO()); // handle complete as well
+      return 0L;
+    }
+
+    DEBUG_LOG("read write-vio flush-wait: %#lx+%#lx >= %#lx", TSVIONDoneGet(outputVIO()), avail, _startSkip);
+    _bodyCopyVIOWaiting = event;
+>>>>>>> Stashed changes
     return 0L;
   };
 
@@ -185,12 +194,23 @@ BlockReadXform::launch_block_reads()
 
     _xformOutWaiting = event; // save the event...
 
+<<<<<<< Updated upstream
     if ( _xformOutU || avail < _startSkip ) {
+=======
+    if ( avail < 
+
+    if ( outputVIO() || avail < _startSkip ) {
+      TSIOBufferReaderConsume(outputReader(), _startSkip);
+>>>>>>> Stashed changes
       return 0L; // already requested callback...
     }
 
     // no VIO and enough is available...
+<<<<<<< Updated upstream
     DEBUG_LOG("read -> body vio begin: %#lx: %#lx-%#lx [%p]", avail, _startSkip, _startSkip + _ctxt.rangeLen(), _bodyCopyVIO);
+=======
+    DEBUG_LOG("read -> body vio begin: %#lx: %#lx-%#lx [%p]", avail, _startSkip, _startSkip + _ctxt.rangeLen(), outputVIO());
+>>>>>>> Stashed changes
 
     TSIOBufferReaderConsume(outputReader(), _startSkip);
     _xformOutU = ATSXformOutVConn::create_if_ready(*this,_ctxt.rangeLen());
@@ -220,9 +240,13 @@ BlockReadXform::handleRead(TSEvent event, void *edata, std::nullptr_t)
       return; /// RETURN
 
     case TS_EVENT_VCONN_READ_COMPLETE:
+<<<<<<< Updated upstream
       if ( vio && TSVIOVConnGet(vio) ) {
         DEBUG_LOG("waiting on close of cache-read: e#%d", event);
       }
+=======
+      DEBUG_LOG("close desired for cache-read: e#%d", event);
+>>>>>>> Stashed changes
       break; /// ....
   }
 

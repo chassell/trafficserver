@@ -221,8 +221,12 @@ public:
   //  ATSXformCont() = default; // nullptr by default
   //  ATSXformCont(ATSXformCont &&) = default;
   ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t bytes, int64_t offset = 0);
+<<<<<<< Updated upstream
   // external-cache-read body
   ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, const ATSCont &rdSrc, int64_t bytes, int64_t offset = 0); 
+=======
+  ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, const ATSVConnFuture &rdSrc, int64_t bytes, int64_t offset = 0); // external-only body
+>>>>>>> Stashed changes
   virtual ~ATSXformCont() = default;
 
   operator TSVConn() const { return get(); }
