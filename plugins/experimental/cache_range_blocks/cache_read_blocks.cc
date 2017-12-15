@@ -44,13 +44,12 @@ BlockSetAccess::launch_block_tests()
 
   // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
   auto barrierLock = std::shared_ptr<BlockSetAccess>(this, deleter);
-  auto mutex       = TSContMutexGet(_txnCont); // single mutex for all reads
   auto blkNum      = _beginByte / _blkSize;
 
   for (auto i = 0U; i < _keysInRange.size(); ++i, ++blkNum) {
     // prep for async reads that init into VConn-futures
-    _keysInRange[i] = std::move(APICacheKey(clientUrl(), _etagStr, blkNum * _blkSize));
-    auto contp      = APICont::create_temp_tscont(mutex, _vcsToRead[i], barrierLock);
+    _keysInRange[i] = std::move(ATSCacheKey(clientUrl(), _etagStr, blkNum * _blkSize));
+    auto contp      = ATSCont::create_temp_tscont(_txnCont, _vcsToRead[i], barrierLock);
     TSCacheRead(contp, _keysInRange[i]);
   }
 }
@@ -84,17 +83,10 @@ BlockSetAccess::handle_block_tests()
       continue; // known present..
     }
 
-    if (_vcsToRead[n].wait_for(seconds::zero()) != future_status::ready) {
-      DEBUG_LOG("read isn't ready: 1<<%ld", firstBlk + n);
-      continue;
-    }
-
     auto vconn    = _vcsToRead[n].get();
-    auto vconnErr = -reinterpret_cast<intptr_t>(vconn); // block isn't ready
-    // valid pointers don't look like this
-    if (!vconnErr || (vconnErr >= CACHE_ERRNO && vconnErr < EHTTP_ERROR)) {
-      // clear bit
-      DEBUG_LOG("read returned non-pointer: 1<<%ld == %ld: %s", firstBlk + n, vconnErr, _b64BlkBitset.c_str());
+
+    if ( ! vconn ) {
+      DEBUG_LOG("read isn't ready: 1<<%ld", firstBlk + n);
       continue;
     }
 
@@ -121,22 +113,20 @@ BlockSetAccess::handle_block_tests()
     return;
   }
 
-  atscppapi::ScopedContinuationLock lock(_txnCont);
+  auto n = _vcsToRead.size();
 
   for( auto &&p : _vcsToRead ) {
-    auto i = &p - &_vcsToRead.front();
-    if ( p.valid() && p.wait_for(seconds::zero()) == future_status::ready ) {
-      auto ptrErr = reinterpret_cast<intptr_t>(p.get());
-      if ( ptrErr < -INK_START_ERRNO - 1000 || ptrErr > 0 ) {
-        TSVConnClose(p.get());
-        DEBUG_LOG("closed successful cache-read: #%ld %p",i,p.get());
-      } else {
-        DEBUG_LOG("pass failed cache-read: #%ld %p",i,p.get());
-      }
-    } else {
-      DEBUG_LOG("toss invalid cache-read: #%ld",i);
+    if ( ! p.is_close_able() ) {
+      auto i = &p - &_vcsToRead.front();
+      DEBUG_LOG("late cache-read entry: #%ld",i);
+      break;
     }
-    p = std::shared_future<TSVConn>(); // make invalid
+    --n;
+  }
+
+  // best to do now?
+  if ( ! n ) {
+    _vcsToRead.clear(); // deallocate and close now...
   }
 
   start_cache_miss(firstBlk, endBlk);
@@ -150,32 +140,17 @@ BlockSetAccess::start_cache_hit(int64_t rangeStart)
 }
 
 BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
-  : APIXformCont(ctxt.txn(), TS_HTTP_RESPONSE_TRANSFORM_HOOK, 0), // zero bytes length, zero bytes offset...
+  : ATSXformCont(ctxt.txn(), TS_HTTP_RESPONSE_TRANSFORM_HOOK, 0), // zero bytes length, zero bytes offset...
     _ctxt(ctxt),
     _startSkip(start % ctxt.blockSize()),
-    _readEvents(*this, &BlockReadXform::handleRead, nullptr, TSContMutexGet(*this)) // shared mutex
+    _vconns(ctxt._vcsToRead),
+    _readEvents(*this, &BlockReadXform::handleRead, nullptr, *this) // shared mutex
 {
   TSHttpTxnUntransformedRespCache(ctxt.atsTxn(), 0);
   TSHttpTxnTransformedRespCache(ctxt.atsTxn(), 0);
-
-  // make a stack-stored version ...
-  decltype(ctxt._vcsToRead) readVCs;
-
-  readVCs.swap(ctxt._vcsToRead); // grab away from BlockSetAccess
-  std::transform(readVCs.begin(), readVCs.end(), std::back_inserter(_vconns),
-                 [](decltype(readVCs.front()) &fut) { return fut.get(); });
 }
 
-BlockReadXform::~BlockReadXform()
-{
-  for( auto &&vc : _vconns ) {
-    if ( vc ) {
-      auto i = &vc - &_vconns.front();
-      DEBUG_LOG("close successful cache-read: #%ld %p",i,vc);
-      TSVConnClose(vc); 
-    }
-  }
-}
+BlockReadXform::~BlockReadXform() { }
 
 void
 BlockReadXform::handleReadCacheLookupComplete(Transaction &txn)
@@ -192,15 +167,15 @@ BlockReadXform::launch_block_reads()
 
   // handler after body is being written...
   auto blockBodyHandler = [this](TSEvent event, TSVIO vio, int64_t left) {
-    auto avail = TSIOBufferReaderAvail(outputReader());
+    auto avail = TSIOBufferReaderAvail(*_xformOutU);
 
     if ( avail || event != TS_EVENT_VCONN_WRITE_READY) {
-      TSVIOReenable(_bodyCopyVIO); // retried by the write op
+      TSVIOReenable(*_xformOutU); // retried by the write op
       return 0L;
     }
 
-    DEBUG_LOG("read write-vio flush-wait: %#lx+%#lx >= %#lx", TSVIONDoneGet(_bodyCopyVIO), avail, _startSkip);
-    _bodyCopyVIOWaiting = event;
+    DEBUG_LOG("read write-vio flush-wait: %#lx+%#lx >= %#lx", TSVIONDoneGet(*_xformOutU), avail, _startSkip);
+    _xformOutWaiting = event;
     return 0L;
   };
 
@@ -208,17 +183,21 @@ BlockReadXform::launch_block_reads()
   set_body_handler([this,blockBodyHandler](TSEvent event, TSVIO vio, int64_t left) {
     auto avail = TSIOBufferReaderAvail(outputReader());
 
-    _bodyCopyVIOWaiting = event; // save the event...
+    _xformOutWaiting = event; // save the event...
 
-    if ( _bodyCopyVIO || avail < _startSkip ) {
+    if ( _xformOutU || avail < _startSkip ) {
       return 0L; // already requested callback...
     }
 
     // no VIO and enough is available...
     DEBUG_LOG("read -> body vio begin: %#lx: %#lx-%#lx [%p]", avail, _startSkip, _startSkip + _ctxt.rangeLen(), _bodyCopyVIO);
-    handleRead(TS_EVENT_VCONN_WRITE_READY, nullptr, nullptr);
 
-    set_body_handler(blockBodyHandler); // NOTE: destructs active lambda
+    TSIOBufferReaderConsume(outputReader(), _startSkip);
+    _xformOutU = ATSXformOutVConn::create_if_ready(*this,_ctxt.rangeLen());
+
+    if ( _xformOutU ) {
+      set_body_handler(blockBodyHandler); // NOTE: destructs active lambda
+    }
     return 0L;
   });
 
@@ -233,67 +212,31 @@ BlockReadXform::handleRead(TSEvent event, void *edata, std::nullptr_t)
   switch ( event ) 
   {
     case TS_EVENT_VCONN_READ_READY: // failure!
-      ink_assert( event != TS_EVENT_VCONN_READ_READY );
+      DEBUG_LOG("read ready was blocked: e#%d", event);
       return; /// RETURN
 
     default:
       DEBUG_LOG("read unkn event: e#%d", event);
       return; /// RETURN
 
-    case TS_EVENT_VCONN_WRITE_COMPLETE:
-      if ( vio == _bodyCopyVIO && outputVIO() ) {
-        DEBUG_LOG("completion with outputvio: e#%d", event);
-        TSVIONDoneSet(outputVIO(), TSVIONDoneGet(outputVIO()) );
-        TSVIOReenable(outputVIO()); // deliver end to main transform...
-        return;
-      }
-
-      if ( vio == _bodyCopyVIO ) {
-        // must forward external events to main transform...
-        DEBUG_LOG("completion with zeroed outputvio: e#%d", event);
-        TSVConnClose(output());
-        TSVConnShutdown(output(),0,1); 
-        forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE, inputVIO()); // to make sure..
-        return;
-      }
-
-      DEBUG_LOG("completion of unkn vio: e#%d", event);
-      return; /// RETURN
-
-    case TS_EVENT_VCONN_WRITE_READY:
-      if ( _bodyCopyVIO ) {
-        DEBUG_LOG("write-ready event for reenable: e#%d", event);
-        TSVIOReenable(_bodyCopyVIO);
-        return; // 
-      }
-      DEBUG_LOG("read to begin body write: e#%d", event);
-      break; /// ....
     case TS_EVENT_VCONN_READ_COMPLETE:
       if ( vio && TSVIOVConnGet(vio) ) {
-        DEBUG_LOG("close of cache-read: e#%d", event);
-        TSVConnClose(TSVIOVConnGet(vio)); 
+        DEBUG_LOG("waiting on close of cache-read: e#%d", event);
       }
       break; /// ....
   }
 
   // first nonzero vconn ... or past end..
-  auto nxt = std::find_if(_vconns.begin(), _vconns.end(), [](TSVConn vc) { return vc != nullptr; } ) - _vconns.begin();
+  auto nxt = std::find_if(_vconns.begin(), _vconns.end(), [](ATSVConnFuture &vc) { return vc.get() != nullptr; } ) - _vconns.begin();
 
   auto blkSize = _ctxt.blockSize();
   auto avail   = TSIOBufferReaderAvail(outputReader()); // last ready byte in buffer..
   auto posin   = nxt * blkSize; // last ready byte in buffer..
   auto endout  = _startSkip + _ctxt.rangeLen();
 
-  if ( _bodyCopyVIO && _bodyCopyVIOWaiting ) {
-    DEBUG_LOG("flush: @%ld",posin);
-    TSVIOReenable(_bodyCopyVIO); // give it a retry now..
-    _bodyCopyVIOWaiting = TS_EVENT_NONE; // back to zero
-  }
-
   // start the transform write?
   if ( ! _bodyCopyVIO && output() && avail >= _startSkip ) {
     DEBUG_LOG("write-body start: %#lx-%#lx endblk#%#lx", _startSkip, _ctxt.rangeLen(), nxt);
-    TSIOBufferReaderConsume(outputReader(), _startSkip);
     // start the write up correctly now..
     _bodyCopyVIO = TSVConnWrite(output(), _readEvents, outputReader(), _ctxt.rangeLen());
     _bodyCopyVIOWaiting = TS_EVENT_VCONN_WRITE_READY;
@@ -314,8 +257,8 @@ BlockReadXform::handleRead(TSEvent event, void *edata, std::nullptr_t)
 
   DEBUG_LOG("read start: %#lx-%#lx #%#lx", nextRd, nextRdMax, nxt);
 
-  _cacheRdVIO = TSVConnRead(_vconns[nxt], _readEvents, outputBuffer(), nextRdMax - nextRd);
-  _vconns[nxt] = nullptr;
+  _cacheRdVIO = TSVConnRead(_vconns[nxt].get(), _readEvents, outputBuffer(), nextRdMax - nextRd);
+  _vconns[nxt].reset();
 }
 
 void

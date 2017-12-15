@@ -28,6 +28,8 @@
 
 #pragma once
 
+class ATSXformCont;
+
 extern const int8_t base64_values[80];
 extern const char base64_chars[65];
 
@@ -121,34 +123,34 @@ default_delete<TSIOBufferReader_t::element_type>::operator()(TSIOBufferReader re
 }
 
 // unique-ref object for a cache-read or cache-write request
-struct APICacheKey : public TSCacheKey_t {
-  APICacheKey() = default; // nullptr by default
+struct ATSCacheKey : public TSCacheKey_t {
+  ATSCacheKey() = default; // nullptr by default
 
   operator TSCacheKey() const { return get(); }
-  APICacheKey(const atscppapi::Url &url, std::string const &etag, uint64_t offset);
+  ATSCacheKey(const atscppapi::Url &url, std::string const &etag, uint64_t offset);
 };
 
 // object to request write/read into cache
-struct APICont : public TSCont_t {
+struct ATSCont : public TSCont_t {
   template <class T, typename... Args> friend std::unique_ptr<T> std::make_unique(Args &&... args);
 
 public:
-  template <typename T_DATA>
-  static TSCont create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DATA> &cbFuture,
+  template <class T_FUTURE>
+  static TSCont create_temp_tscont(TSCont mutexSrc, T_FUTURE &cbFuture,
                                    const std::shared_ptr<void> &counted = std::shared_ptr<void>());
 
 public:
-  explicit APICont(TSMutex mutex=TSMutexCreate()); // no handler
-  virtual ~APICont() = default;
+  explicit ATSCont(TSCont mutexSrc=nullptr); // no handler
+  virtual ~ATSCont() = default;
 
   // accepts TSHttpTxn handler functions
   template <class T_OBJ, typename T_DATA> 
-  APICont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, T_DATA), T_DATA cbdata, TSMutex mutex=TSMutexCreate());
+  ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, T_DATA), T_DATA cbdata, TSCont mutexSrc=nullptr);
 
 public:
   operator TSCont() const { return get(); }
 
-  APICont &
+  ATSCont &
   operator=(std::function<void(TSEvent, void *)> &&fxn)
   {
     _userCB = fxn;
@@ -162,25 +164,75 @@ private:
   std::function<void(TSEvent, void *)> _userCB;
 };
 
+// cover up interface
+struct ATSVConnFuture : private std::shared_future<TSVConn> 
+{
+  using std::shared_future<TSVConn>::operator=; // allow use
+
+  explicit ATSVConnFuture() = default;
+  explicit ATSVConnFuture(const ATSVConnFuture &) = default;
+
+  ~ATSVConnFuture();
+
+  bool valid() const;
+  bool is_close_able() const;
+  void reset() 
+     { operator=(std::shared_future<TSVConn>{}); }
+  TSVConn get() const 
+     { return valid() ? std::shared_future<TSVConn>::get() : nullptr; }
+};
+
+struct ATSXformOutVConn
+{
+  friend ATSXformCont;
+  using Uniq_t = std::unique_ptr<ATSXformOutVConn>;
+
+  static Uniq_t create_if_ready(const ATSXformCont &xform, int64_t len);
+
+  explicit ATSXformOutVConn(const ATSXformCont &xform);
+  ATSXformOutVConn(const ATSXformCont &xform, const ATSCont &hdlr, int64_t len);
+
+  operator TSVConn() const { return _outVConn; }
+  operator TSVIO() const { return _outVIO; }
+  operator TSIOBuffer() const { return _outBufferU.get(); }
+  operator TSIOBufferReader() const { return _outReaderU.get(); }
+
+  ~ATSXformOutVConn();
+
+  void set_close_able(); // two phases: pre-VIO close and post-VIO close
+  bool is_close_able() const; // two phases: pre-VIO close and post-VIO close
+private:
+  TSVIO const _inVIO = nullptr;
+  TSVConn const _outVConn = nullptr;
+  TSIOBuffer_t const _outBufferU;
+  TSIOBufferReader_t const _outReaderU;
+
+  TSVIO _outVIO = nullptr;
+};
+
+
 // object to request write/read into cache
-struct APIXformCont : public TSCont_t {
+struct ATSXformCont : public TSCont_t {
   using XformCBFxn_t = int64_t(TSEvent, TSVIO, int64_t);
   using XformCB_t = std::function<int64_t(TSEvent, TSVIO, int64_t)>;
   template <class T, typename... Args> friend std::unique_ptr<T> std::make_unique(Args &&... args);
 
 public:
-  //  APIXformCont() = default; // nullptr by default
-  //  APIXformCont(APIXformCont &&) = default;
-  APIXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t bytes = INT64_MAX, int64_t offset = 0);
-  virtual ~APIXformCont() = default;
+  //  ATSXformCont() = default; // nullptr by default
+  //  ATSXformCont(ATSXformCont &&) = default;
+  ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t bytes, int64_t offset = 0);
+  // external-cache-read body
+  ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, const ATSCont &rdSrc, int64_t bytes, int64_t offset = 0); 
+  virtual ~ATSXformCont() = default;
 
-  operator TSVConn() { return get(); }
+  operator TSVConn() const { return get(); }
+
   TSVConn input() const { return get(); }
   TSVIO inputVIO() const { return _inVIO; }
-  TSVConn output() const { return _outVConn; }
-  TSVIO outputVIO() const { return _outVIO; }
-  TSIOBuffer outputBuffer() const { return _outBufferP.get(); }
-  TSIOBufferReader outputReader() const { return _outReaderP.get(); }
+  TSVConn output() const { return _outVConnU ? static_cast<TSVConn>(*_outVConnU) : nullptr; }
+  TSVIO outputVIO() const { return _outVConnU ? static_cast<TSVIO>(*_outVConnU) : nullptr; }
+  TSIOBuffer outputBuffer() const { return _outVConnU ? static_cast<TSIOBuffer>(*_outVConnU) : nullptr; }
+  TSIOBufferReader outputReader() const { return _outVConnU ? static_cast<TSIOBufferReader>(*_outVConnU) : nullptr; }
 
   void
   set_body_handler(const XformCB_t &fxn)
@@ -211,6 +263,7 @@ private:
   static int handleXformTSEventCB(TSCont cont, TSEvent event, void *data);
 
   void init_body_range_handlers(int64_t len, int64_t offset);
+  void init_body_replace_handlers(int64_t len);
 
   // called for
   int64_t
@@ -232,18 +285,14 @@ private:
   TSVIO _inVIO = nullptr;
   TSEvent _inVIOWaiting = TS_EVENT_NONE;
 
-  TSIOBuffer_t _outBufferP;
-  TSIOBufferReader_t _outReaderP;
-
-  TSVConn _outVConn     = nullptr;
-  TSVIO _outVIO         = nullptr;
+  ATSXformOutVConn::Uniq_t _outVConnU;
   // for if WRITE_READY when _outVIO ran out...
   TSEvent _outVIOWaiting = TS_EVENT_NONE;
 };
 
 
 
-class BlockTeeXform : public APIXformCont
+class BlockTeeXform : public ATSXformCont
 {
   using HookType = std::function<int64_t(TSIOBufferReader, int64_t pos, int64_t len)>;
 

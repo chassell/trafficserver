@@ -50,7 +50,7 @@ forward_vio_event(TSEvent event, TSVIO invio)
   }
 }
 
-APICacheKey::APICacheKey(const atscppapi::Url &url, std::string const &etag, uint64_t offset) : TSCacheKey_t(TSCacheKeyCreate())
+ATSCacheKey::ATSCacheKey(const atscppapi::Url &url, std::string const &etag, uint64_t offset) : TSCacheKey_t(TSCacheKeyCreate())
 {
   auto str = url.getUrlString();
   str.append(etag);                                              // etag for version handling
@@ -60,13 +60,15 @@ APICacheKey::APICacheKey(const atscppapi::Url &url, std::string const &etag, uin
   TSCacheKeyHostNameSet(get(), host.data(), host.size());
 }
 
-template <typename T_DATA>
+template <class T_FUTURE>
 TSCont
-APICont::create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DATA> &cbFuture, const std::shared_ptr<void> &counted)
+ATSCont::create_temp_tscont(TSCont mutexSrc, T_FUTURE &cbFuture, const std::shared_ptr<void> &counted)
 {
+  using FutureData_t = decltype(cbFuture.get());
+
   // alloc two objs to pass into lambda
-  auto contp = std::make_unique<APICont>(shared_mutex); // uses empty stub-callback!!
-  auto promp = std::make_unique<std::promise<T_DATA>>();
+  auto contp = std::make_unique<ATSCont>(mutexSrc); // uses empty stub-callback!!
+  auto promp = std::make_unique<std::promise<FutureData_t>>();
 
   auto &cont = *contp; // hold scoped-ref
   auto &prom = *promp; // hold scoped-ref
@@ -78,7 +80,7 @@ APICont::create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DATA> &cb
     decltype(contp) contp(&cont); // free after this call
     decltype(promp) promp(&prom); // free after this call
 
-    prom.set_value(static_cast<T_DATA>(data)); // store correctly
+    prom.set_value(static_cast<FutureData_t>(data)); // store correctly
 
     // bad ptr?  then call deleter on this!
     auto ptrErr = -reinterpret_cast<intptr_t>(data);
@@ -98,8 +100,8 @@ APICont::create_temp_tscont(TSMutex shared_mutex, std::shared_future<T_DATA> &cb
 
 // accepts TSHttpTxn handler functions
 template <class T_OBJ, typename T_DATA>
-APICont::APICont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, T_DATA), T_DATA cbdata, TSMutex mutex)
-  : TSCont_t(TSContCreate(&APICont::handleTSEventCB, mutex))
+ATSCont::ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, T_DATA), T_DATA cbdata, TSCont mutexSrc)
+  : TSCont_t(TSContCreate(&ATSCont::handleTSEventCB, ( mutexSrc ? TSContMutexGet(mutexSrc) : TSMutexCreate() )))
 {
   // point back here
   TSContDataSet(get(), this);
@@ -110,29 +112,130 @@ APICont::APICont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, T_DATA), T_DA
 }
 
 // bare Continuation lambda adaptor
-APICont::APICont(TSMutex mutex) : TSCont_t(TSContCreate(&APICont::handleTSEventCB, mutex))
+ATSCont::ATSCont(TSCont mutexSrc) : TSCont_t(TSContCreate(&ATSCont::handleTSEventCB, ( mutexSrc ? TSContMutexGet(mutexSrc) : TSMutexCreate() )))
 {
   // point back here
   TSContDataSet(get(), this);
 }
 
 int
-APICont::handleTSEventCB(TSCont cont, TSEvent event, void *data)
+ATSCont::handleTSEventCB(TSCont cont, TSEvent event, void *data)
 {
   atscppapi::ScopedContinuationLock lock(cont);
-  APICont *self = static_cast<APICont *>(TSContDataGet(cont));
+  ATSCont *self = static_cast<ATSCont *>(TSContDataGet(cont));
   ink_assert(self->operator TSCont() == cont);
   self->_userCB(event, data);
   return 0;
 }
 
+ATSXformOutVConn::Uniq_t
+ATSXformOutVConn::create_if_ready(const ATSXformCont &xform, int64_t len)
+{
+  return TSTransformOutputVConnGet(xform) 
+     ?  std::make_unique<ATSXformOutVConn>(xform, len)
+     :  ATSXformOutVConn::Uniq_t{};
+}
+
+ATSXformOutVConn::ATSXformOutVConn(const ATSXformCont &xform)
+   : _inVIO(xform.inputVIO()),
+     _outVConn( TSTransformOutputVConnGet(xform) ),
+     _outBufferU(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
+     _outReaderU(TSIOBufferReaderAlloc(this->_outBufferU.get()))
+{
+}
+
+ATSXformOutVConn::ATSXformOutVConn(const ATSXformCont &xform, int64_t len)
+   : _inVIO(xform.inputVIO()),
+    _outVConn( TSTransformOutputVConnGet(xform) ),
+    _outBufferU(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
+    _outReaderU(TSIOBufferReaderAlloc(this->_outBufferU.get())),
+    _outVIO( TSVConnWrite(this->_outVConn,this->_outVConn,this->_outReaderU.get(),len) )
+{
+}
+
+ATSVConnFuture::~ATSVConnFuture()
+{
+  using namespace std::chrono;
+  using std::future_status;
+
+  if ( valid() ) {
+    auto vconn = get();
+    atscppapi::ScopedContinuationLock lock(vconn);
+    TSVConnClose(vconn);
+    DEBUG_LOG("closed cache vconn: %p",vconn);
+  }
+}
+
+bool
+ATSVConnFuture::is_close_able() const
+{
+  using namespace std::chrono;
+  using std::future_status;
+
+  return ( ! std::shared_future<TSVConn>::valid() || wait_for(seconds::zero()) == future_status::ready );
+}
+
+bool
+ATSVConnFuture::valid() const
+{
+  using namespace std::chrono;
+  using std::future_status;
+
+  if ( ! std::shared_future<TSVConn>::valid() ) {
+    return false;
+  }
+  if ( wait_for(seconds::zero()) != future_status::ready ) {
+    return false;
+  }
+  auto ptrErr = reinterpret_cast<intptr_t>(get());
+  if ( ptrErr >= -INK_START_ERRNO - 1000 && ptrErr <= 0 ) {
+    return false;
+  }
+
+  return true;
+}
+
+void
+ATSXformOutVConn::set_close_able()
+{
+  if ( _outVIO ) {
+    TSVIONBytesSet(_outVIO, TSVIONDoneGet(_outVIO)); // define it as complete
+  }
+}
+
+bool
+ATSXformOutVConn::is_close_able() const
+{
+  if ( _outVIO && TSVIONTodoGet(_outVIO) ) {
+    DEBUG_LOG("xform-event input-only complete"); // don't dealloc early!
+    return false; // not ready to delete now...
+  }
+
+  return true;
+}
+
+ATSXformOutVConn::~ATSXformOutVConn()
+{
+  if ( _outVIO ) {
+    ink_assert( ! TSVIONTodoGet(_outVIO) );
+
+    DEBUG_LOG("xform-event dual write-complete");
+    TSVIOReenable(_outVIO);
+    _outVIO = nullptr;
+  } else {
+    DEBUG_LOG("xform-event transform-complete");
+  }
+
+  TSVConnClose(_outVConn);          // do only once!
+  TSVConnShutdown(_outVConn, 0, 1); // do only once!
+  forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE, _inVIO); // required for upstream...
+}
+
 // Transform continuations
-APIXformCont::APIXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t len, int64_t offset)
-  : TSCont_t(TSTransformCreate(&APIXformCont::handleXformTSEventCB, static_cast<TSHttpTxn>(txn.getAtsHandle()))),
+ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t len, int64_t offset)
+  : TSCont_t(TSTransformCreate(&ATSXformCont::handleXformTSEventCB, static_cast<TSHttpTxn>(txn.getAtsHandle()))),
     _txn(txn),
-    _atsTxn(static_cast<TSHttpTxn>(txn.getAtsHandle())),
-    _outBufferP(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
-    _outReaderP(TSIOBufferReaderAlloc(this->_outBufferP.get()))
+    _atsTxn(static_cast<TSHttpTxn>(txn.getAtsHandle()))
 {
   init_body_range_handlers(len, offset); // hdrs -> skip-pre-range -> range -> skip-post-range
 
@@ -141,16 +244,39 @@ APIXformCont::APIXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, 
   TSHttpTxnHookAdd(_atsTxn, xformType, get());
 }
 
+// Transform continuations
+ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, const ATSVConnFuture &rdSrc, int64_t bytes, int64_t offset) // external-only body
+  : TSCont_t(TSTransformCreate(&ATSXformCont::handleXformTSEventCB, static_cast<TSHttpTxn>(txn.getAtsHandle()))),
+    _txn(txn),
+    _atsTxn(static_cast<TSHttpTxn>(txn.getAtsHandle()))
+{
+  init_cache_read_handlers(bytes, offset); // hdrs -> skip-pre-range -> range -> skip-post-range
+
+  // point back here
+  TSContDataSet(get(), this);
+  TSHttpTxnHookAdd(_atsTxn, xformType, get());
+
+  // start *now* ...
+  _xformCB         = _nextXformCB;
+  _xformCBAbsLimit = _nextXformCBAbsLimit;
+
+  auto cachevc = rdSrc.get();
+  auto cachevclen = TSVConnCacheObjectSizeGet(cachevc);
+
+  // read from the cache object first...
+  _inVIO = TSVConnRead(cachevc, *this, outputBuffer(), cachevclen);
+}
+
 int
-APIXformCont::handleXformTSEventCB(TSCont cont, TSEvent event, void *data)
+ATSXformCont::handleXformTSEventCB(TSCont cont, TSEvent event, void *data)
 {
   atscppapi::ScopedContinuationLock lock(cont);
-  APIXformCont *self = static_cast<APIXformCont *>(TSContDataGet(cont));
+  ATSXformCont *self = static_cast<ATSXformCont *>(TSContDataGet(cont));
   return self->handleXformTSEvent(cont, event, data);
 }
 
 BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, int64_t xformLen, int64_t xformOffset)
-  : APIXformCont(txn, TS_HTTP_RESPONSE_TRANSFORM_HOOK, xformLen, xformOffset),
+  : ATSXformCont(txn, TS_HTTP_RESPONSE_TRANSFORM_HOOK, xformLen, xformOffset),
     _writeHook(writeHook),
     _teeBufferP(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
     _teeReaderP(TSIOBufferReaderAlloc(this->_teeBufferP.get()))
@@ -162,8 +288,8 @@ BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, 
 class BlockStoreXform;
 class BlockReadXform;
 
-template APICont::APICont(BlockStoreXform &obj, void (BlockStoreXform::*funcp)(TSEvent, void *, decltype(nullptr)), decltype(nullptr),TSMutex);
-template APICont::APICont(BlockReadXform &obj, void (BlockReadXform::*funcp)(TSEvent, void *, decltype(nullptr)), decltype(nullptr),TSMutex);
-template TSCont APICont::create_temp_tscont(TSMutex, std::shared_future<TSVConn> &, const std::shared_ptr<void> &);
+template ATSCont::ATSCont(BlockStoreXform &obj, void (BlockStoreXform::*funcp)(TSEvent, void *, decltype(nullptr)), decltype(nullptr),TSCont);
+template ATSCont::ATSCont(BlockReadXform &obj, void (BlockReadXform::*funcp)(TSEvent, void *, decltype(nullptr)), decltype(nullptr),TSCont);
+template TSCont ATSCont::create_temp_tscont(TSCont, ATSVConnFuture &, const std::shared_ptr<void> &);
 
 //}

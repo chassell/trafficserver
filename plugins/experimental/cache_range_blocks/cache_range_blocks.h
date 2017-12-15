@@ -207,8 +207,9 @@ private:
   std::vector<ATSVConnFuture> &_vconns;
   ATSCont _readEvents;
 
-  TSVIO _bodyCopyVIO = nullptr;
-  TSEvent _bodyCopyVIOWaiting = TS_EVENT_NONE; // last event
+  ATSXformOutVConn::Uniq_t _xformOutU;
+  TSEvent _xformOutWaiting = TS_EVENT_NONE; // last event
+
   TSVIO _cacheRdVIO = nullptr;
 };
 
