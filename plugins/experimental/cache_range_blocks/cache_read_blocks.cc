@@ -145,23 +145,9 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
     _startSkip(start % ctxt.blockSize()),
     _vconns(ctxt._vcsToRead)
 {
-  TSHttpTxnUntransformedRespCache(ctxt.atsTxn(), 0);
-  TSHttpTxnTransformedRespCache(ctxt.atsTxn(), 0);
-}
+  auto len = std::min( TSVConnCacheObjectSizeGet(_vconns[0].get()), _startSkip + _ctxt.rangeLen() );
+  reset_input_vio( TSVConnRead(_vconns[0].get(), *this, outputBuffer(), len) );
 
-BlockReadXform::~BlockReadXform() { }
-
-void
-BlockReadXform::handleReadCacheLookupComplete(Transaction &txn)
-{
-  launch_block_reads();
-  _ctxt.set_cache_hit_bitset();
-  txn.resume();
-}
-
-void
-BlockReadXform::launch_block_reads()
-{
   // initial handler ....
   set_body_handler([this](TSEvent event, TSVIO vio, int64_t left) {
     if ( event == TS_EVENT_VCONN_WRITE_READY && vio == outputVIO() ) {
@@ -187,12 +173,30 @@ BlockReadXform::launch_block_reads()
 
       DEBUG_LOG("read start: %#lx-%#lx #%#lx", nextRd, nextRdMax, nxt);
 
+      auto len = TSVConnCacheObjectSizeGet(_vconns[nxt].get());
+      len = std::min(len, _startSkip + _ctxt.rangeLen() - nextRd);
+
       reset_input_vio( TSVConnRead(_vconns[nxt].get(), *this, outputBuffer(), nextRdMax - nextRd) );
       _vconns[nxt].reset();
     }
     return 0L;
   });
   // do not resume until first block is read in
+  //
+  TSHttpTxnUntransformedRespCache(ctxt.atsTxn(), 0);
+  TSHttpTxnTransformedRespCache(ctxt.atsTxn(), 0);
+}
+
+BlockReadXform::~BlockReadXform() 
+{ 
+  DEBUG_LOG("destruct start");
+}
+
+void
+BlockReadXform::handleReadCacheLookupComplete(Transaction &txn)
+{
+  _ctxt.set_cache_hit_bitset();
+  txn.resume();
 }
 
 void

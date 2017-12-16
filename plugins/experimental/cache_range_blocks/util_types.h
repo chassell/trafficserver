@@ -189,6 +189,9 @@ struct ATSXformOutVConn
 
   static Uniq_t create_if_ready(const ATSXformCont &xform, int64_t len, int64_t offset);
 
+  ATSXformOutVConn() = delete;
+  ATSXformOutVConn(ATSXformOutVConn&&) = delete;
+  ATSXformOutVConn(const ATSXformOutVConn&) = delete;
   ATSXformOutVConn(const ATSXformCont &xform, int64_t len, int64_t offset);
 
   operator TSVConn() const { return _outVConn; }
@@ -203,6 +206,7 @@ struct ATSXformOutVConn
   bool check_refill(TSEvent event);
 
 private:
+  TSVConn const _inVConn = nullptr;
   TSVIO const _inVIO = nullptr;
   TSVConn const _outVConn = nullptr;
   TSIOBuffer_t const _outBufferU;
@@ -222,8 +226,8 @@ struct ATSXformCont : public TSCont_t {
   template <class T, typename... Args> friend std::unique_ptr<T> std::make_unique(Args &&... args);
 
 public:
-  //  ATSXformCont() = default; // nullptr by default
-  //  ATSXformCont(ATSXformCont &&) = default;
+  ATSXformCont() = delete; // nullptr by default
+  ATSXformCont(ATSXformCont &&) = delete;
   ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t bytes, int64_t offset = 0);
   // external-only body
   virtual ~ATSXformCont() = default;
@@ -231,6 +235,7 @@ public:
 public:
   operator TSVConn() const { return get(); }
 
+  TSVIO xformInputVIO() const { return TSVConnWriteVIOGet(get()); }
   TSVIO inputVIO() const { return _inVIO; }
   TSVConn output() const { return _outVConnU ? static_cast<TSVConn>(*_outVConnU) : nullptr; }
   TSVIO outputVIO() const { return _outVConnU ? static_cast<TSVIO>(*_outVConnU) : nullptr; }
@@ -246,7 +251,7 @@ public:
   set_body_handler(const XformCB_t &fxn)
   {
     _xformCB = fxn;
-    TSDebug("cache_range_block", "%s: %p",__func__,_bodyXformCB.target<XformCBFxn_t>());
+    TSDebug("cache_range_block", "%s",__func__);
   }
 
   int64_t copy_next_len(int64_t);
@@ -260,17 +265,6 @@ private:
   int handleXformTSEvent(TSCont cont, TSEvent event, void *data);
 
   static int handleXformTSEventCB(TSCont cont, TSEvent event, void *data);
-
-  void init_body_range_handlers(int64_t len, int64_t offset);
-  void init_body_replace_handlers(int64_t len);
-
-  // called for
-  int64_t
-  call_body_handler(TSEvent evt, TSVIO vio, int64_t left)
-  {
-    return _bodyXformCB ? _bodyXformCB(evt, vio, left) : left;
-  }
-
 private:
   atscppapi::Transaction &_txn;
   TSHttpTxn _atsTxn;
@@ -278,11 +272,6 @@ private:
   int64_t _xformCBAbsLimit = 0L;
   int64_t const _skipBytes;
   int64_t const _writeBytes;
-
-  XformCB_t _nextXformCB;
-  int64_t _nextXformCBAbsLimit = 0L;
-
-  XformCB_t _bodyXformCB;
 
   TSVIO _inVIO = nullptr;
   TSEvent _inVIOWaiting = TS_EVENT_NONE;

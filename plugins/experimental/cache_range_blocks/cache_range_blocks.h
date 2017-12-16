@@ -158,7 +158,7 @@ public:
 
 public:
   BlockStoreXform(BlockSetAccess &ctxt, int blockCount);
-  ~BlockStoreXform() override { }
+  ~BlockStoreXform() override;
 
   // starting point if created from lookup hook
   void handleReadCacheLookupComplete(Transaction &txn) override; 
@@ -199,7 +199,6 @@ private:
   BlockReadXform(BlockSetAccess &ctxt, int64_t start);
 
   void launch_block_reads(); // from constructor
-  void handleReadComplete(TSEvent, TSVIO, int64_t); // for read events
 private:
   BlockSetAccess &_ctxt;
   int64_t _startSkip;

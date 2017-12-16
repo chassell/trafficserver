@@ -137,12 +137,13 @@ ATSXformOutVConn::create_if_ready(const ATSXformCont &xform, int64_t bytes, int6
 }
 
 ATSXformOutVConn::ATSXformOutVConn(const ATSXformCont &xform, int64_t bytes, int64_t offset)
-   : _inVIO(xform.inputVIO()),
-     _outVConn( TSTransformOutputVConnGet(xform) ),
-     _outBufferU(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
-     _outReaderU(TSIOBufferReaderAlloc(this->_outBufferU.get())),
-     _skipBytes(offset),
-     _writeBytes(bytes)
+  : _inVConn(xform),
+    _inVIO(xform.inputVIO()),
+    _outVConn( TSTransformOutputVConnGet(xform) ),
+    _outBufferU(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
+    _outReaderU(TSIOBufferReaderAlloc(this->_outBufferU.get())),
+    _skipBytes(offset),
+    _writeBytes(bytes)
 {
 }
 
@@ -151,8 +152,8 @@ ATSVConnFuture::~ATSVConnFuture()
   using namespace std::chrono;
   using std::future_status;
 
-  if ( valid() ) {
-    auto vconn = get();
+  auto vconn = get();
+  if ( vconn ) {
     atscppapi::ScopedContinuationLock lock(vconn);
     TSVConnClose(vconn);
     DEBUG_LOG("closed cache vconn: %p",vconn);
@@ -180,7 +181,7 @@ ATSVConnFuture::valid() const
   if ( wait_for(seconds::zero()) != future_status::ready ) {
     return false;
   }
-  auto ptrErr = reinterpret_cast<intptr_t>(get());
+  auto ptrErr = reinterpret_cast<intptr_t>(std::shared_future<TSVConn>::get());
   if ( ptrErr >= -INK_START_ERRNO - 1000 && ptrErr <= 0 ) {
     return false;
   }
@@ -212,29 +213,30 @@ ATSXformOutVConn::~ATSXformOutVConn()
   if ( _outVIO ) {
     ink_assert( ! TSVIONTodoGet(_outVIO) );
 
-    DEBUG_LOG("xform-event dual write-complete");
+    DEBUG_LOG("xform-event out write-complete @%#lx",TSVIONDoneGet(_outVIO));
     TSVIOReenable(_outVIO);
     _outVIO = nullptr;
   } else {
-    DEBUG_LOG("xform-event transform-complete");
+    DEBUG_LOG("xform-event out transform-complete @%#lx",TSVIONDoneGet(_outVIO));
   }
 
   TSVConnClose(_outVConn);          // do only once!
   TSVConnShutdown(_outVConn, 0, 1); // do only once!
-  forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE, _inVIO); // required for upstream...
 }
 
 // Transform continuations
-ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t len, int64_t offset)
+ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t bytes, int64_t offset)
   : TSCont_t(TSTransformCreate(&ATSXformCont::handleXformTSEventCB, static_cast<TSHttpTxn>(txn.getAtsHandle()))),
     _txn(txn),
     _atsTxn(static_cast<TSHttpTxn>(txn.getAtsHandle())),
-    _skipBytes(len),
-    _writeBytes(offset)
+    _xformCB( [](TSEvent evt, TSVIO vio, int64_t left) { DEBUG_LOG("xform-event empty body handler"); return 0; }),
+    _skipBytes(offset),
+    _writeBytes(bytes)
 {
   // point back here
   TSContDataSet(get(), this);
   TSHttpTxnHookAdd(_atsTxn, xformType, get());
+  // get to method via callback
 }
 
 int

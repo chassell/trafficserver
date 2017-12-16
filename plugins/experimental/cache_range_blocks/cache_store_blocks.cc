@@ -67,6 +67,11 @@ BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
   TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // adjust headers to stub-file
 }
 
+BlockStoreXform::~BlockStoreXform()
+{
+  DEBUG_LOG("destruct start");
+}
+
 void
 BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
 {
