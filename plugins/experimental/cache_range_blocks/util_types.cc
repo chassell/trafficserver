@@ -129,27 +129,20 @@ ATSCont::handleTSEventCB(TSCont cont, TSEvent event, void *data)
 }
 
 ATSXformOutVConn::Uniq_t
-ATSXformOutVConn::create_if_ready(const ATSXformCont &xform, int64_t len)
+ATSXformOutVConn::create_if_ready(const ATSXformCont &xform, int64_t bytes, int64_t offset)
 {
   return TSTransformOutputVConnGet(xform) 
-     ?  std::make_unique<ATSXformOutVConn>(xform, len)
+     ?  std::make_unique<ATSXformOutVConn>(xform, bytes, offset)
      :  ATSXformOutVConn::Uniq_t{};
 }
 
-ATSXformOutVConn::ATSXformOutVConn(const ATSXformCont &xform)
+ATSXformOutVConn::ATSXformOutVConn(const ATSXformCont &xform, int64_t bytes, int64_t offset)
    : _inVIO(xform.inputVIO()),
      _outVConn( TSTransformOutputVConnGet(xform) ),
      _outBufferU(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
-     _outReaderU(TSIOBufferReaderAlloc(this->_outBufferU.get()))
-{
-}
-
-ATSXformOutVConn::ATSXformOutVConn(const ATSXformCont &xform, int64_t len)
-   : _inVIO(xform.inputVIO()),
-    _outVConn( TSTransformOutputVConnGet(xform) ),
-    _outBufferU(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
-    _outReaderU(TSIOBufferReaderAlloc(this->_outBufferU.get())),
-    _outVIO( TSVConnWrite(this->_outVConn,this->_outVConn,this->_outReaderU.get(),len) )
+     _outReaderU(TSIOBufferReaderAlloc(this->_outBufferU.get())),
+     _skipBytes(offset),
+     _writeBytes(bytes)
 {
 }
 
@@ -235,36 +228,13 @@ ATSXformOutVConn::~ATSXformOutVConn()
 ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t len, int64_t offset)
   : TSCont_t(TSTransformCreate(&ATSXformCont::handleXformTSEventCB, static_cast<TSHttpTxn>(txn.getAtsHandle()))),
     _txn(txn),
-    _atsTxn(static_cast<TSHttpTxn>(txn.getAtsHandle()))
+    _atsTxn(static_cast<TSHttpTxn>(txn.getAtsHandle())),
+    _skipBytes(len),
+    _writeBytes(offset)
 {
-  init_body_range_handlers(len, offset); // hdrs -> skip-pre-range -> range -> skip-post-range
-
   // point back here
   TSContDataSet(get(), this);
   TSHttpTxnHookAdd(_atsTxn, xformType, get());
-}
-
-// Transform continuations
-ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, const ATSVConnFuture &rdSrc, int64_t bytes, int64_t offset) // external-only body
-  : TSCont_t(TSTransformCreate(&ATSXformCont::handleXformTSEventCB, static_cast<TSHttpTxn>(txn.getAtsHandle()))),
-    _txn(txn),
-    _atsTxn(static_cast<TSHttpTxn>(txn.getAtsHandle()))
-{
-  init_cache_read_handlers(bytes, offset); // hdrs -> skip-pre-range -> range -> skip-post-range
-
-  // point back here
-  TSContDataSet(get(), this);
-  TSHttpTxnHookAdd(_atsTxn, xformType, get());
-
-  // start *now* ...
-  _xformCB         = _nextXformCB;
-  _xformCBAbsLimit = _nextXformCBAbsLimit;
-
-  auto cachevc = rdSrc.get();
-  auto cachevclen = TSVConnCacheObjectSizeGet(cachevc);
-
-  // read from the cache object first...
-  _inVIO = TSVConnRead(cachevc, *this, outputBuffer(), cachevclen);
 }
 
 int
@@ -282,7 +252,7 @@ BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, 
     _teeReaderP(TSIOBufferReaderAlloc(this->_teeBufferP.get()))
 {
   // get to method via callback
-  set_body_handler([this](TSEvent evt, TSVIO vio, int64_t left) { return this->handleEvent(evt, vio, left); });
+  set_body_handler([this](TSEvent evt, TSVIO vio, int64_t left) { return this->inputEvent(evt, vio, left); });
 }
 
 class BlockStoreXform;

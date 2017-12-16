@@ -199,18 +199,12 @@ private:
   BlockReadXform(BlockSetAccess &ctxt, int64_t start);
 
   void launch_block_reads(); // from constructor
-  void handleRead(TSEvent, void *, std::nullptr_t); // for read events
+  void handleReadComplete(TSEvent, TSVIO, int64_t); // for read events
 private:
   BlockSetAccess &_ctxt;
   int64_t _startSkip;
 
   std::vector<ATSVConnFuture> &_vconns;
-  ATSCont _readEvents;
-
-  ATSXformOutVConn::Uniq_t _xformOutU;
-  TSEvent _xformOutWaiting = TS_EVENT_NONE; // last event
-
-  TSVIO _cacheRdVIO = nullptr;
 };
 
 //}

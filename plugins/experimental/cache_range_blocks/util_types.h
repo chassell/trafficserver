@@ -187,10 +187,9 @@ struct ATSXformOutVConn
   friend ATSXformCont;
   using Uniq_t = std::unique_ptr<ATSXformOutVConn>;
 
-  static Uniq_t create_if_ready(const ATSXformCont &xform, int64_t len);
+  static Uniq_t create_if_ready(const ATSXformCont &xform, int64_t len, int64_t offset);
 
-  explicit ATSXformOutVConn(const ATSXformCont &xform);
-  ATSXformOutVConn(const ATSXformCont &xform, const ATSCont &hdlr, int64_t len);
+  ATSXformOutVConn(const ATSXformCont &xform, int64_t len, int64_t offset);
 
   operator TSVConn() const { return _outVConn; }
   operator TSVIO() const { return _outVIO; }
@@ -201,13 +200,18 @@ struct ATSXformOutVConn
 
   void set_close_able(); // two phases: pre-VIO close and post-VIO close
   bool is_close_able() const; // two phases: pre-VIO close and post-VIO close
+  bool check_refill(TSEvent event);
+
 private:
   TSVIO const _inVIO = nullptr;
   TSVConn const _outVConn = nullptr;
   TSIOBuffer_t const _outBufferU;
   TSIOBufferReader_t const _outReaderU;
+  int64_t const _skipBytes;
+  int64_t const _writeBytes;
 
   TSVIO _outVIO = nullptr;
+  TSEvent _outVIOWaiting = TS_EVENT_NONE;
 };
 
 
@@ -221,39 +225,28 @@ public:
   //  ATSXformCont() = default; // nullptr by default
   //  ATSXformCont(ATSXformCont &&) = default;
   ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t bytes, int64_t offset = 0);
-<<<<<<< Updated upstream
-  // external-cache-read body
-  ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, const ATSCont &rdSrc, int64_t bytes, int64_t offset = 0); 
-=======
-  ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, const ATSVConnFuture &rdSrc, int64_t bytes, int64_t offset = 0); // external-only body
->>>>>>> Stashed changes
+  // external-only body
   virtual ~ATSXformCont() = default;
 
+public:
   operator TSVConn() const { return get(); }
 
-  TSVConn input() const { return get(); }
   TSVIO inputVIO() const { return _inVIO; }
   TSVConn output() const { return _outVConnU ? static_cast<TSVConn>(*_outVConnU) : nullptr; }
   TSVIO outputVIO() const { return _outVConnU ? static_cast<TSVIO>(*_outVConnU) : nullptr; }
   TSIOBuffer outputBuffer() const { return _outVConnU ? static_cast<TSIOBuffer>(*_outVConnU) : nullptr; }
   TSIOBufferReader outputReader() const { return _outVConnU ? static_cast<TSIOBufferReader>(*_outVConnU) : nullptr; }
 
+  bool using_two_buffers() const { return _inVIO && TSVIOBufferGet(_inVIO) != outputBuffer(); }
+  bool using_one_buffer() const { return _inVIO && TSVIOBufferGet(_inVIO) == outputBuffer(); }
+
+  void reset_input_vio(TSVIO vio) { _inVIO = vio; }
+
   void
   set_body_handler(const XformCB_t &fxn)
   {
-    _bodyXformCB = fxn;
+    _xformCB = fxn;
     TSDebug("cache_range_block", "%s: %p",__func__,_bodyXformCB.target<XformCBFxn_t>());
-  }
-
-  void
-  set_copy_handler(int64_t pos, const XformCB_t &fxn)
-  {
-    if ( pos == _nextXformCBAbsLimit ) {
-      return;
-    }
-    _nextXformCB         = fxn;
-    _nextXformCBAbsLimit = pos; // relative position to prev. one
-    TSDebug("cache_range_block", "%s: %p limit=%#lx", __func__ ,_nextXformCB.target<XformCBFxn_t>(), pos);
   }
 
   int64_t copy_next_len(int64_t);
@@ -261,6 +254,8 @@ public:
 
 private:
   int check_completions(TSEvent event);
+
+  void xform_input_event();  // for input events
 
   int handleXformTSEvent(TSCont cont, TSEvent event, void *data);
 
@@ -276,10 +271,13 @@ private:
     return _bodyXformCB ? _bodyXformCB(evt, vio, left) : left;
   }
 
+private:
   atscppapi::Transaction &_txn;
   TSHttpTxn _atsTxn;
   XformCB_t _xformCB;
   int64_t _xformCBAbsLimit = 0L;
+  int64_t const _skipBytes;
+  int64_t const _writeBytes;
 
   XformCB_t _nextXformCB;
   int64_t _nextXformCBAbsLimit = 0L;
@@ -307,7 +305,7 @@ public:
   TSIOBufferReader teeReader() const { return _teeReaderP.get(); }
 
 public:
-  int64_t handleEvent(TSEvent event, TSVIO vio, int64_t left);
+  int64_t inputEvent(TSEvent event, TSVIO vio, int64_t left);
 
   HookType _writeHook;
   TSIOBuffer_t _teeBufferP;
