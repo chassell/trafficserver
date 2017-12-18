@@ -95,7 +95,7 @@ BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
     TSCacheWrite(contp, keys[i]); // find room to store each key...
   }
 
-  DEBUG_LOG("store: len=%#lx [blk:%ldK, %#lx bytes]", _ctxt._assetLen, _ctxt.blockSize(), _ctxt.blockSize());
+  DEBUG_LOG("store: len=%#lx [blk:%ldK, %#lx bytes]", _ctxt._assetLen, _ctxt.blockSize()/1024, _ctxt.blockSize());
   txn.resume(); // wait for response
 }
 

@@ -49,7 +49,7 @@ BlockSetAccess::launch_block_tests()
   for (auto i = 0U; i < _keysInRange.size(); ++i, ++blkNum) {
     // prep for async reads that init into VConn-futures
     _keysInRange[i] = std::move(ATSCacheKey(clientUrl(), _etagStr, blkNum * _blkSize));
-    auto contp      = ATSCont::create_temp_tscont(_txnCont, _vcsToRead[i], barrierLock);
+    auto contp      = ATSCont::create_temp_tscont(_mutexOnlyCont, _vcsToRead[i], barrierLock);
     TSCacheRead(contp, _keysInRange[i]);
   }
 }
@@ -140,12 +140,13 @@ BlockSetAccess::start_cache_hit(int64_t rangeStart)
 }
 
 BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
-  : ATSXformCont(ctxt.txn(), TS_HTTP_RESPONSE_TRANSFORM_HOOK, 0), // zero bytes length, zero bytes offset...
+  : ATSXformCont(ctxt.txn(), TS_HTTP_RESPONSE_TRANSFORM_HOOK, ctxt.rangeLen(), start % ctxt.blockSize()), // zero bytes length, zero bytes offset...
     _ctxt(ctxt),
     _startSkip(start % ctxt.blockSize()),
     _vconns(ctxt._vcsToRead)
 {
   auto len = std::min( TSVConnCacheObjectSizeGet(_vconns[0].get()), _startSkip + _ctxt.rangeLen() );
+
   reset_input_vio( TSVConnRead(_vconns[0].get(), *this, outputBuffer(), len) );
 
   // initial handler ....
@@ -156,9 +157,11 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
       return 0L;
     }
 
+    DEBUG_LOG("checking event. e#%d %p %ld %p",event,vio,left,inputVIO());
     if ( event == TS_EVENT_VCONN_READ_COMPLETE && vio == inputVIO() ) {
       // first nonzero vconn ... or past end..
-      auto nxt = std::find_if(_vconns.begin(), _vconns.end(), [](ATSVConnFuture &vc) { return vc.get() != nullptr; } ) - _vconns.begin();
+      auto curr = std::find_if(_vconns.begin(), _vconns.end(), [](ATSVConnFuture &vc) { return vc.get() != nullptr; } ) - _vconns.begin();
+      auto nxt = curr+1;
 
       if ( nxt >= static_cast<int64_t>(_vconns.size()) ) {
         DEBUG_LOG("ignoring event.  completed all reads: e#%d",event);
@@ -176,9 +179,13 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
       auto len = TSVConnCacheObjectSizeGet(_vconns[nxt].get());
       len = std::min(len, _startSkip + _ctxt.rangeLen() - nextRd);
 
+      TSVConnClose(_vconns[curr].get());
+      _vconns[curr].reset();
       reset_input_vio( TSVConnRead(_vconns[nxt].get(), *this, outputBuffer(), nextRdMax - nextRd) );
-      _vconns[nxt].reset();
+      return 0L;
     }
+
+    DEBUG_LOG("ignoring event. e#%d %p %ld %p",event,vio,left,inputVIO());
     return 0L;
   });
   // do not resume until first block is read in

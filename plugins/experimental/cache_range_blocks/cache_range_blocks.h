@@ -138,7 +138,7 @@ private:
   int64_t _beginByte = -1L;
   int64_t _endByte   = -1L;
 
-  ATSCont _txnCont;
+  ATSCont _mutexOnlyCont;
 
   std::vector<ATSCacheKey> _keysInRange;               // in order with index
   std::vector<ATSVConnFuture> _vcsToRead; // indexed as the keys

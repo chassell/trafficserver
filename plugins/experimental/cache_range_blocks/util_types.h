@@ -189,15 +189,12 @@ struct ATSXformOutVConn
 
   static Uniq_t create_if_ready(const ATSXformCont &xform, int64_t len, int64_t offset);
 
-  ATSXformOutVConn() = delete;
-  ATSXformOutVConn(ATSXformOutVConn&&) = delete;
-  ATSXformOutVConn(const ATSXformOutVConn&) = delete;
   ATSXformOutVConn(const ATSXformCont &xform, int64_t len, int64_t offset);
 
   operator TSVConn() const { return _outVConn; }
   operator TSVIO() const { return _outVIO; }
-  operator TSIOBuffer() const { return _outBufferU.get(); }
-  operator TSIOBufferReader() const { return _outReaderU.get(); }
+  operator TSIOBuffer() const { return _outBuffer; }
+  operator TSIOBufferReader() const { return _outReader; }
 
   ~ATSXformOutVConn();
 
@@ -209,13 +206,18 @@ private:
   TSVConn const _inVConn = nullptr;
   TSVIO const _inVIO = nullptr;
   TSVConn const _outVConn = nullptr;
-  TSIOBuffer_t const _outBufferU;
-  TSIOBufferReader_t const _outReaderU;
+  TSIOBuffer _outBuffer;
+  TSIOBufferReader _outReader;
   int64_t const _skipBytes;
   int64_t const _writeBytes;
 
   TSVIO _outVIO = nullptr;
   TSEvent _outVIOWaiting = TS_EVENT_NONE;
+
+  ATSXformOutVConn() = delete;
+  ATSXformOutVConn(ATSXformOutVConn&&) = delete;
+  ATSXformOutVConn(const ATSXformOutVConn&) = delete;
+
 };
 
 
@@ -237,10 +239,12 @@ public:
 
   TSVIO xformInputVIO() const { return TSVConnWriteVIOGet(get()); }
   TSVIO inputVIO() const { return _inVIO; }
+
   TSVConn output() const { return _outVConnU ? static_cast<TSVConn>(*_outVConnU) : nullptr; }
   TSVIO outputVIO() const { return _outVConnU ? static_cast<TSVIO>(*_outVConnU) : nullptr; }
-  TSIOBuffer outputBuffer() const { return _outVConnU ? static_cast<TSIOBuffer>(*_outVConnU) : nullptr; }
-  TSIOBufferReader outputReader() const { return _outVConnU ? static_cast<TSIOBufferReader>(*_outVConnU) : nullptr; }
+
+  TSIOBuffer outputBuffer() const { return _outBufferU.get(); }
+  TSIOBufferReader outputReader() const { return _outReaderU.get(); }
 
   bool using_two_buffers() const { return _inVIO && TSVIOBufferGet(_inVIO) != outputBuffer(); }
   bool using_one_buffer() const { return _inVIO && TSVIOBufferGet(_inVIO) == outputBuffer(); }
@@ -261,8 +265,13 @@ private:
   int check_completions(TSEvent event);
 
   void xform_input_event();  // for input events
+  int xform_input_completion(TSEvent event);  // checks input events
 
   int handleXformTSEvent(TSCont cont, TSEvent event, void *data);
+
+  void handleXformBufferEvent(TSEvent event, TSVIO evio);
+  void handleXformInputEvent(TSEvent event, TSVIO evio);
+  void handleXformOutputEvent(TSEvent event);
 
   static int handleXformTSEventCB(TSCont cont, TSEvent event, void *data);
 private:
@@ -270,13 +279,16 @@ private:
   TSHttpTxn _atsTxn;
   XformCB_t _xformCB;
   int64_t _xformCBAbsLimit = 0L;
-  int64_t const _skipBytes;
-  int64_t const _writeBytes;
+  int64_t const _outSkipBytes;
+  int64_t const _outWriteBytes;
 
   TSVIO _inVIO = nullptr;
   TSEvent _inVIOWaiting = TS_EVENT_NONE;
 
   ATSXformOutVConn::Uniq_t _outVConnU;
+  TSIOBuffer_t const _outBufferU;
+  TSIOBufferReader_t const _outReaderU;
+
   // for if WRITE_READY when _outVIO ran out...
   TSEvent _outVIOWaiting = TS_EVENT_NONE;
 };

@@ -140,8 +140,8 @@ ATSXformOutVConn::ATSXformOutVConn(const ATSXformCont &xform, int64_t bytes, int
   : _inVConn(xform),
     _inVIO(xform.inputVIO()),
     _outVConn( TSTransformOutputVConnGet(xform) ),
-    _outBufferU(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
-    _outReaderU(TSIOBufferReaderAlloc(this->_outBufferU.get())),
+    _outBuffer(xform.outputBuffer()),
+    _outReader(xform.outputReader()),
     _skipBytes(offset),
     _writeBytes(bytes)
 {
@@ -200,12 +200,12 @@ ATSXformOutVConn::set_close_able()
 bool
 ATSXformOutVConn::is_close_able() const
 {
-  if ( _outVIO && TSVIONTodoGet(_outVIO) ) {
-    DEBUG_LOG("xform-event input-only complete"); // don't dealloc early!
-    return false; // not ready to delete now...
+  if ( ! _outVIO || ! TSVIONTodoGet(_outVIO) ) {
+    return true;
   }
 
-  return true;
+  DEBUG_LOG("xform-event input-only complete"); // don't dealloc early!
+  return false; // not ready to delete now...
 }
 
 ATSXformOutVConn::~ATSXformOutVConn()
@@ -230,8 +230,10 @@ ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, 
     _txn(txn),
     _atsTxn(static_cast<TSHttpTxn>(txn.getAtsHandle())),
     _xformCB( [](TSEvent evt, TSVIO vio, int64_t left) { DEBUG_LOG("xform-event empty body handler"); return 0; }),
-    _skipBytes(offset),
-    _writeBytes(bytes)
+    _outSkipBytes(offset),
+    _outWriteBytes(bytes),
+    _outBufferU(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
+    _outReaderU(TSIOBufferReaderAlloc(this->_outBufferU.get()))
 {
   // point back here
   TSContDataSet(get(), this);

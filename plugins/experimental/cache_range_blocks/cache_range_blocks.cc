@@ -83,7 +83,7 @@ BlockSetAccess::~BlockSetAccess()
 
   DEBUG_LOG("delete beginning");
 
-  atscppapi::ScopedContinuationLock lock(_txnCont); // to close
+  atscppapi::ScopedContinuationLock lock(_mutexOnlyCont); // to close
 
   _storeXform.reset(); // clear first
   _readXform.reset(); // clear next
