@@ -278,38 +278,40 @@ ATSXformCont::xform_input_event()
 bool
 ATSXformOutVConn::check_refill(TSEvent event)
 {
-  auto outready = TSIOBufferReaderAvail(*this);
-
-  // time to flag for Reenable?
-  if ( ! outready ) {
-    DEBUG_LOG("xform empty: @-%#lx w/avail 0", _skipBytes);
-    _outVIOWaiting = event; // can't do it now...
-    return true;
-  }
+  auto outready = ( _outVIO ? TSIOBufferReaderAvail(TSVIOReaderGet(_outVIO)) : TSIOBufferReaderAvail(_outReader) );
+  auto pos = ( _outVIO ? TSVIONDoneGet(_outVIO) : 0 ) - _skipBytes;
 
   // ready to start write?
   if ( ! _outVIO && outready >= _skipBytes ) {
     if ( _skipBytes ) {
-      DEBUG_LOG("xform begin write: skip %#lx w/extra +%#lx", _skipBytes, outready - _skipBytes);
-      TSIOBufferReaderConsume(*this, _skipBytes);
+      DEBUG_LOG("xform begin write: skip %#lx w/extra +%#lx", _skipBytes, outready + pos);
+      TSIOBufferReaderConsume(_outReader, _skipBytes);
+      outready = TSIOBufferReaderAvail(_outReader);
     }
-    DEBUG_LOG("xform begin write: %#lx w/avail %#lx", _writeBytes, TSIOBufferReaderAvail(*this));
+    DEBUG_LOG("xform begin write: %#lx w/avail %#lx", _writeBytes, outready);
     _outVIO = TSVConnWrite(_outVConn,_inVConn,_outReader,_writeBytes);
     return false;
   }
 
   // not ready
   if ( ! _outVIO ) {
-    DEBUG_LOG("xform no-write with early data: @-%#lx w/avail %#lx", _skipBytes - outready, outready);
+    DEBUG_LOG("xform no-write with early data: @-%#lx w/avail %#lx", - (outready + pos), outready);
     return false; // need more to start
   }
 
   // past end of write?
   if ( !TSVIONTodoGet(_outVIO) ) {
-    DEBUG_LOG("xform flush past end: @%#lx w/avail %#lx", TSVIONDoneGet(_outVIO), outready);
-    TSIOBufferReaderConsume(*this, outready);
+    DEBUG_LOG("xform flush past end: @%#lx w/avail %#lx", pos, outready);
+    TSIOBufferReaderConsume(_outReader, outready);
     _outVIOWaiting = TS_EVENT_NONE; // flushed new data...
     return false;
+  }
+
+  // time to flag for Reenable?
+  if ( ! outready ) {
+    DEBUG_LOG("xform empty: @-%#lx w/avail 0", pos);
+    _outVIOWaiting = event; // can't do it now...
+    return true;
   }
 
   // event with empty buffer above?
@@ -317,11 +319,11 @@ ATSXformOutVConn::check_refill(TSEvent event)
     DEBUG_LOG("xform flush reenable: @%#lx w/avail %#lx", TSVIONDoneGet(_outVIO),outready);
     TSVIOReenable(_outVIO);
     _outVIOWaiting = TS_EVENT_NONE; // flushed new data...
+    return false;
   }
 
   DEBUG_LOG("xform no-wait no-end: @%#lx w/avail %#lx", TSVIONDoneGet(_outVIO), outready);
   // not waiting and not at end...
-
   return false;
 }
 

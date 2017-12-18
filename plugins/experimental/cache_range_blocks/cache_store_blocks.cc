@@ -21,6 +21,8 @@
 #include <atscppapi/HttpStatus.h>
 #include <atscppapi/Mutex.h>
 
+#include <algorithm>
+
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
 #define PLUGIN_NAME "cache_range_blocks"
@@ -238,7 +240,15 @@ BlockStoreXform::handleBlockWrite(TSEvent event, void *edata, std::nullptr_t)
     TSVIOReenable(blkWriteVIO);
     break;
   case TS_EVENT_VCONN_WRITE_COMPLETE:
+  {
+    auto vc = TSVIOVConnGet(blkWriteVIO);
+    auto it = std::find_if(_vcsToWrite.begin(),_vcsToWrite.end(), [vc](ATSVConnFuture &v){ return v.get() == vc; });
+    if ( it !=  _vcsToWrite.end() ) {
+      TSVConnClose(vc); // flush and store
+      it->reset(); // don't close a second time
+    }
     break;
+  }
   default:
     DEBUG_LOG("cache-write event: e#%d", event);
     break;
