@@ -23,6 +23,9 @@ check_PROGRAMS =
 noinst_LTLIBRARIES =
 pkglib_LTLIBRARIES =
 
+libatscppapi = $(top_builddir)/lib/cppapi/libatscppapi.la
+libtsconfig = $(top_builddir)/lib/tsconfig/libtsconfig.la
+
 SUBDIRS =
 
 AM_LDFLAGS = $(TS_PLUGIN_LD_FLAGS)
@@ -50,6 +53,7 @@ include experimental/balancer/Makefile.inc
 include experimental/buffer_upload/Makefile.inc
 include experimental/cache_promote/Makefile.inc
 include experimental/cache_range_requests/Makefile.inc
+include experimental/cache_range_blocks/Makefile.inc
 include experimental/cachekey/Makefile.inc
 include experimental/collapsed_connection/Makefile.inc
 include experimental/collapsed_forwarding/Makefile.inc

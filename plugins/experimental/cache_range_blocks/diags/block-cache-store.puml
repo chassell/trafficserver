@@ -1,0 +1,191 @@
+@startuml 
+title Range-Block Cache Plugin
+hide footbox
+
+'
+' first case: init
+'
+boundary Client as C
+create "Global Plugin" as GH1
+
+create "Client Request\n(TXN#2)" as TC2 #cyan
+activate TC2 #cyan
+C -// TC2: Client HTTP Request
+deactivate C
+
+TC2 -> GH1: READ_REQUEST_HDR
+deactivate TC2
+activate GH1
+create "Txn Plugin Obj" as TX2
+GH1 --> TX2: detected range req
+deactivate GH1
+activate TX2
+TC2 <- TX2: enable WRITE_RANGE option
+
+participant "Cached Response\n(TXN#1)" as CATC #cyan
+'
+' server and hooks
+participant "Txn Hook\nLOOKUP_COMPLETE" as TH2
+
+participant "TSCacheWrite()\nobjects" as CAWR #springgreen
+
+TX2 --> TH2: enable hook
+TX2 --> "Txn Hook\nSEND_RESPONSE_HDR" as TH5: enable hook
+TX2 -> TC2: add Accept-Encoding to req
+TC2 //- TX2: resume
+deactivate TX2
+activate TC2 #cyan
+
+TC2 -> TC2: perform lookup
+activate TC2 #cyan
+TC2 -> CATC: select alternate\n(match Accept-Encoding -->\n\tContent-Encoding)
+activate CATC #cyan
+TC2 /- CATC
+deactivate CATC
+
+TC2 -> TH2: LOOKUP_COMPLETE (HIT_FRESH)
+deactivate TC2
+deactivate TC2
+activate TH2
+'
+' do block lookups if possible
+'
+CATC -/o TX2: save asset size
+TH2 ->o TX2: compute block size
+TC2 -/o TX2: save new range request
+TH2 ->o TX2: compute block range
+
+TH2 -// CAWR: TSCacheRead() needed block objects
+TH2 -// CAWR: 
+deactivate TH2
+activate CAWR #springgreen
+...
+TH2 //- CAWR: 
+TH2 //- CAWR: Block objects missing/invalid
+deactivate CAWR
+activate TH2
+TH2 -// CAWR: Start TSCacheWrite() of needed block objects
+TH2 -// CAWR: 
+deactivate TH2
+activate CAWR #springgreen
+...
+TH2 //- CAWR: 
+TH2 //- CAWR: Writes started
+activate TH2
+TH2 -> TC2: set status HIT_STALE
+activate TC2 #cyan
+TX2 o-> TC2: expand range to block based
+
+'
+' prepare for request
+'
+
+create "Server Request\n(TXN#2)" as TQ2 #cyan
+TC2 --/ TQ2
+deactivate TC2
+
+participant "Txn Hook\nSEND_REQUEST_HDR" as TH3
+
+TH2 --> TH3: enable hook
+
+'
+' server and hooks
+entity "Origin Server" as S
+
+TH2 -> "Txn Hook\nREAD_RESPONSE_HDR" as TH4: enable hook
+TQ2 //- TH2: resume
+deactivate TH2
+activate TQ2 #cyan
+TQ2 -> TH3: SEND_REQUEST_HDR
+activate TH3
+deactivate TQ2
+TQ2 <- TH3: erase Accept-Encoding
+TQ2 <- TH3: erase IMS conditions
+TQ2 //- TH3: resume
+deactivate TH3
+activate TQ2 #cyan
+
+...
+TQ2 -// S: HTTP Origin Range-Request
+activate S #grey
+deactivate TQ2
+create "Server Response\n(TXN#2)" as TA2 #cyan
+S -// TA2: HTTP Origin 206 Response
+deactivate S
+activate TA2 #cyan
+
+participant TH4
+
+TA2 -> TH4: READ_RESPONSE_HDR
+deactivate TA2
+activate TH4
+'TX2 o/- TA2: save content-range field
+'TH4 -> TH4: compute block size
+TH4 -> TA2: check content-range field
+'TH4 -> TA2: reset status to 200 OK 
+'TH4 -> TA2: assign Content-Encoding
+'TH4 -> TA2: assign bitset metadata fields
+TH4 -// TA2: resume
+
+deactivate TH4
+activate TA2 #cyan
+
+create "Client Response\n(TXN#2)" as TR2 #cyan
+TA2 --/ TR2: newly copied
+
+deactivate TA2
+activate TR2 #cyan
+
+'create "Cached Response\n(TXN#1)" as TCR2 #cyan
+'TA2 --/ TCR2
+
+participant TH5
+
+TR2 -> TH5: SEND_RESPONSE_HDR
+deactivate TR2
+activate TH5
+TR2 /-o TX2: re-add content-range
+'TH5 -> TR2: reset status to 206 Partial Content
+TH5 -> TR2: erase Content-Encoding
+TH5 -> TR2: erase bitset metadata fields
+
+create "Txn Transform\nVConn Input" as TXIN
+TH5 -> TXIN
+
+TH5 -// TR2: resume
+deactivate TH5
+activate TR2 #cyan
+TR2 --// C: Client Http Response
+
+deactivate TR2
+S --// TXIN: Http Body Start
+activate S #grey
+activate TXIN
+TXIN --// CAWR: write full blocks to correct VConns
+S --// TXIN: Http Body
+TXIN --// C: write partial first block to client output
+TXIN --// CAWR: close after write
+S --// TXIN: Http Body Cont'd
+TXIN --// CAWR: 
+TXIN --// C: write full blocks to client output
+S --// TXIN: Http Body End
+deactivate S
+TXIN --// CAWR: close last block
+deactivate CAWR
+TXIN --// C: write partial block to client output
+deactivate TXIN
+deactivate C
+
+destroy TC2
+destroy TQ2
+destroy TA2
+destroy TR2
+destroy TX2
+destroy TH2
+destroy TH3
+destroy TH4
+destroy TH5
+destroy TXIN
+
+
+@enduml

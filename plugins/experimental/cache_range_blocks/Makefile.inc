@@ -1,4 +1,3 @@
-#
 #  Licensed to the Apache Software Foundation (ASF) under one
 #  or more contributor license agreements.  See the NOTICE file
 #  distributed with this work for additional information
@@ -15,21 +14,15 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-experimental_webp_transform_WebpTransform_la_CPPFLAGS = $(AM_CPPFLAGS) $(LIBMAGICKCPP_CFLAGS)
-experimental_webp_transform_WebpTransform_la_CXXFLAGS = $(AM_CXXFLAGS) -Wno-unused-variable
+pkglib_LTLIBRARIES += experimental/cache_range_blocks/cache_range_blocks.la
 
-# cant be used
-# experimental_webp_transform_WebpTransform_la_LIBADD = $(libatscppapi)
+experimental_cache_range_blocks_cache_range_blocks_la_LIBADD = $(libatscppapi)
 
-pkglib_LTLIBRARIES += experimental/webp_transform/WebpTransform.la
+experimental_cache_range_blocks_cache_range_blocks_la_SOURCES = \
+  experimental/cache_range_blocks/cache_range_blocks.cc \
+  experimental/cache_range_blocks/cache_store_blocks.cc \
+  experimental/cache_range_blocks/cache_read_blocks.cc \
+  experimental/cache_range_blocks/cache_range_transforms.cc \
+  experimental/cache_range_blocks/util_types.cc
 
-experimental_webp_transform_WebpTransform_la_SOURCES = \
-  experimental/webp_transform/ImageTransform.cc
 
-experimental_webp_transform_WebpTransform_la_LDFLAGS = \
-  $(AM_LDFLAGS) \
-  -L$(top_builddir)/lib/cppapi
-
-experimental_webp_transform_WebpTransform_la_LIBADD = \
-  -latscppapi \
-  $(LIBMAGICKCPP_LIBS)
