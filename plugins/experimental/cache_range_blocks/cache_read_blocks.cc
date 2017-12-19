@@ -86,7 +86,7 @@ BlockSetAccess::handle_block_tests()
     auto vconn    = _vcsToRead[n].get();
 
     if ( ! vconn ) {
-      DEBUG_LOG("read isn't ready: 1<<%ld", firstBlk + n);
+      DEBUG_LOG("read not ready: 1<<%ld", firstBlk + n);
       continue;
     }
 
@@ -152,8 +152,17 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
   // initial handler ....
   set_body_handler([this](TSEvent event, TSVIO vio, int64_t left) {
     if ( event == TS_EVENT_VCONN_WRITE_READY && vio == outputVIO() ) {
-      DEBUG_LOG("write ready: %#lx (ready %#lx)", TSVIONDoneGet(vio), TSIOBufferReaderAvail(TSVIOReaderGet(inputVIO())));
+      auto inrdr = TSVIOReaderGet(inputVIO());
+      DEBUG_LOG("write ready: %#lx (ready %#lx)", TSVIONDoneGet(vio), ( inrdr ? TSIOBufferReaderAvail(inrdr) : -1 ));
       TSVIOReenable(inputVIO());
+      return 0L;
+    }
+
+    // detect ending conditions ...
+    if ( event == TS_EVENT_VCONN_WRITE_COMPLETE && vio == outputVIO() ) {
+      TSVIONBytesSet( xformInputVIO(), TSVIONDoneGet(xformInputVIO()) ); // mark as completed!
+      auto inrdr = TSVIOReaderGet(xformInputVIO());
+      DEBUG_LOG("write ready: %#lx (ready %#lx)", TSVIONDoneGet(vio), ( inrdr ? TSIOBufferReaderAvail(inrdr) : -1 ));
       return 0L;
     }
 

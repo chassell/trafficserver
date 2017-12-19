@@ -45,6 +45,7 @@ BlockSetAccess::start_cache_miss(int64_t firstBlk, int64_t endBlk)
   // react to genuine misses above...
   for (auto i = 0U; i < endBlk - firstBlk; ++i) {
     if (!is_base64_bit_set(_b64BlkBitset, firstBlk + i)) {
+      DEBUG_LOG("attempt store from bitset: + 1<<%ld %s", firstBlk + i, _b64BlkBitset.c_str());
       _keysInRange[i]    = std::move(ATSCacheKey(clientUrl(), _etagStr, (firstBlk + i) * _blkSize));
     }
   }
@@ -136,6 +137,9 @@ BlockStoreXform::next_valid_vconn(TSVConn &vconn, int64_t inpos, int64_t len)
       continue;
     }
 
+    // should never hit the same vconn as is being written
+    ink_assert( ! _cacheWrVIO || vconn != TSVIOVConnGet(_cacheWrVIO) );
+
     DEBUG_LOG("ready VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, _ctxt.blockSize()/1024);
     return nxtPos - inpos;
   }
@@ -169,17 +173,42 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
   auto navail = TSIOBufferReaderAvail(teerdr); // new amount
 
   auto oavail = navail - len; // amount that hook had accepted before...
-  auto buffpos  = inpos - oavail; // last consumed/written pos ...
+  auto donepos = inpos - oavail;
+  auto newpos = inpos + len;
+
+  // no bytes even cross into new?
+  if ( newpos < _minBuffPos ) {
+    DEBUG_LOG("store **** more to buffer: @%#lx -%#lx left [+%#lx] / @%#lx+%#lx", _minBuffPos, _minBuffPos - newpos, len, donepos, navail);
+    return len;
+  }
+
+  // older bytes need flushing out?
+  if (_cacheWrVIO && donepos <= _minBuffPos ) {
+    TSVIOReenable(_cacheWrVIO);
+    // haven't caught up yet?
+    if (_cacheWrVIO && donepos < _minBuffPos ) {
+      DEBUG_LOG("store **** flush buffer out: @%#lx -%#lx held / @%#lx+%#lx", _minBuffPos, _minBuffPos - donepos, donepos, navail);
+      return len;
+    }
+    DEBUG_LOG("store **** flushed last: @%#lx -%#lx final / @%#lx+%#lx", _minBuffPos, _minBuffPos - donepos, donepos, navail);
+  }
+
+  // no bytes before minbuffpos
+  oavail = std::min(oavail, inpos - _minBuffPos);
+  navail = std::min(oavail + len, navail);
+
+  // new bytes can be skipped or written safely...
+
   auto endpos = inpos + TSVIONTodoGet(inputVIO()); // final byte pos
 
   // check any unneeded bytes before next block
-  auto skipDist = next_valid_vconn(currBlock, buffpos, navail);
+  auto skipDist = next_valid_vconn(currBlock, std::max(_minBuffPos,donepos), navail);
 
   // don't have enough to reach full block boundary?
   if (skipDist < 0) {
     // no need to save these bytes?
     TSIOBufferReaderConsume(teerdr, navail);
-    DEBUG_LOG("store **** skip current block pos:%#lx+%#lx+%#lx", buffpos, oavail, len);
+    DEBUG_LOG("store **** skip current block pos:%#lx+%#lx+%#lx", donepos, oavail, len);
     return len;
     //////// RETURN
   }
@@ -192,31 +221,34 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
     // recheck..
     navail = TSIOBufferReaderAvail(teerdr);
     // align forward..
-    buffpos += skipDist;
+    donepos += skipDist;
 
-    DEBUG_LOG("store **** skipping to buffered pos:%#lx+%#lx --> skipped %#lx", buffpos, navail, skipDist);
+    DEBUG_LOG("store **** skipping to buffered pos:%#lx+%#lx --> skipped %#lx", donepos, navail, skipDist);
   }
 
   // at block boundary now...
 
-  auto wrlen = std::min(endpos - buffpos,blksz); // len needed for a block write...
+  auto wrlen = std::min(endpos - donepos,blksz); // len needed for a block write...
 
-  if (navail < wrlen ) {
-    DEBUG_LOG("store ++++ buffering more dist pos:%#lx+%#lx [+%#lx]", buffpos, navail, wrlen);
+/*
+  if (navail < wrlen) {
+    DEBUG_LOG("store ++++ buffering more dist pos:%#lx+%#lx [+%#lx]", donepos, navail, wrlen);
     return len; // limit amt left by distance to a filled block
     //////// RETURN
   }
+*/
 
-  auto &vcFuture = _vcsToWrite[buffpos / blksz]; // should be correct now...
+  auto blk = donepos / blksz;
+  auto firstBlk = _ctxt._beginByte / _ctxt.blockSize();
+  auto &vcFuture = _vcsToWrite[blk]; // should be correct now...
 
   ink_assert(vcFuture.get() == currBlock);
 
-//  vcFuture = std::shared_future<TSVConn>(); // writing it now .. so zero block out
+  _minBuffPos = donepos + wrlen;
 
   // should send a WRITE_COMPLETE rather quickly
   _cacheWrVIO = TSVConnWrite(currBlock, _writeEvents, teerdr, wrlen);
-
-  DEBUG_LOG("store ++++ performed write [%p] pos:%#lx+%#lx / +%#lx+%#lx", _cacheWrVIO, buffpos, wrlen, oavail, len);
+  DEBUG_LOG("store ++++ beginning block 1<<%ld write @%#lx+%#lx+%#lx [final %#lx]", firstBlk + blk, donepos, oavail, len, wrlen);
   return len;
 }
 
@@ -239,13 +271,17 @@ BlockStoreXform::handleBlockWrite(TSEvent event, void *edata, std::nullptr_t)
     DEBUG_LOG("cache-write flush e#%d -> %ld? %ld?", event, TSVIONDoneGet(blkWriteVIO), TSVIONBytesGet(blkWriteVIO));
     TSVIOReenable(blkWriteVIO);
     break;
-  case TS_EVENT_VCONN_WRITE_COMPLETE:
-  {
+  case TS_EVENT_VCONN_WRITE_COMPLETE: {
+    if ( blkWriteVIO == _cacheWrVIO ) {
+      _cacheWrVIO = nullptr;
+    }
     auto vc = TSVIOVConnGet(blkWriteVIO);
     auto it = std::find_if(_vcsToWrite.begin(),_vcsToWrite.end(), [vc](ATSVConnFuture &v){ return v.get() == vc; });
     if ( it !=  _vcsToWrite.end() ) {
+      auto firstBlk = _ctxt._beginByte / _ctxt.blockSize();
       TSVConnClose(vc); // flush and store
       it->reset(); // don't close a second time
+      DEBUG_LOG("completed store to bitset: + 1<<%ld %s", firstBlk + (it - _vcsToWrite.begin()), _ctxt.b64BlkBitset().c_str());
     }
     break;
   }

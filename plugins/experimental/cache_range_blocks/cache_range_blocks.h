@@ -177,6 +177,7 @@ private:
 
   ATSCont _writeEvents;
 
+  int64_t _minBuffPos = 0L;
   TSVIO _cacheWrVIO = nullptr;
   TSEvent _cacheWrVIOWaiting = TS_EVENT_NONE; // event if cache-write is blocked
   TSEvent _blockVIOWaiting = TS_EVENT_NONE; // event if body-read is blocked

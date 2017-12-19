@@ -32,7 +32,7 @@ int
 ATSXformCont::xform_input_completion(TSEvent event)
 {
   TSVConn invconn = *this;
-  TSVIO invio = xformInputVIO();
+  TSVIO invio = ( invconn ? xformInputVIO() : nullptr );
 
   // check for rude shutdown?
   if (!invio || !TSVIOBufferGet(invio)) {
@@ -52,11 +52,15 @@ ATSXformCont::xform_input_completion(TSEvent event)
     return -2; // cannot proceed when closed
   }
 
-  // input N-Todo is complete...
-  
-  if ( outputVIO() ) {
+  if ( outputVIO() && ! _outVConnU->is_close_able() ) {
     DEBUG_LOG("xform-event input-only complete: @%#lx / @%#lx e#%d", TSVIONDoneGet(invio), TSVIONDoneGet(outputVIO()), event);
     return -3; // cannot proceed with no data
+  }
+
+  // input N-Todo is complete...
+  if ( outputVIO() ) {
+    _xformCB(event, outputVIO(), 0); // notify...
+    _outVConnU.reset(); // delete, flush and free
   }
 
   if ( invio == _inVIO ) {
@@ -67,7 +71,6 @@ ATSXformCont::xform_input_completion(TSEvent event)
 
   // input and output both complete
   _xformCB(event, invio, 0);
-
   forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE, invio); // required for upstream...
   return -4; // cannot proceed with no data
 }
@@ -80,16 +83,11 @@ ATSXformCont::handleXformOutputEvent(TSEvent event)
 
   switch ( event ) {
     case TS_EVENT_VCONN_WRITE_COMPLETE:
-
       // handle an early output-complete?
       if ( ! _outVConnU->is_close_able() ) {
-        _outVConnU->set_close_able();
-        _xformCB(event, outvio, 0); // notify...
-      } else {
-        _outVConnU.reset(); // delete, flush and free
-        TSVIONBytesSet( xformInputVIO(), TSVIONDoneGet(xformInputVIO()) ); // mark at end *now* ...
-        xform_input_completion(event);
-      }
+        _outVConnU->set_close_able(); // in case something cut it early...
+      } 
+      _xformCB(event, outputVIO(), 0); // notify...
       break;
 
     case TS_EVENT_VCONN_WRITE_READY:

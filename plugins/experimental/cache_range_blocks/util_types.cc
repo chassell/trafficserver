@@ -179,6 +179,7 @@ ATSVConnFuture::valid() const
     return false;
   }
   if ( wait_for(seconds::zero()) != future_status::ready ) {
+    DEBUG_LOG("vconn waiting: %p",this);
     return false;
   }
   auto ptrErr = reinterpret_cast<intptr_t>(std::shared_future<TSVConn>::get());
