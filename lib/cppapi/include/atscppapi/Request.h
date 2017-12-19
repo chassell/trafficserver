@@ -31,11 +31,6 @@
 
 namespace atscppapi
 {
-namespace utils
-{
-  class internal;
-}
-
 class Transaction;
 struct RequestState;
 
@@ -85,7 +80,6 @@ private:
   void reset();
   friend class Transaction;
   friend class ClientRequest;
-  friend class utils::internal;
 };
 }
 

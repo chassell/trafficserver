@@ -141,6 +141,10 @@ void inline invokePluginForEvent(Plugin *plugin, TSHttpTxn ats_txn_handle, TSEve
   case TS_EVENT_HTTP_CACHE_LOOKUP_COMPLETE:
     plugin->handleReadCacheLookupComplete(transaction);
     break;
+  case TS_EVENT_HTTP_SELECT_ALT:
+    plugin->handleSelectAlt(transaction);
+    break;
+
   default:
     assert(false); /* we should never get here */
     break;
@@ -226,27 +230,6 @@ void
 utils::internal::invokePluginForEvent(GlobalPlugin *plugin, TSHttpTxn ats_txn_handle, TSEvent event)
 {
   ::invokePluginForEvent(static_cast<Plugin *>(plugin), ats_txn_handle, event);
-}
-
-void
-utils::internal::invokePluginForEvent(GlobalPlugin *plugin, TSHttpAltInfo altinfo_handle, TSEvent event)
-{
-  TSMBuffer chdr_buf, ohdr_buf;
-  TSMLoc chdr_loc, ohdr_loc;
-
-  assert(event == TS_EVENT_HTTP_SELECT_ALT);
-
-  TSHttpAltInfoClientReqGet(altinfo_handle, &chdr_buf, &chdr_loc);
-  TSHttpAltInfoCachedReqGet(altinfo_handle, &ohdr_buf, &ohdr_loc);
-
-  const Request clientReq(chdr_buf, chdr_loc);
-  const Request cachedReq(ohdr_buf, ohdr_loc);
-  const Response cachedResp;
-
-  TSHttpAltInfoCachedRespGet(altinfo_handle, &ohdr_buf, &ohdr_loc);
-  const_cast<Response &>(cachedResp).init(ohdr_buf, ohdr_loc);
-
-  plugin->handleSelectAlt(clientReq, cachedReq, cachedResp);
 }
 
 std::string
