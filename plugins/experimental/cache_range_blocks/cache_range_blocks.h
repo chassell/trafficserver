@@ -26,7 +26,6 @@
 #include <atscppapi/TransformationPlugin.h>
 #include <atscppapi/GlobalPlugin.h>
 #include <atscppapi/PluginInit.h>
-#include <atscppapi/RemapPlugin.h>
 
 #include <iostream>
 #include <memory>
@@ -34,11 +33,15 @@
 #include <vector>
 #include <future>
 
+#pragma once
+
 #define CONTENT_ENCODING_INTERNAL "x-block-cache-range"
 
+#define VARY_TAG "Vary"
 #define ETAG_TAG "ETag"
 #define IF_MODIFIED_SINCE_TAG "If-Modified-Since"
 #define IF_NONE_MATCH_TAG "If-None-Match"
+#define IF_RANGE_TAG "If-Range"
 #define CONTENT_ENCODING_TAG "Content-Encoding"
 #define CONTENT_LENGTH_TAG "Content-Length"
 #define RANGE_TAG "Range"
@@ -50,7 +53,6 @@
 
 using namespace atscppapi;
 
-class BlockInitXform;
 class BlockStoreXform;
 class BlockReadXform;
 
@@ -59,97 +61,68 @@ class BlockSetAccess : public TransactionPlugin
   friend BlockStoreXform; // when it needs to change over
   friend BlockReadXform;  // when it needs to change over
   using Txn_t = Transaction;
+public:
+  static void start_if_range_present(Transaction &txn);
 
 public:
   explicit BlockSetAccess(Transaction &txn);
+  ~BlockSetAccess() override;
 
-  ~BlockSetAccess() override {}
+  Transaction & txn() const { return _txn; }
+  TSHttpTxn atsTxn() const { return _atsTxn; }
+  Headers & clientHdrs() { return _clntHdrs; }
+  const Url & clientUrl() const { return _url; }
+  const std::string & clientRangeStr() const { return _clntRangeStr; }
+  const std::string & blockRangeStr() const { return _blkRangeStr; }
 
-  Transaction &
-  txn() const
-  {
-    return _txn;
-  }
-  TSHttpTxn
-  atsTxn() const
-  {
-    return _atsTxn;
-  }
-  Headers &
-  clientHdrs()
-  {
-    return _clntHdrs;
-  }
-  const Url &
-  clientUrl() const
-  {
-    return _url;
-  }
-  const std::string &
-  clientRangeStr() const
-  {
-    return _clntRangeStr;
-  }
-  const std::string &
-  blockRangeStr() const
-  {
-    return _blkRangeStr;
-  }
+  const std::vector<ATSCacheKey> & keysInRange() const { return _keysInRange; }
+  const std::string & b64BlkBitset() const { return _b64BlkBitset; }
 
-  const std::vector<APICacheKey> &
-  keysInRange() const
-  {
-    return _keysInRange;
-  }
-  const std::string &
-  b64BlkBitset() const
-  {
-    return _b64BlkBitset;
-  }
-
-  int64_t
-  assetLen() const
-  {
-    return _assetLen;
-  }
-  int64_t
-  rangeLen() const
-  {
-    return _endByte - _beginByte;
-  }
-  int64_t
-  blockSize() const
-  {
-    return _blkSize;
-  }
-  // pos --> aligned *next* pos
-  // pos --> VConn to read
-
-  void clean_client_request();
+  int64_t assetLen() const { return _assetLen; }
+  int64_t rangeLen() const { return _endByte - _beginByte; }
+  int64_t blockSize() const { return _blkSize; }
+  
+  void clean_client_request(); // allow secondary-accepting block-set match
+  
+  // clean up, increase range-request, avoid any 304/200 if client didn't request one
   void clean_server_request(Transaction &txn);
-  void clean_server_response(Transaction &txn);
+
+  void reset_cached_stub(Transaction &txn) {
+    txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1); // permit range in cached-request
+    TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // handle reply for stub-file storage
+  }
+
+  void prepare_cached_stub(Transaction &txn);
   void clean_client_response(Transaction &txn);
 
-  // prep to match a block map file
+public:
+  // permit use of blocks if possible
   void handleReadRequestHeadersPostRemap(Transaction &txn) override;
 
-  // detect a block map file
+  // detect a block map file here
   void handleReadCacheLookupComplete(Transaction &txn) override;
 
-  void
-  handleSendResponseHeaders(Transaction &txn) override
-  {
-    clean_client_response(txn);
-    txn.resume();
-  }
+  // upon a new URL init .. add these only
+  void handleSendRequestHeaders(Transaction &txn) override;
+  void handleReadResponseHeaders(Transaction &txn) override;
 
-  void handleBlockTests();
+  // restore the request as before...
+  void handleSendResponseHeaders(Transaction &txn) override;
+private:
+
+  void launch_block_tests();
+  void handle_block_tests();
 
 private:
-  Headers *get_trunc_hdrs();
+  Headers *get_stub_hdrs();
 
   int64_t select_needed_blocks();
 
+  void start_cache_miss(int64_t firstBlk, int64_t endBlk);
+  void start_cache_hit(int64_t rangeStart);
+  void set_cache_hit_bitset();
+
+private:
   Transaction &_txn;
   const TSHttpTxn _atsTxn = nullptr;
   Url &_url;
@@ -165,112 +138,73 @@ private:
   int64_t _beginByte = -1L;
   int64_t _endByte   = -1L;
 
-  std::vector<APICacheKey> _keysInRange;               // in order with index
-  std::vector<std::shared_future<TSVConn>> _vcsToRead; // indexed as the keys
+  ATSCont _mutexOnlyCont;
+
+  std::vector<ATSCacheKey> _keysInRange;               // in order with index
+  std::vector<ATSVConnFuture> _vcsToRead; // indexed as the keys
 
   // transform objects must be committed to, upon response
 
-  std::unique_ptr<BlockInitXform> _initXform;   // state-object ptr
-  std::unique_ptr<BlockReadXform> _readXform;   // state-object ptr
-  std::unique_ptr<BlockStoreXform> _storeXform; // state-object ptr
+  std::unique_ptr<BlockReadXform> _readXform;   // state-object ptr [registers Transforms/Continuations]
+  std::unique_ptr<BlockStoreXform> _storeXform; // state-object ptr [registers Transforms/Continuations]
 };
 
-class BlockInitXform : public TransactionPlugin
-{
-public:
-  BlockInitXform(BlockSetAccess &ctxt) : TransactionPlugin(ctxt.txn()), _ctxt(ctxt)
-  {
-    TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS);  // add user-range and clean up
-    TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // remember length to create new entry
-  }
-
-  void
-  handleSendRequestHeaders(Transaction &txn) override
-  {
-    _ctxt.clean_server_request(txn); // request full blocks if possible
-    txn.resume();
-  }
-
-  // change to 200 and append stub-file headers...
-  void
-  handleReadResponseHeaders(Transaction &txn) override
-  {
-    _ctxt.clean_server_response(txn); // request full blocks if possible
-    txn.getServerResponse().setStatusCode(HTTP_STATUS_OK);
-    txn.resume();
-  }
-
-private:
-  BlockSetAccess &_ctxt;
-};
-
+/////////////////////////////////////////////////
+/////////////////////////////////////////////////
 class BlockStoreXform : public TransactionPlugin, public BlockTeeXform
 {
 public:
-  BlockStoreXform(BlockSetAccess &ctxt);
+  using WriteVCs_t = std::vector<ATSVConnFuture>;
+
+public:
+  BlockStoreXform(BlockSetAccess &ctxt, int blockCount);
   ~BlockStoreXform() override;
 
-  void handleReadCacheLookupComplete(Transaction &txn) override;
-  void handleSendRequestHeaders(Transaction &txn) override;
-  void handleReadResponseHeaders(Transaction &txn) override;
+  // starting point if created from lookup hook
+  void handleReadCacheLookupComplete(Transaction &txn) override; 
 
-  //////////////////////////////////////////
-  //////////// in Response-Transformation phase
 private:
   int64_t next_valid_vconn(TSVConn &vconn, int64_t pos, int64_t len);
 
-  int64_t handleInput(TSIOBufferReader r, int64_t pos, int64_t len);
-  void handleWrite(TSEvent, void *, std::nullptr_t);
-
-  TSVConn next_valid_vconn(int64_t pos, int64_t len);
+  int64_t handleBodyRead(TSIOBufferReader r, int64_t pos, int64_t len);
+  void handleBlockWrite(TSEvent, void *, std::nullptr_t);
 
 private:
   BlockSetAccess &_ctxt;
-  std::vector<std::shared_future<TSVConn>> _vcsToWrite; // indexed as the keys
-  APICont _writeEvents;
+
+  std::shared_ptr<WriteVCs_t> _vcsToWriteP; 
+  WriteVCs_t &_vcsToWrite; // indexed as the keys
+
+  ATSCont _writeEvents;
+
+  int64_t _minBuffPos = 0L;
+  TSVIO _cacheWrVIO = nullptr;
+  TSEvent _cacheWrVIOWaiting = TS_EVENT_NONE; // event if cache-write is blocked
+  TSEvent _blockVIOWaiting = TS_EVENT_NONE; // event if body-read is blocked
 };
 
-class BlockReadXform : public APIXformCont
+/////////////////////////////////////////////////
+/////////////////////////////////////////////////
+class BlockReadXform : public ATSXformCont
 {
+  template <typename _Tp, typename... _Args>
+  friend unique_ptr<_Tp> std::make_unique(_Args &&... __args); // when it needs to change over
+
 public:
+  // starting point if created from lookup hook
+  void handleReadCacheLookupComplete(Transaction &txn);
+
+  ~BlockReadXform() override;
+
+private:
   BlockReadXform(BlockSetAccess &ctxt, int64_t start);
 
-private:
-  void handleRead(TSEvent, void *, std::nullptr_t);
-
+  void launch_block_reads(); // from constructor
 private:
   BlockSetAccess &_ctxt;
-  int64_t _startByte;
-  TSVIO _bodyVIO = nullptr;
-  std::vector<TSVConn> _vconns;
-  APICont _readEvents;
-};
+  int64_t _startSkip;
 
-class GlobalRangeDetect : public GlobalPlugin
-{
-public:
-  using GlobalPlugin::GlobalPlugin; // same ctors
-
-  void
-  addHooks()
-  {
-    GlobalPlugin::registerHook(HOOK_READ_REQUEST_HEADERS_POST_REMAP);
-  }
-
-  // add stub-allowing header if has a valid range
-  void handleReadRequestHeadersPostRemap(Transaction &txn) override;
-
-private:
-  std::string _random;
-};
-
-class RemapRangeDetect : public RemapPlugin
-{
-public:
-  using RemapPlugin::RemapPlugin; // same ctors
-
-  Result
-  doRemap(const Url &, const Url &, Transaction &txn, bool &) override;
+  std::vector<ATSVConnFuture> &_vconns;
 };
 
 //}

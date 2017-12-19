@@ -33,9 +33,31 @@
 
 using namespace atscppapi;
 
+void
+BlockSetAccess::launch_block_tests()
+{
+  // stateless callback as deleter...
+  using Deleter_t                = void (*)(BlockSetAccess *);
+  static const Deleter_t deleter = [](BlockSetAccess *ptr) {
+    ptr->handle_block_tests(); // recurse from last one
+  };
+
+  // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
+  auto barrierLock = std::shared_ptr<BlockSetAccess>(this, deleter);
+  auto blkNum      = _beginByte / _blkSize;
+
+  for (auto i = 0U; i < _keysInRange.size(); ++i, ++blkNum) {
+    // prep for async reads that init into VConn-futures
+    _keysInRange[i] = std::move(ATSCacheKey(clientUrl(), _etagStr, blkNum * _blkSize));
+    auto contp      = ATSCont::create_temp_tscont(_mutexOnlyCont, _vcsToRead[i], barrierLock);
+    TSCacheRead(contp, _keysInRange[i]);
+  }
+}
+
+
 // start read of all the blocks
 void
-BlockSetAccess::handleBlockTests()
+BlockSetAccess::handle_block_tests()
 {
   using namespace std::chrono;
   using std::future_status;
@@ -44,33 +66,35 @@ BlockSetAccess::handleBlockTests()
   // mutex-protected check
   //
 
-  if (_storeXform || _readXform || _initXform) {
+  if (_storeXform || _readXform) {
     return; // transform has already begun
   }
 
   auto nrdy     = 0U;
   auto firstBlk = _beginByte / _blkSize;
+  auto endBlk = (_endByte + _blkSize-1) / _blkSize; // round up
+  auto finalBlk = _assetLen / _blkSize; // round down..
 
   // scan *all* keys and vconns to check if ready
   for (auto n = 0U; n < _vcsToRead.size(); ++n) {
-    // clear bit
     base64_bit_clr(_b64BlkBitset, firstBlk + n);
 
-    if (_vcsToRead[n].wait_for(seconds::zero()) != future_status::ready) {
-      DEBUG_LOG("read isn't ready: #%#lx", firstBlk + n);
-      continue;
+    if ( ! _keysInRange[n] ) {
+      continue; // known present..
     }
 
     auto vconn    = _vcsToRead[n].get();
-    auto vconnErr = -reinterpret_cast<intptr_t>(vconn); // block isn't ready
-    // valid pointers don't look like this
-    if (!vconnErr || (vconnErr >= CACHE_ERRNO && vconnErr < EHTTP_ERROR)) {
-      DEBUG_LOG("read returned non-pointer: #%#lx == %ld", firstBlk + n, vconnErr);
+
+    if ( ! vconn ) {
+      DEBUG_LOG("read not ready: 1<<%ld", firstBlk + n);
       continue;
     }
 
+    auto blkLen = ( firstBlk + n == finalBlk ? ((_assetLen-1) % blockSize())+1 : blockSize() );
+
     // block is ready and of right size?
-    if (TSVConnCacheObjectSizeGet(vconn) != static_cast<int64_t>(blockSize())) {
+    if ( TSVConnCacheObjectSizeGet(vconn) != blkLen ) {
+      // clear bit
       DEBUG_LOG("read returned wrong size: #%#lx", firstBlk + n);
       continue;
     }
@@ -80,130 +104,144 @@ BlockSetAccess::handleBlockTests()
     // successful!
     ++nrdy;
     base64_bit_set(_b64BlkBitset, firstBlk + n); // set a bit
-    DEBUG_LOG("read successful bitset: %s", _b64BlkBitset.c_str());
+    DEBUG_LOG("read successful bitset: + 1<<%ld %s", firstBlk + n, _b64BlkBitset.c_str());
   }
 
   // ready to read from cache...
-  if (_vcsToRead.empty() || nrdy < _keysInRange.size()) {
-    DEBUG_LOG("cache-resp-wr: len=%#lx set=%s", assetLen(), b64BlkBitset().c_str());
-
-    // intercept data for new or updated stub version
-    _storeXform = std::make_unique<BlockStoreXform>(*this);
-    _storeXform->handleReadCacheLookupComplete(_txn);
+  if ( nrdy == _keysInRange.size() ) {
+    start_cache_hit(_beginByte);
     return;
   }
 
-  //  TSHttpTxnCacheLookupStatusSet(atsTxn(), TS_CACHE_LOOKUP_HIT_FRESH);
+  auto n = _vcsToRead.size();
 
-  auto &cachhdrs = _txn.updateCachedResponse().getHeaders();
-  //  cachhdrs.erase(CONTENT_RANGE_TAG); // erase to remove concerns
-  cachhdrs.set(X_BLOCK_BITSET_TAG, _b64BlkBitset); // attempt to erase/rewrite field in headers
-
-  DEBUG_LOG("updated bitset: %s", _b64BlkBitset.c_str());
-  DEBUG_LOG("updated cache-hdrs:\n%s\n------\n", cachhdrs.wireStr().c_str());
-
-  // change the cached header we're about to send out
-  TSHttpTxnUpdateCachedObject(atsTxn());
-
-  // adds hook for transform...
-  _readXform = std::make_unique<BlockReadXform>(*this, _beginByte);
-  // don't continue until first block is read ...
-}
-
-BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
-  : APIXformCont(ctxt.txn(), TS_HTTP_RESPONSE_TRANSFORM_HOOK, 0),
-    _ctxt(ctxt),
-    _startByte(start % ctxt.blockSize()),
-    _readEvents(*this, &BlockReadXform::handleRead, nullptr)
-{
-  auto blkSize  = ctxt.blockSize();
-  auto &readVCs = ctxt._vcsToRead;
-
-  TSHttpTxnUntransformedRespCache(ctxt.atsTxn(), 0);
-  TSHttpTxnTransformedRespCache(ctxt.atsTxn(), 0);
-
-  // move get()'s into _vconns vector
-  std::transform(readVCs.begin(), readVCs.end(), std::back_inserter(_vconns),
-                 [](decltype(readVCs.front()) &fut) { return fut.get(); });
-
-  // start first read *only* to fill buffer for later
-  TSVConnRead(_vconns[0], _readEvents, outputBuffer(), blkSize);
-  _vconns[0] = nullptr;
-
-  set_body_handler([this](TSEvent event, TSVIO vio, int64_t left) {
-    auto avail = TSIOBufferReaderAvail(outputReader());
-    auto ndone = (_bodyVIO ? TSVIONDoneGet(_bodyVIO) : -1);
-
-    // write has buffered up?  flush down
-    if (!_bodyVIO && avail >= _startByte) {
-      // start full write
-      DEBUG_LOG("read -> body vio begin: %#lx >= %#lx: n=%#lx", avail, _startByte, _ctxt.rangeLen());
-      TSIOBufferReaderConsume(outputReader(), _startByte);
-      _bodyVIO = TSVConnWrite(output(), *this, outputReader(), _ctxt.rangeLen());
-      return 0L;
+  for( auto &&p : _vcsToRead ) {
+    if ( ! p.is_close_able() ) {
+      auto i = &p - &_vcsToRead.front();
+      DEBUG_LOG("late cache-read entry: #%ld",i);
+      break;
     }
+    --n;
+  }
 
-    if (_bodyVIO && event == TS_EVENT_VCONN_WRITE_READY) {
-      TSVIOReenable(_bodyVIO);
-      DEBUG_LOG("read write-vio flush: %#lx+%#lx >= %#lx", ndone, avail, _startByte);
-      return 0L;
-    }
+  // best to do now?
+  if ( ! n ) {
+    _vcsToRead.clear(); // deallocate and close now...
+  }
 
-    if (_bodyVIO && event == TS_EVENT_VCONN_WRITE_COMPLETE) {
-      DEBUG_LOG("flushing close: #%d pos:%#lx / %#lx", event, ndone, avail);
-      TSVIOReenable(_bodyVIO);
-      return 0L;
-    }
-
-    DEBUG_LOG("read unkn event: #%d pos:%#lx / %#lx", event, ndone, avail);
-    return 0L;
-  });
-
-  // do not resume until first block is read in
+  start_cache_miss(firstBlk, endBlk);
 }
 
 void
-BlockReadXform::handleRead(TSEvent event, void *, std::nullptr_t)
+BlockSetAccess::start_cache_hit(int64_t rangeStart)
 {
-  // gauge total read already
-  if (event != TS_EVENT_VCONN_READ_COMPLETE) {
-    DEBUG_LOG("read event: #%d", event);
-    return;
-  }
-
-  auto n = std::count(_vconns.begin(), _vconns.end(), nullptr);
-
-  // only first read ended ...
-  if (n == 1 && !_bodyVIO) {
-    _ctxt.txn().resume(); // continue w/data
-    DEBUG_LOG("read of first block complete");
-  }
-
-  auto blkSize = _ctxt.blockSize();
-  auto pos     = _startByte; // position in output stream
-  auto end     = _startByte + _ctxt.rangeLen();
-
-  if (_bodyVIO) {
-    pos += TSVIONDoneGet(_bodyVIO);
-  }
-
-  // get next to read
-  auto blkNum    = (pos + blkSize - 1) / blkSize;
-  int64_t blkMax = _vconns.size();
-
-  while (!_vconns[blkNum] && blkNum < blkMax) {
-    ++blkNum;
-    pos += blkSize;
-  }
-
-  if (blkNum >= blkMax) {
-    return; // no more thanks
-  }
-
-  auto currRead    = blkNum * blkSize;
-  auto currReadMax = std::min((blkNum + 1) * blkSize, end);
-
-  DEBUG_LOG("read start: %#lx-%#lx #%#lx", currRead, currReadMax, blkNum);
-  TSVConnRead(_vconns[blkNum], _readEvents, outputBuffer(), currReadMax - currRead);
-  _vconns[blkNum] = nullptr;
+  _readXform = std::make_unique<BlockReadXform>(*this, rangeStart);
+  _readXform->handleReadCacheLookupComplete(txn());  // may have txn.resume()
 }
+
+BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
+  : ATSXformCont(ctxt.txn(), TS_HTTP_RESPONSE_TRANSFORM_HOOK, ctxt.rangeLen(), start % ctxt.blockSize()), // zero bytes length, zero bytes offset...
+    _ctxt(ctxt),
+    _startSkip(start % ctxt.blockSize()),
+    _vconns(ctxt._vcsToRead)
+{
+  auto len = std::min( TSVConnCacheObjectSizeGet(_vconns[0].get()), _startSkip + _ctxt.rangeLen() );
+
+  reset_input_vio( TSVConnRead(_vconns[0].get(), *this, outputBuffer(), len) );
+
+  // initial handler ....
+  set_body_handler([this](TSEvent event, TSVIO vio, int64_t left) {
+    if ( event == TS_EVENT_VCONN_WRITE_READY && vio == outputVIO() ) {
+      auto inrdr = TSVIOReaderGet(inputVIO());
+      DEBUG_LOG("write ready: %#lx (ready %#lx)", TSVIONDoneGet(vio), ( inrdr ? TSIOBufferReaderAvail(inrdr) : -1 ));
+      TSVIOReenable(inputVIO());
+      return 0L;
+    }
+
+    // detect ending conditions ...
+    if ( event == TS_EVENT_VCONN_WRITE_COMPLETE && vio == outputVIO() ) {
+      TSVIONBytesSet( xformInputVIO(), TSVIONDoneGet(xformInputVIO()) ); // mark as completed!
+      auto inrdr = TSVIOReaderGet(xformInputVIO());
+      DEBUG_LOG("write ready: %#lx (ready %#lx)", TSVIONDoneGet(vio), ( inrdr ? TSIOBufferReaderAvail(inrdr) : -1 ));
+      return 0L;
+    }
+
+    DEBUG_LOG("checking event. e#%d %p %ld %p",event,vio,left,inputVIO());
+    if ( event == TS_EVENT_VCONN_READ_COMPLETE && vio == inputVIO() ) {
+      // first nonzero vconn ... or past end..
+      auto curr = std::find_if(_vconns.begin(), _vconns.end(), [](ATSVConnFuture &vc) { return vc.get() != nullptr; } ) - _vconns.begin();
+      auto nxt = curr+1;
+
+      if ( nxt >= static_cast<int64_t>(_vconns.size()) ) {
+        DEBUG_LOG("ignoring event.  completed all reads: e#%d",event);
+        return 0L; // no reads left to start!
+      }
+
+      auto blkSize = _ctxt.blockSize();
+      auto endout  = _startSkip + _ctxt.rangeLen();
+
+      auto nextRd    = nxt * blkSize; // next read-pos
+      auto nextRdMax = std::min(nextRd + blkSize, endout);
+
+      DEBUG_LOG("read start: %#lx-%#lx #%#lx", nextRd, nextRdMax, nxt);
+
+      auto len = TSVConnCacheObjectSizeGet(_vconns[nxt].get());
+      len = std::min(len, _startSkip + _ctxt.rangeLen() - nextRd);
+
+      TSVConnClose(_vconns[curr].get());
+      _vconns[curr].reset();
+      reset_input_vio( TSVConnRead(_vconns[nxt].get(), *this, outputBuffer(), nextRdMax - nextRd) );
+      return 0L;
+    }
+
+    DEBUG_LOG("ignoring event. e#%d %p %ld %p",event,vio,left,inputVIO());
+    return 0L;
+  });
+  // do not resume until first block is read in
+  //
+  TSHttpTxnUntransformedRespCache(ctxt.atsTxn(), 0);
+  TSHttpTxnTransformedRespCache(ctxt.atsTxn(), 0);
+}
+
+BlockReadXform::~BlockReadXform() 
+{ 
+  DEBUG_LOG("destruct start");
+}
+
+void
+BlockReadXform::handleReadCacheLookupComplete(Transaction &txn)
+{
+  _ctxt.set_cache_hit_bitset();
+  txn.resume();
+}
+
+void
+BlockSetAccess::set_cache_hit_bitset()
+{
+  // HIT_FRESH is the case currently...
+
+  Headers cachedHdr;
+  TSMBuffer bufp = nullptr;
+  TSMLoc offset = nullptr;
+
+  // no need to free these 
+  TSHttpTxnCachedRespModifiableGet(atsTxn(), &bufp, &offset);
+
+  cachedHdr.reset(bufp,offset); 
+  //  cachhdrs.erase(CONTENT_RANGE_TAG); // erase to remove concerns
+  cachedHdr.erase(X_BLOCK_BITSET_TAG); // attempt to erase/rewrite field in headers
+  cachedHdr.append(X_BLOCK_BITSET_TAG, b64BlkBitset()); // attempt to erase/rewrite field in headers
+
+  auto r = TSHttpTxnUpdateCachedObject(atsTxn());
+
+  // re-read everything ...
+  cachedHdr.reset(bufp,offset);
+
+  if ( r == TS_SUCCESS ) {
+    DEBUG_LOG("updated bitset: %s", b64BlkBitset().c_str());
+    DEBUG_LOG("updated cache-hdrs:\n-----\n%s\n------\n", cachedHdr.wireStr().c_str());
+  } else if ( r == TS_ERROR ) {
+    DEBUG_LOG("failed to update cache-hdrs:\n-----\n%s\n------\n", cachedHdr.wireStr().c_str());
+  }
+}
+
