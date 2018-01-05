@@ -25,11 +25,13 @@
 
 #include <algorithm>
 
-thread_local int g_pluginTxnID = -1;
+thread_local int ThreadTxnID::g_pluginTxnID = -1;
 
 static int parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_t &end);
 
-void BlockSetAccess::start_if_range_present(Transaction &txn) {
+void BlockSetAccess::start_if_range_present(Transaction &txn) 
+{
+  ThreadTxnID txnid{txn};
 
   int i = 0;
   TSCacheReady(&i);
@@ -75,6 +77,8 @@ BlockSetAccess::~BlockSetAccess()
   using namespace std::chrono;
   using std::future_status;
 
+  ThreadTxnID txnid{_txn};
+
   DEBUG_LOG("top delete beginning");
 
   {
@@ -96,6 +100,7 @@ BlockSetAccess::~BlockSetAccess()
 void
 BlockSetAccess::handleReadRequestHeadersPostRemap(Transaction &txn)
 {
+  ThreadTxnID txnid{_txn};
   clean_client_request(); // permit match to a stub-file [disallowed by default]
   txn.resume();
 }
@@ -103,6 +108,7 @@ BlockSetAccess::handleReadRequestHeadersPostRemap(Transaction &txn)
 void
 BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 {
+  ThreadTxnID txnid{_txn};
   auto pstub = get_stub_hdrs(); // get (1) client-req ptr or (2) cached-stub ptr or nullptr
 
   // file was found?!
@@ -162,6 +168,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 void
 BlockSetAccess::handleSendRequestHeaders(Transaction &txn)
 {
+  ThreadTxnID txnid{_txn};
   clean_server_request(txn); // request full blocks if possible
   txn.resume();
 }
@@ -170,6 +177,7 @@ BlockSetAccess::handleSendRequestHeaders(Transaction &txn)
 void
 BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
 {
+  ThreadTxnID txnid{_txn};
   auto &resp = txn.getServerResponse();
   auto &respHdrs = resp.getHeaders();
   if (resp.getStatusCode() != HTTP_STATUS_PARTIAL_CONTENT) {
@@ -196,6 +204,7 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
 void
 BlockSetAccess::handleSendResponseHeaders(Transaction &txn)
 {
+  ThreadTxnID txnid{_txn};
   clean_client_response(txn);
   txn.resume();
 }
