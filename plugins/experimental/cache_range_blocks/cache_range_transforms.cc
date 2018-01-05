@@ -389,3 +389,22 @@ BlockTeeXform::inputEvent(TSEvent event, TSVIO evtvio, int64_t left)
 
   return _writeHook(_teeReaderP.get(), done, left); // show advance
 }
+
+TSIOBufferReader
+BlockTeeXform::cloneAndSkip(int64_t skip)
+{
+  auto ordr = _teeReaderP.release(); // caller must free it
+  _teeBufferP.release(); // caller must free it
+
+  TSIOBufferReader_t ordr2( TSIOBufferReaderClone(ordr) ); // delete upon return
+
+  TSIOBufferReaderConsume(ordr2.get(), skip); // advance input to next point
+
+  _teeBufferP.reset(TSIOBufferCreate());
+  _teeReaderP.reset(TSIOBufferReaderAlloc(_teeBufferP.get()));
+
+  auto left = TSIOBufferReaderAvail(ordr2.get());
+  TSIOBufferCopy(_teeBufferP.get(), ordr2.get(), left, 0); // save extra bytes as before
+  return ordr;
+}
+

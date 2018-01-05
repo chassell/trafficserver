@@ -210,7 +210,7 @@ public:
   void handleReadCacheLookupComplete(Transaction &txn) override; 
 
 private:
-  int64_t next_valid_vconn(TSVConn &vconn, int64_t pos, int64_t len);
+  TSVConn next_valid_vconn(int64_t pos, int64_t len, int64_t &skipDist);
 
   int64_t handleBodyRead(TSIOBufferReader r, int64_t pos, int64_t len);
   static int handleBlockWrite(TSCont, TSEvent, void *);
@@ -221,9 +221,6 @@ private:
   WriteVCsPtr_t _vcsToWriteP; 
   WriteVCs_t &_vcsToWrite; // indexed as the keys
 
-  int64_t _minBuffPos = 0L;
-  TSVIO _cacheWrVIO = nullptr;
-  TSEvent _cacheWrVIOWaiting = TS_EVENT_NONE; // event if cache-write is blocked
   TSEvent _blockVIOWaiting = TS_EVENT_NONE; // event if body-read is blocked
 };
 
