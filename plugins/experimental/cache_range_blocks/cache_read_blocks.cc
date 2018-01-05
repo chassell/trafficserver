@@ -25,12 +25,6 @@
 #include <chrono>
 #include <algorithm>
 
-#define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
-
-#define PLUGIN_NAME "cache_range_blocks"
-#define DEBUG_LOG(fmt, ...) TSDebug(PLUGIN_NAME, "[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
-#define ERROR_LOG(fmt, ...) TSError("[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
-
 using namespace atscppapi;
 
 void
@@ -76,35 +70,44 @@ BlockSetAccess::handle_block_tests()
   auto finalBlk = _assetLen / _blkSize; // round down..
 
   // scan *all* keys and vconns to check if ready
-  for (auto n = 0U; n < _vcsToRead.size(); ++n) {
-    base64_bit_clr(_b64BlkBitset, firstBlk + n);
+  for( auto &&p : _keysInRange ) {
+    auto i = &p - &_keysInRange.front();
+    auto blk = firstBlk + i;
 
-    if ( ! _keysInRange[n] ) {
-      continue; // known present..
+    base64_bit_set(_b64BlkPresent, blk);
+
+    if ( ! p ) {
+      continue; // likely fine..
     }
 
-    auto vconn    = _vcsToRead[n].get();
-
-    if ( ! vconn ) {
-      DEBUG_LOG("read not ready: 1<<%ld", firstBlk + n);
+    int error = _vcsToRead[i].error();
+    if ( error ) {
+      if ( error == ECACHE_NO_DOC ) {
+        base64_bit_clr(_b64BlkPresent, blk);
+      }
+      DEBUG_LOG("read not ready: 1<<%ld %s", blk, InkStrerror(error));
       continue;
     }
 
-    auto blkLen = ( firstBlk + n == finalBlk ? ((_assetLen-1) % blockSize())+1 : blockSize() );
+    auto vconn = _vcsToRead[i].get();
+    auto blkLen = TSVConnCacheObjectSizeGet(vconn);
+    auto neededLen = ( blk == finalBlk ? ((_assetLen-1) % blockSize())+1 : blockSize() );
 
     // block is ready and of right size?
-    if ( TSVConnCacheObjectSizeGet(vconn) != blkLen ) {
-      // clear bit
-      DEBUG_LOG("read returned wrong size: #%#lx", firstBlk + n);
+    if ( blkLen != neededLen ) {
+      base64_bit_clr(_b64BlkPresent, blk);
+      DEBUG_LOG("read returned wrong size: 1<<%ld n=%ld", blk, blkLen);
       continue;
     }
 
-    _keysInRange[n].reset(); // no need for cache-key
+    p.reset(); // no need for cache-key
 
     // successful!
     ++nrdy;
-    base64_bit_set(_b64BlkBitset, firstBlk + n); // set a bit
-    DEBUG_LOG("read successful bitset: + 1<<%ld %s", firstBlk + n, _b64BlkBitset.c_str());
+    base64_bit_set(_b64BlkUsable, blk);
+    DEBUG_LOG("read successful present bitset: + 1<<%ld ..%s.. / ..%s..", blk, 
+       _b64BlkPresent.substr(firstBlk/6,(endBlk+5)/6-firstBlk/6).c_str(),
+       _b64BlkUsable.substr(firstBlk/6,(endBlk+5)/6-firstBlk/6).c_str());
   }
 
   // ready to read from cache...
@@ -115,10 +118,9 @@ BlockSetAccess::handle_block_tests()
 
   auto n = _vcsToRead.size();
 
-  for( auto &&p : _vcsToRead ) {
-    if ( ! p.is_close_able() ) {
+  for( auto &&p : _vcsToRead ) { if ( ! p.is_close_able() ) {
       auto i = &p - &_vcsToRead.front();
-      DEBUG_LOG("late cache-read entry: #%ld",i);
+      DEBUG_LOG("late cache-read entry: 1<<%ld",firstBlk + i);
       break;
     }
     --n;
@@ -162,7 +164,8 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
     if ( event == TS_EVENT_VCONN_WRITE_COMPLETE && vio == outputVIO() ) {
       TSVIONBytesSet( xformInputVIO(), TSVIONDoneGet(xformInputVIO()) ); // mark as completed!
       auto inrdr = TSVIOReaderGet(xformInputVIO());
-      DEBUG_LOG("write ready: %#lx (ready %#lx)", TSVIONDoneGet(vio), ( inrdr ? TSIOBufferReaderAvail(inrdr) : -1 ));
+      DEBUG_LOG("write complete: %#lx (ready %#lx)", TSVIONDoneGet(vio), ( inrdr ? TSIOBufferReaderAvail(inrdr) : -1 ));
+      TSVIOReenable(inputVIO()); // (forward an event?)
       return 0L;
     }
 
@@ -204,7 +207,7 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
 }
 
 BlockReadXform::~BlockReadXform() 
-{ 
+{
   DEBUG_LOG("destruct start");
 }
 
@@ -230,7 +233,7 @@ BlockSetAccess::set_cache_hit_bitset()
   cachedHdr.reset(bufp,offset); 
   //  cachhdrs.erase(CONTENT_RANGE_TAG); // erase to remove concerns
   cachedHdr.erase(X_BLOCK_BITSET_TAG); // attempt to erase/rewrite field in headers
-  cachedHdr.append(X_BLOCK_BITSET_TAG, b64BlkBitset()); // attempt to erase/rewrite field in headers
+  cachedHdr.append(X_BLOCK_BITSET_TAG, b64BlkUsable()); // attempt to erase/rewrite field in headers
 
   auto r = TSHttpTxnUpdateCachedObject(atsTxn());
 
@@ -238,7 +241,7 @@ BlockSetAccess::set_cache_hit_bitset()
   cachedHdr.reset(bufp,offset);
 
   if ( r == TS_SUCCESS ) {
-    DEBUG_LOG("updated bitset: %s", b64BlkBitset().c_str());
+    DEBUG_LOG("updated bitset: %s", b64BlkUsable().c_str());
     DEBUG_LOG("updated cache-hdrs:\n-----\n%s\n------\n", cachedHdr.wireStr().c_str());
   } else if ( r == TS_ERROR ) {
     DEBUG_LOG("failed to update cache-hdrs:\n-----\n%s\n------\n", cachedHdr.wireStr().c_str());

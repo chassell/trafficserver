@@ -17,13 +17,7 @@
  */
 #include "cache_range_blocks.h"
 
-#include "atscppapi/HttpStatus.h"
-
-#define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
-
-#define PLUGIN_NAME "cache_range_blocks"
-#define DEBUG_LOG(fmt, ...) TSDebug(PLUGIN_NAME, "[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
-#define ERROR_LOG(fmt, ...) TSError("[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
+#include <atscppapi/HttpStatus.h>
 
 // namespace
 // {
@@ -142,7 +136,9 @@ ATSXformCont::handleXformBufferEvent(TSEvent event, TSVIO evio)
     }
 
     case TS_EVENT_VCONN_READ_COMPLETE:
+      _outVConnU->check_refill(event); // if first is last
       _xformCB(event, _inVIO, 0); // no more fills ready...
+      xform_input_completion(event); // check if complete now
       break;
 
     default:
@@ -155,6 +151,9 @@ ATSXformCont::handleXformBufferEvent(TSEvent event, TSVIO evio)
 int
 ATSXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
 {
+  int oldTxnID = g_pluginTxnID;
+  g_pluginTxnID = TSHttpTxnIdGet(static_cast<TSHttpTxn>(_txn.getAtsHandle()));
+
   DEBUG_LOG("xform-event: e#%d %p", event, edata);
 
   ink_assert(this->operator TSVConn() == cont);
@@ -166,22 +165,16 @@ ATSXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
   // output got this?
   if ( _outVConnU && evio == *_outVConnU ) {
     handleXformOutputEvent(event);
-    return 0; ////////////// RETURN
-  }
-
-  // input normal path?
-  if ( evio == xformInputVIO() || using_two_buffers() ) {
+  } else if ( evio == xformInputVIO() || using_two_buffers() ) {
     handleXformInputEvent(event, evio);
-    return 0;
-  }
-
-  // input reading path?
-  if ( using_one_buffer() ) {
+  } else if ( using_one_buffer() ) {
     handleXformBufferEvent(event,evio);
-    return 0;
+  } else {
+    DEBUG_LOG("unkn-event from unkn e#%d [%p]",event,evio);
   }
-
-  DEBUG_LOG("unkn-event from unkn e#%d [%p]",event,evio);
+  
+  xform_input_completion(event); // check again if complete ...
+  g_pluginTxnID = oldTxnID;
   return 0;
 }
 
@@ -312,8 +305,8 @@ ATSXformOutVConn::check_refill(TSEvent event)
     return true;
   }
 
-  // event with empty buffer above?
-  if ( _outVIOWaiting ) {
+  // event with empty buffer above (or too full buffer)?
+  if ( _outVIOWaiting || outready >= 0x8000 ) {
     DEBUG_LOG("xform flush reenable: @%#lx w/avail %#lx", TSVIONDoneGet(_outVIO),outready);
     TSVIOReenable(_outVIO);
     _outVIOWaiting = TS_EVENT_NONE; // flushed new data...

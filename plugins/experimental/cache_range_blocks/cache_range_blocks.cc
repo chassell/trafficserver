@@ -25,13 +25,7 @@
 
 #include <algorithm>
 
-#define PLUGIN_NAME "cache_range_blocks"
-
-#define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
-
-#define PLUGIN_NAME "cache_range_blocks"
-#define DEBUG_LOG(fmt, ...) TSDebug(PLUGIN_NAME, "[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
-#define ERROR_LOG(fmt, ...) TSError("[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
+thread_local int g_pluginTxnID = -1;
 
 static int parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_t &end);
 
@@ -81,12 +75,22 @@ BlockSetAccess::~BlockSetAccess()
   using namespace std::chrono;
   using std::future_status;
 
-  DEBUG_LOG("delete beginning");
+  DEBUG_LOG("top delete beginning");
 
-  atscppapi::ScopedContinuationLock lock(_mutexOnlyCont); // to close
+  {
+    atscppapi::ScopedContinuationLock lock(_mutexOnlyCont); // to close
 
-  _storeXform.reset(); // clear first
-  _readXform.reset(); // clear next
+    DEBUG_LOG("top delete mid 1");
+    _storeXform.reset(); // clear first
+    DEBUG_LOG("top delete mid 2");
+    _readXform.reset(); // clear next
+    DEBUG_LOG("top delete mid 3");
+    _keysInRange.clear();
+    DEBUG_LOG("top delete mid 4");
+  }
+
+  _mutexOnlyCont.reset();
+  DEBUG_LOG("top delete end");
 }
 
 void
@@ -130,14 +134,15 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   // test if range is readable
   if (parse_range(_clntRangeStr, _assetLen, _beginByte, _endByte) >= 0) {
-    _b64BlkBitset = pstub->value(X_BLOCK_BITSET_TAG);
+    _b64BlkPresent = pstub->value(X_BLOCK_BITSET_TAG);
+    _b64BlkUsable = pstub->value(X_BLOCK_BITSET_TAG);
   }
 
-  auto chk = std::find_if(_b64BlkBitset.begin(), _b64BlkBitset.end(), [](char c) { return !isalnum(c) && c != '+' && c != '/'; });
+  auto chk = std::find_if(_b64BlkPresent.begin(), _b64BlkPresent.end(), [](char c) { return !isalnum(c) && c != '+' && c != '/'; });
 
   // invalid stub file... (or client headers instead)
-  if (!_assetLen || _b64BlkBitset.empty() || chk != _b64BlkBitset.end()) {
-    DEBUG_LOG("stub-failed: len=%#lx [blk:%ldK] set=%s", _assetLen, _blkSize/1024, _b64BlkBitset.c_str());
+  if (!_assetLen || _b64BlkPresent.empty() || chk != _b64BlkPresent.end()) {
+    DEBUG_LOG("stub-failed: len=%#lx [blk:%ldK] set=%s", _assetLen, _blkSize/1024, _b64BlkPresent.c_str());
     reset_cached_stub(txn);
     txn.resume();
     return;
@@ -146,7 +151,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   _blkSize = INK_ALIGN((_assetLen >> 10) | 1, MIN_BLOCK_STORED);
 
   if (!select_needed_blocks()) {
-    DEBUG_LOG("write is likely needed: len=%#lx [blk:%ldK] set=%s", _assetLen, _blkSize/1024, _b64BlkBitset.c_str());
+    DEBUG_LOG("write is likely needed: len=%#lx [blk:%ldK] set=%s", _assetLen, _blkSize/1024, _b64BlkPresent.c_str());
   }
 
   // nothing handled until handle_block_tests is done...
@@ -254,15 +259,16 @@ BlockSetAccess::prepare_cached_stub(Transaction &txn)
 
   if (currAssetLen != _assetLen) {
     _blkSize      = INK_ALIGN((currAssetLen >> 10) | 1, MIN_BLOCK_STORED);
-    _b64BlkBitset = std::string((currAssetLen + _blkSize * 6 - 1) / (_blkSize * 6), 'A');
+    _b64BlkPresent = std::string((currAssetLen + _blkSize * 6 - 1) / (_blkSize * 6), 'A');
+    _b64BlkUsable = _b64BlkPresent;
     _assetLen     = static_cast<uint64_t>(currAssetLen);
-    DEBUG_LOG("srvr-bitset: blk=%#lx %s", _blkSize, _b64BlkBitset.c_str());
+    DEBUG_LOG("srvr-bitset: blk=%#lx %s", _blkSize, _b64BlkPresent.c_str());
   }
 
   proxyRespStatus.setStatusCode(HTTP_STATUS_OK);
   proxyResp.set(CONTENT_ENCODING_TAG, CONTENT_ENCODING_INTERNAL); // promote matches
   proxyResp.append(VARY_TAG,ACCEPT_ENCODING_TAG); // please notice it!
-  proxyResp.set(X_BLOCK_BITSET_TAG, _b64BlkBitset); // keep as *last* field
+  proxyResp.set(X_BLOCK_BITSET_TAG, _b64BlkUsable); // keep as *last* field
 
   DEBUG_LOG("stub-hdrs:\n-------\n%s\n------\n", proxyResp.wireStr().c_str());
 }
@@ -341,6 +347,20 @@ BlockSetAccess::get_stub_hdrs()
 }
 
 
+std::string
+BlockSetAccess::b64BlkUsableSubstr() const
+{
+  int i = _beginByte/_blkSize;
+  return _b64BlkUsable.substr(i, _endByte/_blkSize - i);
+}
+
+std::string
+BlockSetAccess::b64BlkPresentSubstr() const
+{
+  int i = _beginByte/_blkSize;
+  return _b64BlkPresent.substr(i, _endByte/_blkSize - i);
+}
+
 int64_t
 BlockSetAccess::select_needed_blocks()
 {
@@ -361,7 +381,7 @@ BlockSetAccess::select_needed_blocks()
 
   auto i = startBlk;
 
-  for (; i < endBlk && is_base64_bit_set(_b64BlkBitset, i); ++i) {
+  for (; i < endBlk && is_base64_bit_set(_b64BlkUsable, i); ++i) {
   }
 
   // any missed
