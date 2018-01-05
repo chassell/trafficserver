@@ -151,9 +151,7 @@ ATSXformCont::handleXformBufferEvent(TSEvent event, TSVIO evio)
 int
 ATSXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
 {
-  int oldTxnID = g_pluginTxnID;
-  g_pluginTxnID = TSHttpTxnIdGet(static_cast<TSHttpTxn>(_txn.getAtsHandle()));
-
+  ThreadTxnID txnid{_txn};
   DEBUG_LOG("xform-event: e#%d %p", event, edata);
 
   ink_assert(this->operator TSVConn() == cont);
@@ -174,7 +172,6 @@ ATSXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
   }
   
   xform_input_completion(event); // check again if complete ...
-  g_pluginTxnID = oldTxnID;
   return 0;
 }
 

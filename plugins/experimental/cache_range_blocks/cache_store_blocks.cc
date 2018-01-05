@@ -58,8 +58,7 @@ BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
     _ctxt(ctxt),
     // must handle late late returns for TSCacheWrite
     _vcsToWriteP( new WriteVCs_t(blockCount), []( WriteVCs_t *ptr ){ delete ptr; } ),
-    _vcsToWrite(*_vcsToWriteP),
-    _writeEvents(*this, &BlockStoreXform::handleBlockWrite, this->_vcsToWriteP, *this)
+    _vcsToWrite(*_vcsToWriteP)
 {
   TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS);  // add block-range and clean up
   TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // adjust headers to stub-file
@@ -173,6 +172,7 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
 
   // older bytes need flushing out?
   if (_cacheWrVIO && donepos <= _minBuffPos ) {
+    atscppapi::ScopedContinuationLock lock(TSVIOContGet(_cacheWrVIO));
     TSVIOReenable(_cacheWrVIO);
     // haven't caught up yet?
     donepos += navail - TSIOBufferReaderAvail(teerdr); // moved forward?
@@ -232,59 +232,64 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
 
   ink_assert(vcFuture.get() == currBlock);
 
+  vcFuture.reset(); // free from being auto-destructed!
+
   _minBuffPos = donepos + wrlen;
 
   // should send a WRITE_COMPLETE rather quickly
-  _cacheWrVIO = TSVConnWrite(currBlock, _writeEvents, teerdr, wrlen);
+  auto blockCont = TSContCreate(&BlockStoreXform::handleBlockWrite,TSMutexCreate());
+  intptr_t data = ThreadTxnID::get() | ((firstBlk + blk) << 50);
+  TSContDataSet(blockCont,reinterpret_cast<void*>(data));
+  _cacheWrVIO = TSVConnWrite(currBlock, blockCont, TSIOBufferReaderClone(teerdr), wrlen);
   if ( ! navail ) {
     DEBUG_LOG("store ++++ beginning block 1<<%ld write @%#lx+%#lx+%#lx [final @%#lx]", firstBlk + blk, donepos, oavail, len, donepos + wrlen);
   } else {
     DEBUG_LOG("store ++++ beginning block w/write 1<<%ld write @%#lx+%#lx+%#lx [final @%#lx]", firstBlk + blk, donepos, navail, len, donepos + wrlen);
+
+    atscppapi::ScopedContinuationLock lock(TSVIOContGet(_cacheWrVIO));
     TSVIOReenable(_cacheWrVIO); // flush if some available!
   }
   return len;
 }
 
-void
-BlockStoreXform::handleBlockWrite(TSEvent event, void *edata, WriteVCsPtr_t sharedPtr)
+int
+BlockStoreXform::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
 {
-  int oldTxnID = g_pluginTxnID;
-  g_pluginTxnID = TSHttpTxnIdGet(static_cast<TSHttpTxn>(_txn.getAtsHandle()));
+  auto data = reinterpret_cast<intptr_t>(TSContDataGet(cont));
+  auto blkid = data >> 50;
+
+  ThreadTxnID txnid{static_cast<int>(data) & ~0};
 
   TSVIO blkWriteVIO = static_cast<TSVIO>(edata);
+  TSIOBufferReader writeRdr = TSVIOReaderGet(blkWriteVIO);
 
   if (!blkWriteVIO) {
     DEBUG_LOG("empty edata event e#%d", event);
-    g_pluginTxnID = oldTxnID;
-    return;
+    return 0;
   }
 
   switch (event) {
   case TS_EVENT_VCONN_WRITE_READY:
     // didn't detect enough bytes in buffer to complete?
-    if (! TSIOBufferReaderAvail(teeReader())) {
+    if (! TSIOBufferReaderAvail(writeRdr)) {
+      DEBUG_LOG("cache-write 1<<%ld flush empty e#%d -> %ld? %ld?", blkid, event, TSVIONDoneGet(blkWriteVIO), TSVIONBytesGet(blkWriteVIO));
       break; // surprising!
     }
-    DEBUG_LOG("cache-write flush e#%d -> %ld? %ld?", event, TSVIONDoneGet(blkWriteVIO), TSVIONBytesGet(blkWriteVIO));
+    DEBUG_LOG("cache-write 1<<%ld flush e#%d -> %ld? %ld?", blkid, event, TSVIONDoneGet(blkWriteVIO), TSVIONBytesGet(blkWriteVIO));
     TSVIOReenable(blkWriteVIO);
     break;
+
   case TS_EVENT_VCONN_WRITE_COMPLETE: {
-    if ( blkWriteVIO == _cacheWrVIO ) {
-      _cacheWrVIO = nullptr;
-    }
+    DEBUG_LOG("completed store to bitset 1<<%ld",blkid);
     auto vc = TSVIOVConnGet(blkWriteVIO);
-    auto it = std::find_if(_vcsToWrite.begin(),_vcsToWrite.end(), [vc](ATSVConnFuture &v){ return v.get() == vc; });
-    if ( it !=  _vcsToWrite.end() ) {
-      auto firstBlk = _ctxt._beginByte / _ctxt.blockSize();
-      TSVConnClose(vc); // flush and store
-      it->reset(); // don't close a second time
-      DEBUG_LOG("completed store to bitset: + 1<<%ld %s", firstBlk + (it - _vcsToWrite.begin()), _ctxt.b64BlkPresent().c_str());
-    }
+    TSVConnClose(vc); // flush and store
+    TSContDestroy(cont);
     break;
   }
+
   default:
     DEBUG_LOG("cache-write event: e#%d", event);
     break;
   }
-  g_pluginTxnID = oldTxnID;
+  return 0;
 }

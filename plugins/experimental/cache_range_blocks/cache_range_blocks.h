@@ -39,13 +39,37 @@
 
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
-extern thread_local int g_pluginTxnID;
+class ThreadTxnID
+{
+  static thread_local int g_pluginTxnID;
 
-#define TXN_ID      ( TransactionPlugin::getTxnID() > 0 ? TransactionPlugin::getTxnID() : g_pluginTxnID )
+public:
+  static int get() { 
+    return ( atscppapi::TransactionPlugin::getTxnID() >= 0 
+                ? atscppapi::TransactionPlugin::getTxnID() 
+                : g_pluginTxnID );
+  }
+
+  ThreadTxnID(atscppapi::Transaction &txn) {
+    g_pluginTxnID = TSHttpTxnIdGet(static_cast<TSHttpTxn>(txn.getAtsHandle()));
+  }
+  ThreadTxnID(TSHttpTxn txn) {
+    g_pluginTxnID = TSHttpTxnIdGet(txn);
+  }
+  ThreadTxnID(int txnid) {
+    g_pluginTxnID = txnid;
+  }
+  ~ThreadTxnID() {
+    g_pluginTxnID = _oldTxnID; // restore
+  }
+
+private:
+  int _oldTxnID = g_pluginTxnID; // always save it ..
+};
 
 #define PLUGIN_NAME "cache_range_blocks"
-#define DEBUG_LOG(fmt, ...) TSDebug(PLUGIN_NAME, "[%d] [%s:%d] %s(): " fmt,  TXN_ID, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
-#define ERROR_LOG(fmt, ...) TSError("[%d] [%s:%d] %s(): " fmt, TXN_ID, TransactionPlugin::getTxnID(), __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
+#define DEBUG_LOG(fmt, ...) TSDebug(PLUGIN_NAME, "[%d] [%s:%d] %s(): " fmt,  ThreadTxnID::get(), __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
+#define ERROR_LOG(fmt, ...) TSError("[%d] [%s:%d] %s(): " fmt, ThreadTxnID::get(), __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
 
 #define CONTENT_ENCODING_INTERNAL "x-block-cache-range"
 
@@ -189,15 +213,13 @@ private:
   int64_t next_valid_vconn(TSVConn &vconn, int64_t pos, int64_t len);
 
   int64_t handleBodyRead(TSIOBufferReader r, int64_t pos, int64_t len);
-  void handleBlockWrite(TSEvent, void *, WriteVCsPtr_t);
+  static int handleBlockWrite(TSCont, TSEvent, void *);
 
 private:
   BlockSetAccess &_ctxt;
 
   WriteVCsPtr_t _vcsToWriteP; 
   WriteVCs_t &_vcsToWrite; // indexed as the keys
-
-  ATSCont _writeEvents;
 
   int64_t _minBuffPos = 0L;
   TSVIO _cacheWrVIO = nullptr;
