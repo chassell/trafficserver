@@ -36,6 +36,15 @@
 
 using namespace atscppapi;
 
+thread_local int sm_txnID = -1;
+
+// static call per thread
+int
+TransactionPlugin::getTxnID()
+{
+  return sm_txnID;
+}
+
 namespace
 {
 /// The index used to store required transaction based data.
@@ -53,6 +62,10 @@ handleTransactionEvents(TSCont cont, TSEvent event, void *edata)
 {
   // This function is only here to clean up Transaction objects
   TSHttpTxn ats_txn_handle = static_cast<TSHttpTxn>(edata);
+
+  int oldTxnID = sm_txnID;
+  sm_txnID = TSHttpTxnIdGet(ats_txn_handle);
+
   Transaction &transaction = utils::internal::getTransaction(ats_txn_handle);
   LOG_DEBUG("Got event %d on continuation %p for transaction (ats pointer %p, object %p)", event, cont, ats_txn_handle,
             &transaction);
@@ -91,6 +104,7 @@ handleTransactionEvents(TSCont cont, TSEvent event, void *edata)
     break;
   }
   TSHttpTxnReenable(ats_txn_handle, TS_EVENT_HTTP_CONTINUE);
+  sm_txnID = oldTxnID;
   return 0;
 }
 
@@ -112,6 +126,8 @@ setupTransactionManagement()
 
 void inline invokePluginForEvent(Plugin *plugin, TSHttpTxn ats_txn_handle, TSEvent event)
 {
+  int oldTxnID = sm_txnID;
+  sm_txnID = TSHttpTxnIdGet(ats_txn_handle);
   Transaction &transaction = utils::internal::getTransaction(ats_txn_handle);
   switch (event) {
   case TS_EVENT_HTTP_PRE_REMAP:
@@ -149,6 +165,7 @@ void inline invokePluginForEvent(Plugin *plugin, TSHttpTxn ats_txn_handle, TSEve
     assert(false); /* we should never get here */
     break;
   }
+  sm_txnID = oldTxnID;
 }
 
 } /* anonymous namespace */

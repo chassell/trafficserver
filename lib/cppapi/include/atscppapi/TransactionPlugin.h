@@ -80,6 +80,8 @@ struct TransactionPluginState;
 class TransactionPlugin : public Plugin
 {
 public:
+  static int getTxnID();
+
   /**
    * registerHook is the mechanism used to attach a transaction hook.
    *
