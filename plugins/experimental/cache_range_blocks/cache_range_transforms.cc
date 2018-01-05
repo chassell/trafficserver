@@ -16,6 +16,7 @@
   limitations under the License.
  */
 #include "cache_range_blocks.h"
+#include "ts/ink_time.h"
 
 #include <atscppapi/HttpStatus.h>
 
@@ -287,9 +288,11 @@ ATSXformOutVConn::check_refill(TSEvent event)
     return false; // need more to start
   }
 
+  auto left = TSVIONTodoGet(_outVIO);
+
   // past end of write?
-  if ( !TSVIONTodoGet(_outVIO) ) {
-    DEBUG_LOG("xform flush past end: @%#lx w/avail %#lx", pos, outready);
+  if ( ! left ) {
+    DEBUG_LOG("xform consume past end: @%#lx w/avail %#lx", pos, outready);
     TSIOBufferReaderConsume(_outReader, outready);
     _outVIOWaiting = TS_EVENT_NONE; // flushed new data...
     return false;
@@ -299,19 +302,26 @@ ATSXformOutVConn::check_refill(TSEvent event)
   if ( ! outready ) {
     DEBUG_LOG("xform empty: @-%#lx w/avail 0", pos);
     _outVIOWaiting = event; // can't do it now...
+    _outVIOWaitingTS = ink_microseconds(MICRO_REAL); // can't do it now...
     return true;
   }
 
-  // event with empty buffer above (or too full buffer)?
-  if ( _outVIOWaiting || outready >= 0x8000 ) {
-    DEBUG_LOG("xform flush reenable: @%#lx w/avail %#lx", TSVIONDoneGet(_outVIO),outready);
-    TSVIOReenable(_outVIO);
-    _outVIOWaiting = TS_EVENT_NONE; // flushed new data...
+  if ( ! _outVIOWaiting ) {
+    DEBUG_LOG("xform no-wait no-end: @%#lx w/avail %#lx", TSVIONDoneGet(_outVIO), outready);
+    // not waiting and not at end...
     return false;
   }
 
-  DEBUG_LOG("xform no-wait no-end: @%#lx w/avail %#lx", TSVIONDoneGet(_outVIO), outready);
-  // not waiting and not at end...
+  auto delay = ( ink_microseconds(MICRO_REAL) - _outVIOWaitingTS ); // can't do it now...
+
+  // not full enough and delay is too small (<10ms RTT)?
+  if ( outready < std::min(left+0,0x20000L) && delay < 10000 ) {
+    return false;
+  }
+
+  DEBUG_LOG("xform flush reenable: @%#lx w/avail %#lx", TSVIONDoneGet(_outVIO),outready);
+  TSVIOReenable(_outVIO);
+  _outVIOWaiting = TS_EVENT_NONE; // flushed new data...
   return false;
 }
 
