@@ -149,9 +149,6 @@ ATSXformOutVConn::ATSXformOutVConn(const ATSXformCont &xform, int64_t bytes, int
 
 ATSVConnFuture::~ATSVConnFuture()
 {
-  using namespace std::chrono;
-  using std::future_status;
-
   auto vconn = get();
   if ( vconn ) {
     atscppapi::ScopedContinuationLock lock(vconn);
@@ -169,25 +166,23 @@ ATSVConnFuture::is_close_able() const
   return ( ! std::shared_future<TSVConn>::valid() || wait_for(seconds::zero()) == future_status::ready );
 }
 
-bool
-ATSVConnFuture::valid() const
+int
+ATSVConnFuture::error() const
 {
   using namespace std::chrono;
   using std::future_status;
 
   if ( ! std::shared_future<TSVConn>::valid() ) {
-    return false;
+    return SOCK_ERRNO;
   }
   if ( wait_for(seconds::zero()) != future_status::ready ) {
-    DEBUG_LOG("vconn waiting: %p",this);
-    return false;
+    return ESOCK_TIMEOUT;
   }
   auto ptrErr = reinterpret_cast<intptr_t>(std::shared_future<TSVConn>::get());
   if ( ptrErr >= -INK_START_ERRNO - 1000 && ptrErr <= 0 ) {
-    return false;
+    return -ptrErr;
   }
-
-  return true;
+  return 0;
 }
 
 void
@@ -212,17 +207,18 @@ ATSXformOutVConn::is_close_able() const
 ATSXformOutVConn::~ATSXformOutVConn()
 {
   if ( _outVIO ) {
-    ink_assert( ! TSVIONTodoGet(_outVIO) );
-
-    DEBUG_LOG("xform-event out write-complete @%#lx",TSVIONDoneGet(_outVIO));
+//    ink_assert( ! TSVIONTodoGet(_outVIO) );
+    DEBUG_LOG("write-complete @%#lx",TSVIONDoneGet(_outVIO));
     TSVIOReenable(_outVIO);
     _outVIO = nullptr;
   } else {
-    DEBUG_LOG("xform-event out transform-complete @%#lx",TSVIONDoneGet(_outVIO));
+    DEBUG_LOG("transform-complete @%#lx",TSVIONDoneGet(_outVIO));
   }
 
   TSVConnClose(_outVConn);          // do only once!
+  DEBUG_LOG("close-complete");
   TSVConnShutdown(_outVConn, 0, 1); // do only once!
+  DEBUG_LOG("shutdown-complete");
 }
 
 // Transform continuations

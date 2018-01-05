@@ -23,12 +23,6 @@
 
 #include <algorithm>
 
-#define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
-
-#define PLUGIN_NAME "cache_range_blocks"
-#define DEBUG_LOG(fmt, ...) TSDebug(PLUGIN_NAME, "[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
-#define ERROR_LOG(fmt, ...) TSError("[%s:%d] %s(): " fmt, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
-
 void
 BlockSetAccess::start_cache_miss(int64_t firstBlk, int64_t endBlk)
 {
@@ -37,15 +31,16 @@ BlockSetAccess::start_cache_miss(int64_t firstBlk, int64_t endBlk)
   TSHttpTxnUntransformedRespCache(atsTxn(), 0);
   TSHttpTxnTransformedRespCache(atsTxn(), 0);
 
-  DEBUG_LOG("cache-resp-wr: len=%#lx [blk:%ldK] set=%s", assetLen(), blockSize()/1024, b64BlkBitset().c_str());
+  DEBUG_LOG("cache-resp-wr: len=%#lx [blk:%ldK] p=..%s.. u=..%s..", assetLen(), blockSize()/1024, 
+        b64BlkPresentSubstr().c_str(), b64BlkUsableSubstr().c_str());
 
   _keysInRange.clear();
   _keysInRange.resize(endBlk - firstBlk);
 
   // react to genuine misses above...
   for (auto i = 0U; i < endBlk - firstBlk; ++i) {
-    if (!is_base64_bit_set(_b64BlkBitset, firstBlk + i)) {
-      DEBUG_LOG("attempt store from bitset: + 1<<%ld %s", firstBlk + i, _b64BlkBitset.c_str());
+    if (!is_base64_bit_set(_b64BlkPresent, firstBlk + i)) {
+      DEBUG_LOG("attempt store from bitset: + 1<<%ld %s", firstBlk + i, b64BlkPresentSubstr().c_str());
       _keysInRange[i]    = std::move(ATSCacheKey(clientUrl(), _etagStr, (firstBlk + i) * _blkSize));
     }
   }
@@ -64,7 +59,7 @@ BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
     // must handle late late returns for TSCacheWrite
     _vcsToWriteP( new WriteVCs_t(blockCount), []( WriteVCs_t *ptr ){ delete ptr; } ),
     _vcsToWrite(*_vcsToWriteP),
-    _writeEvents(*this, &BlockStoreXform::handleBlockWrite, nullptr, *this)
+    _writeEvents(*this, &BlockStoreXform::handleBlockWrite, this->_vcsToWriteP, *this)
 {
   TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS);  // add block-range and clean up
   TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // adjust headers to stub-file
@@ -90,7 +85,7 @@ BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
 
   for (auto i = 0U; i < keys.size(); ++i, ++blkNum) 
   {
-    if ( ! keys[i] || is_base64_bit_set(_ctxt.b64BlkBitset(), blkNum) ) {
+    if ( ! keys[i] || is_base64_bit_set(_ctxt.b64BlkPresent(), blkNum) ) {
       continue;
     }
 
@@ -176,21 +171,22 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
   auto donepos = inpos - oavail;
   auto newpos = inpos + len;
 
-  // no bytes even cross into new?
-  if ( newpos < _minBuffPos ) {
-    DEBUG_LOG("store **** more to buffer: @%#lx -%#lx left [+%#lx] / @%#lx+%#lx", _minBuffPos, _minBuffPos - newpos, len, donepos, navail);
-    return len;
-  }
-
   // older bytes need flushing out?
   if (_cacheWrVIO && donepos <= _minBuffPos ) {
     TSVIOReenable(_cacheWrVIO);
     // haven't caught up yet?
+    donepos += navail - TSIOBufferReaderAvail(teerdr); // moved forward?
     if (_cacheWrVIO && donepos < _minBuffPos ) {
-      DEBUG_LOG("store **** flush buffer out: @%#lx -%#lx held / @%#lx+%#lx", _minBuffPos, _minBuffPos - donepos, donepos, navail);
+      DEBUG_LOG("store **** flush buffer out: @%#lx w/buff -%#lx wout/buff -%#lx", _minBuffPos, _minBuffPos - donepos - navail, _minBuffPos - donepos);
       return len;
     }
-    DEBUG_LOG("store **** flushed last: @%#lx -%#lx final / @%#lx+%#lx", _minBuffPos, _minBuffPos - donepos, donepos, navail);
+    DEBUG_LOG("store **** flushed last: @%#lx w/buff -%#lx wout/buff -%#lx", _minBuffPos, _minBuffPos - donepos - navail, _minBuffPos - donepos);
+  }
+
+  // no bytes even cross into new?
+  if ( newpos < _minBuffPos ) {
+    DEBUG_LOG("store **** small amt to buffer: @%#lx -%#lx left [+%#lx] / @%#lx+%#lx", _minBuffPos, _minBuffPos - newpos, len, donepos, navail);
+    return len;
   }
 
   // no bytes before minbuffpos
@@ -230,14 +226,6 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
 
   auto wrlen = std::min(endpos - donepos,blksz); // len needed for a block write...
 
-/*
-  if (navail < wrlen) {
-    DEBUG_LOG("store ++++ buffering more dist pos:%#lx+%#lx [+%#lx]", donepos, navail, wrlen);
-    return len; // limit amt left by distance to a filled block
-    //////// RETURN
-  }
-*/
-
   auto blk = donepos / blksz;
   auto firstBlk = _ctxt._beginByte / _ctxt.blockSize();
   auto &vcFuture = _vcsToWrite[blk]; // should be correct now...
@@ -248,17 +236,26 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
 
   // should send a WRITE_COMPLETE rather quickly
   _cacheWrVIO = TSVConnWrite(currBlock, _writeEvents, teerdr, wrlen);
-  DEBUG_LOG("store ++++ beginning block 1<<%ld write @%#lx+%#lx+%#lx [final %#lx]", firstBlk + blk, donepos, oavail, len, wrlen);
+  if ( ! navail ) {
+    DEBUG_LOG("store ++++ beginning block 1<<%ld write @%#lx+%#lx+%#lx [final @%#lx]", firstBlk + blk, donepos, oavail, len, donepos + wrlen);
+  } else {
+    DEBUG_LOG("store ++++ beginning block w/write 1<<%ld write @%#lx+%#lx+%#lx [final @%#lx]", firstBlk + blk, donepos, navail, len, donepos + wrlen);
+    TSVIOReenable(_cacheWrVIO); // flush if some available!
+  }
   return len;
 }
 
 void
-BlockStoreXform::handleBlockWrite(TSEvent event, void *edata, std::nullptr_t)
+BlockStoreXform::handleBlockWrite(TSEvent event, void *edata, WriteVCsPtr_t sharedPtr)
 {
+  int oldTxnID = g_pluginTxnID;
+  g_pluginTxnID = TSHttpTxnIdGet(static_cast<TSHttpTxn>(_txn.getAtsHandle()));
+
   TSVIO blkWriteVIO = static_cast<TSVIO>(edata);
 
   if (!blkWriteVIO) {
     DEBUG_LOG("empty edata event e#%d", event);
+    g_pluginTxnID = oldTxnID;
     return;
   }
 
@@ -281,7 +278,7 @@ BlockStoreXform::handleBlockWrite(TSEvent event, void *edata, std::nullptr_t)
       auto firstBlk = _ctxt._beginByte / _ctxt.blockSize();
       TSVConnClose(vc); // flush and store
       it->reset(); // don't close a second time
-      DEBUG_LOG("completed store to bitset: + 1<<%ld %s", firstBlk + (it - _vcsToWrite.begin()), _ctxt.b64BlkBitset().c_str());
+      DEBUG_LOG("completed store to bitset: + 1<<%ld %s", firstBlk + (it - _vcsToWrite.begin()), _ctxt.b64BlkPresent().c_str());
     }
     break;
   }
@@ -289,13 +286,5 @@ BlockStoreXform::handleBlockWrite(TSEvent event, void *edata, std::nullptr_t)
     DEBUG_LOG("cache-write event: e#%d", event);
     break;
   }
-}
-
-void
-close_all_vcs(BlockStoreXform::WriteVCs_t &vect)
-{
-  using namespace std::chrono;
-  using std::future_status;
-
-  DEBUG_LOG("vcs destruct started");
+  g_pluginTxnID = oldTxnID;
 }

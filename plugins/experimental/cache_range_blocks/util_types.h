@@ -174,7 +174,8 @@ struct ATSVConnFuture : private std::shared_future<TSVConn>
 
   ~ATSVConnFuture();
 
-  bool valid() const;
+  int error() const;
+  bool valid() const { return ! error(); }
   bool is_close_able() const;
   void reset() 
      { operator=(std::shared_future<TSVConn>{}); }
@@ -274,9 +275,11 @@ private:
   void handleXformOutputEvent(TSEvent event);
 
   static int handleXformTSEventCB(TSCont cont, TSEvent event, void *data);
-private:
+protected:
   atscppapi::Transaction &_txn;
-  TSHttpTxn _atsTxn;
+  const TSHttpTxn _atsTxn;
+
+private:
   XformCB_t _xformCB;
   int64_t _xformCBAbsLimit = 0L;
   int64_t const _outSkipBytes;

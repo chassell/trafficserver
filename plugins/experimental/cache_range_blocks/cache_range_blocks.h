@@ -35,6 +35,18 @@
 
 #pragma once
 
+#define PLUGIN_NAME "cache_range_blocks"
+
+#define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
+
+extern thread_local int g_pluginTxnID;
+
+#define TXN_ID      ( TransactionPlugin::getTxnID() > 0 ? TransactionPlugin::getTxnID() : g_pluginTxnID )
+
+#define PLUGIN_NAME "cache_range_blocks"
+#define DEBUG_LOG(fmt, ...) TSDebug(PLUGIN_NAME, "[%d] [%s:%d] %s(): " fmt,  TXN_ID, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
+#define ERROR_LOG(fmt, ...) TSError("[%d] [%s:%d] %s(): " fmt, TXN_ID, TransactionPlugin::getTxnID(), __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
+
 #define CONTENT_ENCODING_INTERNAL "x-block-cache-range"
 
 #define VARY_TAG "Vary"
@@ -76,7 +88,12 @@ public:
   const std::string & blockRangeStr() const { return _blkRangeStr; }
 
   const std::vector<ATSCacheKey> & keysInRange() const { return _keysInRange; }
-  const std::string & b64BlkBitset() const { return _b64BlkBitset; }
+
+  const std::string & b64BlkUsable() const { return _b64BlkUsable; }
+  const std::string & b64BlkPresent() const { return _b64BlkPresent; }
+
+  std::string b64BlkUsableSubstr() const;
+  std::string b64BlkPresentSubstr() const;
 
   int64_t assetLen() const { return _assetLen; }
   int64_t rangeLen() const { return _endByte - _beginByte; }
@@ -130,7 +147,8 @@ private:
   std::string _clntRangeStr;
   std::string _blkRangeStr; // from clnt req for serv req
 
-  std::string _b64BlkBitset; // if cached and found
+  std::string _b64BlkUsable; // if cached and found
+  std::string _b64BlkPresent; // if cached and found
   int64_t _assetLen = 0L;    // if cached and found
   int64_t _blkSize  = 0L;    // if cached and found
   std::string _etagStr;      // if cached and found
@@ -138,12 +156,14 @@ private:
   int64_t _beginByte = -1L;
   int64_t _endByte   = -1L;
 
+  // objs w/destructors
+
   ATSCont _mutexOnlyCont;
 
   std::vector<ATSCacheKey> _keysInRange;               // in order with index
   std::vector<ATSVConnFuture> _vcsToRead; // indexed as the keys
 
-  // transform objects must be committed to, upon response
+  // delayed creation: transform objects must be committed to, only upon response
 
   std::unique_ptr<BlockReadXform> _readXform;   // state-object ptr [registers Transforms/Continuations]
   std::unique_ptr<BlockStoreXform> _storeXform; // state-object ptr [registers Transforms/Continuations]
@@ -151,10 +171,12 @@ private:
 
 /////////////////////////////////////////////////
 /////////////////////////////////////////////////
-class BlockStoreXform : public TransactionPlugin, public BlockTeeXform
+class BlockStoreXform : public TransactionPlugin, 
+                        public BlockTeeXform
 {
 public:
   using WriteVCs_t = std::vector<ATSVConnFuture>;
+  using WriteVCsPtr_t = std::shared_ptr<std::vector<ATSVConnFuture>>;
 
 public:
   BlockStoreXform(BlockSetAccess &ctxt, int blockCount);
@@ -167,12 +189,12 @@ private:
   int64_t next_valid_vconn(TSVConn &vconn, int64_t pos, int64_t len);
 
   int64_t handleBodyRead(TSIOBufferReader r, int64_t pos, int64_t len);
-  void handleBlockWrite(TSEvent, void *, std::nullptr_t);
+  void handleBlockWrite(TSEvent, void *, WriteVCsPtr_t);
 
 private:
   BlockSetAccess &_ctxt;
 
-  std::shared_ptr<WriteVCs_t> _vcsToWriteP; 
+  WriteVCsPtr_t _vcsToWriteP; 
   WriteVCs_t &_vcsToWrite; // indexed as the keys
 
   ATSCont _writeEvents;
