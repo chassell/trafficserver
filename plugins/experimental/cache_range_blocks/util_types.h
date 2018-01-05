@@ -214,6 +214,7 @@ private:
 
   TSVIO _outVIO = nullptr;
   TSEvent _outVIOWaiting = TS_EVENT_NONE;
+  uint64_t _outVIOWaitingTS = 0UL;
 
   ATSXformOutVConn() = delete;
   ATSXformOutVConn(ATSXformOutVConn&&) = delete;
