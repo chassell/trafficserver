@@ -308,6 +308,8 @@ public:
 
   TSIOBufferReader teeReader() const { return _teeReaderP.get(); }
 
+  TSIOBufferReader cloneAndSkip(int64_t bytes);
+
 public:
   int64_t inputEvent(TSEvent event, TSVIO vio, int64_t left);
 

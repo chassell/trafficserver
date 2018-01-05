@@ -229,7 +229,7 @@ ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, 
     _xformCB( [](TSEvent evt, TSVIO vio, int64_t left) { DEBUG_LOG("xform-event empty body handler"); return 0; }),
     _outSkipBytes(offset),
     _outWriteBytes(bytes),
-    _outBufferU(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
+    _outBufferU(TSIOBufferCreate()),
     _outReaderU(TSIOBufferReaderAlloc(this->_outBufferU.get()))
 {
   // point back here
@@ -249,7 +249,7 @@ ATSXformCont::handleXformTSEventCB(TSCont cont, TSEvent event, void *data)
 BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, int64_t xformLen, int64_t xformOffset)
   : ATSXformCont(txn, TS_HTTP_RESPONSE_TRANSFORM_HOOK, xformLen, xformOffset),
     _writeHook(writeHook),
-    _teeBufferP(TSIOBufferSizedCreate(TS_IOBUFFER_SIZE_INDEX_32K)),
+    _teeBufferP(TSIOBufferCreate()),
     _teeReaderP(TSIOBufferReaderAlloc(this->_teeBufferP.get()))
 {
   // get to method via callback

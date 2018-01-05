@@ -97,50 +97,43 @@ BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
 }
 
 
-int64_t
-BlockStoreXform::next_valid_vconn(TSVConn &vconn, int64_t inpos, int64_t len)
+TSVConn
+BlockStoreXform::next_valid_vconn(int64_t inpos, int64_t len, int64_t &skip)
 {
   auto blksz = static_cast<int64_t>(_ctxt.blockSize());
   using namespace std::chrono;
   using std::future_status;
 
-  vconn = nullptr;
-
-  auto absBlk = _ctxt._beginByte / blksz;
-  auto absEnd = ( _ctxt._endByte + blksz-1 ) / blksz;
+  skip = -1;
 
   // find distance to next start point (w/zero possible)
 
+  // amt past boundary (maybe full block)
   auto fwdDist = ((inpos + blksz - 1) % blksz) + 1; // between 1 and blksz
-  int64_t revDist = blksz - fwdDist;              // between zero and blksz-1
-  auto nxtPos = inpos + revDist;
+  auto nxtPos = inpos - fwdDist + blksz; // (can be same as inpos)
+  auto lastPos = static_cast<int64_t>(_vcsToWrite.size()) * blksz;
 
-  // skip available or unstorable blocks
-  for ( ; nxtPos <= inpos + len ; nxtPos += blksz ) {
-    auto blk     = nxtPos / blksz;
+  // find nxtPos within this new span ... and before end
+  for ( auto blk = nxtPos / blksz 
+          ; nxtPos <= inpos + len && nxtPos < lastPos 
+             ; (nxtPos += blksz),++blk ) 
+  {
+    auto vconn = _vcsToWrite[blk].get();
 
-    if (blk >= static_cast<int64_t>(_vcsToWrite.size())) {
-      DEBUG_LOG("beyond final block final block start revDist:- blk%#lx,%#lx n=%ld)", absBlk + blk, absEnd, absEnd - absBlk);
-      return -1;
+    // write is ready?
+    if (vconn) {
+      DEBUG_LOG("ready VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, blksz/1024);
+      skip = nxtPos - inpos; // report if a skip is needed...
+      return vconn;
     }
-   
-    vconn = _vcsToWrite[blk].get();
+
     // can't find a ready write waiting?
-    if (!vconn) {
-      DEBUG_LOG("non-valid VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, _ctxt.blockSize()/1024);
-      continue;
-    }
-
-    // should never hit the same vconn as is being written
-    ink_assert( ! _cacheWrVIO || vconn != TSVIOVConnGet(_cacheWrVIO) );
-
-    DEBUG_LOG("ready VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, _ctxt.blockSize()/1024);
-    return nxtPos - inpos;
+    DEBUG_LOG("non-valid VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, blksz/1024);
   }
 
   // no boundary within distance?
-  DEBUG_LOG("skip required pos:%#lx -> %#lx len=%#lx [blk:%ldK]", inpos, nxtPos, len, _ctxt.blockSize()/1024);
-  return -1;
+  DEBUG_LOG("skip required pos:%#lx -> %#lx len=%#lx [blk:%ldK]", inpos, nxtPos, len, blksz/1024);
+  return nullptr;
 }
 
 //
@@ -160,95 +153,68 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
 
   // position is distance within body *without* len...
 
-  TSVConn currBlock = nullptr;
   auto blksz        = static_cast<int64_t>(_ctxt.blockSize());
 
   // amount "ready" for block is read from our reader
   auto navail = TSIOBufferReaderAvail(teerdr); // new amount
-
-  auto oavail = navail - len; // amount that hook had accepted before...
-  auto donepos = inpos - oavail;
-  auto newpos = inpos + len;
-
-  // older bytes need flushing out?
-  if (_cacheWrVIO && donepos <= _minBuffPos ) {
-    atscppapi::ScopedContinuationLock lock(TSVIOContGet(_cacheWrVIO));
-    TSVIOReenable(_cacheWrVIO);
-    // haven't caught up yet?
-    donepos += navail - TSIOBufferReaderAvail(teerdr); // moved forward?
-    if (_cacheWrVIO && donepos < _minBuffPos ) {
-      DEBUG_LOG("store **** flush buffer out: @%#lx w/buff -%#lx wout/buff -%#lx", _minBuffPos, _minBuffPos - donepos - navail, _minBuffPos - donepos);
-      return len;
-    }
-    DEBUG_LOG("store **** flushed last: @%#lx w/buff -%#lx wout/buff -%#lx", _minBuffPos, _minBuffPos - donepos - navail, _minBuffPos - donepos);
-  }
-
-  // no bytes even cross into new?
-  if ( newpos < _minBuffPos ) {
-    DEBUG_LOG("store **** small amt to buffer: @%#lx -%#lx left [+%#lx] / @%#lx+%#lx", _minBuffPos, _minBuffPos - newpos, len, donepos, navail);
-    return len;
-  }
-
-  // no bytes before minbuffpos
-  oavail = std::min(oavail, inpos - _minBuffPos);
-  navail = std::min(oavail + len, navail);
-
-  // new bytes can be skipped or written safely...
-
-  auto endpos = inpos + TSVIONTodoGet(inputVIO()); // final byte pos
+  auto donepos = inpos - (navail - len); // totally completed bytes
+  auto endpos = inpos + TSVIONTodoGet(inputVIO()); // expected final input byte
 
   // check any unneeded bytes before next block
-  auto skipDist = next_valid_vconn(currBlock, std::max(_minBuffPos,donepos), navail);
+  int64_t skipDist = 0;
+  auto currBlock = next_valid_vconn(donepos, navail, skipDist);
 
-  // don't have enough to reach full block boundary?
-  if (skipDist < 0) {
+  // no block to write?
+  if (! currBlock) {
     // no need to save these bytes?
     TSIOBufferReaderConsume(teerdr, navail);
-    DEBUG_LOG("store **** skip current block pos:%#lx+%#lx+%#lx", donepos, oavail, len);
+    DEBUG_LOG("store **** skip current block pos:%#lx+%#lx+%#lx", donepos, navail - len, len);
     return len;
     //////// RETURN
   }
 
-  ink_assert(currBlock);
-
   if (skipDist) {
-    // no need to save these bytes?
-    TSIOBufferReaderConsume(teerdr, skipDist);
-    // recheck..
-    navail = TSIOBufferReaderAvail(teerdr);
-    // align forward..
-    donepos += skipDist;
+    TSIOBufferReaderConsume(teerdr, skipDist); // skipped
+
+    navail = TSIOBufferReaderAvail(teerdr); // recheck..
+    donepos += skipDist; // more completed bytes 
 
     DEBUG_LOG("store **** skipping to buffered pos:%#lx+%#lx --> skipped %#lx", donepos, navail, skipDist);
   }
 
-  // at block boundary now...
+  // reader has reached block boundary now...
 
   auto wrlen = std::min(endpos - donepos,blksz); // len needed for a block write...
 
+  if ( navail < wrlen ) {
+    DEBUG_LOG("store **** reading pos:%#lx+%#lx+%#lx < %#lx", donepos, navail - len, len, wrlen);
+    return len;
+    //////// RETURN
+  }
+
+  // reader has more than the needed bytes for a complete write
+
   auto blk = donepos / blksz;
-  auto firstBlk = _ctxt._beginByte / _ctxt.blockSize();
+
+  auto absBeg = _ctxt._beginByte / blksz;
+  // auto absEnd = ( _ctxt._endByte + blksz-1 ) / blksz;
+
   auto &vcFuture = _vcsToWrite[blk]; // should be correct now...
 
   ink_assert(vcFuture.get() == currBlock);
 
-  vcFuture.reset(); // free from being auto-destructed!
+  vcFuture.reset(); // will skip old bytes next time...
 
-  _minBuffPos = donepos + wrlen;
-
-  // should send a WRITE_COMPLETE rather quickly
-  auto blockCont = TSContCreate(&BlockStoreXform::handleBlockWrite,TSMutexCreate());
-  intptr_t data = ThreadTxnID::get() | ((firstBlk + blk) << 50);
+  // make a totally async set of callbacks to write out new block
+  auto blockCont = TSContCreate(&BlockStoreXform::handleBlockWrite,TSContMutexGet(*this));
+  intptr_t data = ThreadTxnID::get() | ((absBeg + blk) << 50);
   TSContDataSet(blockCont,reinterpret_cast<void*>(data));
-  _cacheWrVIO = TSVConnWrite(currBlock, blockCont, TSIOBufferReaderClone(teerdr), wrlen);
-  if ( ! navail ) {
-    DEBUG_LOG("store ++++ beginning block 1<<%ld write @%#lx+%#lx+%#lx [final @%#lx]", firstBlk + blk, donepos, oavail, len, donepos + wrlen);
-  } else {
-    DEBUG_LOG("store ++++ beginning block w/write 1<<%ld write @%#lx+%#lx+%#lx [final @%#lx]", firstBlk + blk, donepos, navail, len, donepos + wrlen);
 
-    atscppapi::ScopedContinuationLock lock(TSVIOContGet(_cacheWrVIO));
-    TSVIOReenable(_cacheWrVIO); // flush if some available!
-  }
+  cloneAndSkip(blksz); // substitute new buffer ...
+
+  TSVConnWrite(currBlock, blockCont, teerdr, wrlen); // copy older buffer bytes out
+
+  DEBUG_LOG("store ++++ beginning block w/write 1<<%ld write @%#lx+%#lx+%#lx [final @%#lx]", absBeg + blk, donepos, navail, len, donepos + wrlen);
   return len;
 }
 
@@ -279,8 +245,13 @@ BlockStoreXform::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
     TSVIOReenable(blkWriteVIO);
     break;
 
-  case TS_EVENT_VCONN_WRITE_COMPLETE: {
+  case TS_EVENT_VCONN_WRITE_COMPLETE:
+  {
+    TSIOBufferReader_t ordr( TSVIOReaderGet(blkWriteVIO) ); // dtor upon break
+    TSIOBuffer_t obuff( TSVIOBufferGet(blkWriteVIO) ); // dtor upon break
+
     DEBUG_LOG("completed store to bitset 1<<%ld",blkid);
+
     auto vc = TSVIOVConnGet(blkWriteVIO);
     TSVConnClose(vc); // flush and store
     TSContDestroy(cont);
