@@ -360,14 +360,14 @@ std::string
 BlockSetAccess::b64BlkUsableSubstr() const
 {
   int i = _beginByte/_blkSize;
-  return _b64BlkUsable.substr(i, _endByte/_blkSize - i);
+  return ( ! _b64BlkUsable.empty() ? _b64BlkUsable.substr(i, _endByte/_blkSize - i) : "" );
 }
 
 std::string
 BlockSetAccess::b64BlkPresentSubstr() const
 {
   int i = _beginByte/_blkSize;
-  return _b64BlkPresent.substr(i, _endByte/_blkSize - i);
+  return ( ! _b64BlkPresent.empty() ? _b64BlkPresent.substr(i, _endByte/_blkSize - i) : "" );
 }
 
 int64_t

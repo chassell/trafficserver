@@ -74,6 +74,10 @@ BlockSetAccess::handle_block_tests()
     auto i = &p - &_keysInRange.front();
     auto blk = firstBlk + i;
 
+    if ( blk >= endBlk ) {
+      continue; // too many 
+    }
+
     base64_bit_set(_b64BlkPresent, blk);
 
     if ( ! p ) {
@@ -138,7 +142,8 @@ void
 BlockSetAccess::start_cache_hit(int64_t rangeStart)
 {
   _readXform = std::make_unique<BlockReadXform>(*this, rangeStart);
-  _readXform->handleReadCacheLookupComplete(txn());  // may have txn.resume()
+  set_cache_hit_bitset();
+  _txn.resume();
 }
 
 BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
@@ -154,29 +159,21 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
   // initial handler ....
   set_body_handler([this](TSEvent event, TSVIO vio, int64_t left) {
     if ( event == TS_EVENT_VCONN_WRITE_READY && vio == outputVIO() ) {
-      auto inrdr = TSVIOReaderGet(inputVIO());
-      DEBUG_LOG("write ready: %#lx (ready %#lx)", TSVIONDoneGet(vio), ( inrdr ? TSIOBufferReaderAvail(inrdr) : -1 ));
+      {
+        auto inrdr = TSVIOReaderGet(inputVIO()); // log current buffer level
+        DEBUG_LOG("output empty: %#lx (ready %#lx)", TSVIONDoneGet(vio), ( inrdr ? TSIOBufferReaderAvail(inrdr) : -1 ));
+      }
       TSVIOReenable(inputVIO());
       return 0L;
     }
 
-    // detect ending conditions ...
-    if ( event == TS_EVENT_VCONN_WRITE_COMPLETE && vio == outputVIO() ) {
-      TSVIONBytesSet( xformInputVIO(), TSVIONDoneGet(xformInputVIO()) ); // mark as completed!
-      auto inrdr = TSVIOReaderGet(xformInputVIO());
-      DEBUG_LOG("write complete: %#lx (ready %#lx)", TSVIONDoneGet(vio), ( inrdr ? TSIOBufferReaderAvail(inrdr) : -1 ));
-      TSVIOReenable(inputVIO()); // (forward an event?)
-      return 0L;
-    }
-
-    DEBUG_LOG("checking event. e#%d %p %ld %p",event,vio,left,inputVIO());
     if ( event == TS_EVENT_VCONN_READ_COMPLETE && vio == inputVIO() ) {
       // first nonzero vconn ... or past end..
       auto curr = std::find_if(_vconns.begin(), _vconns.end(), [](ATSVConnFuture &vc) { return vc.get() != nullptr; } ) - _vconns.begin();
       auto nxt = curr+1;
 
       if ( nxt >= static_cast<int64_t>(_vconns.size()) ) {
-        DEBUG_LOG("ignoring event.  completed all reads: e#%d",event);
+        DEBUG_LOG("ignoring input-completion.  completed all reads: e#%d",event);
         return 0L; // no reads left to start!
       }
 
@@ -197,7 +194,24 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
       return 0L;
     }
 
-    DEBUG_LOG("ignoring event. e#%d %p %ld %p",event,vio,left,inputVIO());
+    // detect ending conditions ...
+    if ( event == TS_EVENT_VCONN_WRITE_COMPLETE && vio == outputVIO() ) {
+      auto ndone = TSVIONDoneGet(xformInputVIO());
+      auto inrdr = TSVIOReaderGet(xformInputVIO());
+      if ( inrdr ) {
+        auto n = TSIOBufferReaderAvail(inrdr);
+        DEBUG_LOG("output complete: %#lx (input ready %#lx)",ndone,n);
+        TSIOBufferReaderConsume(inrdr,n);
+      } else {
+        DEBUG_LOG("output complete: %#lx w/no reader available",ndone);
+      }
+      TSVIONBytesSet(xformInputVIO(), ndone); // mark as completed!
+      TSVIOReenable(xformInputVIO()); // restart to detect end ...
+      TSVConnShutdown(*this, 1, 0);
+      return 0L;
+    }
+
+    DEBUG_LOG("ignoring unhandled event. e#%d %p %ld %p",event,vio,left,inputVIO());
     return 0L;
   });
   // do not resume until first block is read in
@@ -209,13 +223,6 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
 BlockReadXform::~BlockReadXform() 
 {
   DEBUG_LOG("destruct start");
-}
-
-void
-BlockReadXform::handleReadCacheLookupComplete(Transaction &txn)
-{
-  _ctxt.set_cache_hit_bitset();
-  txn.resume();
 }
 
 void

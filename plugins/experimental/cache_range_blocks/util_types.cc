@@ -215,8 +215,8 @@ ATSXformOutVConn::~ATSXformOutVConn()
     DEBUG_LOG("transform-complete @%#lx",TSVIONDoneGet(_outVIO));
   }
 
-  TSVConnClose(_outVConn);          // do only once!
-  DEBUG_LOG("close-complete");
+//  TSVConnClose(_outVConn);          // do only once!
+//  DEBUG_LOG("close-complete");
   TSVConnShutdown(_outVConn, 0, 1); // do only once!
   DEBUG_LOG("shutdown-complete");
 }

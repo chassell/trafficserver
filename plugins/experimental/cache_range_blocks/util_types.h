@@ -248,7 +248,7 @@ public:
   TSIOBuffer outputBuffer() const { return _outBufferU.get(); }
   TSIOBufferReader outputReader() const { return _outReaderU.get(); }
 
-  bool using_two_buffers() const { return _inVIO && TSVIOBufferGet(_inVIO) != outputBuffer(); }
+  bool using_two_buffers() const { return _inVIO && TSVIOVConnGet(_inVIO) != operator TSVConn(); }  // || TSVIOBufferGet(_inVIO) != outputBuffer(); }
   bool using_one_buffer() const { return _inVIO && TSVIOBufferGet(_inVIO) == outputBuffer(); }
 
   void reset_input_vio(TSVIO vio) { _inVIO = vio; }

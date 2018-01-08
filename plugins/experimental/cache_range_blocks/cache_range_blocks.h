@@ -232,9 +232,6 @@ class BlockReadXform : public ATSXformCont
   friend unique_ptr<_Tp> std::make_unique(_Args &&... __args); // when it needs to change over
 
 public:
-  // starting point if created from lookup hook
-  void handleReadCacheLookupComplete(Transaction &txn);
-
   ~BlockReadXform() override;
 
 private:
