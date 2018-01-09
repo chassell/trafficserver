@@ -208,6 +208,7 @@ ATSXformOutVConn::~ATSXformOutVConn()
 {
   if ( _outVIO ) {
 //    ink_assert( ! TSVIONTodoGet(_outVIO) );
+    TSVIONBytesSet( _outVIO, TSVIONDoneGet(_outVIO) );
     DEBUG_LOG("write-complete @%#lx",TSVIONDoneGet(_outVIO));
     TSVIOReenable(_outVIO);
     _outVIO = nullptr;

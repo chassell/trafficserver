@@ -1635,6 +1635,7 @@ HttpTunnel::main_handler(int event, void *data)
   //  VConnections alive.  If not, notifiy the state machine
   //
   // Don't call out if we are nested
+  Debug("http_tunnel", "is_tunnel_alive: %d/%d -> %d/%d", producers[0].alive, consumers[0].alive, producers[1].alive, consumers[1].alive);
   if (call_sm || (sm_callback && !is_tunnel_alive())) {
     if (reentrancy_count == 1) {
       reentrancy_count = 0;
