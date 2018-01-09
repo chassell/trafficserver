@@ -128,6 +128,9 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     return;
   }
 
+  // no interest in cacheing the file... so waive any storage
+  TSHttpTxnServerRespNoStoreSet(_atsTxn,1);
+
   _clntHdrs.erase(RANGE_TAG);
 
   _etagStr = pstub->value(ETAG_TAG); // hold on for later

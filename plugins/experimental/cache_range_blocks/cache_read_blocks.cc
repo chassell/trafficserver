@@ -197,17 +197,7 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
     // detect ending conditions ...
     if ( event == TS_EVENT_VCONN_WRITE_COMPLETE && vio == outputVIO() ) {
       auto ndone = TSVIONDoneGet(xformInputVIO());
-      auto inrdr = TSVIOReaderGet(xformInputVIO());
-      if ( inrdr ) {
-        auto n = TSIOBufferReaderAvail(inrdr);
-        DEBUG_LOG("output complete: %#lx (input ready %#lx)",ndone,n);
-        TSIOBufferReaderConsume(inrdr,n);
-      } else {
-        DEBUG_LOG("output complete: %#lx w/no reader available",ndone);
-      }
-      TSVIONBytesSet(xformInputVIO(), ndone); // mark as completed!
-      TSVIOReenable(xformInputVIO()); // restart to detect end ...
-      TSVConnShutdown(*this, 1, 0);
+      DEBUG_LOG("output complete: input @%#lx",ndone);
       return 0L;
     }
 

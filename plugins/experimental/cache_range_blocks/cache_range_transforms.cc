@@ -40,12 +40,17 @@ ATSXformCont::xform_input_completion(TSEvent event)
   }
 
   // bytes are not transferred and VConn is not closed early
+  // ** ONLY ** if this is past can a shutdown start [i.e. input exhausted]
   if ( TSVIONTodoGet(xfinvio) && ! TSVConnClosedGet(xfinvconn) ) {
     return 0; // not complete at all...
   }
 
   // closed suddenly?
   if ( TSVConnClosedGet(xfinvconn) ) {
+    if ( outputVIO() ) {
+      _xformCB(event, outputVIO(), 0); // notify...
+      _outVConnU.reset(); // delete, flush and free
+    }
     _xformCB(event, nullptr, 0);
     DEBUG_LOG("xform-event closed: e#%d", event);
     return -2; // cannot proceed when closed
@@ -60,7 +65,10 @@ ATSXformCont::xform_input_completion(TSEvent event)
   if ( outputVIO() ) {
     _xformCB(event, outputVIO(), 0); // notify...
     _outVConnU.reset(); // delete, flush and free
+    // DROP THROUGH...
   }
+
+  // attempt a start of shutdown...
 
   if ( xfinvio == _inVIO ) {
     DEBUG_LOG("xform-event one-input pos @%#lx",TSVIONDoneGet(_inVIO));
@@ -71,7 +79,7 @@ ATSXformCont::xform_input_completion(TSEvent event)
   // input and output both complete
   _xformCB(event, xfinvio, 0);
   forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE, xfinvio); // required for upstream...
-  return -4; // cannot proceed with no data
+  return -5; // cannot proceed with no data
 }
 
 void
@@ -85,8 +93,13 @@ ATSXformCont::handleXformOutputEvent(TSEvent event)
       // handle an early output-complete?
       if ( ! _outVConnU->is_close_able() ) {
         _outVConnU->set_close_able(); // in case something cut it early...
-      } 
+      }
       _xformCB(event, outputVIO(), 0); // notify...
+
+      if ( ! TSVIONDoneGet(xformInputVIO()) ) {
+        TSVIONDoneSet( xformInputVIO(), TSVIONBytesGet(xformInputVIO()) );
+        forward_vio_event(TS_EVENT_VCONN_WRITE_READY, xformInputVIO());   // skip
+      }
       break;
 
     case TS_EVENT_VCONN_WRITE_READY:
@@ -185,14 +198,21 @@ ATSXformCont::xform_input_event()
 {
   const auto event = TS_EVENT_IMMEDIATE; // only way in ...
 
-  if ( ! _outVConnU ) {
+  // only create at precise start..
+  if ( ! TSVIONDoneGet(xformInputVIO()) && ! _outVConnU ) {
     DEBUG_LOG("create xform write vio: len=%#lx skip=%#lx", _outWriteBytes, _outSkipBytes);
     _outVConnU = ATSXformOutVConn::create_if_ready(*this, _outWriteBytes, _outSkipBytes);
     _outVConnU->check_refill(event);
   }
 
+  auto xfinrdr = TSVIOReaderGet(xformInputVIO());
+  auto avail = TSIOBufferReaderAvail(xfinrdr);
+
   if ( using_one_buffer() ) {
-    DEBUG_LOG("must ignore input-buffer event");
+    TSIOBufferReaderConsume(xfinrdr, avail); // skip
+    // TSVIONDoneSet( xformInputVIO(), TSVIONDoneGet(xformInputVIO()) + avail );
+    forward_vio_event(TS_EVENT_VCONN_WRITE_READY, xformInputVIO());   // skip
+    DEBUG_LOG("consume input-buffer event: avail %ld",avail);
     return;
   }
 
