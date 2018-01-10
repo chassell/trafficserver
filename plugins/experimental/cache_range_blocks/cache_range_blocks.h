@@ -195,8 +195,7 @@ private:
 
 /////////////////////////////////////////////////
 /////////////////////////////////////////////////
-class BlockStoreXform : public TransactionPlugin, 
-                        public BlockTeeXform
+class BlockStoreXform : public BlockTeeXform
 {
 public:
   using WriteVCs_t = std::vector<ATSVConnFuture>;
@@ -206,8 +205,7 @@ public:
   BlockStoreXform(BlockSetAccess &ctxt, int blockCount);
   ~BlockStoreXform() override;
 
-  // starting point if created from lookup hook
-  void handleReadCacheLookupComplete(Transaction &txn) override; 
+  void txnReadCacheLookupComplete(); 
 
 private:
   TSVConn next_valid_vconn(int64_t pos, int64_t len, int64_t &skipDist);

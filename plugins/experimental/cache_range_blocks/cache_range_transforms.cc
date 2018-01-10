@@ -153,7 +153,10 @@ ATSXformCont::handleXformBufferEvent(TSEvent event, TSVIO evio)
     }
 
     case TS_EVENT_VCONN_READ_COMPLETE:
-      _outVConnU->check_refill(event); // if first is last
+      // only check if made yet...
+      if ( _outVConnU ) {
+        _outVConnU->check_refill(event); // if first is last
+      }
       _xformCB(event, _inVIO, 0); // no more fills ready...
       break;
 
@@ -203,16 +206,16 @@ ATSXformCont::xform_input_event()
     DEBUG_LOG("create xform write vio: len=%#lx skip=%#lx", _outWriteBytes, _outSkipBytes);
     _outVConnU = ATSXformOutVConn::create_if_ready(*this, _outWriteBytes, _outSkipBytes);
     _outVConnU->check_refill(event);
+    DEBUG_LOG("input block level set: %ld",TSVIONBytesGet(xformInputVIO()));
+    TSIOBufferWaterMarkSet( TSVIOBufferGet(xformInputVIO()), TSVIONBytesGet(xformInputVIO()));
   }
 
   auto xfinrdr = TSVIOReaderGet(xformInputVIO());
   auto avail = TSIOBufferReaderAvail(xfinrdr);
 
   if ( using_one_buffer() ) {
-    TSIOBufferReaderConsume(xfinrdr, avail); // skip
-    // TSVIONDoneSet( xformInputVIO(), TSVIONDoneGet(xformInputVIO()) + avail );
-    forward_vio_event(TS_EVENT_VCONN_WRITE_READY, xformInputVIO());   // skip
-    DEBUG_LOG("consume input-buffer event: avail %ld",avail);
+    TSIOBufferReaderConsume(xfinrdr, avail); // empty out now..
+    DEBUG_LOG("consume skip input-buffer event: avail %ld",avail);
     return;
   }
 
@@ -427,7 +430,7 @@ TSIOBufferReader
 BlockTeeXform::cloneAndSkip(int64_t skip)
 {
   auto ordr = _teeReaderP.release(); // caller must free it
-  _teeBufferP.release(); // caller must free it
+  auto obuff = _teeBufferP.release(); // caller must free it
 
   TSIOBufferReader_t ordr2( TSIOBufferReaderClone(ordr) ); // delete upon return
 
@@ -435,6 +438,8 @@ BlockTeeXform::cloneAndSkip(int64_t skip)
 
   _teeBufferP.reset(TSIOBufferCreate());
   _teeReaderP.reset(TSIOBufferReaderAlloc(_teeBufferP.get()));
+
+  TSIOBufferWaterMarkSet(_teeBufferP.get(), TSIOBufferWaterMarkGet(_teeBufferP.get()) );
 
   auto left = TSIOBufferReaderAvail(ordr2.get());
   TSIOBufferCopy(_teeBufferP.get(), ordr2.get(), left, 0); // save extra bytes as before
