@@ -46,12 +46,12 @@ BlockSetAccess::start_cache_miss(int64_t firstBlk, int64_t endBlk)
   }
 
   _storeXform = std::make_unique<BlockStoreXform>(*this,endBlk - firstBlk);
-  _storeXform->handleReadCacheLookupComplete(txn()); // may have txn.resume()
+  _storeXform->txnReadCacheLookupComplete(); // may have txn.resume()
+  txn().resume(); // wait for response
 }
 
 BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
-  : TransactionPlugin(ctxt.txn()),
-    BlockTeeXform(ctxt.txn(), 
+  : BlockTeeXform(ctxt.txn(), 
                   [this](TSIOBufferReader r, int64_t inpos, int64_t len) { return this->handleBodyRead(r, inpos, len); },
                   ctxt.rangeLen(),
                   ctxt._beginByte % ctxt.blockSize()),
@@ -60,8 +60,8 @@ BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
     _vcsToWriteP( new WriteVCs_t(blockCount), []( WriteVCs_t *ptr ){ delete ptr; } ),
     _vcsToWrite(*_vcsToWriteP)
 {
-  TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS);  // add block-range and clean up
-  TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // adjust headers to stub-file
+  TSIOBufferWaterMarkSet(teeBuffer(), ctxt.blockSize()); // perfect point to stop..
+  DEBUG_LOG("tee-buffer block level reset to: %ld", ctxt.blockSize());
 }
 
 BlockStoreXform::~BlockStoreXform()
@@ -70,12 +70,10 @@ BlockStoreXform::~BlockStoreXform()
 }
 
 void
-BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
+BlockStoreXform::txnReadCacheLookupComplete()
 {
   using namespace std::chrono;
   using std::future_status;
-
-  DEBUG_LOG("store: xhook:%p _ctxt:%p len=%#lx [blk:%ldK]", this, &_ctxt, _ctxt.assetLen(), _ctxt.blockSize()/1024);
 
   // [will override the server response for headers]
   //
@@ -84,18 +82,22 @@ BlockStoreXform::handleReadCacheLookupComplete(Transaction &txn)
 
   for (auto i = 0U; i < keys.size(); ++i, ++blkNum) 
   {
-    if ( ! keys[i] || is_base64_bit_set(_ctxt.b64BlkPresent(), blkNum) ) {
+    if ( ! keys[i] ) {
+      DEBUG_LOG("store: 1<<%ld key left out", blkNum + i);
+      continue;
+    }
+    if ( is_base64_bit_set(_ctxt.b64BlkPresent(), blkNum) ) {
+      DEBUG_LOG("store: 1<<%ld present / not usable", blkNum + i);
       continue;
     }
 
     auto contp = ATSCont::create_temp_tscont(*this, _vcsToWrite[i], _vcsToWriteP);
+    DEBUG_LOG("store: 1<<%ld to write", blkNum + i);
     TSCacheWrite(contp, keys[i]); // find room to store each key...
   }
 
   DEBUG_LOG("store: len=%#lx [blk:%ldK, %#lx bytes]", _ctxt._assetLen, _ctxt.blockSize()/1024, _ctxt.blockSize());
-  txn.resume(); // wait for response
 }
-
 
 TSVConn
 BlockStoreXform::next_valid_vconn(int64_t inpos, int64_t len, int64_t &skip)
@@ -146,6 +148,11 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
   if (!teerdr) {
     DEBUG_LOG("store **** final call");
     return 0;
+  }
+
+  if ( ! inpos ) {
+    TSIOBufferWaterMarkSet(TSVIOBufferGet(xformInputVIO()), 
+          _ctxt.blockSize() * _ctxt.keysInRange().size()); // grab full amount
   }
 
   // prevent multiple starts of a storage
