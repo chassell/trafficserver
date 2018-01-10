@@ -142,7 +142,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   _assetLen = std::atol(srvrRange.c_str());
 
   // test if range is readable
-  if (parse_range(_clntRangeStr, _assetLen, _beginByte, _endByte) >= 0) {
+  if (parse_range(_clntRangeStr, _assetLen, _beginByte, _endByte) > 0) {
     _b64BlkPresent = pstub->value(X_BLOCK_BITSET_TAG);
     _b64BlkUsable = pstub->value(X_BLOCK_BITSET_TAG);
   }
@@ -200,7 +200,7 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
     return; // cannot use this for range block storage ...
   }
 
-  prepare_cached_stub(txn); // request full blocks if possible
+  prepare_cached_stub(txn); // prepare to be stored
   txn.resume();
 }
 
@@ -327,7 +327,7 @@ parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_t &end)
   end = -std::atol(rangeFld.erase(0, rangeFld.rfind('-')).c_str());
 
   if (rangeFld.empty()) {
-    return --end;
+    return --end - start;
   }
 
   if (start >= 0 && !end) {
@@ -339,7 +339,7 @@ parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_t &end)
     ++end; // change inclusive to exclusive
   }
 
-  return end;
+  return end - start;
 }
 
 Headers *
