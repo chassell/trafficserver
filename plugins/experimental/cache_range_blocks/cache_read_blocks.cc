@@ -40,14 +40,14 @@ BlockSetAccess::launch_block_tests()
   auto barrierLock = std::shared_ptr<BlockSetAccess>(this, deleter);
   auto blkNum      = _beginByte / _blkSize;
 
-  for (auto i = 0U; i < _keysInRange.size(); ++i, ++blkNum) {
+  for (auto &&k : _keysInRange) {
+    auto i = &k - &_keysInRange.front();
     // prep for async reads that init into VConn-futures
-    _keysInRange[i] = std::move(ATSCacheKey(clientUrl(), _etagStr, blkNum * _blkSize));
+    k = std::move(ATSCacheKey(clientUrl(), _etagStr, blkNum * _blkSize));
     auto contp      = ATSCont::create_temp_tscont(_mutexOnlyCont, _vcsToRead[i], barrierLock);
-    TSCacheRead(contp, _keysInRange[i]);
+    TSCacheRead(contp, k);
   }
 }
-
 
 // start read of all the blocks
 void
@@ -109,7 +109,7 @@ BlockSetAccess::handle_block_tests()
     // successful!
     ++nrdy;
     base64_bit_set(_b64BlkUsable, blk);
-    DEBUG_LOG("read successful present bitset: + 1<<%ld ..%s.. / ..%s..", blk, 
+    DEBUG_LOG("read successful present bitset: vc:%p + 1<<%ld ..%s.. / ..%s..", vconn, blk, 
        _b64BlkPresent.substr(firstBlk/6,(endBlk+5)/6-firstBlk/6).c_str(),
        _b64BlkUsable.substr(firstBlk/6,(endBlk+5)/6-firstBlk/6).c_str());
   }
