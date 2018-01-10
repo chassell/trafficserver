@@ -141,7 +141,7 @@ public:
 
 public:
   explicit ATSCont(TSCont mutexSrc=nullptr); // no handler
-  virtual ~ATSCont() = default;
+  virtual ~ATSCont();
 
   // accepts TSHttpTxn handler functions
   template <class T_OBJ, typename T_DATA> 
@@ -233,8 +233,9 @@ public:
   ATSXformCont() = delete; // nullptr by default
   ATSXformCont(ATSXformCont &&) = delete;
   ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t bytes, int64_t offset = 0);
+
   // external-only body
-  virtual ~ATSXformCont() = default;
+  virtual ~ATSXformCont();
 
 public:
   operator TSVConn() const { return get(); }
@@ -307,6 +308,7 @@ public:
   BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, int64_t xformLen, int64_t xformOffset);
   virtual ~BlockTeeXform() = default;
 
+  TSIOBuffer teeBuffer() const { return _teeBufferP.get(); }
   TSIOBufferReader teeReader() const { return _teeReaderP.get(); }
 
   TSIOBufferReader cloneAndSkip(int64_t bytes);

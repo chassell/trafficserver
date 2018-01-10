@@ -118,13 +118,22 @@ ATSCont::ATSCont(TSCont mutexSrc) : TSCont_t(TSContCreate(&ATSCont::handleTSEven
   TSContDataSet(get(), this);
 }
 
+ATSCont::~ATSCont() 
+{
+  if ( get() ) {
+    TSContDataSet(get(), nullptr); // signal to *stop* continuations
+  }
+}
+
 int
 ATSCont::handleTSEventCB(TSCont cont, TSEvent event, void *data)
 {
   atscppapi::ScopedContinuationLock lock(cont);
   ATSCont *self = static_cast<ATSCont *>(TSContDataGet(cont));
-  ink_assert(self->operator TSCont() == cont);
-  self->_userCB(event, data);
+  if ( self ) {
+    ink_assert(self->operator TSCont() == cont);
+    self->_userCB(event, data);
+  }
   return 0;
 }
 
@@ -219,6 +228,10 @@ ATSXformOutVConn::~ATSXformOutVConn()
 //  TSVConnClose(_outVConn);          // do only once!
 //  DEBUG_LOG("close-complete");
   TSVConnShutdown(_outVConn, 0, 1); // do only once!
+
+  const_cast<TSVConn&>(_outVConn) = nullptr;
+  const_cast<TSVConn&>(_inVConn) = nullptr;
+
   DEBUG_LOG("shutdown-complete");
 }
 
@@ -237,6 +250,8 @@ ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, 
   TSContDataSet(get(), this);
   TSHttpTxnHookAdd(_atsTxn, xformType, get());
   // get to method via callback
+  TSIOBufferWaterMarkSet(_outBufferU.get(), bytes + offset); // never produce a READ_READY
+  DEBUG_LOG("output block level set to: %ld",bytes + offset);
 }
 
 int
@@ -244,7 +259,16 @@ ATSXformCont::handleXformTSEventCB(TSCont cont, TSEvent event, void *data)
 {
   atscppapi::ScopedContinuationLock lock(cont);
   ATSXformCont *self = static_cast<ATSXformCont *>(TSContDataGet(cont));
-  return self->handleXformTSEvent(cont, event, data);
+  return self ? self->handleXformTSEvent(cont, event, data) : 0;
+}
+
+ATSXformCont::~ATSXformCont()
+{
+  if ( get() ) {
+    TSContDataSet(get(), nullptr);
+  }
+  _xformCB = XformCB_t{}; // no callbacks
+  TSCont_t::reset();
 }
 
 BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, int64_t xformLen, int64_t xformOffset)
@@ -255,6 +279,8 @@ BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, 
 {
   // get to method via callback
   set_body_handler([this](TSEvent evt, TSVIO vio, int64_t left) { return this->inputEvent(evt, vio, left); });
+  TSIOBufferWaterMarkSet(_teeBufferP.get(), xformLen + xformOffset); // never produce a READ_READY
+  DEBUG_LOG("tee-buffer block level set to: %ld", xformLen + xformOffset);
 }
 
 class BlockStoreXform;
