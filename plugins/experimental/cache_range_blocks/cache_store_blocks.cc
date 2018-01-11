@@ -151,8 +151,9 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
   }
 
   if ( ! inpos ) {
-    TSIOBufferWaterMarkSet(TSVIOBufferGet(xformInputVIO()), 
-          _ctxt.blockSize() * _ctxt.keysInRange().size()); // grab full amount
+    auto n = _ctxt.blockSize() * _ctxt.keysInRange().size();
+    TSIOBufferWaterMarkSet(TSVIOBufferGet(xformInputVIO()), n); // grab full amount
+    DEBUG_LOG("input block level reset to: %ld", n);
   }
 
   // prevent multiple starts of a storage
