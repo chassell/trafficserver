@@ -83,16 +83,16 @@ BlockStoreXform::txnReadCacheLookupComplete()
   for (auto i = 0U; i < keys.size(); ++i, ++blkNum) 
   {
     if ( ! keys[i] ) {
-      DEBUG_LOG("store: 1<<%ld key left out", blkNum + i);
+      DEBUG_LOG("store: 1<<%ld key left out", blkNum);
       continue;
     }
     if ( is_base64_bit_set(_ctxt.b64BlkPresent(), blkNum) ) {
-      DEBUG_LOG("store: 1<<%ld present / not usable", blkNum + i);
+      DEBUG_LOG("store: 1<<%ld present / not usable", blkNum);
       continue;
     }
 
     auto contp = ATSCont::create_temp_tscont(*this, _vcsToWrite[i], _vcsToWriteP);
-    DEBUG_LOG("store: 1<<%ld to write", blkNum + i);
+    DEBUG_LOG("store: 1<<%ld to write", blkNum);
     TSCacheWrite(contp, keys[i]); // find room to store each key...
   }
 
