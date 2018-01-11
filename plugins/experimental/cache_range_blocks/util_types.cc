@@ -39,22 +39,32 @@ const int8_t base64_values[80] = {
 const char base64_chars[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 void
-forward_vio_event(TSEvent event, TSVIO invio)
+forward_vio_event(TSEvent event, TSVIO tgt, TSCont mutexCont)
 {
-  //  if ( invio && TSVIOContGet(invio) && TSVIOBufferGet(invio)) {
-  if (invio && TSVIOContGet(invio)) {
+//  auto mutex = TSContMutexGet(mutexCont);
+  auto tgtcont = TSVIOContGet(tgt);
+//  TSMutexUnlock(mutex);
+
+  //  if ( tgt && TSVIOContGet(tgt) && TSVIOBufferGet(tgt)) {
+  if (tgt && tgtcont) {
     DEBUG_LOG("delivered: e#%d", event);
-    TSContCall(TSVIOContGet(invio), event, invio);
+    TSContCall(tgtcont, event, tgt);
   } else {
     DEBUG_LOG("not delivered: e#%d", event);
   }
+
+//  TSMutexLock(mutex);
 }
 
 ATSCacheKey::ATSCacheKey(const atscppapi::Url &url, std::string const &etag, uint64_t offset) : TSCacheKey_t(TSCacheKeyCreate())
 {
   auto str = url.getUrlString();
+  str.push_back('\0');
+  for ( ; offset ; offset >>= 6 ) {
+    str.push_back(base64_chars[offset & 0x3f]); // append *unique* position bytes (until empty)
+  }
+  str.push_back('\0');
   str.append(etag);                                              // etag for version handling
-  str.append(reinterpret_cast<char *>(&offset), sizeof(offset)); // append *unique* position bytes
   TSCacheKeyDigestSet(get(), str.data(), str.size());
   auto host = url.getHost();
   TSCacheKeyHostNameSet(get(), host.data(), host.size());
@@ -121,7 +131,8 @@ ATSCont::ATSCont(TSCont mutexSrc) : TSCont_t(TSContCreate(&ATSCont::handleTSEven
 ATSCont::~ATSCont() 
 {
   if ( get() ) {
-    TSContDataSet(get(), nullptr); // signal to *stop* continuations
+    atscppapi::ScopedContinuationLock lock(get());
+    TSContDataSet(get(), nullptr); // prevent new events
   }
 }
 
@@ -130,8 +141,7 @@ ATSCont::handleTSEventCB(TSCont cont, TSEvent event, void *data)
 {
   atscppapi::ScopedContinuationLock lock(cont);
   ATSCont *self = static_cast<ATSCont *>(TSContDataGet(cont));
-  if ( self ) {
-    ink_assert(self->operator TSCont() == cont);
+  if ( self && self->get() == cont ) {
     self->_userCB(event, data);
   }
   return 0;
@@ -209,25 +219,25 @@ ATSXformOutVConn::is_close_able() const
     return true;
   }
 
-  DEBUG_LOG("xform-event input-only complete"); // don't dealloc early!
   return false; // not ready to delete now...
 }
 
 ATSXformOutVConn::~ATSXformOutVConn()
 {
+  atscppapi::ScopedContinuationLock lock(_inVConn);
   if ( _outVIO ) {
 //    ink_assert( ! TSVIONTodoGet(_outVIO) );
     TSVIONBytesSet( _outVIO, TSVIONDoneGet(_outVIO) );
     DEBUG_LOG("write-complete @%#lx",TSVIONDoneGet(_outVIO));
     TSVIOReenable(_outVIO);
     _outVIO = nullptr;
-  } else {
-    DEBUG_LOG("transform-complete @%#lx",TSVIONDoneGet(_outVIO));
-  }
+  } 
 
 //  TSVConnClose(_outVConn);          // do only once!
 //  DEBUG_LOG("close-complete");
-  TSVConnShutdown(_outVConn, 0, 1); // do only once!
+  if ( _outVConn ) {
+    TSVConnShutdown(_outVConn, 0, 1); // do only once!
+  }
 
   const_cast<TSVConn&>(_outVConn) = nullptr;
   const_cast<TSVConn&>(_inVConn) = nullptr;
@@ -259,13 +269,17 @@ ATSXformCont::handleXformTSEventCB(TSCont cont, TSEvent event, void *data)
 {
   atscppapi::ScopedContinuationLock lock(cont);
   ATSXformCont *self = static_cast<ATSXformCont *>(TSContDataGet(cont));
-  return self ? self->handleXformTSEvent(cont, event, data) : 0;
+  if ( !self || self->get() != cont ) {
+    return 0;
+  }
+  return self->handleXformTSEvent(cont, event, data);
 }
 
 ATSXformCont::~ATSXformCont()
 {
   if ( get() ) {
-    TSContDataSet(get(), nullptr);
+    atscppapi::ScopedContinuationLock lock(get());
+    TSContDataSet(get(), nullptr); // prevent new events
   }
   _xformCB = XformCB_t{}; // no callbacks
   TSCont_t::reset();
