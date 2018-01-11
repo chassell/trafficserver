@@ -20,29 +20,56 @@
 
 #include <atscppapi/HttpStatus.h>
 
+enum {
+  eNoError=0,
+  eErrXformNoBuff=1,
+  eErrXformClosed=2,
+  eErrXformOutputWait=3,
+  eErrXformComplete=4,
+  eErrXformExtraImmEvent=5
+};
+
+const char *
+ATSXformCont::xform_input_completion_desc(int error)
+{
+  if ( _inLastError == error ) {
+    return nullptr;
+  }
+
+  _inLastError = error;
+
+  switch (abs(error)) {
+    case eErrXformExtraImmEvent:
+       return "xform-event input unchanged";
+    case eErrXformNoBuff: 
+       return "xform-event no buffer event";
+    case eErrXformClosed:
+       return "xform-event closed";
+    case eErrXformOutputWait:
+       return "xform-event output-wait";
+    case eErrXformComplete:
+       return "xform-event completed";
+    default:
+       break;
+  }
+  return nullptr;
+}
+
 int
 ATSXformCont::xform_input_completion(TSEvent event)
 {
   TSVConn xfinvconn = *this;
-
-  // check for rude shutdown?
-  if (!xfinvconn) {
-    DEBUG_LOG("xform-event null-vconn event: e#%d", event);
-    return -1;
-  }
-
   TSVIO xfinvio = xformInputVIO();
 
   // check for rude shutdown?
   if (!TSVIOBufferGet(xfinvio)) {
-    DEBUG_LOG("xform-event no buffer event: e#%d", event);
-    return -1;
+    return eErrXformNoBuff;
   }
 
   // bytes are not transferred and VConn is not closed early
   // ** ONLY ** if this is past can a shutdown start [i.e. input exhausted]
   if ( TSVIONTodoGet(xfinvio) && ! TSVConnClosedGet(xfinvconn) ) {
-    return 0; // not complete at all...
+    return eNoError; // not complete at all...
   }
 
   // closed suddenly?
@@ -52,13 +79,11 @@ ATSXformCont::xform_input_completion(TSEvent event)
       _outVConnU.reset(); // delete, flush and free
     }
     _xformCB(event, nullptr, 0);
-    DEBUG_LOG("xform-event closed: e#%d", event);
-    return -2; // cannot proceed when closed
+    return eErrXformClosed; // cannot proceed when closed
   }
 
   if ( outputVIO() && ! _outVConnU->is_close_able() ) {
-    DEBUG_LOG("xform-event input-only complete: @%#lx / @%#lx e#%d", TSVIONDoneGet(xfinvio), TSVIONDoneGet(outputVIO()), event);
-    return -3; // cannot proceed with no data
+    return eErrXformOutputWait; // cannot proceed with no data
   }
 
   // input N-Todo is complete...
@@ -70,19 +95,18 @@ ATSXformCont::xform_input_completion(TSEvent event)
 
   // attempt a start of shutdown...
 
-  if ( xfinvio == _inVIO ) {
-    DEBUG_LOG("xform-event one-input pos @%#lx",TSVIONDoneGet(_inVIO));
-  } else {
-    DEBUG_LOG("xform-event two-input pos @%#lx / @%#lx",TSVIONDoneGet(xfinvio),TSVIONDoneGet(_inVIO));
-  }
-
   // input and output both complete
   _xformCB(event, xfinvio, 0);
-  forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE, xfinvio); // required for upstream...
-  return -5; // cannot proceed with no data
+  if ( xfinvio == _inVIO ) {
+   DEBUG_LOG("xform-event xform-input pos @%#lx",TSVIONDoneGet(_inVIO));
+  } else {
+   DEBUG_LOG("xform-event buffer-input pos [xform@%#lx] @%#lx",TSVIONDoneGet(xfinvio),TSVIONDoneGet(_inVIO));
+  }
+  forward_vio_event(TS_EVENT_VCONN_WRITE_COMPLETE, xfinvio, *this); // DANGER: may be reentrantly destroyed!!
+  return eErrXformComplete; // cannot proceed with no data
 }
 
-void
+int
 ATSXformCont::handleXformOutputEvent(TSEvent event)
 {
   DEBUG_LOG("xform-event from outVIO e#%d",event);
@@ -98,7 +122,7 @@ ATSXformCont::handleXformOutputEvent(TSEvent event)
 
       if ( ! TSVIONDoneGet(xformInputVIO()) ) {
         TSVIONDoneSet( xformInputVIO(), TSVIONBytesGet(xformInputVIO()) );
-        forward_vio_event(TS_EVENT_VCONN_WRITE_READY, xformInputVIO());   // skip
+        forward_vio_event(TS_EVENT_VCONN_WRITE_READY, xformInputVIO(), *this);   // skip
       }
       break;
 
@@ -112,32 +136,46 @@ ATSXformCont::handleXformOutputEvent(TSEvent event)
       DEBUG_LOG("unkn event from output: e#%d %p",event,outvio);
       break;
   }
+  return xform_input_completion(event); // detect any problems..
 }
 
-void
+int
 ATSXformCont::handleXformInputEvent(TSEvent event, TSVIO evio)
 {
-    DEBUG_LOG("xform-event from xformInVIO e#%d",event);
-    switch ( event ) {
-      case TS_EVENT_IMMEDIATE:
-        if ( ! xform_input_completion(event) ) {
-          xform_input_event();
-        }
-        break;
+  auto err = 0;
 
-      // can delay the end!
-      case TS_EVENT_ERROR:
-      case TS_EVENT_VCONN_WRITE_COMPLETE:
-        forward_vio_event(event, xformInputVIO()); // upstream needs full shutdown now ...
+  switch ( event ) {
+    case TS_EVENT_IMMEDIATE:
+      if ( (err=xform_input_completion(event)) ) {
         break;
+      }
 
-      default:
-        DEBUG_LOG("xform-unkn-event from xformInVIO e#%d",event);
+      // past first write and no bytes available?
+      if ( TSVIONDoneGet(evio) && ! TSIOBufferReaderAvail(TSVIOReaderGet(evio)) ) {
+        err = eErrXformExtraImmEvent; // no data and not done?
         break;
-    }
+      }
+      err = xform_input_event();
+      break;
+
+    // can delay the end!
+    case TS_EVENT_ERROR:
+    case TS_EVENT_VCONN_WRITE_COMPLETE:
+      DEBUG_LOG("xform-event from xformInVIO e#%d",event);
+      _xformCB(event, xformInputVIO(), 0);
+      forward_vio_event(event, xformInputVIO(), *this); // DANGER: may be reentrantly destroyed!!
+      err = eErrXformComplete;
+      break;
+
+    default:
+      DEBUG_LOG("xform-unkn-event from xformInVIO e#%d",event);
+      break;
+  }
+  // check again if anything changed..
+  return ( err ? : xform_input_completion(event) );
 }
 
-void
+int
 ATSXformCont::handleXformBufferEvent(TSEvent event, TSVIO evio)
 {
   // evio == _inVIO and a one-buffer write
@@ -164,39 +202,65 @@ ATSXformCont::handleXformBufferEvent(TSEvent event, TSVIO evio)
       DEBUG_LOG("xform-unkn-event buffer VIO e#%d",event);
       break;
   }
+  return eNoError;
 }
 
 
 int
 ATSXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
 {
+  auto xfinvconn = get();
+
+  if (!xfinvconn || !xformInputVIO()) {
+    return 0;
+  }
+
+  // check for rude shutdown?
+  if (cont != xfinvconn) {
+    DEBUG_LOG("mismatch vconn event: e#%d", event);
+    return 0;
+  }
+
   ThreadTxnID txnid{_txn};
-  DEBUG_LOG("xform-event: e#%d %p", event, edata);
+  TSVIO evio = static_cast<TSVIO>(edata);
+
+  if ( event == TS_EVENT_IMMEDIATE ) {
+    DEBUG_LOG("xform-input-event: e#%d %p", event, evio);
+    evio = xformInputVIO();
+  } else {
+    DEBUG_LOG("xform-event: e#%d %p", event, evio);
+  }
 
   ink_assert(this->operator TSVConn() == cont);
-
-  TSVIO evio = ( event == TS_EVENT_IMMEDIATE ? xformInputVIO() : static_cast<TSVIO>(edata) );
-
   ink_assert(evio);
+
+  auto err = 0;
 
   // output got this?
   if ( _outVConnU && evio == *_outVConnU ) {
-    handleXformOutputEvent(event);
-    xform_input_completion(event); // check if complete ...
+    err = handleXformOutputEvent(event);
+    // may have been destroyed!
   } else if ( evio == xformInputVIO() ) {
-    handleXformInputEvent(event, evio);
-    xform_input_completion(event); // check if complete ...
+    err = handleXformInputEvent(event, evio);
+    // may have been destroyed!
   } else if ( using_one_buffer() ) {
     handleXformBufferEvent(event,evio); // don't check xform
   } else {
     ink_assert( ! evio || ! using_two_buffers() );
     DEBUG_LOG("unkn-event from unkn e#%d [%p]",event,evio);
   }
+
+  if ( err ) {
+    auto errstr = xform_input_completion_desc(err);
+    if ( errstr ) {
+      DEBUG_LOG("%s: e#%d",errstr,event);
+    }
+  }
   
   return 0;
 }
 
-void
+int
 ATSXformCont::xform_input_event()
 {
   const auto event = TS_EVENT_IMMEDIATE; // only way in ...
@@ -216,7 +280,7 @@ ATSXformCont::xform_input_event()
   if ( using_one_buffer() ) {
     TSIOBufferReaderConsume(xfinrdr, avail); // empty out now..
     DEBUG_LOG("consume skip input-buffer event: avail %ld",avail);
-    return;
+    return eNoError;
   }
 
   // standard input is needed if not present
@@ -257,21 +321,25 @@ ATSXformCont::xform_input_event()
 
   // no change at all and no data left?
   if ( ! inavail && oinpos == inpos ) {
-    DEBUG_LOG("xform input waiting: @%#lx w/no change", inpos);
-    forward_vio_event(TS_EVENT_VCONN_WRITE_READY, _inVIO);
-    return;
+//    DEBUG_LOG("xform input waiting: @%#lx w/no change", inpos);
+    forward_vio_event(TS_EVENT_VCONN_WRITE_READY, _inVIO, *this);
+    return eErrXformExtraImmEvent;
   }
 
   // have output and data was consumed?
   if ( oinavail > inavail && _outVConnU ) {
     _outVConnU->check_refill(event);
+    auto err = xform_input_completion(event);
+    if (err) {
+      return err; // RETURN
+    }
   }
 
   // the input is waiting for something...
   if ( inavail ) {
     DEBUG_LOG("xform input buffer left: buff=%#lx", TSIOBufferReaderAvail(inrdr));
     _inVIOWaiting = event;
-    return; 
+    return eNoError;
     // RETURN
   }
 
@@ -282,12 +350,9 @@ ATSXformCont::xform_input_event()
     _inVIOWaiting = event;
   }
 
-  if (xform_input_completion(event)) {
-    return; // RETURN
-  }
-
   DEBUG_LOG("xform input pull: @%#lx -> @%#lx", oinpos, inpos);
-  forward_vio_event(TS_EVENT_VCONN_WRITE_READY, _inVIO);
+  forward_vio_event(TS_EVENT_VCONN_WRITE_READY, _inVIO, *this);
+  return eNoError;
 }
 
 bool
@@ -427,8 +492,15 @@ BlockTeeXform::inputEvent(TSEvent event, TSVIO evtvio, int64_t left)
 }
 
 TSIOBufferReader
-BlockTeeXform::cloneAndSkip(int64_t skip)
+BlockTeeXform::cloneAndSkip(int64_t oskip)
 {
+  auto oavail = TSIOBufferReaderAvail(_teeReaderP.get());
+  auto skip = std::min(oavail, oskip);
+
+  if ( skip != oskip ) {
+    DEBUG_LOG("tee buffer clone shrank: %#lx < %#lx", skip, oskip);
+  }
+
   auto ordr = _teeReaderP.release(); // caller must free it
   auto obuff = _teeBufferP.release(); // caller must free it
 
@@ -441,8 +513,7 @@ BlockTeeXform::cloneAndSkip(int64_t skip)
 
   TSIOBufferWaterMarkSet(_teeBufferP.get(), TSIOBufferWaterMarkGet(_teeBufferP.get()) );
 
-  auto left = TSIOBufferReaderAvail(ordr2.get());
-  TSIOBufferCopy(_teeBufferP.get(), ordr2.get(), left, 0); // save extra bytes as before
+  TSIOBufferCopy(_teeBufferP.get(), ordr2.get(), oavail - skip, 0); // save extra bytes as before
   return ordr;
 }
 
