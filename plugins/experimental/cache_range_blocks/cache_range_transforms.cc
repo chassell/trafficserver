@@ -511,7 +511,9 @@ BlockTeeXform::cloneAndSkip(int64_t oskip)
   _teeBufferP.reset(TSIOBufferCreate());
   _teeReaderP.reset(TSIOBufferReaderAlloc(_teeBufferP.get()));
 
-  TSIOBufferWaterMarkSet(_teeBufferP.get(), TSIOBufferWaterMarkGet(_teeBufferP.get()) );
+  if ( TSIOBufferWaterMarkGet(obuff) > 0 ) {
+    TSIOBufferWaterMarkSet(_teeBufferP.get(), TSIOBufferWaterMarkGet(obuff) );
+  }
 
   TSIOBufferCopy(_teeBufferP.get(), ordr2.get(), oavail - skip, 0); // save extra bytes as before
   return ordr;
