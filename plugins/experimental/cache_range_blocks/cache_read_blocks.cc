@@ -38,14 +38,15 @@ BlockSetAccess::launch_block_tests()
 
   // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
   auto barrierLock = std::shared_ptr<BlockSetAccess>(this, deleter);
-  auto blkNum      = _beginByte / _blkSize;
+  auto blkByte      = _beginByte - ( _beginByte % _blkSize ); // strict location
 
   for (auto &&k : _keysInRange) {
     auto i = &k - &_keysInRange.front();
     // prep for async reads that init into VConn-futures
-    k = std::move(ATSCacheKey(clientUrl(), _etagStr, blkNum * _blkSize));
+    k = std::move(ATSCacheKey(clientUrl(), _etagStr, blkByte));
     auto contp      = ATSCont::create_temp_tscont(_mutexOnlyCont, _vcsToRead[i], barrierLock);
     TSCacheRead(contp, k);
+    blkByte += _blkSize;
   }
 }
 
@@ -142,7 +143,7 @@ void
 BlockSetAccess::start_cache_hit(int64_t rangeStart)
 {
   _readXform = std::make_unique<BlockReadXform>(*this, rangeStart);
-  set_cache_hit_bitset();
+//  set_cache_hit_bitset(); // may be dangerous...
   _txn.resume();
 }
 
@@ -229,8 +230,8 @@ BlockSetAccess::set_cache_hit_bitset()
 
   cachedHdr.reset(bufp,offset); 
   //  cachhdrs.erase(CONTENT_RANGE_TAG); // erase to remove concerns
-  cachedHdr.erase(X_BLOCK_BITSET_TAG); // attempt to erase/rewrite field in headers
-  cachedHdr.append(X_BLOCK_BITSET_TAG, b64BlkUsable()); // attempt to erase/rewrite field in headers
+//  cachedHdr.erase(X_BLOCK_BITSET_TAG); // attempt to erase/rewrite field in headers
+//  cachedHdr.append(X_BLOCK_BITSET_TAG, b64BlkUsable()); // attempt to erase/rewrite field in headers
 
   auto r = TSHttpTxnUpdateCachedObject(atsTxn());
 
