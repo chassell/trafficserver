@@ -143,21 +143,21 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   // test if range is readable
   if (parse_range(_clntRangeStr, _assetLen, _beginByte, _endByte) > 0) {
-    _b64BlkPresent = pstub->value(X_BLOCK_BITSET_TAG);
-    _b64BlkUsable = pstub->value(X_BLOCK_BITSET_TAG);
+    _blkSize = INK_ALIGN((_assetLen >> 10) | 1, MIN_BLOCK_STORED);
+    _blkSize = std::min( _blkSize+0 , 1L<<21 );  // 2Meg max size
+    _b64BlkPresent = std::string((_assetLen + _blkSize*6 - 1) / (_blkSize * 6), 'A');
+    _b64BlkUsable = _b64BlkPresent;
   }
 
   auto chk = std::find_if(_b64BlkPresent.begin(), _b64BlkPresent.end(), [](char c) { return !isalnum(c) && c != '+' && c != '/'; });
 
   // invalid stub file... (or client headers instead)
-  if (!_assetLen || _b64BlkPresent.empty() || chk != _b64BlkPresent.end()) {
+  if (!_assetLen || !_blkSize || _b64BlkPresent.empty() || chk != _b64BlkPresent.end()) {
     DEBUG_LOG("stub-failed: len=%#lx [blk:%ldK] set=%s", _assetLen, _blkSize/1024, _b64BlkPresent.c_str());
     reset_cached_stub(txn);
     txn.resume();
     return;
   }
-
-  _blkSize = INK_ALIGN((_assetLen >> 10) | 1, MIN_BLOCK_STORED);
 
   if (!select_needed_blocks()) {
     DEBUG_LOG("write is likely needed: len=%#lx [blk:%ldK] set=%s", _assetLen, _blkSize/1024, _b64BlkPresent.c_str());
@@ -271,7 +271,8 @@ BlockSetAccess::prepare_cached_stub(Transaction &txn)
 
   if (currAssetLen != _assetLen) {
     _blkSize      = INK_ALIGN((currAssetLen >> 10) | 1, MIN_BLOCK_STORED);
-    _b64BlkPresent = std::string((currAssetLen + _blkSize * 6 - 1) / (_blkSize * 6), 'A');
+    _blkSize = std::min( _blkSize+0 , 1L<<21 );  // 2Meg max size
+    _b64BlkPresent = std::string((currAssetLen + _blkSize*6 - 1) / (_blkSize * 6), 'A');
     _b64BlkUsable = _b64BlkPresent;
     _assetLen     = static_cast<uint64_t>(currAssetLen);
     DEBUG_LOG("srvr-bitset: blk=%#lx %s", _blkSize, _b64BlkPresent.c_str());
@@ -280,7 +281,7 @@ BlockSetAccess::prepare_cached_stub(Transaction &txn)
   proxyRespStatus.setStatusCode(HTTP_STATUS_OK);
   proxyResp.set(CONTENT_ENCODING_TAG, CONTENT_ENCODING_INTERNAL); // promote matches
   proxyResp.append(VARY_TAG,ACCEPT_ENCODING_TAG); // please notice it!
-  proxyResp.set(X_BLOCK_BITSET_TAG, _b64BlkUsable); // keep as *last* field
+//  proxyResp.set(X_BLOCK_BITSET_TAG, _b64BlkUsable); // keep as *last* field
 
   DEBUG_LOG("stub-hdrs:\n-------\n%s\n------\n", proxyResp.wireStr().c_str());
 }
@@ -297,7 +298,7 @@ BlockSetAccess::clean_client_response(Transaction &txn)
   }
 
   clntRespStatus.setStatusCode(HTTP_STATUS_PARTIAL_CONTENT);
-  clntResp.erase(X_BLOCK_BITSET_TAG);
+//  clntResp.erase(X_BLOCK_BITSET_TAG);
   clntResp.erase(CONTENT_ENCODING_TAG);
 
   // override block-style range
@@ -364,7 +365,7 @@ BlockSetAccess::b64BlkUsableSubstr() const
 {
   auto i = _beginByte/_blkSize/6;
   auto j = _endByte/_blkSize/6;
-  return ( _b64BlkUsable.size() <= j ? _b64BlkUsable.substr(i,j - i) : "" );
+  return ( _b64BlkUsable.size() >= j ? _b64BlkUsable.substr(i,j - i) : "" );
 }
 
 std::string
@@ -372,7 +373,7 @@ BlockSetAccess::b64BlkPresentSubstr() const
 {
   auto i = _beginByte/_blkSize/6;
   auto j = _endByte/_blkSize/6;
-  return ( _b64BlkPresent.size() <= j ? _b64BlkPresent.substr(i,j - i) : "" );
+  return ( _b64BlkPresent.size() >= j ? _b64BlkPresent.substr(i,j - i) : "" );
 }
 
 int64_t
