@@ -55,7 +55,7 @@ is_base64_bit_set(const std::string &base64, unsigned i)
   return (1 << (i % 6)) & base64_values[base64[i / 6] - '+'];
 }
 
-void forward_vio_event(TSEvent event, TSVIO invio);
+void forward_vio_event(TSEvent event, TSVIO invio, TSCont mutexCont);
 
 class XformReader;
 
@@ -267,14 +267,15 @@ public:
 private:
   int check_completions(TSEvent event);
 
-  void xform_input_event();  // for input events
+  int xform_input_event();  // for pure input events
   int xform_input_completion(TSEvent event);  // checks input events
+  const char *xform_input_completion_desc(int error);
 
   int handleXformTSEvent(TSCont cont, TSEvent event, void *data);
 
-  void handleXformBufferEvent(TSEvent event, TSVIO evio);
-  void handleXformInputEvent(TSEvent event, TSVIO evio);
-  void handleXformOutputEvent(TSEvent event);
+  int handleXformBufferEvent(TSEvent event, TSVIO evio);
+  int handleXformInputEvent(TSEvent event, TSVIO evio);
+  int handleXformOutputEvent(TSEvent event);
 
   static int handleXformTSEventCB(TSCont cont, TSEvent event, void *data);
 protected:
@@ -287,6 +288,7 @@ private:
   int64_t const _outSkipBytes;
   int64_t const _outWriteBytes;
 
+  int _inLastError = 0;
   TSVIO _inVIO = nullptr;
   TSEvent _inVIOWaiting = TS_EVENT_NONE;
 
