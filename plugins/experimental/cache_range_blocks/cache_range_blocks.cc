@@ -362,15 +362,17 @@ BlockSetAccess::get_stub_hdrs()
 std::string
 BlockSetAccess::b64BlkUsableSubstr() const
 {
-  int i = _beginByte/_blkSize;
-  return ( ! _b64BlkUsable.empty() ? _b64BlkUsable.substr(i, _endByte/_blkSize - i) : "" );
+  auto i = _beginByte/_blkSize/6;
+  auto j = _endByte/_blkSize/6;
+  return ( _b64BlkUsable.size() <= j ? _b64BlkUsable.substr(i,j - i) : "" );
 }
 
 std::string
 BlockSetAccess::b64BlkPresentSubstr() const
 {
-  int i = _beginByte/_blkSize;
-  return ( ! _b64BlkPresent.empty() ? _b64BlkPresent.substr(i, _endByte/_blkSize - i) : "" );
+  auto i = _beginByte/_blkSize/6;
+  auto j = _endByte/_blkSize/6;
+  return ( _b64BlkPresent.size() <= j ? _b64BlkPresent.substr(i,j - i) : "" );
 }
 
 int64_t
