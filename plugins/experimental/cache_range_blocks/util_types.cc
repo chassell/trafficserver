@@ -41,7 +41,6 @@ const char base64_chars[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvw
 void
 forward_vio_event(TSEvent event, TSVIO tgt, TSCont mutexCont)
 {
-//  auto mutex = TSContMutexGet(mutexCont);
   auto tgtcont = TSVIOContGet(tgt);
 //  TSMutexUnlock(mutex);
 
@@ -59,15 +58,18 @@ forward_vio_event(TSEvent event, TSVIO tgt, TSCont mutexCont)
 ATSCacheKey::ATSCacheKey(const atscppapi::Url &url, std::string const &etag, uint64_t offset) : TSCacheKey_t(TSCacheKeyCreate())
 {
   auto str = url.getUrlString();
+  auto origLen = str.size();
   str.push_back('\0');
   for ( ; offset ; offset >>= 6 ) {
     str.push_back(base64_chars[offset & 0x3f]); // append *unique* position bytes (until empty)
   }
   str.push_back('\0');
   str.append(etag);                                              // etag for version handling
-  TSCacheKeyDigestSet(get(), str.data(), str.size());
-  auto host = url.getHost();
-  TSCacheKeyHostNameSet(get(), host.data(), host.size());
+  auto key = get();
+  // match must be same etag and block pos
+  TSCacheKeyDigestSet(key, str.data(), str.size());
+  // disk randomized by etag and pos
+  TSCacheKeyHostNameSet(key, str.data()+origLen, str.size()-origLen);
 }
 
 template <class T_FUTURE>
@@ -130,10 +132,14 @@ ATSCont::ATSCont(TSCont mutexSrc) : TSCont_t(TSContCreate(&ATSCont::handleTSEven
 
 ATSCont::~ATSCont() 
 {
-  if ( get() ) {
-    atscppapi::ScopedContinuationLock lock(get());
-    TSContDataSet(get(), nullptr); // prevent new events
+  auto cont = get();
+  if ( ! cont ) {
+    return; // happens often
   }
+
+  atscppapi::ScopedContinuationLock lock(cont);
+  DEBUG_LOG("final destruct cont=%p",cont);
+  TSContDataSet(cont, nullptr); // prevent new events
 }
 
 int
@@ -141,9 +147,11 @@ ATSCont::handleTSEventCB(TSCont cont, TSEvent event, void *data)
 {
   atscppapi::ScopedContinuationLock lock(cont);
   ATSCont *self = static_cast<ATSCont *>(TSContDataGet(cont));
-  if ( self && self->get() == cont ) {
-    self->_userCB(event, data);
-  }
+  if ( ! self || self->get() != cont ) {
+    DEBUG_LOG("late event e#%d %p",event,data);
+    return 0;
+  } 
+  self->_userCB(event, data);
   return 0;
 }
 
@@ -169,11 +177,13 @@ ATSXformOutVConn::ATSXformOutVConn(const ATSXformCont &xform, int64_t bytes, int
 ATSVConnFuture::~ATSVConnFuture()
 {
   auto vconn = get();
-  if ( vconn ) {
-    atscppapi::ScopedContinuationLock lock(vconn);
-    TSVConnClose(vconn);
-    DEBUG_LOG("closed cache vconn: %p",vconn);
+  if ( ! vconn ) {
+    return; // happens often
   }
+
+  atscppapi::ScopedContinuationLock lock(vconn);
+  TSVConnClose(vconn);
+  DEBUG_LOG("closed cache vconn=%p",vconn);
 }
 
 bool
@@ -224,17 +234,19 @@ ATSXformOutVConn::is_close_able() const
 
 ATSXformOutVConn::~ATSXformOutVConn()
 {
+  if ( ! _inVConn ) {
+    DEBUG_LOG("late destruct");
+    return;
+  }
+
   atscppapi::ScopedContinuationLock lock(_inVConn);
   if ( _outVIO ) {
-//    ink_assert( ! TSVIONTodoGet(_outVIO) );
     TSVIONBytesSet( _outVIO, TSVIONDoneGet(_outVIO) );
-    DEBUG_LOG("write-complete @%#lx",TSVIONDoneGet(_outVIO));
+    DEBUG_LOG("write-complete @%#lx invconn=%p outvconn=%p",TSVIONDoneGet(_outVIO), _inVConn, _outVConn);
     TSVIOReenable(_outVIO);
     _outVIO = nullptr;
-  } 
+  }
 
-//  TSVConnClose(_outVConn);          // do only once!
-//  DEBUG_LOG("close-complete");
   if ( _outVConn ) {
     TSVConnShutdown(_outVConn, 0, 1); // do only once!
   }
@@ -256,9 +268,14 @@ ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, 
     _outBufferU(TSIOBufferCreate()),
     _outReaderU(TSIOBufferReaderAlloc(this->_outBufferU.get()))
 {
+  ink_assert( bytes + offset >= 0LL );
+
   // point back here
-  TSContDataSet(get(), this);
-  TSHttpTxnHookAdd(_atsTxn, xformType, get());
+  auto xformCont = get();
+  TSContDataSet(xformCont, this);
+
+  // NOTE: maybe called long past TXN_CLOSE!
+  TSHttpTxnHookAdd(_atsTxn, xformType, xformCont);
   // get to method via callback
   TSIOBufferWaterMarkSet(_outBufferU.get(), bytes + offset); // never produce a READ_READY
   DEBUG_LOG("output block level set to: %ld",bytes + offset);
@@ -270,6 +287,7 @@ ATSXformCont::handleXformTSEventCB(TSCont cont, TSEvent event, void *data)
   atscppapi::ScopedContinuationLock lock(cont);
   ATSXformCont *self = static_cast<ATSXformCont *>(TSContDataGet(cont));
   if ( !self || self->get() != cont ) {
+    DEBUG_LOG("late event e#%d %p",event,data);
     return 0;
   }
   return self->handleXformTSEvent(cont, event, data);
@@ -277,10 +295,17 @@ ATSXformCont::handleXformTSEventCB(TSCont cont, TSEvent event, void *data)
 
 ATSXformCont::~ATSXformCont()
 {
-  if ( get() ) {
-    atscppapi::ScopedContinuationLock lock(get());
-    TSContDataSet(get(), nullptr); // prevent new events
+  auto cont = get();
+  if ( ! cont ) {
+    DEBUG_LOG("late destruct");
+    return;
   }
+
+  atscppapi::ScopedContinuationLock lock(cont);
+  TSContDataSet(cont, nullptr); // prevent new events
+
+  DEBUG_LOG("final destruct %p",cont);
+
   _xformCB = XformCB_t{}; // no callbacks
   TSCont_t::reset();
 }
@@ -291,6 +316,8 @@ BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, 
     _teeBufferP(TSIOBufferCreate()),
     _teeReaderP(TSIOBufferReaderAlloc(this->_teeBufferP.get()))
 {
+  ink_assert( xformLen + xformOffset >= 0LL );
+
   // get to method via callback
   set_body_handler([this](TSEvent evt, TSVIO vio, int64_t left) { return this->inputEvent(evt, vio, left); });
   TSIOBufferWaterMarkSet(_teeBufferP.get(), xformLen + xformOffset); // never produce a READ_READY

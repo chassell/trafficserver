@@ -94,6 +94,7 @@ template <>
 inline void
 default_delete<TSCont_t::element_type>::operator()(TSCont cont) const
 {
+  TSDebug("cache_range_block", "%s: destroyed %p",__func__,cont);
   TSContDestroy(cont);
 }
 template <>
@@ -177,8 +178,8 @@ struct ATSVConnFuture : private std::shared_future<TSVConn>
   int error() const;
   bool valid() const { return ! error(); }
   bool is_close_able() const;
-  void reset() 
-     { operator=(std::shared_future<TSVConn>{}); }
+  TSVConn release()
+     { auto v = get(); operator=(std::shared_future<TSVConn>{}); return v; }
   TSVConn get() const 
      { return valid() ? std::shared_future<TSVConn>::get() : nullptr; }
 };
@@ -248,9 +249,6 @@ public:
 
   TSIOBuffer outputBuffer() const { return _outBufferU.get(); }
   TSIOBufferReader outputReader() const { return _outReaderU.get(); }
-
-  bool using_two_buffers() const { return _inVIO && TSVIOVConnGet(_inVIO) != operator TSVConn(); }  // || TSVIOBufferGet(_inVIO) != outputBuffer(); }
-  bool using_one_buffer() const { return _inVIO && TSVIOBufferGet(_inVIO) == outputBuffer(); }
 
   void reset_input_vio(TSVIO vio) { _inVIO = vio; }
 

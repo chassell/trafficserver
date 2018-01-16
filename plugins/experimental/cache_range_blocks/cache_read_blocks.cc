@@ -137,6 +137,7 @@ BlockSetAccess::handle_block_tests()
   }
 
   start_cache_miss(firstBlk, endBlk);
+  _txn.resume();
 }
 
 void
@@ -155,7 +156,7 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
 {
   auto len = std::min( TSVConnCacheObjectSizeGet(_vconns[0].get()), _startSkip + _ctxt.rangeLen() );
 
-  reset_input_vio( TSVConnRead(_vconns[0].get(), *this, outputBuffer(), len) );
+  reset_input_vio( TSVConnRead(_vconns[0].release(), *this, outputBuffer(), len) );
 
   // initial handler ....
   set_body_handler([this](TSEvent event, TSVIO vio, int64_t left) {
@@ -168,10 +169,13 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
       return 0L;
     }
 
-    if ( event == TS_EVENT_VCONN_READ_COMPLETE && vio == inputVIO() ) {
+    if ( event == TS_EVENT_VCONN_READ_COMPLETE && vio == inputVIO() ) 
+    {
+      auto ovconn = TSVIOVConnGet(vio);
+      TSVConnClose(ovconn); // complete close.. [CacheVC is not an InkContinuation]
+
       // first nonzero vconn ... or past end..
-      auto curr = std::find_if(_vconns.begin(), _vconns.end(), [](ATSVConnFuture &vc) { return vc.get() != nullptr; } ) - _vconns.begin();
-      auto nxt = curr+1;
+      auto nxt = std::find_if(_vconns.begin(), _vconns.end(), [](ATSVConnFuture &vc) { return vc.get() != nullptr; } ) - _vconns.begin();
 
       if ( nxt >= static_cast<int64_t>(_vconns.size()) ) {
         DEBUG_LOG("ignoring input-completion.  completed all reads: e#%d",event);
@@ -189,9 +193,7 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
       auto len = TSVConnCacheObjectSizeGet(_vconns[nxt].get());
       len = std::min(len, _startSkip + _ctxt.rangeLen() - nextRd);
 
-      TSVConnClose(_vconns[curr].get());
-      _vconns[curr].reset();
-      reset_input_vio( TSVConnRead(_vconns[nxt].get(), *this, outputBuffer(), nextRdMax - nextRd) );
+      reset_input_vio( TSVConnRead(_vconns[nxt].release(), *this, outputBuffer(), nextRdMax - nextRd) );
       return 0L;
     }
 
