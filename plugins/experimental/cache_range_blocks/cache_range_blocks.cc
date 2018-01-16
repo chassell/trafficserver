@@ -123,13 +123,18 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   if (pstub == &_clntHdrs) {
     DEBUG_LOG("stub-init only");
-    reset_cached_stub(txn);
+    txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1); // permit range in cached-request
+    TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // handle reply for stub-file storage
     txn.resume();
     return;
   }
 
   // no interest in cacheing the file... so waive any storage
   TSHttpTxnServerRespNoStoreSet(_atsTxn,1);
+
+  txn.configIntSet(TS_CONFIG_HTTP_DEFAULT_BUFFER_SIZE,TS_IOBUFFER_SIZE_INDEX_1M); // 1M buffer-size by default
+  txn.configIntSet(TS_CONFIG_HTTP_DEFAULT_BUFFER_WATER_MARK,1<<20);               // 1M buffer-wait by default
+  txn.configIntSet(TS_CONFIG_NET_SOCK_RECV_BUFFER_SIZE_OUT,1<<20);                // 1M kernel TCP buffer
 
   _clntHdrs.erase(RANGE_TAG);
 
@@ -143,8 +148,9 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   // test if range is readable
   if (parse_range(_clntRangeStr, _assetLen, _beginByte, _endByte) > 0) {
-    _blkSize = INK_ALIGN((_assetLen >> 10) | 1, MIN_BLOCK_STORED);
-    _blkSize = std::min( _blkSize+0 , 1L<<21 );  // 2Meg max size
+//    _blkSize = INK_ALIGN((_assetLen >> 10) | 1, MIN_BLOCK_STORED);
+//    _blkSize = std::min( _blkSize+0 , 1L<<21 );  // 2Meg max size
+    _blkSize = 1L<<20;  // 1Meg standard size
     _b64BlkPresent = std::string((_assetLen + _blkSize*6 - 1) / (_blkSize * 6), 'A');
     _b64BlkUsable = _b64BlkPresent;
   }
@@ -154,7 +160,8 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   // invalid stub file... (or client headers instead)
   if (!_assetLen || !_blkSize || _b64BlkPresent.empty() || chk != _b64BlkPresent.end()) {
     DEBUG_LOG("stub-failed: len=%#lx [blk:%ldK] set=%s", _assetLen, _blkSize/1024, _b64BlkPresent.c_str());
-    reset_cached_stub(txn);
+    txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1); // permit range in cached-request
+    TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // handle reply for stub-file storage
     txn.resume();
     return;
   }
@@ -270,8 +277,9 @@ BlockSetAccess::prepare_cached_stub(Transaction &txn)
   DEBUG_LOG("srvr-resp: len=%#lx olen=%#lx final=%s range=%s", currAssetLen, _assetLen, srvrRange.c_str(), srvrRangeCopy.c_str());
 
   if (currAssetLen != _assetLen) {
-    _blkSize      = INK_ALIGN((currAssetLen >> 10) | 1, MIN_BLOCK_STORED);
-    _blkSize = std::min( _blkSize+0 , 1L<<21 );  // 2Meg max size
+//    _blkSize      = INK_ALIGN((currAssetLen >> 10) | 1, MIN_BLOCK_STORED);
+//    _blkSize = std::min( _blkSize+0 , 1L<<21 );  // 2Meg max size
+    _blkSize = 1L<<20;  // 1Meg standard size
     _b64BlkPresent = std::string((currAssetLen + _blkSize*6 - 1) / (_blkSize * 6), 'A');
     _b64BlkUsable = _b64BlkPresent;
     _assetLen     = static_cast<uint64_t>(currAssetLen);
@@ -292,8 +300,10 @@ BlockSetAccess::clean_client_response(Transaction &txn)
   auto &clntRespStatus = txn.getClientResponse();
   auto &clntResp       = txn.getClientResponse().getHeaders();
 
+  auto resp = clntRespStatus.getStatusCode();
+
   // only change 200-case back to 206
-  if (clntRespStatus.getStatusCode() != HTTP_STATUS_OK) {
+  if ( resp != HTTP_STATUS_OK && resp != HTTP_STATUS_PARTIAL_CONTENT ) {
     return; // cannot do more...
   }
 
@@ -308,7 +318,7 @@ BlockSetAccess::clean_client_response(Transaction &txn)
       std::string() + "bytes " + std::to_string(_beginByte) + "-" + std::to_string(_endByte - 1) + "/" + std::to_string(_assetLen);
     clntResp.set(CONTENT_RANGE_TAG, srvrRange);
     clntResp.set(CONTENT_LENGTH_TAG, std::to_string(rangeLen()));
-  }
+  } 
 }
 
 static int
@@ -363,16 +373,16 @@ BlockSetAccess::get_stub_hdrs()
 std::string
 BlockSetAccess::b64BlkUsableSubstr() const
 {
-  auto i = _beginByte/_blkSize/6;
-  auto j = _endByte/_blkSize/6;
+  size_t i = _beginByte/_blkSize/6;
+  size_t j = _endByte/_blkSize/6;
   return ( _b64BlkUsable.size() >= j ? _b64BlkUsable.substr(i,j - i) : "" );
 }
 
 std::string
 BlockSetAccess::b64BlkPresentSubstr() const
 {
-  auto i = _beginByte/_blkSize/6;
-  auto j = _endByte/_blkSize/6;
+  size_t i = _beginByte/_blkSize/6;
+  size_t j = _endByte/_blkSize/6;
   return ( _b64BlkPresent.size() >= j ? _b64BlkPresent.substr(i,j - i) : "" );
 }
 
