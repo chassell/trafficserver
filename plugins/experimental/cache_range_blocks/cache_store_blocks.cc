@@ -47,7 +47,6 @@ BlockSetAccess::start_cache_miss(int64_t firstBlk, int64_t endBlk)
 
   _storeXform = std::make_unique<BlockStoreXform>(*this,endBlk - firstBlk);
   _storeXform->txnReadCacheLookupComplete(); // may have txn.resume()
-  txn().resume(); // wait for response
 }
 
 BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
@@ -211,7 +210,7 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
 
   ink_assert(vcFuture.get() == currBlock);
 
-  vcFuture.reset(); // will skip old bytes next time...
+  vcFuture.release(); // will skip old bytes next time...
 
   // make a totally async set of callbacks to write out new block
   auto blockCont = TSContCreate(&BlockStoreXform::handleBlockWrite,TSContMutexGet(*this));
