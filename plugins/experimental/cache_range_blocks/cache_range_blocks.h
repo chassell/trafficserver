@@ -128,11 +128,6 @@ public:
   // clean up, increase range-request, avoid any 304/200 if client didn't request one
   void clean_server_request(Transaction &txn);
 
-  void reset_cached_stub(Transaction &txn) {
-    txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1); // permit range in cached-request
-    TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // handle reply for stub-file storage
-  }
-
   void prepare_cached_stub(Transaction &txn);
   void clean_client_response(Transaction &txn);
 
