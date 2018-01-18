@@ -1390,6 +1390,13 @@ url_parse_http(HdrHeap *heap, URLImpl *url, const char **start, const char *end,
   }
 
   path_start = cur;
+  path_end = static_cast<const char*>( memrchr(cur,'?',end - cur) ? // use query start '?'
+              : memrchr(cur,'#',end - cur) ? // use fragment start '#'
+              : end );                       // use uri ending
+
+  // last segment of path
+  cur = static_cast<const char*>(memrchr(cur,'/',path_end - cur));
+
   mask       = ';' & '?' & '#';
 parse_path2:
   if ((*cur & mask) == mask) {
