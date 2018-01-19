@@ -23,6 +23,9 @@
     _a < _b ? _a : _b;      \
   })
 
+// for strcasestr in string.h
+#define _GNU_SOURCE
+
 #include "ts/ink_defs.h"
 #include "url_sig.h"
 
@@ -60,6 +63,7 @@ struct config {
   pcre_extra *regex_extra;
   int pristine_url_flag;
   char *sig_anchor;
+  char *sig_anchor_encoded;
 };
 
 static void
@@ -195,8 +199,39 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char *errbuf, int errbuf_s
       } else {
         cfg->err_url = NULL;
       }
-    } else if (strncmp(line, "sig_anchor", 10) == 0) {
-      cfg->sig_anchor = TSstrndup(value, strlen(value));
+    } else if (strncmp(line, "sig_anchor", 10) == 0 && value[0] ) {
+      // non empty anchor in value
+      int len = strlen(value);
+      char *enc = alloca(len * 3 + 1);
+      char *encp = enc;
+
+      // create all-chars path anchor
+      // NOTE: leave any sub-delims or %-encodings from user
+
+      if ( ! strchr(URL_SUB_DELIMS_W_PCT,value[0]) ) {
+        --value;
+        value[0] = ';'; // default anchor start is ';'
+        ++len;
+      }
+      if ( ! strchr(URL_SUB_DELIMS_W_PCT,value[len-1]) ) {
+        value[len] = '='; // default anchor end is '='
+        value[++len] = '\0';
+      }
+
+      // create all-chars %-encoded version
+      //    NOTE: gen-delims are illegal in cfg
+      for( char *valp = value ; *valp ; ++valp ) {
+        if ( ! strchr(URL_SUB_DELIMS,*valp) ) { // don't re-encode %
+          *encp++ = *valp;
+          continue;
+        }
+        snprintf(encp,3,"%%%02X",*valp);
+        encp += 3;
+      }
+      *encp = '\0'; // add nul
+
+      cfg->sig_anchor = TSstrdup(value);
+      cfg->sig_anchor_encoded = TSstrdup(enc);
     } else if (strncmp(line, "excl_regex", 10) == 0) {
       // compile and study regex
       const char *errptr;
@@ -330,8 +365,10 @@ getAppQueryString(const char *query_string, int query_length)
   }
 }
 
+// called only when no query with expires param (E=) is found
+
 static char *
-urlParse(char *url, char *anchor, char *new_path_seg, int new_path_seg_len, char *signed_seg, unsigned int signed_seg_len)
+urlParse(char *url, char *anchor, char *anchor_enc, char *new_path_seg, int new_path_seg_len, char *signed_seg, unsigned int signed_seg_len)
 {
   char *segment[MAX_SEGMENTS];
   unsigned char decoded_string[2048] = {'\0'};
@@ -349,32 +386,42 @@ urlParse(char *url, char *anchor, char *new_path_seg, int new_path_seg_len, char
   TSDebug(PLUGIN_NAME, "%s:%d - new_url: %s\n", __FILE__, __LINE__, new_url);
 
   // parse the url.
-  if ((p = strtok_r(skip, "/", &saveptr)) != NULL) {
-    segment[numtoks++] = p;
-    do {
-      p = strtok_r(NULL, "/", &saveptr);
-      if (p != NULL) {
-        segment[numtoks] = p;
-        if (anchor != NULL && sig_anchor_seg == 0) {
-          // look for the signed anchor string.
-          if ((sig_anchor = strcasestr(segment[numtoks], anchor)) != NULL) {
-            // null terminate this segment just before he signing anchor, this should be a ';'.
-            *(sig_anchor - 1) = '\0';
-            if ((sig_anchor = strstr(sig_anchor, "=")) != NULL) {
-              *sig_anchor = '\0';
-              sig_anchor++;
-              sig_anchor_seg = numtoks;
-            }
-          }
-        }
-        numtoks++;
-      }
-    } while (p != NULL && numtoks < MAX_SEGMENTS);
-  } else {
-    return NULL;
-  }
+  do {
+    segment[numtoks] = strtok_r(skip, "/", &saveptr);
+  } while ( segment[numtoks] && ++numtoks < MAX_SEGMENTS);
+
   if ((numtoks >= MAX_SEGMENTS) || (numtoks < 3)) {
     return NULL;
+  }
+
+  if (anchor != NULL) {
+    char chk[3];
+    chk[0] = anchor[0];
+    chk[1] = anchor_enc[0];
+    chk[2] = '\0';
+
+    // look for the signed anchor string.
+    for ( int i = numtoks ; --i ; ) { // from last segment to segment 1
+      char *p = strpbrk(segment[i], chk); // anything there?
+      if ( ! p ) {
+        continue; // no params in segment
+      }
+      // check all chars after p for both
+      sig_anchor = strcasestr(p, anchor);
+      if ( sig_anchor ) {
+        *sig_anchor = '\0';
+        sig_anchor += strlen(anchor);
+        sig_anchor_seg = i;
+        break;
+      }
+      sig_anchor = strcasestr(p, anchor_enc);
+      if ( sig_anchor ) {
+        *sig_anchor = '\0';
+        sig_anchor += strlen(anchor_enc);
+        sig_anchor_seg = i;
+        break;
+      }
+    }
   }
 
   // create a new path string for later use when dealing with query parameters.
@@ -471,13 +518,13 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   bool has_path_params = false;
 
   /* all strings are locally allocated except url... about 25k per instance */
-  char *const current_url          = TSUrlStringGet(rri->requestBufp, rri->requestUrl, &current_url_len);
-  const char *url                  = current_url, *new_url;
+  char *const current_url = TSUrlStringGet(rri->requestBufp, rri->requestUrl, &current_url_len);
+  char *url               = current_url, *new_url;
+  char path_params[8192] = {'\0'}, new_path[8192] = {'\0'};
   char signed_part[8192]           = {'\0'}; // this initializes the whole array and is needed
   char urltokstr[8192]             = {'\0'};
   char client_ip[INET6_ADDRSTRLEN] = {'\0'}; // chose the larger ipv6 size
   char ipstr[INET6_ADDRSTRLEN]     = {'\0'}; // chose the larger ipv6 size
-  char path_params[8192] = {'\0'}, new_path[8192] = {'\0'};
   unsigned char sig[MAX_SIG_SIZE + 1];
   char sig_string[2 * MAX_SIG_SIZE + 1];
 
@@ -526,8 +573,8 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
   }
 
   // check for path params.
-  if (query == NULL || strstr(query, "E=") == NULL) {
-    if ((new_url = urlParse(url, cfg->sig_anchor, new_path, 8192, path_params, 8192)) == NULL) {
+  if (query == NULL || strstr(query, EXP_QSTRING "=") == NULL) {
+    if ((new_url = urlParse(url, cfg->sig_anchor, cfg->sig_anchor_encoded, new_path, 8192, path_params, 8192)) == NULL) {
       err_log(url, "Has no signing query string or signing path parameters.");
       goto deny;
     }

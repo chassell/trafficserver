@@ -51,4 +51,8 @@
 #define USIG_HMAC_SHA1 1
 #define USIG_HMAC_MD5 2
 
+// from RFC3986 2.2
+#define URL_SUB_DELIMS        "!$&'()*+,;="
+#define URL_SUB_DELIMS_W_PCT  "!$&'()*+,;=%"
+
 #endif /* URL_SIG_H_ */
