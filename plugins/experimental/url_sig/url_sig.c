@@ -237,6 +237,7 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char *errbuf, int errbuf_s
 
       cfg->sig_anchor = TSstrdup(value);
       cfg->sig_anchor_encoded = TSstrdup(enc);
+      TSDebug(PLUGIN_NAME, "%s:%d - sig_anchor: %s or %s\n", __FILE__, __LINE__, cfg->sig_anchor, cfg->sig_anchor_encoded);
     } else if (strncmp(line, "excl_regex", 10) == 0) {
       // compile and study regex
       const char *errptr;
@@ -388,7 +389,6 @@ urlParse(char *url, char *anchor, char *anchor_enc, char *new_path_seg, int new_
   // preserve the scheme in the new_url.
   strncat(new_url, url, skip - url);
   TSDebug(PLUGIN_NAME, "%s:%d - old_url: %s\n", __FILE__, __LINE__, url);
-  TSDebug(PLUGIN_NAME, "%s:%d - anchors: %s %s\n", __FILE__, __LINE__, anchor, anchor_enc);
 
   segment[numtoks] = strtok_r(skip, "/", &saveptr);
   TSDebug(PLUGIN_NAME, "%s:%d - new_url#%d: %s\n", __FILE__, __LINE__, numtoks,segment[numtoks]);
@@ -590,8 +590,7 @@ TSRemapDoRemap(void *ih, TSHttpTxn txnp, TSRemapRequestInfo *rri)
     }
     TSDebug(PLUGIN_NAME, "new_url: %s", new_url);
     has_path_params = true;
-    TSfree(url);
-    url   = new_url;
+    url   = new_url; // old value of url is caller's
     query = strstr(url, ";");
 
     if (query == NULL) {
