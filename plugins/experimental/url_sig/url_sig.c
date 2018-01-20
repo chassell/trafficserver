@@ -24,7 +24,9 @@
   })
 
 // for strcasestr in string.h
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include "ts/ink_defs.h"
 #include "url_sig.h"
@@ -72,6 +74,7 @@ free_cfg(struct config *cfg)
   TSError("[url_sig] Cleaning up");
   TSfree(cfg->err_url);
   TSfree(cfg->sig_anchor);
+  TSfree(cfg->sig_anchor_encoded);
 
   if (cfg->regex_extra) {
 #ifndef PCRE_STUDY_JIT_COMPILE
@@ -195,15 +198,17 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char *errbuf, int errbuf_s
         value++;
       }
       if (cfg->err_status == TS_HTTP_STATUS_MOVED_TEMPORARILY) {
-        cfg->err_url = TSstrndup(value, strlen(value));
+        cfg->err_url = TSstrdup(value);
       } else {
         cfg->err_url = NULL;
       }
     } else if (strncmp(line, "sig_anchor", 10) == 0 && value[0] ) {
       // non empty anchor in value
       int len = strlen(value);
+      char *encp = NULL;
       char *enc = alloca(len * 3 + 1);
-      char *encp = enc;
+
+      encp = enc;
 
       // create all-chars path anchor
       // NOTE: leave any sub-delims or %-encodings from user
@@ -225,7 +230,7 @@ TSRemapNewInstance(int argc, char *argv[], void **ih, char *errbuf, int errbuf_s
           *encp++ = *valp;
           continue;
         }
-        snprintf(encp,3,"%%%02X",*valp);
+        snprintf(encp,5,"%%%02X",*valp);
         encp += 3;
       }
       *encp = '\0'; // add nul
@@ -357,9 +362,8 @@ getAppQueryString(const char *query_string, int query_length)
     }
   } while (!done);
 
-  if (strlen(buf) > 0) {
-    p = TSstrdup(buf);
-    return p;
+  if (*buf) {
+    return TSstrdup(buf);
   } else {
     return NULL;
   }
@@ -373,7 +377,7 @@ urlParse(char *url, char *anchor, char *anchor_enc, char *new_path_seg, int new_
   char *segment[MAX_SEGMENTS];
   unsigned char decoded_string[2048] = {'\0'};
   char new_url[8192]                 = {'\0'};
-  char *p = NULL, *sig_anchor = NULL, *saveptr = NULL;
+  char *sig_anchor = NULL, *saveptr = NULL;
   int i = 0, numtoks = 0, cp_len = 0, l, decoded_len = 0, sig_anchor_seg = 0;
 
   char *skip = strchr(url, ':');
@@ -383,12 +387,17 @@ urlParse(char *url, char *anchor, char *anchor_enc, char *new_path_seg, int new_
   skip += 3;
   // preserve the scheme in the new_url.
   strncat(new_url, url, skip - url);
-  TSDebug(PLUGIN_NAME, "%s:%d - new_url: %s\n", __FILE__, __LINE__, new_url);
+  TSDebug(PLUGIN_NAME, "%s:%d - old_url: %s\n", __FILE__, __LINE__, url);
+  TSDebug(PLUGIN_NAME, "%s:%d - anchors: %s %s\n", __FILE__, __LINE__, anchor, anchor_enc);
+
+  segment[numtoks] = strtok_r(skip, "/", &saveptr);
+  TSDebug(PLUGIN_NAME, "%s:%d - new_url#%d: %s\n", __FILE__, __LINE__, numtoks,segment[numtoks]);
 
   // parse the url.
-  do {
-    segment[numtoks] = strtok_r(skip, "/", &saveptr);
-  } while ( segment[numtoks] && ++numtoks < MAX_SEGMENTS);
+  while ( segment[numtoks] && ++numtoks < MAX_SEGMENTS ) {
+    segment[numtoks] = strtok_r(NULL, "/", &saveptr);
+    TSDebug(PLUGIN_NAME, "%s:%d - new_url#%d: %s\n", __FILE__, __LINE__, numtoks,segment[numtoks]);
+  }
 
   if ((numtoks >= MAX_SEGMENTS) || (numtoks < 3)) {
     return NULL;
@@ -497,7 +506,8 @@ urlParse(char *url, char *anchor, char *anchor_enc, char *new_path_seg, int new_
       strncat(new_url, "/", 1);
     }
   }
-  return TSstrndup(new_url, strlen(new_url));
+  TSDebug(PLUGIN_NAME, "final: %s", new_url);
+  return TSstrdup(new_url);
 }
 
 TSRemapStatus
@@ -857,6 +867,7 @@ allow:
   }
   url = TSUrlStringGet(rri->requestBufp, rri->requestUrl, &url_len);
   TSDebug(PLUGIN_NAME, "url: %s", url);
+  TSfree(url);
 
   return TSREMAP_NO_REMAP;
 }
