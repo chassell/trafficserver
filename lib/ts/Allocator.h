@@ -294,7 +294,7 @@ private:
 
 #define ink_freelist_init_ops(...)
 
-#include "ts/StdAllocWrapper.h"
+#include "ts/JemAllocator.h"
 
 // cover up use of original Allocators above
 #define Allocator AlignedAllocator

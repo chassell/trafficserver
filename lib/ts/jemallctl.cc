@@ -261,7 +261,7 @@ create_global_nodump_arena()
     void *r = (*s_origAllocHook)(old, len, aligned, zero, commit, arena);
 
     if (r) {
-      madvise(r, aligned_size(len, aligned), MADV_DONTDUMP);
+      madvise(r, INK_ALIGN(len, aligned), MADV_DONTDUMP);
     }
 
     return r;

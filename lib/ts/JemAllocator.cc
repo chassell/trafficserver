@@ -42,7 +42,7 @@ AlignedAllocator::init_premapped(std::atomic_uint *preMappedP, unsigned len, uns
   unsigned olastPreMapped = lastPreMapped; 
 
   // align up to number that fit into one (or more) pages
-  chunk_size = aligned_size(chunk_size * len, pgsz) / len;
+  chunk_size = INK_ALIGN(chunk_size * len, pgsz) / len;
 
   // continue until satisfied or substituted
   do
@@ -89,7 +89,7 @@ AlignedAllocator::re_init(const char *name, unsigned int element_size, unsigned 
 {
   _name = name;
   _chunkSize = chunk_size;
-  _sz   = aligned_size(element_size, std::max(sizeof(uint64_t), alignment + 0UL)); // increase to aligned size
+  _sz   = INK_ALIGN(element_size, std::max(sizeof(uint64_t), alignment + 0UL)); // increase to aligned size
   _align = alignment;
 
   if (advice == MADV_DONTDUMP) {
@@ -98,7 +98,7 @@ AlignedAllocator::re_init(const char *name, unsigned int element_size, unsigned 
   } else if (advice == MADV_NORMAL) {
     _arena = 0; // default arena always
   } else {
-    ink_abort("allocator re_init: unknown madvise() flags: %x", advice);
+    ink_fatal("allocator re_init: unknown madvise() flags: %x", advice);
   }
 
   init_premapped(&_preMapped, _sz, _align, _chunkSize, _arena);

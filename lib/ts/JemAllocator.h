@@ -63,19 +63,19 @@ class AlignedAllocator
 public:
   AlignedAllocator() {}
   AlignedAllocator(const char *name, unsigned int element_size)
-    : _name(name), _sz(aligned_size(element_size, sizeof(uint64_t)))
+    : _name(name), _sz(INK_ALIGN(element_size, sizeof(uint64_t)))
   {
     // no cache-warming until first alloc
   }
 
   AlignedAllocator(const char *name, unsigned int element_size, unsigned int chunk_size)
-    : _name(name), _sz(aligned_size(element_size, sizeof(uint64_t))), _chunkSize(chunk_size)
+    : _name(name), _sz(INK_ALIGN(element_size, sizeof(uint64_t))), _chunkSize(chunk_size)
   {
     // no cache-warming until first alloc
   }
 
   AlignedAllocator(const char *name, unsigned int element_size, unsigned int chunk_size, unsigned int alignment)
-    : _name(name), _sz(aligned_size(element_size, alignment)), _align(alignment), _chunkSize(chunk_size)
+    : _name(name), _sz(INK_ALIGN(element_size, alignment)), _align(alignment), _chunkSize(chunk_size)
   {
     // no cache-warming until first alloc
   }
@@ -165,7 +165,7 @@ thread_local int SizeCacheAllocator<N_LENGTH,N_ALIGN>::tm_preCached = 0;
 //
 // type-specialized wrapper
 //
-template <class T_OBJECT, size_t N_SIZE = aligned_size(sizeof(T_OBJECT),alignof(T_OBJECT)) > 
+template <class T_OBJECT, size_t N_SIZE = INK_ALIGN(sizeof(T_OBJECT),alignof(T_OBJECT)) > 
 class ObjAllocator : public SizeCacheAllocator<N_SIZE,alignof(T_OBJECT)>
 {
 public:
