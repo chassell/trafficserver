@@ -35,6 +35,7 @@
 #define EXP_STRLEN 16
 #define PAR_STRLEN 16
 #define MAX_PARTS 32
+#define MAX_SEGMENTS 64
 
 #define MAX_HTTP_REQUEST_SIZE 8192 //
 
@@ -49,5 +50,9 @@
 
 #define USIG_HMAC_SHA1 1
 #define USIG_HMAC_MD5 2
+
+// from RFC3986 2.2
+#define URL_SUB_DELIMS        "!$&'()*+,;="
+#define URL_SUB_DELIMS_W_PCT  "!$&'()*+,;=%"
 
 #endif /* URL_SIG_H_ */
