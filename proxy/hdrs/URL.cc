@@ -1371,7 +1371,7 @@ const char *collect_params(char *start, char *end)
   ts::string_view path(start, end-start);
   // snip query/param from path
   path = path.substr(0, path.find_first_of("?#")); // disclude query or fragment
-  path = path.substr(0, path.rfind(';', path.rfind('/'))); // disclude any params inside path's file
+  path = path.substr(0, path.find(';', path.rfind('/'))); // disclude any params inside path's file
 
   for( size_t lastsemi ; (lastsemi=path.rfind(';')) != path.npos ; )
   {
@@ -1380,7 +1380,7 @@ const char *collect_params(char *start, char *end)
     path.remove_suffix(nxtdiv - lastsemi); // disclude any params rotated
   }
 
-  return &path[path.size()]; // new path end..
+  return start + path.size(); // new path end..
 }
 
 // empties params/query/fragment component
