@@ -30,9 +30,6 @@
 #include "MIME.h"
 #include "HTTP.h"
 #include "ts/Diags.h"
-#include "ts/string_view.h"
-
-#include <algorithm>
 
 const char *URL_SCHEME_FILE;
 const char *URL_SCHEME_FTP;
@@ -1365,24 +1362,6 @@ url_parse_internet(HdrHeap *heap, URLImpl *url, const char **start, char const *
 /*-------------------------------------------------------------------------
   -------------------------------------------------------------------------*/
 
-const char *collect_params(char *start, char *end)
-{
-  // collect params together...
-  ts::string_view path(start, end-start);
-  // snip query/param from path
-  path = path.substr(0, path.find_first_of("?#")); // disclude query or fragment
-  path = path.substr(0, path.find(';', path.rfind('/'))); // disclude any params inside path's file
-
-  for( size_t lastsemi ; (lastsemi=path.rfind(';')) != path.npos ; )
-  {
-    auto nxtdiv = path.find('/',lastsemi);
-    std::rotate(start + lastsemi, start + nxtdiv, start + path.size() );
-    path.remove_suffix(nxtdiv - lastsemi); // disclude any params rotated
-  }
-
-  return start + path.size(); // new path end..
-}
-
 // empties params/query/fragment component
 
 ParseResult
@@ -1414,9 +1393,6 @@ url_parse_http(HdrHeap *heap, URLImpl *url, const char **start, const char *end,
   mask       = ';' & '?' & '#';
 parse_path2:
   if ((*cur & mask) == mask) {
-    if (*cur == ';' && ! path_end) {
-      path_end = collect_params(const_cast<char*>(*start),const_cast<char*>(end));
-    }
     if (*cur == ';') {
       path_end = cur;
       goto parse_params1;
@@ -1439,6 +1415,11 @@ parse_params1:
   params_start = cur + 1;
   GETNEXT(done);
 parse_params2:
+  if (*cur == '/') {
+    params_end = cur;
+    path_end = NULL;
+    goto parse_path2;
+  }
   if (*cur == '?') {
     params_end = cur;
     goto parse_query1;
