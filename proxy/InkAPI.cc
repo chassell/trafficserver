@@ -1000,7 +1000,6 @@ INKContInternal::handle_event(int event, void *edata)
       INKContAllocator.free(this);
     } else {
       Warning("INKCont Deletable but not deleted %d", m_event_count);
-      TSDebug("warning","INKCont Deletable but not deleted %d [%p e#%d %p]", m_event_count, this, event, edata);
     }
   } else {
     int retval = m_event_func((TSCont)this, (TSEvent)event, edata);
