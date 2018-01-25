@@ -43,6 +43,11 @@ static const char HTTP_VALUE_STALE_WHILE_REVALIDATE[] = "stale-while-revalidate"
 static const char HTTP_VALUE_STALE_IF_ERROR[]         = "stale-if-error";
 static const char HTTP_VALUE_STALE_WARNING[]          = "110 Response is stale";
 
+static const char HTTP_CONTENT_ENCODING_BGD[]             = "x-background-download";
+static const char HTTP_ACCEPT_ENCODING_QUERY[]            = "identity;q=1.0, x-background-download;q=0.001";
+static const char HTTP_CONTENT_ENCODING_TAG[]             = "Content-Encoding";
+static const char HTTP_CACHE_CONTROL_OVERRIDE[]           = "max-age=2222222, stale-if-error=21600, stale-while-revalidate=21600";
+
 #define STALE_WARNING_CODE 110
 
 typedef struct {
@@ -384,7 +389,7 @@ consume_resource(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
 }
 
 static void
-override_hdr_field(TSMBuffer buffp, TSMLoc hdr_loc, const char *wksField, unsigned wksFieldLen, const char *str, unsigned len)
+erase_hdr_field(TSMBuffer buffp, TSMLoc hdr_loc, const char *wksField, unsigned wksFieldLen)
 {
   TSMLoc fld_loc = TSMimeHdrFieldFind(buffp, hdr_loc, wksField, wksFieldLen);
 
@@ -395,6 +400,14 @@ override_hdr_field(TSMBuffer buffp, TSMLoc hdr_loc, const char *wksField, unsign
     TSHandleMLocRelease(buffp, hdr_loc, fld_loc);
     fld_loc = tmp;
   }
+}
+
+static void
+override_hdr_field(TSMBuffer buffp, TSMLoc hdr_loc, const char *wksField, unsigned wksFieldLen, const char *str, unsigned len)
+{
+  erase_hdr_field(buffp, hdr_loc, wksField, wksFieldLen); 
+
+  TSMLoc fld_loc = TS_NULL_MLOC;
 
   TSMimeHdrFieldCreateNamed(buffp, hdr_loc, wksField, wksFieldLen, &fld_loc);
   TSMimeHdrFieldValueStringSet(buffp, hdr_loc, fld_loc, -1, str, len);
@@ -407,6 +420,7 @@ fetch_resource(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
 {
   StateInfo *state;
   TSCont consume_cont;
+  const char *method = TS_HTTP_METHOD_HEAD;
 
   state = (StateInfo *)TSContDataGet(cont);
   TSContDestroy(cont);
@@ -435,6 +449,13 @@ fetch_resource(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
     }
 
     TSMutexUnlock(mtx);
+
+    method = TS_HTTP_METHOD_GET; // we need a full download soon
+
+    // add Accept-Encoding field to save in cache
+    override_hdr_field(state->req_info->buf, state->req_info->http_hdr_loc, 
+             TS_MIME_FIELD_ACCEPT_ENCODING, TS_MIME_LEN_ACCEPT_ENCODING,  
+             HTTP_ACCEPT_ENCODING_QUERY, sizeof(HTTP_ACCEPT_ENCODING_QUERY) );
   }
 
   {
@@ -450,14 +471,16 @@ fetch_resource(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
 
       datelen = strftime(date, sizeof(date), fmt, gmtime(&state->rmt_resp_date));
 
+      // no need to keep open...
       override_hdr_field(state->req_info->buf, state->req_info->http_hdr_loc, TS_MIME_FIELD_CONNECTION, TS_MIME_LEN_CONNECTION,
                          "close", strlen("close"));
+      // returning a 304 to here is better ...
       override_hdr_field(state->req_info->buf, state->req_info->http_hdr_loc, TS_MIME_FIELD_IF_MODIFIED_SINCE,
                          TS_MIME_LEN_IF_MODIFIED_SINCE, date, datelen);
     }
 
     // only revalidate or detect a server error ... without a full download
-    TSHttpHdrMethodSet(state->req_info->buf, state->req_info->http_hdr_loc, TS_HTTP_METHOD_HEAD, -1);
+    TSHttpHdrMethodSet(state->req_info->buf, state->req_info->http_hdr_loc, method, -1);
 
     state->req_io_buf         = TSIOBufferCreate();
     state->req_io_buf_reader  = TSIOBufferReaderAlloc(state->req_io_buf);
@@ -500,6 +523,7 @@ main_plugin(TSCont cont, TSEvent event, void *edata)
 
     if (is_swr_transaction(txn)) {
       TSHttpTxnHookAdd(txn, TS_HTTP_READ_RESPONSE_HDR_HOOK, cont);
+      TSHttpTxnHookAdd(txn, TS_HTTP_SEND_REQUEST_HDR_HOOK, cont);
     } else {
       state = TSmalloc(sizeof(StateInfo));
       memset(state, 0, sizeof(StateInfo));
@@ -605,6 +629,17 @@ main_plugin(TSCont cont, TSEvent event, void *edata)
     }
     break;
 
+  // internal (passthru) async-requests only...
+  case TS_EVENT_HTTP_SEND_REQUEST_HDR:
+    TSAssert(is_swr_transaction(txn));
+
+    if (TS_SUCCESS == TSHttpTxnServerReqGet(txn, &buf, &loc)) {
+      erase_hdr_field(buf,loc, TS_MIME_FIELD_ACCEPT_ENCODING, TS_MIME_LEN_ACCEPT_ENCODING);
+    }
+    TSHandleMLocRelease(buf, TS_NULL_MLOC, loc);
+    break;
+
+  // internal (passthru) async-requests only...
   case TS_EVENT_HTTP_READ_RESPONSE_HDR:
     // In this continuation we only hook responses for background
     // requests that we issued ourselves. If the origin went away,
@@ -620,7 +655,17 @@ main_plugin(TSCont cont, TSEvent event, void *edata)
         TSDebug(PLUGIN_NAME, "marking background request no-store");
         TSHttpTxnServerRespNoStoreSet(txn, 1);
         break;
+
       default:
+        // add/replace Content-Encoding header 
+        override_hdr_field(buf, loc, TS_MIME_FIELD_CONTENT_ENCODING, TS_MIME_LEN_CONTENT_ENCODING, 
+              HTTP_CONTENT_ENCODING_BGD, sizeof(HTTP_CONTENT_ENCODING_BGD));
+        // add/replace Content-Encoding header 
+        override_hdr_field(buf, loc, TS_MIME_FIELD_VARY, TS_MIME_LEN_VARY, 
+              HTTP_CONTENT_ENCODING_TAG, sizeof(HTTP_CONTENT_ENCODING_TAG));
+        // FAKE for debugging...
+        override_hdr_field(buf, loc, TS_MIME_FIELD_CACHE_CONTROL, TS_MIME_LEN_CACHE_CONTROL, 
+              HTTP_CACHE_CONTROL_OVERRIDE, sizeof(HTTP_CACHE_CONTROL_OVERRIDE));
         break;
       }
 
