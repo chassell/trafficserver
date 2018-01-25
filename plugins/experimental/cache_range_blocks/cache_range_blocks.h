@@ -45,9 +45,9 @@ class ThreadTxnID
 
 public:
   static int get() { 
-    return ( atscppapi::TransactionPlugin::getTxnID() >= 0 
-                ? atscppapi::TransactionPlugin::getTxnID() 
-                : g_pluginTxnID );
+    return ( // atscppapi::TransactionPlugin::getTxnID() >= 0 
+             //    ? atscppapi::TransactionPlugin::getTxnID() : 
+                g_pluginTxnID );
   }
 
   ThreadTxnID(atscppapi::Transaction &txn) {

@@ -216,6 +216,7 @@ BlockSetAccess::handleSendResponseHeaders(Transaction &txn)
 {
   ThreadTxnID txnid{_txn};
   clean_client_response(txn);
+  DEBUG_LOG("client response hdrs:\n----------------%s\n----------------\n", _txn.getClientResponse().getHeaders().wireStr().c_str());
   txn.resume();
 }
 
@@ -310,6 +311,7 @@ BlockSetAccess::clean_client_response(Transaction &txn)
   clntRespStatus.setStatusCode(HTTP_STATUS_PARTIAL_CONTENT);
 //  clntResp.erase(X_BLOCK_BITSET_TAG);
   clntResp.erase(CONTENT_ENCODING_TAG);
+  clntResp.erase(VARY_TAG);
 
   // override block-style range
   if (_assetLen && _beginByte >= 0 && _endByte > 0) {
@@ -362,7 +364,7 @@ BlockSetAccess::get_stub_hdrs()
     return &_clntHdrs;
   }
 
-  DEBUG_LOG("cache-hdrs:\n%s\n------\n", _txn.getCachedResponse().getHeaders().wireStr().c_str());
+  DEBUG_LOG("cache-hdrs:\n----------------%s\n----------------\n", _txn.getCachedResponse().getHeaders().wireStr().c_str());
 
   auto &ccheHdrs = _txn.getCachedResponse().getHeaders();
   auto i         = ccheHdrs.values(CONTENT_ENCODING_TAG).find(CONTENT_ENCODING_INTERNAL);
