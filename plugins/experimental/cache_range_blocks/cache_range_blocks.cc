@@ -111,7 +111,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   ThreadTxnID txnid{_txn};
   auto pstub = get_stub_hdrs(); // get (1) client-req ptr or (2) cached-stub ptr or nullptr
 
-  // file was found?!
+  // file was found in full?
   if (!pstub) {
     txn.resume();
     return; // main file made it through
@@ -120,14 +120,6 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   // simply clean up stub-response to be a normal header
   TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // clean up headers from request
   TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS); // clean up headers from earlier
-
-  if (pstub == &_clntHdrs) {
-    DEBUG_LOG("stub-init only");
-    txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1); // permit range in cached-request
-    TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // handle reply for stub-file storage
-    txn.resume();
-    return;
-  }
 
   // no interest in cacheing the file... so waive any storage
   TSHttpTxnServerRespNoStoreSet(_atsTxn,1);
@@ -138,40 +130,45 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   _clntHdrs.erase(RANGE_TAG);
 
-  _etagStr = pstub->value(ETAG_TAG); // hold on for later
+  if (pstub == &_clntHdrs) {
+    DEBUG_LOG("stub-init request");
+    txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1); // just permit a range in cached HTTP request
+  } else {
+    _etagStr = pstub->value(ETAG_TAG); // hold on for later
 
-  // see if valid stub headers
-  auto srvrRange = pstub->value(CONTENT_RANGE_TAG); // not in clnt hdrs
-
-  srvrRange.erase(0, srvrRange.find('/')).erase(0, 1);
-  _assetLen = std::atol(srvrRange.c_str());
+    // see if valid stub headers
+    auto srvrRange = pstub->value(CONTENT_RANGE_TAG); // not in clnt hdrs
+    auto l = srvrRange.find('/');
+    _assetLen = ( l != srvrRange.npos ? std::atol(srvrRange.c_str() + l) : 0 );
+  }
 
   // test if range is readable
   if (parse_range(_clntRangeStr, _assetLen, _beginByte, _endByte) > 0) {
-//    _blkSize = INK_ALIGN((_assetLen >> 10) | 1, MIN_BLOCK_STORED);
-//    _blkSize = std::min( _blkSize+0 , 1L<<21 );  // 2Meg max size
     _blkSize = 1L<<20;  // 1Meg standard size
     _b64BlkPresent = std::string((_assetLen + _blkSize*6 - 1) / (_blkSize * 6), 'A');
     _b64BlkUsable = _b64BlkPresent;
   }
 
-  auto chk = std::find_if(_b64BlkPresent.begin(), _b64BlkPresent.end(), [](char c) { return !isalnum(c) && c != '+' && c != '/'; });
+  auto firstBlk = _beginByte / _blkSize;
+  auto endBlk = (_endByte + _blkSize-1) / _blkSize; // round up
 
-  // invalid stub file... (or client headers instead)
-  if (!_assetLen || !_blkSize || _b64BlkPresent.empty() || chk != _b64BlkPresent.end()) {
-    DEBUG_LOG("stub-failed: len=%#lx [blk:%ldK] set=%s", _assetLen, _blkSize/1024, _b64BlkPresent.c_str());
-    txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1); // permit range in cached-request
-    TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS); // handle reply for stub-file storage
-    txn.resume();
+  _keysInRange.resize(endBlk - firstBlk); // start empty...
+  _vcsToRead.resize(endBlk - firstBlk);   // start empty...
+
+  // store with inclusive end
+  _blkRangeStr = "bytes=";
+  _blkRangeStr += std::to_string(_blkSize * firstBlk) + "-" + std::to_string(_blkSize * endBlk - 1);
+
+  // cached response exists?
+  if ( _assetLen ) {
+    // nothing handled until handle_block_tests is done...
+    launch_block_tests(); // test if blocks are ready...
     return;
   }
 
-  if (!select_needed_blocks()) {
-    DEBUG_LOG("write is likely needed: len=%#lx [blk:%ldK] set=%s", _assetLen, _blkSize/1024, _b64BlkPresent.c_str());
-  }
-
-  // nothing handled until handle_block_tests is done...
-  launch_block_tests();
+  // no file exists yet?
+  start_cache_miss(firstBlk,endBlk);
+  txn.resume();
 }
 
 // handled for init-only case
@@ -386,37 +383,6 @@ BlockSetAccess::b64BlkPresentSubstr() const
   size_t i = _beginByte/_blkSize/6;
   size_t j = _endByte/_blkSize/6;
   return ( _b64BlkPresent.size() >= j ? _b64BlkPresent.substr(i,j - i) : "" );
-}
-
-int64_t
-BlockSetAccess::select_needed_blocks()
-{
-  int64_t start = _beginByte;
-  int64_t end   = _endByte;
-
-  auto startBlk = start / _blkSize;                // inclusive-start block
-  auto endBlk   = (end + _blkSize - 1) / _blkSize; // exclusive-end block
-
-  _keysInRange.resize(endBlk - startBlk); // start empty...
-  _vcsToRead.resize(endBlk - startBlk);   // start empty...
-
-  //  ink_assert( _contentLen == static_cast<int64_t>(( endBlk - startBlk )*_blkSize) - _beginByte - _endByte );
-
-  // store with inclusive end
-  _blkRangeStr = "bytes=";
-  _blkRangeStr += std::to_string(_blkSize * startBlk) + "-" + std::to_string(_blkSize * endBlk - 1);
-
-  auto i = startBlk;
-
-  for (; i < endBlk && is_base64_bit_set(_b64BlkUsable, i); ++i) {
-  }
-
-  // any missed
-  if (i < endBlk) {
-    return 0; // don't have all of them
-  }
-
-  return end;
 }
 
 ////////////////////////////////////////////////
