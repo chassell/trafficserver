@@ -117,6 +117,26 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     return; // main file made it through
   }
 
+  if (pstub == &_clntHdrs) {
+    DEBUG_LOG("stub-init request");
+    txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1); // just permit a range in cached HTTP request
+  }
+
+  if ( pstub != &_clntHdrs ) {
+    _etagStr = pstub->value(ETAG_TAG); // hold on for later
+
+    // see if valid stub headers
+    auto srvrRange = pstub->value(CONTENT_RANGE_TAG); // not in clnt hdrs
+    auto l = srvrRange.find('/');
+    _assetLen = ( l != srvrRange.npos ? std::atol(srvrRange.c_str() + l) : 0 );
+  }
+
+  // test if range is readable
+  if (parse_range(_clntRangeStr, _assetLen, _beginByte, _endByte) > 0) {
+    _blkSize = 1L<<20;  // 1Meg standard size
+  }
+
+
   // simply clean up stub-response to be a normal header
   TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // clean up headers from request
   TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS); // clean up headers from earlier
@@ -129,25 +149,6 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   txn.configIntSet(TS_CONFIG_NET_SOCK_RECV_BUFFER_SIZE_OUT,1<<20);                // 1M kernel TCP buffer
 
   _clntHdrs.erase(RANGE_TAG);
-
-  if (pstub == &_clntHdrs) {
-    DEBUG_LOG("stub-init request");
-    txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1); // just permit a range in cached HTTP request
-  } else {
-    _etagStr = pstub->value(ETAG_TAG); // hold on for later
-
-    // see if valid stub headers
-    auto srvrRange = pstub->value(CONTENT_RANGE_TAG); // not in clnt hdrs
-    auto l = srvrRange.find('/');
-    _assetLen = ( l != srvrRange.npos ? std::atol(srvrRange.c_str() + l) : 0 );
-  }
-
-  // test if range is readable
-  if (parse_range(_clntRangeStr, _assetLen, _beginByte, _endByte) > 0) {
-    _blkSize = 1L<<20;  // 1Meg standard size
-    _b64BlkPresent = std::string((_assetLen + _blkSize*6 - 1) / (_blkSize * 6), 'A');
-    _b64BlkUsable = _b64BlkPresent;
-  }
 
   auto firstBlk = _beginByte / _blkSize;
   auto endBlk = (_endByte + _blkSize-1) / _blkSize; // round up
