@@ -125,10 +125,14 @@ default_delete<TSIOBufferReader_t::element_type>::operator()(TSIOBufferReader re
 
 // unique-ref object for a cache-read or cache-write request
 struct ATSCacheKey : public TSCacheKey_t {
-  ATSCacheKey() = default; // nullptr by default
+  explicit ATSCacheKey() : TSCacheKey_t{TSCacheKeyCreate()} { }
+  ATSCacheKey(const atscppapi::Url &url, std::string const &etag, uint64_t offset);
 
   operator TSCacheKey() const { return get(); }
-  ATSCacheKey(const atscppapi::Url &url, std::string const &etag, uint64_t offset);
+  bool valid() const { 
+    return get() && ! *reinterpret_cast<const CryptoHash*>(get()) == CryptoHash();
+  }
+
 };
 
 // object to request write/read into cache
