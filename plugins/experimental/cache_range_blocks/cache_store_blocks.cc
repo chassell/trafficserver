@@ -31,19 +31,7 @@ BlockSetAccess::start_cache_miss(int64_t firstBlk, int64_t endBlk)
   TSHttpTxnUntransformedRespCache(atsTxn(), 0);
   TSHttpTxnTransformedRespCache(atsTxn(), 0);
 
-  DEBUG_LOG("cache-resp-wr: len=%#lx [blk:%ldK] p=..%s.. u=..%s..", assetLen(), blockSize()/1024, 
-        b64BlkPresentSubstr().c_str(), b64BlkUsableSubstr().c_str());
-
-  _keysInRange.clear();
-  _keysInRange.resize(endBlk - firstBlk);
-
-  // react to genuine misses above...
-  for (auto i = 0U; i < endBlk - firstBlk; ++i) {
-    if (!is_base64_bit_set(_b64BlkPresent, firstBlk + i)) {
-      DEBUG_LOG("attempt store from bitset: + 1<<%ld %s", firstBlk + i, b64BlkPresentSubstr().c_str());
-      _keysInRange[i]    = std::move(ATSCacheKey(clientUrl(), _etagStr, (firstBlk + i) * _blkSize));
-    }
-  }
+  DEBUG_LOG("cache-resp-wr: len=%#lx [blk:%ldK]", _assetLen, _blkSize/1024);
 
   _storeXform = std::make_unique<BlockStoreXform>(*this,endBlk - firstBlk);
   _storeXform->txnReadCacheLookupComplete(); // may have txn.resume()
@@ -59,7 +47,7 @@ BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
     _vcsToWriteP( new WriteVCs_t(blockCount), []( WriteVCs_t *ptr ){ delete ptr; } ),
     _vcsToWrite(*_vcsToWriteP)
 {
-  TSIOBufferWaterMarkSet(teeBuffer(), ctxt.blockSize()); // perfect point to stop..
+  TSIOBufferWaterMarkSet(teeBuffer(), ctxt.blockSize()); // perfect first point to stop..
   DEBUG_LOG("tee-buffer block level reset to: %ld", ctxt.blockSize());
 }
 
@@ -74,22 +62,17 @@ BlockStoreXform::txnReadCacheLookupComplete()
   using namespace std::chrono;
   using std::future_status;
 
-  // [will override the server response for headers]
-  //
   auto &keys  = _ctxt._keysInRange;
   auto blkNum = _ctxt._beginByte / _ctxt.blockSize();
 
   for (auto i = 0U; i < keys.size(); ++i, ++blkNum) 
   {
-    if ( ! keys[i] ) {
-      DEBUG_LOG("store: 1<<%ld key left out", blkNum);
-      continue;
-    }
-    if ( is_base64_bit_set(_ctxt.b64BlkPresent(), blkNum) ) {
-      DEBUG_LOG("store: 1<<%ld present / not usable", blkNum);
+    if ( ! keys[i] || ! keys[i].valid() ) {
+      DEBUG_LOG("store: 1<<%ld present / not storable", blkNum);
       continue;
     }
 
+    // hash is ready to go?
     auto contp = ATSCont::create_temp_tscont(*this, _vcsToWrite[i], _vcsToWriteP);
     DEBUG_LOG("store: 1<<%ld to write", blkNum);
     TSCacheWrite(contp, keys[i]); // find room to store each key...

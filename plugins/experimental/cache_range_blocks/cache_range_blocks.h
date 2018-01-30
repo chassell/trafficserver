@@ -75,6 +75,7 @@ private:
 
 #define VARY_TAG "Vary"
 #define ETAG_TAG "ETag"
+#define IF_MATCH_TAG "If-Match"
 #define IF_MODIFIED_SINCE_TAG "If-Modified-Since"
 #define IF_NONE_MATCH_TAG "If-None-Match"
 #define IF_RANGE_TAG "If-Range"
@@ -112,12 +113,6 @@ public:
   const std::string & blockRangeStr() const { return _blkRangeStr; }
 
   const std::vector<ATSCacheKey> & keysInRange() const { return _keysInRange; }
-
-  const std::string & b64BlkUsable() const { return _b64BlkUsable; }
-  const std::string & b64BlkPresent() const { return _b64BlkPresent; }
-
-  std::string b64BlkUsableSubstr() const;
-  std::string b64BlkPresentSubstr() const;
 
   int64_t assetLen() const { return _assetLen; }
   int64_t rangeLen() const { return _endByte - _beginByte; }
@@ -166,11 +161,9 @@ private:
   std::string _clntRangeStr;
   std::string _blkRangeStr; // from clnt req for serv req
 
-  std::string _b64BlkUsable; // if cached and found
-  std::string _b64BlkPresent; // if cached and found
   int64_t _assetLen = 0L;    // if cached and found
-  int64_t _blkSize  = 0L;    // if cached and found
   std::string _etagStr;      // if cached and found
+  int64_t _blkSize  = ( 1L << 20 ); // fixed
 
   int64_t _beginByte = -1L;
   int64_t _endByte   = -1L;
@@ -201,6 +194,7 @@ public:
   ~BlockStoreXform() override;
 
   void txnReadCacheLookupComplete(); 
+  void txnReadResponse(); 
 
 private:
   TSVConn next_valid_vconn(int64_t pos, int64_t len, int64_t &skipDist);

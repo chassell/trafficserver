@@ -17,6 +17,7 @@
 #include "ts/ink_memory.h" // for make_unique
 #include "ts/ink_align.h"
 #include "ts/ts.h"
+#include "ts/INK_MD5.h"
 
 #include <atscppapi/Url.h>
 #include <atscppapi/Transaction.h>
@@ -129,8 +130,8 @@ struct ATSCacheKey : public TSCacheKey_t {
   ATSCacheKey(const atscppapi::Url &url, std::string const &etag, uint64_t offset);
 
   operator TSCacheKey() const { return get(); }
-  bool valid() const { 
-    return get() && ! *reinterpret_cast<const CryptoHash*>(get()) == CryptoHash();
+  bool valid() const {
+    return get() && *reinterpret_cast<const ats::CryptoHash*>(get()) != ats::CryptoHash();
   }
 
 };

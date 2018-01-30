@@ -34,6 +34,7 @@ void BlockSetAccess::start_if_range_present(Transaction &txn)
   ThreadTxnID txnid{txn};
 
   int i = 0;
+
   TSCacheReady(&i);
   if ( ! i ) {
     return; // cannot handle new blocks 
@@ -122,33 +123,37 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1); // just permit a range in cached HTTP request
   }
 
-  if ( pstub != &_clntHdrs ) {
+  // not the first request?
+  if ( pstub != &_clntHdrs ) 
+  {
+    // no interest in cacheing a new file... so waive any storage of a reply
+    TSHttpTxnServerRespNoStoreSet(_atsTxn,1);
+
     _etagStr = pstub->value(ETAG_TAG); // hold on for later
 
-    // see if valid stub headers
     auto srvrRange = pstub->value(CONTENT_RANGE_TAG); // not in clnt hdrs
     auto l = srvrRange.find('/');
-    _assetLen = ( l != srvrRange.npos ? std::atol(srvrRange.c_str() + l) : 0 );
+    l = ( l != srvrRange.npos ? l : srvrRange.size() ); // zero-length c-string if no '/' found
+    _assetLen = std::atol( srvrRange.c_str() + l );
+  } else {
+    _clntHdrs.erase(RANGE_TAG); // old range is stored already.. but remove it from cached stub
   }
 
-  // test if range is readable
-  if (parse_range(_clntRangeStr, _assetLen, _beginByte, _endByte) > 0) {
-    _blkSize = 1L<<20;  // 1Meg standard size
+  auto r = parse_range(_clntRangeStr, _assetLen, _beginByte, _endByte);
+
+  if ( _assetLen && r <= 0 ) {
+    txn.resume(); // the range is not serviceable! pass through 
+    return;
   }
 
+  // a store operation is possible ... but blocks to transform might be available 
 
-  // simply clean up stub-response to be a normal header
   TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS); // clean up headers from request
   TransactionPlugin::registerHook(HOOK_SEND_RESPONSE_HEADERS); // clean up headers from earlier
-
-  // no interest in cacheing the file... so waive any storage
-  TSHttpTxnServerRespNoStoreSet(_atsTxn,1);
 
   txn.configIntSet(TS_CONFIG_HTTP_DEFAULT_BUFFER_SIZE,TS_IOBUFFER_SIZE_INDEX_1M); // 1M buffer-size by default
   txn.configIntSet(TS_CONFIG_HTTP_DEFAULT_BUFFER_WATER_MARK,1<<20);               // 1M buffer-wait by default
   txn.configIntSet(TS_CONFIG_NET_SOCK_RECV_BUFFER_SIZE_OUT,1<<20);                // 1M kernel TCP buffer
-
-  _clntHdrs.erase(RANGE_TAG);
 
   auto firstBlk = _beginByte / _blkSize;
   auto endBlk = (_endByte + _blkSize-1) / _blkSize; // round up
@@ -160,14 +165,15 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   _blkRangeStr = "bytes=";
   _blkRangeStr += std::to_string(_blkSize * firstBlk) + "-" + std::to_string(_blkSize * endBlk - 1);
 
-  // cached response exists?
-  if ( _assetLen ) {
+  // cached response could exist with correct etag?
+  if ( _assetLen && ! _etagStr.empty() ) {
     // nothing handled until handle_block_tests is done...
     launch_block_tests(); // test if blocks are ready...
     return;
   }
 
-  // no file exists yet?
+  // no valid file found yet?
+
   start_cache_miss(firstBlk,endBlk);
   txn.resume();
 }
@@ -181,16 +187,31 @@ BlockSetAccess::handleSendRequestHeaders(Transaction &txn)
   txn.resume();
 }
 
-// handled for init-only case
 void
 BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
 {
-  ThreadTxnID txnid{_txn};
+  if ( _storeXform ) {
+    ThreadTxnID txnid{txn};
+    _storeXform->txnReadResponse();
+  }
+  txn.resume();
+}
+
+void
+BlockStoreXform::txnReadResponse()
+{
+  auto blkSz = _ctxt.blockSize();
+  auto &txn = _ctxt.txn();
+  auto atsTxn = _ctxt.atsTxn();
+  auto assetLen = _ctxt.assetLen();
+  auto beginByte = _ctxt._beginByte;
+  auto rangeLen = _ctxt.rangeLen();
+
   auto &resp = txn.getServerResponse();
   auto &respHdrs = resp.getHeaders();
   if (resp.getStatusCode() != HTTP_STATUS_PARTIAL_CONTENT) {
     DEBUG_LOG("rejecting due to unusable status: %d",resp.getStatusCode());
-    TSHttpTxnServerRespNoStoreSet(atsTxn(),1);
+    TSHttpTxnServerRespNoStoreSet(atsTxn,1);
     txn.resume();
     return; // cannot use this for cache ...
   }
@@ -200,12 +221,43 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
   if ( ! contentEnc.empty() && contentEnc != "identity" )
   {
     DEBUG_LOG("rejecting due to unusable encoding: %s",contentEnc.c_str());
-    TSHttpTxnServerRespNoStoreSet(atsTxn(),1);
+    TSHttpTxnServerRespNoStoreSet(atsTxn,1);
     txn.resume();
     return; // cannot use this for range block storage ...
   }
 
-  prepare_cached_stub(txn); // prepare to be stored
+  auto blkByte      = beginByte - ( beginByte % blkSz ); // strict location
+
+  // we have to restart?
+  if ( _ctxt._etagStr != respHdrs.value(ETAG_TAG) ) 
+  {
+    _ctxt._etagStr = respHdrs.value(ETAG_TAG);
+
+    for( auto &&keyp : _ctxt._keysInRange ) {
+      auto i = &keyp - &_ctxt._keysInRange.front();
+      keyp = std::move(ATSCacheKey(_ctxt.clientUrl(), _ctxt._etagStr, blkByte));
+      _vcsToWrite[i].release(); // no future set any more...
+      blkByte += blkSz;
+    }
+  }
+
+  auto srvrRange = respHdrs.value(CONTENT_RANGE_TAG); // not in clnt hdrs
+  auto l = srvrRange.find('/');
+  l = ( l != srvrRange.npos ? l : srvrRange.size() ); // zero-length c-string if no '/' found
+  auto currAssetLen = std::atol( srvrRange.c_str() + l );
+
+  DEBUG_LOG("srvr-resp: len=%#lx olen=%#lx (%ld-%ld) final=%s", currAssetLen, assetLen, beginByte, beginByte + rangeLen, srvrRange.c_str());
+
+  if (currAssetLen != assetLen) {
+    _ctxt._assetLen     = static_cast<uint64_t>(currAssetLen);
+    DEBUG_LOG("srvr-bitset: blk=%#lx", blkSz);
+  }
+
+  resp.setStatusCode(HTTP_STATUS_OK);
+  respHdrs.set(CONTENT_ENCODING_TAG, CONTENT_ENCODING_INTERNAL); // promote matches
+  respHdrs.append(VARY_TAG,ACCEPT_ENCODING_TAG); // please notice it!
+
+  DEBUG_LOG("stub-hdrs:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
   txn.resume();
 }
 
@@ -226,6 +278,7 @@ BlockSetAccess::clean_client_request()
   if ( _clntHdrs.values(ACCEPT_ENCODING_TAG).empty() ) {
     _clntHdrs.append(ACCEPT_ENCODING_TAG, "identity;q=1.0"); // defer to full version
   }
+
   _clntHdrs.append(ACCEPT_ENCODING_TAG, CONTENT_ENCODING_INTERNAL ";q=0.001"); // but accept block-set too
   _clntHdrs.set(ACCEPT_ENCODING_TAG, _clntHdrs.values(ACCEPT_ENCODING_TAG)); // on one line...
 }
@@ -263,34 +316,6 @@ BlockSetAccess::clean_server_request(Transaction &txn)
 void
 BlockSetAccess::prepare_cached_stub(Transaction &txn)
 {
-  auto &proxyRespStatus = txn.getServerResponse();
-  auto &proxyResp       = txn.getServerResponse().getHeaders();
-
-  // see if valid stub headers
-  auto srvrRange     = proxyResp.value(CONTENT_RANGE_TAG); // not in clnt hdrs
-  auto srvrRangeCopy = srvrRange;
-
-  srvrRange.erase(0, srvrRange.find('/')).erase(0, 1);
-  auto currAssetLen = std::atol(srvrRange.c_str());
-
-  DEBUG_LOG("srvr-resp: len=%#lx olen=%#lx final=%s range=%s", currAssetLen, _assetLen, srvrRange.c_str(), srvrRangeCopy.c_str());
-
-  if (currAssetLen != _assetLen) {
-//    _blkSize      = INK_ALIGN((currAssetLen >> 10) | 1, MIN_BLOCK_STORED);
-//    _blkSize = std::min( _blkSize+0 , 1L<<21 );  // 2Meg max size
-    _blkSize = 1L<<20;  // 1Meg standard size
-    _b64BlkPresent = std::string((currAssetLen + _blkSize*6 - 1) / (_blkSize * 6), 'A');
-    _b64BlkUsable = _b64BlkPresent;
-    _assetLen     = static_cast<uint64_t>(currAssetLen);
-    DEBUG_LOG("srvr-bitset: blk=%#lx %s", _blkSize, _b64BlkPresent.c_str());
-  }
-
-  proxyRespStatus.setStatusCode(HTTP_STATUS_OK);
-  proxyResp.set(CONTENT_ENCODING_TAG, CONTENT_ENCODING_INTERNAL); // promote matches
-  proxyResp.append(VARY_TAG,ACCEPT_ENCODING_TAG); // please notice it!
-//  proxyResp.set(X_BLOCK_BITSET_TAG, _b64BlkUsable); // keep as *last* field
-
-  DEBUG_LOG("stub-hdrs:\n-------\n%s\n------\n", proxyResp.wireStr().c_str());
 }
 
 void
@@ -367,23 +392,6 @@ BlockSetAccess::get_stub_hdrs()
   auto &ccheHdrs = _txn.getCachedResponse().getHeaders();
   auto i         = ccheHdrs.values(CONTENT_ENCODING_TAG).find(CONTENT_ENCODING_INTERNAL);
   return (i == std::string::npos ? nullptr : &ccheHdrs);
-}
-
-
-std::string
-BlockSetAccess::b64BlkUsableSubstr() const
-{
-  size_t i = _beginByte/_blkSize/6;
-  size_t j = _endByte/_blkSize/6;
-  return ( _b64BlkUsable.size() >= j ? _b64BlkUsable.substr(i,j - i) : "" );
-}
-
-std::string
-BlockSetAccess::b64BlkPresentSubstr() const
-{
-  size_t i = _beginByte/_blkSize/6;
-  size_t j = _endByte/_blkSize/6;
-  return ( _b64BlkPresent.size() >= j ? _b64BlkPresent.substr(i,j - i) : "" );
 }
 
 ////////////////////////////////////////////////

@@ -66,53 +66,57 @@ BlockSetAccess::handle_block_tests()
   }
 
   auto nrdy     = 0U;
+  auto skip     = 0U;
   auto firstBlk = _beginByte / _blkSize;
   auto endBlk = (_endByte + _blkSize-1) / _blkSize; // round up
   auto finalBlk = _assetLen / _blkSize; // round down..
 
+  ink_assert( _vcsToRead.size() == _keysInRange.size() );
+
   // scan *all* keys and vconns to check if ready
-  for( auto &&p : _keysInRange ) {
-    auto i = &p - &_keysInRange.front();
-    auto blk = firstBlk + i;
+  for( auto &&keyp : _keysInRange ) {
+    auto i = &keyp - &_keysInRange.front();
+    auto &rdFut = _vcsToRead[i];
 
-    if ( blk >= endBlk ) {
-      continue; // too many 
+    if ( ! keyp ) {
+      ++skip; // keep scanning for others
+      continue;
     }
 
-    base64_bit_set(_b64BlkPresent, blk);
-
-    if ( ! p ) {
-      continue; // likely fine..
+    int error = rdFut.error();
+    if ( error == ESOCK_TIMEOUT ) {
+      // leave skip 
+      // leave nrdy also
+      continue; 
     }
 
-    int error = _vcsToRead[i].error();
     if ( error ) {
-      if ( error == ECACHE_NO_DOC ) {
-        base64_bit_clr(_b64BlkPresent, blk);
+      if ( error != ECACHE_NO_DOC ) {
+        keyp.reset();  // disallow new storage
       }
-      DEBUG_LOG("read not ready: 1<<%ld %s", blk, InkStrerror(error));
+      ++skip; // allow storage if NO_DOC error
+      DEBUG_LOG("read not ready: 1<<%ld %s", firstBlk + i, InkStrerror(error));
       continue;
     }
 
-    auto vconn = _vcsToRead[i].get();
+    auto vconn = rdFut.get();
     auto blkLen = TSVConnCacheObjectSizeGet(vconn);
-    auto neededLen = ( blk == finalBlk ? ((_assetLen-1) % blockSize())+1 : blockSize() );
+    auto neededLen = ( firstBlk + i == finalBlk ? ((_assetLen-1) % blockSize())+1 : blockSize() );
 
-    // block is ready and of right size?
+    // vconn/block is right size?
     if ( blkLen != neededLen ) {
-      base64_bit_clr(_b64BlkPresent, blk);
-      DEBUG_LOG("read returned wrong size: 1<<%ld n=%ld", blk, blkLen);
+      ++skip; // allow storage
+      DEBUG_LOG("read returned wrong size: 1<<%ld n=%ld", firstBlk + i, blkLen);
       continue;
     }
 
-    p.reset(); // no need for cache-key
+    if ( skip ) {
+      keyp.reset(); // disallow new storage at this point...
+    } 
 
-    // successful!
+    // all successful so far!
     ++nrdy;
-    base64_bit_set(_b64BlkUsable, blk);
-    DEBUG_LOG("read successful present bitset: vc:%p + 1<<%ld ..%s.. / ..%s..", vconn, blk, 
-       _b64BlkPresent.substr(firstBlk/6,(endBlk+5)/6-firstBlk/6).c_str(),
-       _b64BlkUsable.substr(firstBlk/6,(endBlk+5)/6-firstBlk/6).c_str());
+    DEBUG_LOG("read successful present : vc:%p + 1<<%ld", vconn, firstBlk + i);
   }
 
   // ready to read from cache...
@@ -123,8 +127,9 @@ BlockSetAccess::handle_block_tests()
 
   auto n = _vcsToRead.size();
 
-  for( auto &&p : _vcsToRead ) { if ( ! p.is_close_able() ) {
-      auto i = &p - &_vcsToRead.front();
+  for( auto &&rdFut : _vcsToRead ) { 
+    if ( ! rdFut.is_close_able() ) {
+      auto i = &rdFut - &_vcsToRead.front();
       DEBUG_LOG("late cache-read entry: 1<<%ld",firstBlk + i);
       break;
     }
@@ -241,7 +246,7 @@ BlockSetAccess::set_cache_hit_bitset()
   cachedHdr.reset(bufp,offset);
 
   if ( r == TS_SUCCESS ) {
-    DEBUG_LOG("updated bitset: %s", b64BlkUsable().c_str());
+//    DEBUG_LOG("updated bitset: %s", b64BlkUsable().c_str());
     DEBUG_LOG("updated cache-hdrs:\n-----\n%s\n------\n", cachedHdr.wireStr().c_str());
   } else if ( r == TS_ERROR ) {
     DEBUG_LOG("failed to update cache-hdrs:\n-----\n%s\n------\n", cachedHdr.wireStr().c_str());
