@@ -133,18 +133,20 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
     auto srvrRange = pstub->value(CONTENT_RANGE_TAG); // not in clnt hdrs
     auto l = srvrRange.find('/');
-    l = ( l != srvrRange.npos ? l : srvrRange.size() ); // zero-length c-string if no '/' found
+    l = ( l != srvrRange.npos ? l + 1 : srvrRange.size() ); // index of nul if no '/' found
     _assetLen = std::atol( srvrRange.c_str() + l );
   } else {
-    _clntHdrs.erase(RANGE_TAG); // old range is stored already.. but remove it from cached stub
   }
 
   auto r = parse_range(_clntRangeStr, _assetLen, _beginByte, _endByte);
 
   if ( _assetLen && r <= 0 ) {
-    txn.resume(); // the range is not serviceable! pass through 
+    txn.resume(); // the range is not serviceable! pass onwards 
     return;
   }
+
+  // many ranges can be satisfied .. so prevent system from blocking it
+  _clntHdrs.erase(RANGE_TAG);
 
   // a store operation is possible ... but blocks to transform might be available 
 
@@ -165,7 +167,10 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   _blkRangeStr = "bytes=";
   _blkRangeStr += std::to_string(_blkSize * firstBlk) + "-" + std::to_string(_blkSize * endBlk - 1);
 
-  // cached response could exist with correct etag?
+  // use known values (if enough) to create keys
+  reset_range_keys(); 
+
+  // cached response with etag?
   if ( _assetLen && ! _etagStr.empty() ) {
     // nothing handled until handle_block_tests is done...
     launch_block_tests(); // test if blocks are ready...
@@ -184,80 +189,6 @@ BlockSetAccess::handleSendRequestHeaders(Transaction &txn)
 {
   ThreadTxnID txnid{_txn};
   clean_server_request(txn); // request full blocks if possible
-  txn.resume();
-}
-
-void
-BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
-{
-  if ( _storeXform ) {
-    ThreadTxnID txnid{txn};
-    _storeXform->txnReadResponse();
-  }
-  txn.resume();
-}
-
-void
-BlockStoreXform::txnReadResponse()
-{
-  auto blkSz = _ctxt.blockSize();
-  auto &txn = _ctxt.txn();
-  auto atsTxn = _ctxt.atsTxn();
-  auto assetLen = _ctxt.assetLen();
-  auto beginByte = _ctxt._beginByte;
-  auto rangeLen = _ctxt.rangeLen();
-
-  auto &resp = txn.getServerResponse();
-  auto &respHdrs = resp.getHeaders();
-  if (resp.getStatusCode() != HTTP_STATUS_PARTIAL_CONTENT) {
-    DEBUG_LOG("rejecting due to unusable status: %d",resp.getStatusCode());
-    TSHttpTxnServerRespNoStoreSet(atsTxn,1);
-    txn.resume();
-    return; // cannot use this for cache ...
-  }
-
-  auto contentEnc = respHdrs.values(CONTENT_ENCODING_TAG);
-
-  if ( ! contentEnc.empty() && contentEnc != "identity" )
-  {
-    DEBUG_LOG("rejecting due to unusable encoding: %s",contentEnc.c_str());
-    TSHttpTxnServerRespNoStoreSet(atsTxn,1);
-    txn.resume();
-    return; // cannot use this for range block storage ...
-  }
-
-  auto blkByte      = beginByte - ( beginByte % blkSz ); // strict location
-
-  // we have to restart?
-  if ( _ctxt._etagStr != respHdrs.value(ETAG_TAG) ) 
-  {
-    _ctxt._etagStr = respHdrs.value(ETAG_TAG);
-
-    for( auto &&keyp : _ctxt._keysInRange ) {
-      auto i = &keyp - &_ctxt._keysInRange.front();
-      keyp = std::move(ATSCacheKey(_ctxt.clientUrl(), _ctxt._etagStr, blkByte));
-      _vcsToWrite[i].release(); // no future set any more...
-      blkByte += blkSz;
-    }
-  }
-
-  auto srvrRange = respHdrs.value(CONTENT_RANGE_TAG); // not in clnt hdrs
-  auto l = srvrRange.find('/');
-  l = ( l != srvrRange.npos ? l : srvrRange.size() ); // zero-length c-string if no '/' found
-  auto currAssetLen = std::atol( srvrRange.c_str() + l );
-
-  DEBUG_LOG("srvr-resp: len=%#lx olen=%#lx (%ld-%ld) final=%s", currAssetLen, assetLen, beginByte, beginByte + rangeLen, srvrRange.c_str());
-
-  if (currAssetLen != assetLen) {
-    _ctxt._assetLen     = static_cast<uint64_t>(currAssetLen);
-    DEBUG_LOG("srvr-bitset: blk=%#lx", blkSz);
-  }
-
-  resp.setStatusCode(HTTP_STATUS_OK);
-  respHdrs.set(CONTENT_ENCODING_TAG, CONTENT_ENCODING_INTERNAL); // promote matches
-  respHdrs.append(VARY_TAG,ACCEPT_ENCODING_TAG); // please notice it!
-
-  DEBUG_LOG("stub-hdrs:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
   txn.resume();
 }
 
@@ -311,11 +242,6 @@ BlockSetAccess::clean_server_request(Transaction &txn)
   } else {
     proxyReq.set(RANGE_TAG, clientRangeStr()); // restore as before..
   }
-}
-
-void
-BlockSetAccess::prepare_cached_stub(Transaction &txn)
-{
 }
 
 void

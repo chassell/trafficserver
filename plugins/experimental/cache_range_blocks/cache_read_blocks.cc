@@ -28,8 +28,29 @@
 using namespace atscppapi;
 
 void
+BlockSetAccess::reset_range_keys()
+{
+  _keysInRange.clear();
+
+  auto firstBlk = _beginByte / _blkSize;
+  auto endBlk = (_endByte + _blkSize-1) / _blkSize; // round up
+
+  if ( _etagStr.empty() || _beginByte < 0 || _beginByte >= _endByte ) {
+    DEBUG_LOG("keys are all empty: etag:%s bytes=[%ld-%ld)", _etagStr.c_str(), _beginByte, _endByte);
+    _keysInRange.resize( endBlk - firstBlk );  // resize with defaults
+    return;
+  }
+
+  for ( auto b = firstBlk * _blkSize ; b < _endByte ; b += _blkSize) {
+    _keysInRange.push_back(std::move(ATSCacheKey(clientUrl(), _etagStr, b)));
+  }
+}
+
+void
 BlockSetAccess::launch_block_tests()
 {
+  _vcsToRead.clear(); 
+
   // stateless callback as deleter...
   using Deleter_t                = void (*)(BlockSetAccess *);
   static const Deleter_t deleter = [](BlockSetAccess *ptr) {
@@ -40,12 +61,11 @@ BlockSetAccess::launch_block_tests()
   auto barrierLock = std::shared_ptr<BlockSetAccess>(this, deleter);
   auto blkByte      = _beginByte - ( _beginByte % _blkSize ); // strict location
 
-  for (auto &&k : _keysInRange) {
-    auto i = &k - &_keysInRange.front();
+  for (auto &&key : _keysInRange) {
+    _vcsToRead.emplace_back();
     // prep for async reads that init into VConn-futures
-    k = std::move(ATSCacheKey(clientUrl(), _etagStr, blkByte));
-    auto contp      = ATSCont::create_temp_tscont(_mutexOnlyCont, _vcsToRead[i], barrierLock);
-    TSCacheRead(contp, k);
+    auto contp      = ATSCont::create_temp_tscont(_mutexOnlyCont, _vcsToRead.back(), barrierLock);
+    TSCacheRead(contp, key);
     blkByte += _blkSize;
   }
 }
@@ -58,12 +78,16 @@ BlockSetAccess::handle_block_tests()
   using std::future_status;
 
   //
-  // mutex-protected check
+  // mutex for single choice (read or write only) ...
   //
 
   if (_storeXform || _readXform) {
     return; // transform has already begun
   }
+
+  //
+  // checking once ...
+  //
 
   auto nrdy     = 0U;
   auto skip     = 0U;
@@ -73,7 +97,9 @@ BlockSetAccess::handle_block_tests()
 
   ink_assert( _vcsToRead.size() == _keysInRange.size() );
 
+  //
   // scan *all* keys and vconns to check if ready
+  //
   for( auto &&keyp : _keysInRange ) {
     auto i = &keyp - &_keysInRange.front();
     auto &rdFut = _vcsToRead[i];
@@ -105,40 +131,46 @@ BlockSetAccess::handle_block_tests()
 
     // vconn/block is right size?
     if ( blkLen != neededLen ) {
-      ++skip; // allow storage
+      ++skip; // needs storage
       DEBUG_LOG("read returned wrong size: 1<<%ld n=%ld", firstBlk + i, blkLen);
       continue;
     }
 
+    // block writing to successful reads?
+
     if ( skip ) {
-      keyp.reset(); // disallow new storage at this point...
-    } 
+      ++skip;
+      keyp.reset(); // disallow new storage of successful read
+      DEBUG_LOG("read successful after skip : vc:%p + 1<<%ld", vconn, firstBlk + i);
+      continue;
+    }
 
     // all successful so far!
     ++nrdy;
     DEBUG_LOG("read successful present : vc:%p + 1<<%ld", vconn, firstBlk + i);
   }
 
-  // ready to read from cache...
+  //
+  // done scanning all keys
+  //
+
+  // ready to read from cache? 
   if ( nrdy == _keysInRange.size() ) {
     start_cache_hit(_beginByte);
     return;
   }
 
-  auto n = _vcsToRead.size();
+  //
+  // not all are ready and doing a write instead
+  //
 
-  for( auto &&rdFut : _vcsToRead ) { 
-    if ( ! rdFut.is_close_able() ) {
-      auto i = &rdFut - &_vcsToRead.front();
-      DEBUG_LOG("late cache-read entry: 1<<%ld",firstBlk + i);
-      break;
-    }
-    --n;
+  // if all cache futures are accounted for...
+  if ( skip + nrdy == _vcsToRead.size() ) {
+    _vcsToRead.clear(); // close early
   }
 
-  // best to do now?
-  if ( ! n ) {
-    _vcsToRead.clear(); // deallocate and close now...
+  for ( auto i = nrdy ; i-- ; ) {
+    _keysInRange[i].reset(); // clear the leading keys that don't need replacing...
   }
 
   start_cache_miss(firstBlk, endBlk);
@@ -149,7 +181,6 @@ void
 BlockSetAccess::start_cache_hit(int64_t rangeStart)
 {
   _readXform = std::make_unique<BlockReadXform>(*this, rangeStart);
-//  set_cache_hit_bitset(); // may be dangerous...
   _txn.resume();
 }
 
@@ -222,34 +253,3 @@ BlockReadXform::~BlockReadXform()
 {
   DEBUG_LOG("destruct start");
 }
-
-void
-BlockSetAccess::set_cache_hit_bitset()
-{
-  // HIT_FRESH is the case currently...
-
-  Headers cachedHdr;
-  TSMBuffer bufp = nullptr;
-  TSMLoc offset = nullptr;
-
-  // no need to free these 
-  TSHttpTxnCachedRespModifiableGet(atsTxn(), &bufp, &offset);
-
-  cachedHdr.reset(bufp,offset); 
-  //  cachhdrs.erase(CONTENT_RANGE_TAG); // erase to remove concerns
-//  cachedHdr.erase(X_BLOCK_BITSET_TAG); // attempt to erase/rewrite field in headers
-//  cachedHdr.append(X_BLOCK_BITSET_TAG, b64BlkUsable()); // attempt to erase/rewrite field in headers
-
-  auto r = TSHttpTxnUpdateCachedObject(atsTxn());
-
-  // re-read everything ...
-  cachedHdr.reset(bufp,offset);
-
-  if ( r == TS_SUCCESS ) {
-//    DEBUG_LOG("updated bitset: %s", b64BlkUsable().c_str());
-    DEBUG_LOG("updated cache-hdrs:\n-----\n%s\n------\n", cachedHdr.wireStr().c_str());
-  } else if ( r == TS_ERROR ) {
-    DEBUG_LOG("failed to update cache-hdrs:\n-----\n%s\n------\n", cachedHdr.wireStr().c_str());
-  }
-}
-

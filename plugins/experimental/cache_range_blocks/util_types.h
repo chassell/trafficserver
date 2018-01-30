@@ -180,6 +180,7 @@ struct ATSVConnFuture : private std::shared_future<TSVConn>
 
   ~ATSVConnFuture();
 
+  operator bool() const { return std::shared_future<TSVConn>::valid(); }
   int error() const;
   bool valid() const { return ! error(); }
   bool is_close_able() const;
