@@ -141,6 +141,7 @@ public:
   void handleSendResponseHeaders(Transaction &txn) override;
 private:
 
+  void reset_range_keys();
   void launch_block_tests();
   void handle_block_tests();
 
@@ -193,10 +194,27 @@ public:
   BlockStoreXform(BlockSetAccess &ctxt, int blockCount);
   ~BlockStoreXform() override;
 
-  void txnReadCacheLookupComplete(); 
-  void txnReadResponse(); 
+  void start_write_futures();
+
+  void reset_write_futures() {
+    _vcsToWriteP.reset();
+    start_write_futures();
+  }
 
 private:
+  const ATSVConnFuture &get_vconn_future(const ATSCacheKey &key) const {
+    return _vcsToWriteP->operator []( &key - &_ctxt.keysInRange().front() );
+  }
+
+  ATSVConnFuture &at_vconn_future(const ATSCacheKey &key) 
+  {
+    auto i = &key - &_ctxt.keysInRange().front();
+    if ( i >= static_cast<ptrdiff_t>(_vcsToWriteP->size()) ) {
+      _vcsToWriteP->resize(i+1);
+    }
+    return _vcsToWriteP->operator [](i);
+  }
+
   TSVConn next_valid_vconn(int64_t pos, int64_t len, int64_t &skipDist);
 
   int64_t handleBodyRead(TSIOBufferReader r, int64_t pos, int64_t len);
@@ -206,8 +224,6 @@ private:
   BlockSetAccess &_ctxt;
 
   WriteVCsPtr_t _vcsToWriteP; 
-  WriteVCs_t &_vcsToWrite; // indexed as the keys
-
   TSEvent _blockVIOWaiting = TS_EVENT_NONE; // event if body-read is blocked
 };
 
