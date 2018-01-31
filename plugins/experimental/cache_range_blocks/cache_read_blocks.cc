@@ -49,24 +49,32 @@ BlockSetAccess::reset_range_keys()
 void
 BlockSetAccess::launch_block_tests()
 {
-  _vcsToRead.clear(); 
-
   // stateless callback as deleter...
   using Deleter_t                = void (*)(BlockSetAccess *);
   static const Deleter_t deleter = [](BlockSetAccess *ptr) {
     ptr->handle_block_tests(); // recurse from last one
   };
 
+  auto &keys  = keysInRange();
+  auto nxtBlk = _beginByte / blockSize();
+  nxtBlk += _vcsToRead.size();
+
   // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
   auto barrierLock = std::shared_ptr<BlockSetAccess>(this, deleter);
-  auto blkByte      = _beginByte - ( _beginByte % _blkSize ); // strict location
 
-  for (auto &&key : _keysInRange) {
+  int limit = 50; // block-reads spawned at one time...
+ 
+  for ( auto i = keys.begin() + _vcsToRead.size() ; i != keys.end() ; ++i, ++nxtBlk )
+  {
+    auto &key = *i; // examine all the not-future'd keys
     _vcsToRead.emplace_back();
     // prep for async reads that init into VConn-futures
     auto contp      = ATSCont::create_temp_tscont(_mutexOnlyCont, _vcsToRead.back(), barrierLock);
     TSCacheRead(contp, key);
-    blkByte += _blkSize;
+
+    if ( ! --limit ) {
+      break;
+    }
   }
 }
 
@@ -95,35 +103,44 @@ BlockSetAccess::handle_block_tests()
   auto endBlk = (_endByte + _blkSize-1) / _blkSize; // round up
   auto finalBlk = _assetLen / _blkSize; // round down..
 
-  ink_assert( _vcsToRead.size() == _keysInRange.size() );
-
   //
   // scan *all* keys and vconns to check if ready
   //
   for( auto &&keyp : _keysInRange ) {
     auto i = &keyp - &_keysInRange.front();
-    auto &rdFut = _vcsToRead[i];
 
+    if ( i >= static_cast<ptrdiff_t>(_vcsToRead.size()) ) {
+      break; // see if store is needed yet?
+    }
+
+    auto &rdFut = _vcsToRead[i];
+    int error = rdFut.error();
+
+    // key was reset with result visible..
     if ( ! keyp ) {
-      ++skip; // keep scanning for others
+      ( error ? ++skip : ++nrdy );
       continue;
     }
 
-    int error = rdFut.error();
     if ( error == ESOCK_TIMEOUT ) {
-      // leave skip 
+      DEBUG_LOG("read not ready: 1<<%ld %s %d", firstBlk + i, InkStrerror(error),error);
+      // leave skip [likely nonzero]
       // leave nrdy also
-      continue; 
+      continue;
+    }
+
+    if ( error == ECACHE_NO_DOC ) {
+      ++skip; // allowing new store
+      DEBUG_LOG("read not present: 1<<%ld %s %d", firstBlk + i, InkStrerror(error),error);
+      continue;
     }
 
     if ( error ) {
-      if ( error != ECACHE_NO_DOC ) {
-        keyp.reset();  // disallow new storage
-      }
-      ++skip; // allow storage if NO_DOC error
-      DEBUG_LOG("read not ready: 1<<%ld %s", firstBlk + i, InkStrerror(error));
+      ++skip;
+      DEBUG_LOG("read not usable: 1<<%ld %s %d", firstBlk + i, InkStrerror(error),error);
+      keyp.reset(); // disallow new storage
       continue;
-    }
+    } 
 
     auto vconn = rdFut.get();
     auto blkLen = TSVConnCacheObjectSizeGet(vconn);
@@ -137,15 +154,15 @@ BlockSetAccess::handle_block_tests()
     }
 
     // block writing to successful reads?
+    keyp.reset(); // disallow new storage of successful read
 
     if ( skip ) {
       ++skip;
-      keyp.reset(); // disallow new storage of successful read
       DEBUG_LOG("read successful after skip : vc:%p + 1<<%ld", vconn, firstBlk + i);
       continue;
     }
 
-    // all successful so far!
+    // all from the start that are successful
     ++nrdy;
     DEBUG_LOG("read successful present : vc:%p + 1<<%ld", vconn, firstBlk + i);
   }
@@ -157,6 +174,11 @@ BlockSetAccess::handle_block_tests()
   // ready to read from cache? 
   if ( nrdy == _keysInRange.size() ) {
     start_cache_hit(_beginByte);
+    return;
+  }
+
+  if ( nrdy == _vcsToRead.size() ) {
+    launch_block_tests(); // start more block tests
     return;
   }
 

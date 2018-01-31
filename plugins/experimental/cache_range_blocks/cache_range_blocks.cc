@@ -161,7 +161,6 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   auto endBlk = (_endByte + _blkSize-1) / _blkSize; // round up
 
   _keysInRange.resize(endBlk - firstBlk); // start empty...
-  _vcsToRead.resize(endBlk - firstBlk);   // start empty...
 
   // store with inclusive end
   _blkRangeStr = "bytes=";
