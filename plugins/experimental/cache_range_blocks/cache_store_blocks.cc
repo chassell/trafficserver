@@ -72,25 +72,28 @@ BlockStoreXform::start_write_futures()
     _vcsToWriteP->reserve(keys.size()); // no need to realloc
   }
 
+  nxtBlk += _vcsToWriteP->size();
+
   int limit = 5; // block-writes spawned at one time...
 
-  for ( auto &&key : keys )
+  for ( auto i = keys.begin() + _vcsToWriteP->size() ; i != keys.end() ; ++i, ++nxtBlk )
   {
+    auto &key = *i; // examine all the not-future'd keys
     if ( ! key || ! key.valid() ) {
-      DEBUG_LOG("store: 1<<%ld present / not storable", nxtBlk++);
+      DEBUG_LOG("store: 1<<%ld present / not storable", nxtBlk);
       continue;
     }
 
     auto &vcFuture = at_vconn_future(key); // get future to match key
 
     if ( vcFuture ) {
-      DEBUG_LOG("store: 1<<%ld started or ready", nxtBlk++);
+      DEBUG_LOG("store: 1<<%ld started or ready", nxtBlk);
       continue; // skip a waiting future
     }
 
     // empty future to prep
     auto contp = ATSCont::create_temp_tscont(*this, vcFuture, _vcsToWriteP);
-    DEBUG_LOG("store: 1<<%ld to write", nxtBlk++);
+    DEBUG_LOG("store: 1<<%ld to write", nxtBlk);
     TSCacheWrite(contp, key); // find room to store each key...
 
     if ( ! --limit ) {
@@ -209,7 +212,7 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
     return 0;
   }
 
-  auto &keys = _ctxt.keysInRange();
+  auto &keys = _ctxt._keysInRange;
 
   if ( ! inpos ) {
     auto n = _ctxt.blockSize() * keys.size();
@@ -281,6 +284,7 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
   ink_assert(vcFuture.get() == currBlock);
 
   vcFuture.release(); // will skip old bytes next time...
+  keys[blk].reset(); // no key any more either
 
   // make a totally async set of callbacks to write out new block
   auto blockCont = TSContCreate(&BlockStoreXform::handleBlockWrite,TSContMutexGet(*this));
