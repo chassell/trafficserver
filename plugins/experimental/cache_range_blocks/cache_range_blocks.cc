@@ -160,26 +160,33 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   auto firstBlk = _beginByte / _blkSize;
   auto endBlk = (_endByte + _blkSize-1) / _blkSize; // round up
 
-  _keysInRange.resize(endBlk - firstBlk); // start empty...
-
   // store with inclusive end
   _blkRangeStr = "bytes=";
+
+  if ( ! _assetLen || _etagStr.empty() ) 
+  {
+    if ( ! endBlk && firstBlk >= 0 ) {
+      _blkRangeStr += std::to_string(_blkSize * firstBlk) + "-";
+    } else if ( ! endBlk && firstBlk < 0 ) {
+      _blkRangeStr += std::string("-") + std::to_string(_blkSize * (1-firstBlk));
+    } else if ( endBlk ) {
+      _blkRangeStr += std::to_string(_blkSize * firstBlk) + "-" + std::to_string(_blkSize * endBlk - 1);
+    }
+
+    start_cache_miss(firstBlk,endBlk);
+    txn.resume();
+    return;
+  }
+
   _blkRangeStr += std::to_string(_blkSize * firstBlk) + "-" + std::to_string(_blkSize * endBlk - 1);
+  _keysInRange.resize(endBlk - firstBlk); // start empty...
 
   // use known values (if enough) to create keys
   reset_range_keys(); 
 
-  // cached response with etag?
-  if ( _assetLen && ! _etagStr.empty() ) {
-    // nothing handled until handle_block_tests is done...
-    launch_block_tests(); // test if blocks are ready...
-    return;
-  }
-
-  // no valid file found yet?
-
-  start_cache_miss(firstBlk,endBlk);
-  txn.resume();
+  // nothing handled until handle_block_tests is done...
+  launch_block_tests(); // test if blocks are ready...
+  // delay txn.resume()
 }
 
 // handled for init-only case
@@ -274,32 +281,42 @@ BlockSetAccess::clean_client_response(Transaction &txn)
 static int
 parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_t &end)
 {
+  // illegal zero-length range
+  start = end = -1;
+
   // value of digit-string after last '='
   //    or 0 if no '='
   //    or negative value if no digits and '-' present
-  start = std::atol(rangeFld.erase(0, rangeFld.rfind('=')).erase(0, 1).c_str());
+  rangeFld.erase(0, rangeFld.rfind('='));
 
-  if (!start && (rangeFld.empty() || rangeFld.front() != '0')) {
-    --start;
+  if ( rangeFld.empty() ) {
+    return start; // not legal...
   }
 
-  // negative value of digit-string after last '-'
-  //    or 0 if no '=' or leading 0
-  end = -std::atol(rangeFld.erase(0, rangeFld.rfind('-')).c_str());
+  // skip '=' and parse a number (allowing <= 0)
+  start = std::atol(rangeFld.c_str()+1);
+
+  // skip a start number (> 0 if found)
+  rangeFld.erase(0, rangeFld.rfind('-'));
 
   if (rangeFld.empty()) {
-    return --end - start;
+    return (end = -1); // not legal..
   }
+
+  // flip the negative value of digit-string after last '-'
+
+  end = -std::atol(rangeFld.c_str());
 
   if (start >= 0 && !end) {
     end = len; // end is implied
   } else if (start < 0 && -start == end) {
-    start = len + end; // bytes before end
+    start += len; // bytes before end
     end   = len;       // end is implied
   } else {
     ++end; // change inclusive to exclusive
   }
 
+  // if less than zero .. we need more info!
   return end - start;
 }
 
