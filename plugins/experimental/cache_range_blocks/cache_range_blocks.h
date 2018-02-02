@@ -115,7 +115,10 @@ public:
   const std::vector<ATSCacheKey> & keysInRange() const { return _keysInRange; }
 
   int64_t assetLen() const { return _assetLen; }
-  int64_t rangeLen() const { return _endByte - _beginByte; }
+  int64_t contentLen() const { return _endByte - _beginByte; }
+  int64_t indexLen() const { return endIndex() - firstIndex(); }
+  int64_t firstIndex() const { return _beginByte / _blkSize; }
+  int64_t endIndex() const { return (_endByte + _blkSize-1) / _blkSize; }
   int64_t blockSize() const { return _blkSize; }
   
   void clean_client_request(); // allow secondary-accepting block-set match
@@ -150,8 +153,8 @@ private:
 
   int64_t select_needed_blocks();
 
-  void start_cache_miss(int64_t firstBlk, int64_t endBlk);
-  void start_cache_hit(int64_t rangeStart);
+  void start_cache_miss();
+  void start_cache_hit();
   void set_cache_hit_bitset();
 
 private:
@@ -190,9 +193,18 @@ public:
   using WriteVCs_t = std::vector<ATSVConnFuture>;
   using WriteVCsPtr_t = std::shared_ptr<std::vector<ATSVConnFuture>>;
 
+  struct BlockWriteData {
+    WriteVCsPtr_t       _vcsToWriteP;
+    int                 _txnid;
+    int                 _blkid;
+    int                 _ind;
+  };
+
 public:
   BlockStoreXform(BlockSetAccess &ctxt, int blockCount);
   ~BlockStoreXform() override;
+
+  int64_t currVConnCount() { return _vcsToWriteP->size(); }
 
   void start_write_futures();
 
@@ -209,7 +221,7 @@ private:
   ATSVConnFuture &at_vconn_future(const ATSCacheKey &key) 
   {
     auto i = &key - &_ctxt.keysInRange().front();
-    if ( i >= static_cast<ptrdiff_t>(_vcsToWriteP->size()) ) {
+    if ( i >= currVConnCount() ) {
       _vcsToWriteP->resize(i+1);
     }
     return _vcsToWriteP->operator [](i);
@@ -218,12 +230,13 @@ private:
   TSVConn next_valid_vconn(int64_t pos, int64_t len, int64_t &skipDist);
 
   int64_t handleBodyRead(TSIOBufferReader r, int64_t pos, int64_t len);
-  static int handleBlockWrite(TSCont, TSEvent, void *);
+  static void handleBlockWrite(TSEvent, void *, const BlockWriteData &);
 
 private:
   BlockSetAccess &_ctxt;
 
-  WriteVCsPtr_t _vcsToWriteP; 
+  WriteVCsPtr_t        _vcsToWriteP; 
+//  std::vector<TSCont>  _blockWrites
   TSEvent _blockVIOWaiting = TS_EVENT_NONE; // event if body-read is blocked
 };
 
@@ -238,14 +251,9 @@ public:
   ~BlockReadXform() override;
 
 private:
-  BlockReadXform(BlockSetAccess &ctxt, int64_t start);
+  BlockReadXform(BlockSetAccess &ctxt, int64_t skip);
 
-  void launch_block_reads(); // from constructor
-private:
-  BlockSetAccess &_ctxt;
-  int64_t _startSkip;
-
-  std::vector<ATSVConnFuture> &_vconns;
+  void launch_block_reads();
 };
 
 //}

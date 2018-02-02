@@ -149,9 +149,13 @@ public:
   explicit ATSCont(TSCont mutexSrc=nullptr); // no handler
   virtual ~ATSCont();
 
-  // accepts TSHttpTxn handler functions
+  // handle TSHttpTxn continuations with a method
   template <class T_OBJ, typename T_DATA> 
-  ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, T_DATA), T_DATA cbdata, TSCont mutexSrc=nullptr);
+  ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, const T_DATA&), T_DATA cbdata, TSCont mutexSrc=nullptr);
+
+  // handle TSHttpTxn continuations with a function and a copied type
+  template <typename T_DATA>
+  ATSCont(TSEvent endEvent, void (*funcp)(TSEvent, void *, const T_DATA&), T_DATA cbdata, TSCont mutexSrc=nullptr);
 
 public:
   operator TSCont() const { return get(); }
@@ -326,5 +330,42 @@ public:
   TSIOBuffer_t _teeBufferP;
   TSIOBufferReader_t _teeReaderP;
 };
+
+
+// accepts TSHttpTxn handler functions
+template <class T_OBJ, typename T_DATA>
+ATSCont::ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, const T_DATA&), T_DATA cbdata, TSCont mutexSrc)
+  : TSCont_t(TSContCreate(&ATSCont::handleTSEventCB, ( mutexSrc ? TSContMutexGet(mutexSrc) : TSMutexCreate() )))
+{
+  // point back here
+  TSContDataSet(get(), this);
+
+  static_cast<void>(cbdata);
+
+  // memorize user data to forward on
+  _userCB = decltype(_userCB)([&obj, funcp, cbdata](TSEvent event, void *evtdata) { 
+    (obj.*funcp)(event, evtdata, cbdata); 
+  });
+
+  // deletion from obj's scope .. [helped by Cont-data nullptr]
+}
+
+template <typename T_DATA>
+ATSCont::ATSCont(TSEvent endEvent, void (*funcp)(TSEvent, void *, const T_DATA&), T_DATA cbdata, TSCont mutexSrc)
+  : TSCont_t(TSContCreate(&ATSCont::handleTSEventCB, ( mutexSrc ? TSContMutexGet(mutexSrc) : TSMutexCreate() )))
+{
+  // point back here
+  TSContDataSet(get(), this);
+
+  static_cast<void>(cbdata);
+  // memorize user data to forward on
+  _userCB = decltype(_userCB)([this, endEvent, funcp, cbdata](TSEvent event, void *evtdata) { 
+     (*funcp)(event, evtdata, cbdata);
+     if ( event == endEvent ) {
+       delete this;
+     }
+  });
+}
+
 
 //}

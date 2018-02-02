@@ -109,20 +109,6 @@ ATSCont::create_temp_tscont(TSCont mutexSrc, T_FUTURE &cbFuture, const std::shar
 
   return cont; // convert to TSCont
 }
-
-// accepts TSHttpTxn handler functions
-template <class T_OBJ, typename T_DATA>
-ATSCont::ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, T_DATA), T_DATA cbdata, TSCont mutexSrc)
-  : TSCont_t(TSContCreate(&ATSCont::handleTSEventCB, ( mutexSrc ? TSContMutexGet(mutexSrc) : TSMutexCreate() )))
-{
-  // point back here
-  TSContDataSet(get(), this);
-
-  static_cast<void>(cbdata);
-  // memorize user data to forward on
-  _userCB = decltype(_userCB)([&obj, funcp, cbdata](TSEvent event, void *evtdata) { (obj.*funcp)(event, evtdata, cbdata); });
-}
-
 // bare Continuation lambda adaptor
 ATSCont::ATSCont(TSCont mutexSrc) : TSCont_t(TSContCreate(&ATSCont::handleTSEventCB, ( mutexSrc ? TSContMutexGet(mutexSrc) : TSMutexCreate() )))
 {
@@ -134,7 +120,7 @@ ATSCont::~ATSCont()
 {
   auto cont = get();
   if ( ! cont ) {
-    return; // happens often
+    return; // cont was deleted or none added
   }
 
   atscppapi::ScopedContinuationLock lock(cont);
@@ -327,8 +313,9 @@ BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, 
 class BlockStoreXform;
 class BlockReadXform;
 
-template ATSCont::ATSCont(BlockStoreXform &obj, void (BlockStoreXform::*funcp)(TSEvent, void *, decltype(nullptr)), decltype(nullptr),TSCont);
-template ATSCont::ATSCont(BlockReadXform &obj, void (BlockReadXform::*funcp)(TSEvent, void *, decltype(nullptr)), decltype(nullptr),TSCont);
+// template ATSCont::ATSCont(BlockStoreXform &obj, void (BlockStoreXform::*funcp)(TSEvent, void *, const decltype(nullptr) &), decltype(nullptr),TSCont);
+// template ATSCont::ATSCont(BlockReadXform &obj, void (BlockReadXform::*funcp)(TSEvent, void *, const decltype(nullptr) &), decltype(nullptr),TSCont);
+
 template TSCont ATSCont::create_temp_tscont(TSCont, ATSVConnFuture &, const std::shared_ptr<void> &);
 
 //}
