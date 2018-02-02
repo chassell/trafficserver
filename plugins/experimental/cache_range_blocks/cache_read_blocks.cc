@@ -32,16 +32,13 @@ BlockSetAccess::reset_range_keys()
 {
   _keysInRange.clear();
 
-  auto firstBlk = _beginByte / _blkSize;
-  auto endBlk = (_endByte + _blkSize-1) / _blkSize; // round up
-
   if ( _etagStr.empty() || _beginByte < 0 || _beginByte >= _endByte ) {
     DEBUG_LOG("keys are all empty: etag:%s bytes=[%ld-%ld)", _etagStr.c_str(), _beginByte, _endByte);
-    _keysInRange.resize( endBlk - firstBlk );  // resize with defaults
+    _keysInRange.resize(indexLen());  // resize with defaults
     return;
   }
 
-  for ( auto b = firstBlk * _blkSize ; b < _endByte ; b += _blkSize) {
+  for ( auto b = firstIndex() * _blkSize ; b < _endByte ; b += _blkSize) {
     _keysInRange.push_back(std::move(ATSCacheKey(clientUrl(), _etagStr, b)));
   }
 }
@@ -99,8 +96,6 @@ BlockSetAccess::handle_block_tests()
 
   auto nrdy     = 0U;
   auto skip     = 0U;
-  auto firstBlk = _beginByte / _blkSize;
-  auto endBlk = (_endByte + _blkSize-1) / _blkSize; // round up
   auto finalBlk = _assetLen / _blkSize; // round down..
 
   //
@@ -108,6 +103,7 @@ BlockSetAccess::handle_block_tests()
   //
   for( auto &&keyp : _keysInRange ) {
     auto i = &keyp - &_keysInRange.front();
+    auto blkInd = firstIndex() + i;
 
     if ( i >= static_cast<ptrdiff_t>(_vcsToRead.size()) ) {
       break; // see if store is needed yet?
@@ -123,7 +119,7 @@ BlockSetAccess::handle_block_tests()
     }
 
     if ( error == ESOCK_TIMEOUT ) {
-      DEBUG_LOG("read not ready: 1<<%ld %s %d", firstBlk + i, InkStrerror(error),error);
+      DEBUG_LOG("read not ready: 1<<%ld %s %d", blkInd, InkStrerror(error),error);
       // leave skip [likely nonzero]
       // leave nrdy also
       continue;
@@ -131,25 +127,25 @@ BlockSetAccess::handle_block_tests()
 
     if ( error == ECACHE_NO_DOC ) {
       ++skip; // allowing new store
-      DEBUG_LOG("read not present: 1<<%ld %s %d", firstBlk + i, InkStrerror(error),error);
+      DEBUG_LOG("read not present: 1<<%ld %s %d", blkInd, InkStrerror(error),error);
       continue;
     }
 
     if ( error ) {
       ++skip;
-      DEBUG_LOG("read not usable: 1<<%ld %s %d", firstBlk + i, InkStrerror(error),error);
+      DEBUG_LOG("read not usable: 1<<%ld %s %d", blkInd, InkStrerror(error),error);
       keyp.reset(); // disallow new storage
       continue;
     } 
 
     auto vconn = rdFut.get();
     auto blkLen = TSVConnCacheObjectSizeGet(vconn);
-    auto neededLen = ( firstBlk + i == finalBlk ? ((_assetLen-1) % blockSize())+1 : blockSize() );
+    auto neededLen = ( blkInd == finalBlk ? ((_assetLen-1) % blockSize())+1 : blockSize() );
 
     // vconn/block is right size?
     if ( blkLen != neededLen ) {
       ++skip; // needs storage
-      DEBUG_LOG("read returned wrong size: 1<<%ld n=%ld", firstBlk + i, blkLen);
+      DEBUG_LOG("read returned wrong size: 1<<%ld n=%ld", blkInd, blkLen);
       continue;
     }
 
@@ -158,13 +154,13 @@ BlockSetAccess::handle_block_tests()
 
     if ( skip ) {
       ++skip;
-      DEBUG_LOG("read successful after skip : vc:%p + 1<<%ld", vconn, firstBlk + i);
+      DEBUG_LOG("read successful after skip : 1<<%ld vc:%p + ", blkInd, vconn);
       continue;
     }
 
     // all from the start that are successful
     ++nrdy;
-    DEBUG_LOG("read successful present : vc:%p + 1<<%ld", vconn, firstBlk + i);
+    DEBUG_LOG("read successful present : 1<<%ld vc:%p + ", blkInd, vconn);
   }
 
   //
@@ -173,7 +169,7 @@ BlockSetAccess::handle_block_tests()
 
   // ready to read from cache? 
   if ( nrdy == _keysInRange.size() ) {
-    start_cache_hit(_beginByte);
+    start_cache_hit();
     return;
   }
 
@@ -195,29 +191,29 @@ BlockSetAccess::handle_block_tests()
     _keysInRange[i].reset(); // clear the leading keys that don't need replacing...
   }
 
-  start_cache_miss(firstBlk, endBlk);
+  start_cache_miss();
   _txn.resume();
 }
 
 void
-BlockSetAccess::start_cache_hit(int64_t rangeStart)
+BlockSetAccess::start_cache_hit()
 {
-  _readXform = std::make_unique<BlockReadXform>(*this, rangeStart);
+  _readXform = std::make_unique<BlockReadXform>(*this, _beginByte % _blkSize); // skip this many
   _txn.resume();
 }
 
-BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
-  : ATSXformCont(ctxt.txn(), TS_HTTP_RESPONSE_TRANSFORM_HOOK, ctxt.rangeLen(), start % ctxt.blockSize()), // zero bytes length, zero bytes offset...
-    _ctxt(ctxt),
-    _startSkip(start % ctxt.blockSize()),
-    _vconns(ctxt._vcsToRead)
+BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t toSkip)
+  : ATSXformCont(ctxt.txn(), TS_HTTP_RESPONSE_TRANSFORM_HOOK, ctxt.contentLen(), toSkip) // zero bytes length, zero bytes offset...
 {
-  auto len = std::min( TSVConnCacheObjectSizeGet(_vconns[0].get()), _startSkip + _ctxt.rangeLen() );
+  auto &vconns = ctxt._vcsToRead;
+  auto len = std::min( TSVConnCacheObjectSizeGet(vconns[0].get()), toSkip + ctxt.contentLen() );
+  auto lastCacheByte = toSkip + ctxt.contentLen();
+  auto blkSize = ctxt.blockSize();
 
-  reset_input_vio( TSVConnRead(_vconns[0].release(), *this, outputBuffer(), len) );
+  reset_input_vio( TSVConnRead(vconns[0].release(), *this, outputBuffer(), len) );
 
   // initial handler ....
-  set_body_handler([this](TSEvent event, TSVIO vio, int64_t left) {
+  set_body_handler([this,lastCacheByte,blkSize,&vconns](TSEvent event, TSVIO vio, int64_t left) {
     if ( event == TS_EVENT_VCONN_WRITE_READY && vio == outputVIO() ) {
       {
         auto inrdr = TSVIOReaderGet(inputVIO()); // log current buffer level
@@ -233,25 +229,22 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t start)
       TSVConnClose(ovconn); // complete close.. [CacheVC is not an InkContinuation]
 
       // first nonzero vconn ... or past end..
-      auto nxt = std::find_if(_vconns.begin(), _vconns.end(), [](ATSVConnFuture &vc) { return vc.get() != nullptr; } ) - _vconns.begin();
+      auto nxt = std::find_if(vconns.begin(), vconns.end(), [](ATSVConnFuture &vc) { return vc.get() != nullptr; } ) - vconns.begin();
 
-      if ( nxt >= static_cast<int64_t>(_vconns.size()) ) {
+      if ( nxt >= static_cast<int64_t>(vconns.size()) ) {
         DEBUG_LOG("ignoring input-completion.  completed all reads: e#%d",event);
         return 0L; // no reads left to start!
       }
 
-      auto blkSize = _ctxt.blockSize();
-      auto endout  = _startSkip + _ctxt.rangeLen();
-
       auto nextRd    = nxt * blkSize; // next read-pos
-      auto nextRdMax = std::min(nextRd + blkSize, endout);
+      auto nextRdMax = std::min(nextRd + blkSize, lastCacheByte);
 
       DEBUG_LOG("read start: %#lx-%#lx #%#lx", nextRd, nextRdMax, nxt);
 
-      auto len = TSVConnCacheObjectSizeGet(_vconns[nxt].get());
-      len = std::min(len, _startSkip + _ctxt.rangeLen() - nextRd);
+      auto len = TSVConnCacheObjectSizeGet(vconns[nxt].get());
+      len = std::min(len, lastCacheByte - nextRd);
 
-      reset_input_vio( TSVConnRead(_vconns[nxt].release(), *this, outputBuffer(), nextRdMax - nextRd) );
+      reset_input_vio( TSVConnRead(vconns[nxt].release(), *this, outputBuffer(), nextRdMax - nextRd) );
       return 0L;
     }
 

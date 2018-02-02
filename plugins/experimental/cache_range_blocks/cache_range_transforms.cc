@@ -487,13 +487,20 @@ BlockTeeXform::inputEvent(TSEvent event, TSVIO evtvio, int64_t left)
   // position *without* left new bytes...
   auto done   = TSVIONDoneGet(inputVIO());
   auto oavail = TSIOBufferReaderAvail(_teeReaderP.get());
-  DEBUG_LOG("tee buffer bytes pre-copy: @%#lx+%#lx+%#lx", done - oavail, oavail, left);
+
+  if ( oavail > TSIOBufferWaterMarkGet(_teeBufferP.get()) ) {
+    DEBUG_LOG("tee buffer bytes blocked-copy: @%#lx+%#lx+%#lx", done - oavail, oavail, left);
+    _writeHook(_teeReaderP.get(), done, 0); // cannot un-consume in the write-hook
+    return 0; // used zero...
+  }
+
   left = TSIOBufferCopy(_teeBufferP.get(), TSVIOReaderGet(inputVIO()), left, 0);
 
   auto navail = TSIOBufferReaderAvail(_teeReaderP.get());
   DEBUG_LOG("tee buffer bytes post-copy: @%#lx+%#lx [+%#lx]", done - oavail, navail, left);
 
-  return _writeHook(_teeReaderP.get(), done, left); // show advance
+  _writeHook(_teeReaderP.get(), done, left); // cannot un-consume in the write-hook
+  return left; // always show advance from Tee
 }
 
 TSIOBufferReader

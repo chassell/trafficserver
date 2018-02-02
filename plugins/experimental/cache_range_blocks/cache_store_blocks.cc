@@ -23,8 +23,10 @@
 
 #include <algorithm>
 
+#define USE_COUNT_LIMIT 15
+
 void
-BlockSetAccess::start_cache_miss(int64_t firstBlk, int64_t endBlk)
+BlockSetAccess::start_cache_miss()
 {
   TSHttpTxnCacheLookupStatusSet(atsTxn(), TS_CACHE_LOOKUP_MISS);
 
@@ -41,14 +43,14 @@ BlockSetAccess::start_cache_miss(int64_t firstBlk, int64_t endBlk)
 
   TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS);
 
-  _storeXform = std::make_unique<BlockStoreXform>(*this,endBlk - firstBlk);
+  _storeXform = std::make_unique<BlockStoreXform>(*this,indexLen());
   _storeXform->start_write_futures(); // attempt to start writes now if possible...
 }
 
 BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
   : BlockTeeXform(ctxt.txn(), 
                   [this](TSIOBufferReader r, int64_t inpos, int64_t len) { return this->handleBodyRead(r, inpos, len); },
-                  ctxt.rangeLen(),
+                  ctxt.contentLen(),
                   ctxt._beginByte % ctxt.blockSize()),
     _ctxt(ctxt)
 {
@@ -69,15 +71,19 @@ BlockStoreXform::start_write_futures()
 
   if ( ! _vcsToWriteP ) {
     _vcsToWriteP.reset( new WriteVCs_t{}, []( WriteVCs_t *ptr ){ delete ptr; } );
-    _vcsToWriteP->reserve(keys.size()); // no need to realloc
+    _vcsToWriteP->reserve(_ctxt.indexLen()); // prevent need to realloc
   }
 
-  nxtBlk += _vcsToWriteP->size();
+  nxtBlk += currVConnCount();
 
   int limit = 5; // block-writes spawned at one time...
 
-  for ( auto i = keys.begin() + _vcsToWriteP->size() ; i != keys.end() ; ++i, ++nxtBlk )
+  for ( auto i = keys.begin() + currVConnCount() ; i != keys.end() ; ++i, ++nxtBlk )
   {
+    if ( _vcsToWriteP.use_count() >= USE_COUNT_LIMIT ) {
+      break;
+    }
+
     auto &key = *i; // examine all the not-future'd keys
     if ( ! key || ! key.valid() ) {
       DEBUG_LOG("store: 1<<%ld present / not storable", nxtBlk);
@@ -93,7 +99,7 @@ BlockStoreXform::start_write_futures()
 
     // empty future to prep
     auto contp = ATSCont::create_temp_tscont(*this, vcFuture, _vcsToWriteP);
-    DEBUG_LOG("store: 1<<%ld to write", nxtBlk);
+    DEBUG_LOG("store: 1<<%ld to write refs:%ld", nxtBlk, _vcsToWriteP.use_count());
     TSCacheWrite(contp, key); // find room to store each key...
 
     if ( ! --limit ) {
@@ -101,7 +107,8 @@ BlockStoreXform::start_write_futures()
     }
   }
 
-  DEBUG_LOG("store: len=%#lx [blk:%ldK, %#lx bytes]", _ctxt._assetLen, _ctxt.blockSize()/1024, _ctxt.blockSize());
+  DEBUG_LOG("store: refs:%ld inds=(0-%ld) len=%#lx [blk:%ldK, %#lx bytes]", _vcsToWriteP.use_count(), 
+              currVConnCount()-1, _ctxt._assetLen, _ctxt.blockSize()/1024, _ctxt.blockSize());
 }
 
 void
@@ -132,22 +139,42 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
   auto srvrRange = respHdrs.value(CONTENT_RANGE_TAG); // not in clnt hdrs
   auto l = srvrRange.find('/');
   l = ( l != srvrRange.npos ? l + 1 : srvrRange.size() ); // zero-length c-string if no '/' found
-  int64_t currAssetLen = std::atoll( srvrRange.c_str() + l );
+  auto srvrAssetLen = std::atol( srvrRange.c_str() + l);
+
+  if ( srvrAssetLen <= 0 ) 
+  {
+    DEBUG_LOG("rejecting due to unparsable asset length: %s",srvrRange.c_str());
+    _storeXform.reset(); // cannot perform transform!
+    txn.resume();
+    return; // cannot use this for range block storage ...
+  }
+
+  // orig client requested bytes-from-end-of-stream
+  if ( _beginByte < 0 ) {
+    _beginByte = srvrAssetLen + _beginByte;
+    _endByte = srvrAssetLen;
+  }
+
+  // orig client requested end-of-stream
+  if ( ! _endByte ) {
+    _endByte = srvrAssetLen;
+  }
+
   auto currETag = respHdrs.value(ETAG_TAG);
 
-  if (currAssetLen == _assetLen && currETag == _etagStr ) {
+  if (srvrAssetLen == _assetLen && currETag == _etagStr ) {
     TSHttpTxnServerRespNoStoreSet(atsTxn(),1); // we don't need to save this... assuredly..
     DEBUG_LOG("srvr-resp: len=%#lx (%ld-%ld) final=%s etag=%s", _assetLen, _beginByte, _endByte, srvrRange.c_str(), _etagStr.c_str());
     txn.resume(); // continue with expected transform
     return;
   }
 
-  DEBUG_LOG("stub-reset: len=%#lx olen=%#lx (%ld-%ld) final=%s etag=%s", currAssetLen, _assetLen, _beginByte, _endByte, srvrRange.c_str(), currETag.c_str());
+  DEBUG_LOG("stub-reset: len=%#lx olen=%#lx (%ld-%ld) final=%s etag=%s", srvrAssetLen, _assetLen, _beginByte, _endByte, srvrRange.c_str(), currETag.c_str());
   // resetting the stub headers
 
   TSHttpTxnServerRespNoStoreSet(atsTxn(),0); // must assume now we need to save these headers!
 
-  _assetLen = currAssetLen;
+  _assetLen = srvrAssetLen;
   _etagStr = currETag;
 
   reset_range_keys();
@@ -166,6 +193,7 @@ TSVConn
 BlockStoreXform::next_valid_vconn(int64_t inpos, int64_t len, int64_t &skip)
 {
   auto blksz = static_cast<int64_t>(_ctxt.blockSize());
+  auto firstBlk = _ctxt.firstIndex();
 
   skip = -1;
 
@@ -174,31 +202,49 @@ BlockStoreXform::next_valid_vconn(int64_t inpos, int64_t len, int64_t &skip)
   // amt past boundary (maybe full block)
   auto fwdDist = ((inpos + blksz - 1) % blksz) + 1; // between 1 and blksz
   auto nxtPos = inpos - fwdDist + blksz; // (can be same as inpos)
-  auto lastPos = static_cast<int64_t>(_vcsToWriteP->size()) * blksz;
   auto &keys = _ctxt.keysInRange();
   auto blk = nxtPos / blksz;
 
   // find nxtPos within this new span ... and before end
-  for ( ; nxtPos <= inpos + len && nxtPos < lastPos 
-             ; (nxtPos += blksz),++blk ) 
+  for ( ; nxtPos <= inpos + len ; (nxtPos += blksz),++blk ) 
   {
-    auto vconn = at_vconn_future(keys[blk]).get();
+    if ( blk >= currVConnCount() ) {
+      skip = 0;
+      DEBUG_LOG("unavailable VConn future 1<<%ld nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", blk + firstBlk, nxtPos, inpos, len, blksz/1024);
+      return nullptr;
+    }
+
+    if ( ! keys[blk] ) {
+      // can't find a ready write waiting?
+      DEBUG_LOG("unstored VConn future 1<<%ld nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", blk + firstBlk, nxtPos, inpos, len, blksz/1024);
+      continue;
+    }
+ 
+    auto &vcFuture = at_vconn_future(keys[blk]);
+    auto vconn = vcFuture.get();
 
     // write is ready?
     if (vconn) {
-      DEBUG_LOG("ready VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, blksz/1024);
+      DEBUG_LOG("ready VConn future 1<<%ld nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", blk + firstBlk, nxtPos, inpos, len, blksz/1024);
       skip = nxtPos - inpos; // report if a skip is needed...
       return vconn;
     }
 
     // can't find a ready write waiting?
-    DEBUG_LOG("non-valid VConn future nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", nxtPos, inpos, len, blksz/1024);
+    DEBUG_LOG("failed VConn future [%s] 1<<%ld nxtPos:%#lx pos:%#lx len=%#lx [blk:%ldK]", InkStrerror(vcFuture.error()), blk + firstBlk, nxtPos, inpos, len, blksz/1024);
+
+    vcFuture.release();
+
+    auto contp = ATSCont::create_temp_tscont(*this, vcFuture, _vcsToWriteP);
+    DEBUG_LOG("store restart: 1<<%ld to write refs:%ld", blk + firstBlk, _vcsToWriteP.use_count());
+    TSCacheWrite(contp, keys[blk]); // find room to store each key...
   }
 
   // no boundary within distance?
   DEBUG_LOG("skip required pos:%#lx -> %#lx len=%#lx [blk:%ldK]", inpos, nxtPos, len, blksz/1024);
   return nullptr;
 }
+
 
 //
 // called from writeHook
@@ -213,10 +259,11 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
   }
 
   auto &keys = _ctxt._keysInRange;
+  auto firstBlk = _ctxt.firstIndex();
 
   if ( ! inpos ) {
-    auto n = _ctxt.blockSize() * keys.size();
-    TSIOBufferWaterMarkSet(TSVIOBufferGet(xformInputVIO()), n); // grab full amount
+    auto n = _ctxt.blockSize() * std::min(_ctxt.indexLen(), 100L);
+    TSIOBufferWaterMarkSet(TSVIOBufferGet(xformInputVIO()), n); // grab large amount (100M or entire range)
     DEBUG_LOG("input block level reset to: %ld", n);
   }
 
@@ -226,30 +273,45 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
   // position is distance within body *without* len...
 
   auto blksz        = static_cast<int64_t>(_ctxt.blockSize());
-
-  {
-    ssize_t vcsNeeded = keys.size() - _vcsToWriteP->size();
-    ssize_t vcsReady = _vcsToWriteP->size() - inpos/blksz;
-
-    if ( vcsReady < std::min(5L,vcsNeeded+0) ) {
-      start_write_futures();
-    }
-  }
-
   // amount "ready" for block is read from our reader
   auto navail = TSIOBufferReaderAvail(teerdr); // new amount
   auto donepos = inpos - (navail - len); // totally completed bytes
   auto endpos = inpos + TSVIONTodoGet(inputVIO()); // expected final input byte
 
+  // too much load to add a new write
+  if ( _vcsToWriteP.use_count() >= USE_COUNT_LIMIT ) {
+    DEBUG_LOG("store **** stop at current block 1<<%ld pos:%#lx+%#lx+%#lx", firstBlk + donepos/blksz, donepos, navail - len, len);
+    start_write_futures();
+    return 0;
+  }
+
+
   // check any unneeded bytes before next block
   int64_t skipDist = 0;
   auto currBlock = next_valid_vconn(donepos, navail, skipDist);
+
+  if (! currBlock && ! skipDist) {
+    DEBUG_LOG("store **** stop at current block 1<<%ld pos:%#lx+%#lx+%#lx", firstBlk + donepos/blksz, donepos, navail - len, len);
+    start_write_futures();
+    return 0;
+  }
+
+  {
+    ssize_t vcsNeeded = _ctxt.indexLen() - currVConnCount();
+    ssize_t vcsToPrep = std::min( currVConnCount() - inpos/blksz, donepos/blksz + 10); // always pace the creation of new writes
+
+    // total active writes must be limited!
+    if ( vcsToPrep < std::min(5L,vcsNeeded+0) ) {
+      DEBUG_LOG("init writes: refs:%ld doneblks:%ld inblks:%ld left:%ld", _vcsToWriteP.use_count(),  donepos/blksz, inpos/blksz, vcsNeeded);
+      start_write_futures();
+    }
+  }
 
   // no block to write?
   if (! currBlock) {
     // no need to save these bytes?
     TSIOBufferReaderConsume(teerdr, navail);
-    DEBUG_LOG("store **** skip current block pos:%#lx+%#lx+%#lx", donepos, navail - len, len);
+    DEBUG_LOG("store **** skip current block 1<<%ld pos:%#lx+%#lx+%#lx", firstBlk + donepos/blksz, donepos, navail - len, len);
     return len;
     //////// RETURN
   }
@@ -274,55 +336,47 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t inpos, int64_t 
   }
 
   // reader has more than the needed bytes for a complete write
-
-  auto absBeg = _ctxt._beginByte / blksz;
-  // auto absEnd = ( _ctxt._endByte + blksz-1 ) / blksz;
-
   auto blk = donepos / blksz;
   auto &vcFuture = at_vconn_future(keys[blk]); // should be correct now...
 
   ink_assert(vcFuture.get() == currBlock);
 
-  vcFuture.release(); // will skip old bytes next time...
   keys[blk].reset(); // no key any more either
 
-  // make a totally async set of callbacks to write out new block
-  auto blockCont = TSContCreate(&BlockStoreXform::handleBlockWrite,TSContMutexGet(*this));
-  intptr_t data = ThreadTxnID::get() | ((absBeg + blk) << 50);
-  TSContDataSet(blockCont,reinterpret_cast<void*>(data));
+  // give ownership of current teereader / teebuffer
+  BlockWriteData callData = { _vcsToWriteP, ThreadTxnID::get(), static_cast<int>(_ctxt.firstIndex() + blk), static_cast<int>(blk) };
 
+  // make a totally async set of callbacks to write out new block
+  auto blockCont = new ATSCont(TS_EVENT_VCONN_WRITE_COMPLETE, &BlockStoreXform::handleBlockWrite, callData, *this);
   cloneAndSkip(blksz); // substitute new buffer ...
 
-  TSVConnWrite(currBlock, blockCont, teerdr, wrlen); // copy older buffer bytes out
+  TSVConnWrite(currBlock, blockCont->get(), teerdr, wrlen); // copy older buffer bytes out
 
-  DEBUG_LOG("store ++++ beginning block w/write 1<<%ld write @%#lx+%#lx+%#lx [final @%#lx]", absBeg + blk, donepos, navail, len, donepos + wrlen);
+  DEBUG_LOG("store ++++ beginning block w/write 1<<%ld write @%#lx+%#lx+%#lx [final @%#lx]", _ctxt.firstIndex() + blk, donepos, navail, len, donepos + wrlen);
   return len;
 }
 
-int
-BlockStoreXform::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
+void
+BlockStoreXform::handleBlockWrite(TSEvent event, void *edata, const BlockWriteData &block)
 {
-  auto data = reinterpret_cast<intptr_t>(TSContDataGet(cont));
-  auto blkid = data >> 50;
-
-  ThreadTxnID txnid{static_cast<int>(data) & ~0};
+  ThreadTxnID txnid(block._txnid);
 
   TSVIO blkWriteVIO = static_cast<TSVIO>(edata);
   TSIOBufferReader writeRdr = TSVIOReaderGet(blkWriteVIO);
 
   if (!blkWriteVIO) {
     DEBUG_LOG("empty edata event e#%d", event);
-    return 0;
+    return;
   }
 
   switch (event) {
   case TS_EVENT_VCONN_WRITE_READY:
     // didn't detect enough bytes in buffer to complete?
     if (! TSIOBufferReaderAvail(writeRdr)) {
-      DEBUG_LOG("cache-write 1<<%ld flush empty e#%d -> %ld? %ld?", blkid, event, TSVIONDoneGet(blkWriteVIO), TSVIONBytesGet(blkWriteVIO));
+      DEBUG_LOG("cache-write 1<<%d flush empty e#%d -> %ld? %ld?", block._blkid, event, TSVIONDoneGet(blkWriteVIO), TSVIONBytesGet(blkWriteVIO));
       break; // surprising!
     }
-    DEBUG_LOG("cache-write 1<<%ld flush e#%d -> %ld? %ld?", blkid, event, TSVIONDoneGet(blkWriteVIO), TSVIONBytesGet(blkWriteVIO));
+    DEBUG_LOG("cache-write 1<<%d flush e#%d -> %ld? %ld?", block._blkid, event, TSVIONDoneGet(blkWriteVIO), TSVIONBytesGet(blkWriteVIO));
     TSVIOReenable(blkWriteVIO);
     break;
 
@@ -331,11 +385,16 @@ BlockStoreXform::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
     TSIOBufferReader_t ordr( TSVIOReaderGet(blkWriteVIO) ); // dtor upon break
     TSIOBuffer_t obuff( TSVIOBufferGet(blkWriteVIO) ); // dtor upon break
 
-    DEBUG_LOG("completed store to bitset 1<<%ld",blkid);
+    auto vconn = block._vcsToWriteP->operator[](block._ind).release(); // old vconn
+    auto vconnv = TSVIOVConnGet(blkWriteVIO);
 
-    auto vc = TSVIOVConnGet(blkWriteVIO);
-    TSVConnClose(vc); // flush and store
-    TSContDestroy(cont);
+    if ( vconn == vconnv ) {
+      DEBUG_LOG("completed store to bitset 1<<%d refs:%ld",block._blkid, block._vcsToWriteP.use_count()-1);
+    } else {
+      DEBUG_LOG("double completed store to bitset 1<<%d %p %p refs:%ld",block._blkid, vconn, vconnv, block._vcsToWriteP.use_count()-1);
+    }
+
+    TSVConnClose(vconnv); // flush and store
     break;
   }
 
@@ -343,5 +402,5 @@ BlockStoreXform::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
     DEBUG_LOG("cache-write event: e#%d", event);
     break;
   }
-  return 0;
+  return;
 }

@@ -157,8 +157,8 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   txn.configIntSet(TS_CONFIG_HTTP_DEFAULT_BUFFER_WATER_MARK,1<<20);               // 1M buffer-wait by default
   txn.configIntSet(TS_CONFIG_NET_SOCK_RECV_BUFFER_SIZE_OUT,1<<20);                // 1M kernel TCP buffer
 
-  auto firstBlk = _beginByte / _blkSize;
-  auto endBlk = (_endByte + _blkSize-1) / _blkSize; // round up
+  auto firstBlk = firstIndex();
+  auto endBlk = endIndex();
 
   // store with inclusive end
   _blkRangeStr = "bytes=";
@@ -173,7 +173,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
       _blkRangeStr += std::to_string(_blkSize * firstBlk) + "-" + std::to_string(_blkSize * endBlk - 1);
     }
 
-    start_cache_miss(firstBlk,endBlk);
+    start_cache_miss();
     txn.resume();
     return;
   }
@@ -274,7 +274,7 @@ BlockSetAccess::clean_client_response(Transaction &txn)
     auto srvrRange =
       std::string() + "bytes " + std::to_string(_beginByte) + "-" + std::to_string(_endByte - 1) + "/" + std::to_string(_assetLen);
     clntResp.set(CONTENT_RANGE_TAG, srvrRange);
-    clntResp.set(CONTENT_LENGTH_TAG, std::to_string(rangeLen()));
+    clntResp.set(CONTENT_LENGTH_TAG, std::to_string(contentLen()));
   } 
 }
 
