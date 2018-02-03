@@ -55,9 +55,9 @@ forward_vio_event(TSEvent event, TSVIO tgt, TSCont mutexCont)
 //  TSMutexLock(mutex);
 }
 
-ATSCacheKey::ATSCacheKey(const atscppapi::Url &url, std::string const &etag, uint64_t offset) : TSCacheKey_t(TSCacheKeyCreate())
+ATSCacheKey::ATSCacheKey(const std::string &url, std::string const &etag, uint64_t offset) : TSCacheKey_t(TSCacheKeyCreate())
 {
-  auto str = url.getUrlString();
+  auto str = url;
   auto origLen = str.size();
   str.push_back('\0');
   for ( ; offset ; offset >>= 6 ) {
@@ -158,6 +158,9 @@ ATSXformOutVConn::ATSXformOutVConn(const ATSXformCont &xform, int64_t bytes, int
     _skipBytes(offset),
     _writeBytes(bytes)
 {
+  if ( ! bytes && _inVIO ) {
+    const_cast<int64_t&>(_writeBytes) = TSVIONBytesGet(_inVIO) - offset;
+  }
 }
 
 ATSVConnFuture::~ATSVConnFuture()
@@ -260,11 +263,16 @@ ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, 
   auto xformCont = get();
   TSContDataSet(xformCont, this);
 
+  long maxAgg = 0;
+  if ( TSMgmtIntGet("proxy.config.cache.agg_write_backlog",&maxAgg) != TS_SUCCESS ) {
+    maxAgg = 20 * (1<<20); // 20M watermark
+  }
+
   // NOTE: maybe called long past TXN_CLOSE!
   TSHttpTxnHookAdd(_atsTxn, xformType, xformCont);
   // get to method via callback
-  TSIOBufferWaterMarkSet(_outBufferU.get(), bytes + offset); // never produce a READ_READY
-  DEBUG_LOG("output block level set to: %ld",bytes + offset);
+  TSIOBufferWaterMarkSet(_outBufferU.get(), maxAgg); // never produce a READ_READY
+  DEBUG_LOG("output block level set to: %ldK",maxAgg);
 }
 
 int
@@ -306,7 +314,7 @@ BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, 
 
   // get to method via callback
   set_body_handler([this](TSEvent evt, TSVIO vio, int64_t left) { return this->inputEvent(evt, vio, left); });
-  TSIOBufferWaterMarkSet(_teeBufferP.get(), xformLen + xformOffset); // never produce a READ_READY
+  TSIOBufferWaterMarkSet(_teeBufferP.get(), TSIOBufferWaterMarkGet(outputBuffer()) ); // never produce a READ_READY
   DEBUG_LOG("tee-buffer block level set to: %ld", xformLen + xformOffset);
 }
 

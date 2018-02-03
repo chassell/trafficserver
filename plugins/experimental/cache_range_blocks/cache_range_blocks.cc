@@ -63,7 +63,7 @@ BlockSetAccess::BlockSetAccess(Transaction &txn)
   : TransactionPlugin(txn),
     _txn(txn),
     _atsTxn(static_cast<TSHttpTxn>(txn.getAtsHandle())),
-    _url(txn.getClientRequest().getUrl()),
+    _url(txn.getClientRequest().getUrl().getUrlString()),
     _clntHdrs(txn.getClientRequest().getHeaders()),
     _clntRangeStr(txn.getClientRequest().getHeaders().values(RANGE_TAG))
 {
@@ -118,14 +118,11 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     return; // main file made it through
   }
 
+  txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1); // just permit a range in cached HTTP request
+
   if (pstub == &_clntHdrs) {
     DEBUG_LOG("stub-init request");
-    txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1); // just permit a range in cached HTTP request
-  }
-
-  // not the first request?
-  if ( pstub != &_clntHdrs ) 
-  {
+  } else {
     // no interest in cacheing a new file... so waive any storage of a reply
     TSHttpTxnServerRespNoStoreSet(_atsTxn,1);
 
@@ -135,8 +132,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     auto l = srvrRange.find('/');
     l = ( l != srvrRange.npos ? l + 1 : srvrRange.size() ); // index of nul if no '/' found
     _assetLen = std::atol( srvrRange.c_str() + l );
-  } else {
-  }
+  } 
 
   auto r = parse_range(_clntRangeStr, _assetLen, _beginByte, _endByte);
 

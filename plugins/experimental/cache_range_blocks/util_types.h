@@ -124,10 +124,17 @@ default_delete<TSIOBufferReader_t::element_type>::operator()(TSIOBufferReader re
 }
 }
 
+inline std::pair<int64_t,int64_t> write_range_avail(TSVIO vio) { 
+  int64_t avail = TSIOBufferReaderAvail(TSVIOReaderGet(vio));
+  int64_t pos = TSVIONDoneGet(vio);
+  return std::make_pair( pos, pos + avail );
+}
+
 // unique-ref object for a cache-read or cache-write request
 struct ATSCacheKey : public TSCacheKey_t {
   explicit ATSCacheKey() : TSCacheKey_t{TSCacheKeyCreate()} { }
-  ATSCacheKey(const atscppapi::Url &url, std::string const &etag, uint64_t offset);
+  explicit ATSCacheKey(TSCacheKey key) : TSCacheKey_t{key} { }
+  ATSCacheKey(const std::string &url, std::string const &etag, uint64_t offset);
 
   operator TSCacheKey() const { return get(); }
   bool valid() const {
@@ -151,11 +158,11 @@ public:
 
   // handle TSHttpTxn continuations with a method
   template <class T_OBJ, typename T_DATA> 
-  ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, const T_DATA&), T_DATA cbdata, TSCont mutexSrc=nullptr);
+  ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, const T_DATA&), T_DATA &&cbdata, TSCont mutexSrc=nullptr);
 
   // handle TSHttpTxn continuations with a function and a copied type
   template <typename T_DATA>
-  ATSCont(TSEvent endEvent, void (*funcp)(TSEvent, void *, const T_DATA&), T_DATA cbdata, TSCont mutexSrc=nullptr);
+  ATSCont(TSEvent (*funcp)(TSCont, TSEvent, void *, const T_DATA&), T_DATA &&cbdata, TSCont mutexSrc=nullptr);
 
 public:
   operator TSCont() const { return get(); }
@@ -260,6 +267,10 @@ public:
   TSIOBuffer outputBuffer() const { return _outBufferU.get(); }
   TSIOBufferReader outputReader() const { return _outReaderU.get(); }
 
+  std::pair<int64_t,int64_t> xformInputAvail() const { return write_range_avail(xformInputVIO()); }
+  std::pair<int64_t,int64_t> inputAvail() const { return write_range_avail(inputVIO()); }
+  std::pair<int64_t,int64_t> outputAvail() const { return write_range_avail(outputVIO()); }
+
   void reset_input_vio(TSVIO vio) { _inVIO = vio; }
 
   void
@@ -292,7 +303,6 @@ protected:
 
 private:
   XformCB_t _xformCB;
-  int64_t _xformCBAbsLimit = 0L;
   int64_t const _outSkipBytes;
   int64_t const _outWriteBytes;
 
@@ -312,7 +322,7 @@ private:
 
 class BlockTeeXform : public ATSXformCont
 {
-  using HookType = std::function<int64_t(TSIOBufferReader, int64_t pos, int64_t len)>;
+  using HookType = std::function<void(TSIOBufferReader, int64_t inpos, int64_t newlen)>;
 
 public:
   BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, int64_t xformLen, int64_t xformOffset);
@@ -321,11 +331,17 @@ public:
   TSIOBuffer teeBuffer() const { return _teeBufferP.get(); }
   TSIOBufferReader teeReader() const { return _teeReaderP.get(); }
 
+  std::pair<int64_t,int64_t> teeAvail() const { 
+    int64_t avail = TSIOBufferReaderAvail(_teeReaderP.get());
+    return std::make_pair( _lastInputNDone - avail, _lastInputNDone );
+  }
+
   TSIOBufferReader cloneAndSkip(int64_t bytes);
 
-public:
+private:
   int64_t inputEvent(TSEvent event, TSVIO vio, int64_t left);
 
+  int64_t _lastInputNDone = 0;
   HookType _writeHook;
   TSIOBuffer_t _teeBufferP;
   TSIOBufferReader_t _teeReaderP;
@@ -334,7 +350,7 @@ public:
 
 // accepts TSHttpTxn handler functions
 template <class T_OBJ, typename T_DATA>
-ATSCont::ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, const T_DATA&), T_DATA cbdata, TSCont mutexSrc)
+ATSCont::ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, const T_DATA&), T_DATA &&cbdata, TSCont mutexSrc)
   : TSCont_t(TSContCreate(&ATSCont::handleTSEventCB, ( mutexSrc ? TSContMutexGet(mutexSrc) : TSMutexCreate() )))
 {
   // point back here
@@ -351,7 +367,7 @@ ATSCont::ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, const T_DATA&
 }
 
 template <typename T_DATA>
-ATSCont::ATSCont(TSEvent endEvent, void (*funcp)(TSEvent, void *, const T_DATA&), T_DATA cbdata, TSCont mutexSrc)
+ATSCont::ATSCont(TSEvent (*funcp)(TSCont, TSEvent, void *, const T_DATA&), T_DATA &&cbdata, TSCont mutexSrc)
   : TSCont_t(TSContCreate(&ATSCont::handleTSEventCB, ( mutexSrc ? TSContMutexGet(mutexSrc) : TSMutexCreate() )))
 {
   // point back here
@@ -359,12 +375,13 @@ ATSCont::ATSCont(TSEvent endEvent, void (*funcp)(TSEvent, void *, const T_DATA&)
 
   static_cast<void>(cbdata);
   // memorize user data to forward on
-  _userCB = decltype(_userCB)([this, endEvent, funcp, cbdata](TSEvent event, void *evtdata) { 
-     (*funcp)(event, evtdata, cbdata);
-     if ( event == endEvent ) {
-       delete this;
-     }
-  });
+  _userCB = decltype(_userCB)(
+    [this, funcp, cbdata](TSEvent event, void *evtdata) 
+    {
+       if ( (*funcp)(get(), event, evtdata, cbdata) != TS_EVENT_CONTINUE ) {
+         delete this;
+       }
+    });
 }
 
 

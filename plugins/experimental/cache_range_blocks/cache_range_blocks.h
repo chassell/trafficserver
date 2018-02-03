@@ -108,7 +108,7 @@ public:
   Transaction & txn() const { return _txn; }
   TSHttpTxn atsTxn() const { return _atsTxn; }
   Headers & clientHdrs() { return _clntHdrs; }
-  const Url & clientUrl() const { return _url; }
+  const std::string & clientUrl() const { return _url; }
   const std::string & clientRangeStr() const { return _clntRangeStr; }
   const std::string & blockRangeStr() const { return _blkRangeStr; }
 
@@ -160,7 +160,7 @@ private:
 private:
   Transaction &_txn;
   const TSHttpTxn _atsTxn = nullptr;
-  Url &_url;
+  std::string _url;
   Headers &_clntHdrs;
   std::string _clntRangeStr;
   std::string _blkRangeStr; // from clnt req for serv req
@@ -182,29 +182,33 @@ private:
   // delayed creation: transform objects must be committed to, only upon response
 
   std::unique_ptr<BlockReadXform> _readXform;   // state-object ptr [registers Transforms/Continuations]
-  std::unique_ptr<BlockStoreXform> _storeXform; // state-object ptr [registers Transforms/Continuations]
+  std::shared_ptr<BlockStoreXform> _storeXform; // state-object ptr [registers Transforms/Continuations]
 };
 
 /////////////////////////////////////////////////
 /////////////////////////////////////////////////
-class BlockStoreXform : public BlockTeeXform
+class BlockStoreXform : public BlockTeeXform, 
+                        public std::enable_shared_from_this<BlockStoreXform>
 {
 public:
+  using Ptr_t = std::shared_ptr<BlockStoreXform>;
   using WriteVCs_t = std::vector<ATSVConnFuture>;
   using WriteVCsPtr_t = std::shared_ptr<std::vector<ATSVConnFuture>>;
 
   struct BlockWriteData {
-    WriteVCsPtr_t       _vcsToWriteP;
-    int                 _txnid;
-    int                 _blkid;
-    int                 _ind;
+    Ptr_t      _writeXform;
+    int        _txnid;
+    int        _blkid;
+    int        _ind;
+    TSCacheKey _key;
   };
 
 public:
   BlockStoreXform(BlockSetAccess &ctxt, int blockCount);
   ~BlockStoreXform() override;
 
-  int64_t currVConnCount() { return _vcsToWriteP->size(); }
+  int64_t currVConnCount() const { return _vcsToWriteP->size(); }
+  long write_count() const { return this->shared_from_this().use_count() - 1; } 
 
   void start_write_futures();
 
@@ -229,15 +233,13 @@ private:
 
   TSVConn next_valid_vconn(int64_t pos, int64_t len, int64_t &skipDist);
 
-  int64_t handleBodyRead(TSIOBufferReader r, int64_t pos, int64_t len);
-  static void handleBlockWrite(TSEvent, void *, const BlockWriteData &);
+  void handleBodyRead(TSIOBufferReader r, int64_t pos, int64_t len);
+  static TSEvent handleBlockWrite(TSCont, TSEvent, void *, const BlockWriteData &);
 
 private:
   BlockSetAccess &_ctxt;
-
-  WriteVCsPtr_t        _vcsToWriteP; 
-//  std::vector<TSCont>  _blockWrites
-  TSEvent _blockVIOWaiting = TS_EVENT_NONE; // event if body-read is blocked
+  WriteVCsPtr_t   _vcsToWriteP;  // can detach upon surprising new ETag
+  TSEvent         _blockVIOWaiting = TS_EVENT_NONE; // event if body-read is blocked
 };
 
 /////////////////////////////////////////////////
