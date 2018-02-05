@@ -298,8 +298,7 @@ private:
 
   static int handleXformTSEventCB(TSCont cont, TSEvent event, void *data);
 protected:
-  atscppapi::Transaction &_txn;
-  const TSHttpTxn _atsTxn;
+  int _txnID;
 
 private:
   XformCB_t _xformCB;
@@ -337,6 +336,7 @@ public:
   }
 
   TSIOBufferReader cloneAndSkip(int64_t bytes);
+  void teeReenable();
 
 private:
   int64_t inputEvent(TSEvent event, TSVIO vio, int64_t left);
