@@ -207,14 +207,15 @@ public:
   BlockStoreXform(BlockSetAccess &ctxt, int blockCount);
   ~BlockStoreXform() override;
 
-  int64_t currVConnCount() const { return _vcsToWriteP->size(); }
+  int64_t vconn_future_count() const { return _vcsToWriteP->size(); }
+  int64_t vconn_count() const { return _vcsReady; }
   long write_count() const { return this->shared_from_this().use_count() - 1; } 
 
-  void start_write_futures();
+  void start_write_futures(int min);
 
   void reset_write_futures() {
     _vcsToWriteP.reset();
-    start_write_futures();
+    start_write_futures(0);
   }
 
 private:
@@ -225,7 +226,7 @@ private:
   ATSVConnFuture &at_vconn_future(const ATSCacheKey &key) 
   {
     auto i = &key - &_ctxt.keysInRange().front();
-    if ( i >= currVConnCount() ) {
+    if ( i >= vconn_future_count() ) {
       _vcsToWriteP->resize(i+1);
     }
     return _vcsToWriteP->operator [](i);
@@ -239,7 +240,8 @@ private:
 private:
   BlockSetAccess &_ctxt;
   WriteVCsPtr_t   _vcsToWriteP;  // can detach upon surprising new ETag
-  TSEvent         _blockVIOWaiting = TS_EVENT_NONE; // event if body-read is blocked
+  int             _vcsReady = 0;
+  TSEvent         _blockVIOUntil = TS_EVENT_NONE; // event targeted to fix block
 };
 
 /////////////////////////////////////////////////
