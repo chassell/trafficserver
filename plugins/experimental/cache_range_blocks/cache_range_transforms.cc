@@ -80,7 +80,7 @@ ATSXformCont::xform_input_completion(TSEvent event)
       _outVConnU.reset(); // flush and free
       _outVIOWaiting = TS_EVENT_HTTP_TXN_CLOSE;
     }
-    _xformCB(event, nullptr, 0); // signal it's been aborted...
+    _xformCB(TS_EVENT_HTTP_TXN_CLOSE, nullptr, 0); // signal it's been aborted...
     return eErrXformClosed; // cannot proceed as closed...
   }
 
@@ -101,7 +101,7 @@ ATSXformCont::xform_input_completion(TSEvent event)
   // input at-end and output shut down..
 
   // input and output both complete
-  _xformCB(event, xfinvio, 0);
+  _xformCB(TS_EVENT_VCONN_WRITE_COMPLETE, xfinvio, 0);
   if ( xfinvio == _inVIO ) {
    DEBUG_LOG("xform-event xform-input pos @%#lx",TSVIONDoneGet(_inVIO));
   } else {
@@ -123,7 +123,7 @@ ATSXformCont::handleXformOutputEvent(TSEvent event)
       if ( ! _outVConnU->is_close_able() ) {
         _outVConnU->set_close_able(); // in case something cut it early...
       }
-      _xformCB(event, outputVIO(), 0); // notify...
+      _xformCB(TS_EVENT_VCONN_WRITE_COMPLETE, outputVIO(), 0); // notify...
 
       if ( ! TSVIONDoneGet(xformInputVIO()) ) {
         TSVIONDoneSet( xformInputVIO(), TSVIONBytesGet(xformInputVIO()) );
@@ -133,7 +133,7 @@ ATSXformCont::handleXformOutputEvent(TSEvent event)
 
     case TS_EVENT_VCONN_WRITE_READY:
       if ( _outVConnU->check_refill(event) ) {
-        _xformCB(event, outvio, 0); // no bytes present ...
+        _xformCB(TS_EVENT_VCONN_WRITE_READY, outvio, 0); // no bytes present ...
       }
       break;
 
@@ -157,6 +157,7 @@ ATSXformCont::handleXformInputEvent(TSEvent event, TSVIO evio)
 
       // past first write and no bytes available?
       if ( TSVIONDoneGet(evio) && ! TSIOBufferReaderAvail(TSVIOReaderGet(evio)) ) {
+        _xformCB(TS_EVENT_CONTINUE, xformInputVIO(), 0);
         err = eErrXformExtraImmEvent; // no data and not done?
         break;
       }
@@ -200,7 +201,7 @@ ATSXformCont::handleXformBufferEvent(TSEvent event, TSVIO evio)
       if ( _outVConnU ) {
         _outVConnU->check_refill(event); // if first is last
       }
-      _xformCB(event, _inVIO, 0); // no more fills ready...
+      _xformCB(TS_EVENT_VCONN_READ_COMPLETE, _inVIO, 0); // no more fills ready...
       break;
 
     default:
@@ -226,7 +227,7 @@ ATSXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
     return 0;
   }
 
-  ThreadTxnID txnid{_txn};
+  ThreadTxnID txnid{_txnID};
   TSVIO evio = static_cast<TSVIO>(edata);
 
   if ( event == TS_EVENT_IMMEDIATE ) {
@@ -481,8 +482,14 @@ BlockTeeXform::inputEvent(TSEvent event, TSVIO evtvio, int64_t left)
     return left;
   }
 
+  // redundant wakeup event arriving
+  if ( event == TS_EVENT_CONTINUE ) {
+    teeReenable(); // any changes?
+  }
+
   if (!left) {
-    return left;
+    // something closed or ended...
+    return 0; // TODO: possible abort!
   }
 
   if (evtvio == outputVIO()) {
@@ -495,19 +502,21 @@ BlockTeeXform::inputEvent(TSEvent event, TSVIO evtvio, int64_t left)
   auto oavail = range.second - range.first;
 
   if ( oavail > TSIOBufferWaterMarkGet(_teeBufferP.get()) ) {
-    DEBUG_LOG("tee buffer bytes blocked-copy: @%#lx+%#lx+%#lx", range.first, oavail, left);
-    _writeHook(_teeReaderP.get(), range.first, range.second); // needs draining first...
-    return 0; // used zero...
+    left = 0; // use no incoming bytes...
   }
 
-  left = TSIOBufferCopy(_teeBufferP.get(), TSVIOReaderGet(inputVIO()), left, 0);
-  // NOTE: copied but not Consumed
+  if ( left ) {
+    left = TSIOBufferCopy(_teeBufferP.get(), TSVIOReaderGet(inputVIO()), left, 0);
+    // NOTE: copied but not Consumed
 
-  range.second += left;
-  _lastInputNDone += left; // forward 
-  auto navail = oavail + left;
+    range.second += left;
+    _lastInputNDone += left; // forward 
+    auto navail = oavail + left;
 
-  DEBUG_LOG("tee buffer bytes post-copy: @%#lx+%#lx [+%#lx]", range.first, navail, left);
+    DEBUG_LOG("tee buffer bytes post-copy: @%#lx+%#lx [+%#lx]", range.first, navail, left);
+  } else {
+    DEBUG_LOG("tee buffer bytes blocked-copy: @%#lx+%#lx+%#lx", range.first, oavail, left);
+  }
 
   _writeHook(_teeReaderP.get(), range.first, range.second); // cannot un-consume in the write-hook
   return left; // always show advance from Tee
