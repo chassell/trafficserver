@@ -122,10 +122,15 @@ ATSCont::~ATSCont()
   if ( ! cont ) {
     return; // cont was deleted or none added
   }
-
-  atscppapi::ScopedContinuationLock lock(cont);
-  DEBUG_LOG("final destruct cont=%p",cont);
-  TSContDataSet(cont, nullptr); // prevent new events
+  
+  if ( TSContMutexGet(cont) ) {
+    atscppapi::ScopedContinuationLock lock(cont);
+    DEBUG_LOG("final destruct cont=%p",cont);
+    TSContDataSet(cont, nullptr); // prevent new events
+  } else {
+    DEBUG_LOG("final destruct cont=%p nomutex",cont);
+    TSContDataSet(cont, nullptr); // prevent new events
+  }
 }
 
 int
@@ -170,9 +175,14 @@ ATSVConnFuture::~ATSVConnFuture()
     return; // happens often
   }
 
-  atscppapi::ScopedContinuationLock lock(vconn);
-  TSVConnClose(vconn);
-  DEBUG_LOG("closed cache vconn=%p",vconn);
+  if ( TSContMutexGet(vconn) ) {
+    atscppapi::ScopedContinuationLock lock(vconn);
+    DEBUG_LOG("final close cont=%p",vconn);
+    TSVConnClose(vconn);
+  } else {
+    DEBUG_LOG("final close cont=%p nomutex",vconn);
+    TSVConnClose(vconn);
+  }
 }
 
 bool
@@ -249,8 +259,7 @@ ATSXformOutVConn::~ATSXformOutVConn()
 // Transform continuations
 ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t bytes, int64_t offset)
   : TSCont_t(TSTransformCreate(&ATSXformCont::handleXformTSEventCB, static_cast<TSHttpTxn>(txn.getAtsHandle()))),
-    _txn(txn),
-    _atsTxn(static_cast<TSHttpTxn>(txn.getAtsHandle())),
+    _txnID(TSHttpTxnIdGet(static_cast<TSHttpTxn>(txn.getAtsHandle()))),
     _xformCB( [](TSEvent evt, TSVIO vio, int64_t left) { DEBUG_LOG("xform-event empty body handler"); return 0; }),
     _outSkipBytes(offset),
     _outWriteBytes(bytes),
@@ -269,7 +278,7 @@ ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, 
   }
 
   // NOTE: maybe called long past TXN_CLOSE!
-  TSHttpTxnHookAdd(_atsTxn, xformType, xformCont);
+  TSHttpTxnHookAdd(static_cast<TSHttpTxn>(txn.getAtsHandle()), xformType, xformCont);
   // get to method via callback
   TSIOBufferWaterMarkSet(_outBufferU.get(), maxAgg); // never produce a READ_READY
   DEBUG_LOG("output block level set to: %ldK",maxAgg);
@@ -316,6 +325,13 @@ BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, 
   set_body_handler([this](TSEvent evt, TSVIO vio, int64_t left) { return this->inputEvent(evt, vio, left); });
   TSIOBufferWaterMarkSet(_teeBufferP.get(), TSIOBufferWaterMarkGet(outputBuffer()) ); // never produce a READ_READY
   DEBUG_LOG("tee-buffer block level set to: %ld", xformLen + xformOffset);
+}
+
+void
+BlockTeeXform::teeReenable()
+{
+  auto range = teeAvail();
+  _writeHook(_teeReaderP.get(), range.first, range.second); // attempt new absorb of input
 }
 
 class BlockStoreXform;
