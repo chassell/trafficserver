@@ -31,6 +31,7 @@ void
 BlockSetAccess::reset_range_keys()
 {
   _keysInRange.clear();
+  _keysInRange.reserve(indexLen());
 
   if ( _etagStr.empty() || _beginByte < 0 || _beginByte >= _endByte ) {
     DEBUG_LOG("keys are all empty: etag:%s bytes=[%ld-%ld)", _etagStr.c_str(), _beginByte, _endByte);
@@ -51,6 +52,10 @@ BlockSetAccess::launch_block_tests()
   static const Deleter_t deleter = [](BlockSetAccess *ptr) {
     ptr->handle_block_tests(); // recurse from last one
   };
+
+  if ( _vcsToRead.empty() ) {
+    _vcsToRead.reserve(indexLen());
+  }
 
   auto &keys  = keysInRange();
   auto nxtBlk = _beginByte / blockSize();
