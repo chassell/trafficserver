@@ -175,7 +175,6 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   }
 
   _blkRangeStr += std::to_string(_blkSize * firstBlk) + "-" + std::to_string(_blkSize * endBlk - 1);
-  _keysInRange.resize(endBlk - firstBlk); // start empty...
 
   // use known values (if enough) to create keys
   reset_range_keys(); 
