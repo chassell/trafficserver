@@ -286,7 +286,6 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t donepos, int64_
   auto blksz        = static_cast<int64_t>(_ctxt.blockSize());
   // amount "ready" for block is read from our reader
   auto endpos = TSVIONBytesGet(inputVIO()); // expected final input byte
-  auto nblk = readypos / blksz;
 
   // too much load to add a new write
   while ( donepos < readypos ) 

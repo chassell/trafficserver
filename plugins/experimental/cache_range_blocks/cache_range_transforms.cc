@@ -191,8 +191,8 @@ ATSXformCont::handleXformBufferEvent(TSEvent event, TSVIO evio)
     case TS_EVENT_VCONN_READ_READY:
     {
       // shouldn't fail both...
-      auto r = ! _outVConnU || ! _outVConnU->check_refill(event);
-      ink_assert(r);
+      auto fail = _outVConnU && _outVConnU->check_refill(event);
+      ink_assert(!fail);
       break;
     }
 
