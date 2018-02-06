@@ -31,14 +31,19 @@ static int parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_
 
 void BlockSetAccess::start_if_range_present(Transaction &txn) 
 {
-  ThreadTxnID txnid{txn};
-
   int i = 0;
 
   TSCacheReady(&i);
   if ( ! i ) {
     return; // cannot handle new blocks 
   }
+
+  auto pluginClient = TSHttpTxnPluginTagGet(static_cast<TSHttpTxn>(txn.getAtsHandle()));
+  if ( pluginClient && ! strcmp(pluginClient, PLUGIN_NAME) ) {
+    return; // ignore any recursing txn...
+  }
+
+  ThreadTxnID txnid{txn};
 
   auto &req = txn.getClientRequest();
   auto &hdrs = req.getHeaders();
