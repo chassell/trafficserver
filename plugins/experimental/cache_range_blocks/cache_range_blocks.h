@@ -73,19 +73,6 @@ private:
 
 #define CONTENT_ENCODING_INTERNAL "x-block-cache-range"
 
-#define VARY_TAG "Vary"
-#define ETAG_TAG "ETag"
-#define IF_MATCH_TAG "If-Match"
-#define IF_MODIFIED_SINCE_TAG "If-Modified-Since"
-#define IF_NONE_MATCH_TAG "If-None-Match"
-#define IF_RANGE_TAG "If-Range"
-#define CONTENT_ENCODING_TAG "Content-Encoding"
-#define CONTENT_LENGTH_TAG "Content-Length"
-#define RANGE_TAG "Range"
-#define CONTENT_RANGE_TAG "Content-Range"
-#define ACCEPT_ENCODING_TAG "Accept-Encoding"
-#define X_BLOCK_BITSET_TAG "X-Block-Bitset"
-
 #define MIN_BLOCK_STORED 8192
 
 using namespace atscppapi;
