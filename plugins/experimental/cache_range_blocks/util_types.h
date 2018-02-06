@@ -29,6 +29,19 @@
 
 #pragma once
 
+#define VARY_TAG "Vary"
+#define ETAG_TAG "ETag"
+#define IF_MATCH_TAG "If-Match"
+#define IF_MODIFIED_SINCE_TAG "If-Modified-Since"
+#define IF_NONE_MATCH_TAG "If-None-Match"
+#define IF_RANGE_TAG "If-Range"
+#define CONTENT_ENCODING_TAG "Content-Encoding"
+#define CONTENT_LENGTH_TAG "Content-Length"
+#define RANGE_TAG "Range"
+#define CONTENT_RANGE_TAG "Content-Range"
+#define ACCEPT_ENCODING_TAG "Accept-Encoding"
+#define X_BLOCK_BITSET_TAG "X-Block-Bitset"
+
 class ATSXformCont;
 
 extern const int8_t base64_values[80];
@@ -151,7 +164,8 @@ public:
   template <class T_FUTURE>
   static TSCont create_temp_tscont(TSCont mutexSrc, T_FUTURE &cbFuture,
                                    const std::shared_ptr<void> &counted = std::shared_ptr<void>());
-
+  static TSCont create_temp_tscont(TSCont mutexSrc, 
+                                   const std::shared_ptr<void> &counted = std::shared_ptr<void>());
 public:
   explicit ATSCont(TSCont mutexSrc=nullptr); // no handler
   virtual ~ATSCont();
@@ -250,7 +264,8 @@ struct ATSXformCont : public TSCont_t {
 public:
   ATSXformCont() = delete; // nullptr by default
   ATSXformCont(ATSXformCont &&) = delete;
-  ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t bytes, int64_t offset = 0);
+  ATSXformCont(atscppapi::Transaction &txn);
+  ATSXformCont(atscppapi::Transaction &txn, int64_t bytes, int64_t offset = 0);
 
   // external-only body
   virtual ~ATSXformCont();
@@ -324,6 +339,7 @@ class BlockTeeXform : public ATSXformCont
   using HookType = std::function<void(TSIOBufferReader, int64_t inpos, int64_t newlen)>;
 
 public:
+  BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook);
   BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, int64_t xformLen, int64_t xformOffset);
   virtual ~BlockTeeXform() = default;
 
