@@ -109,6 +109,29 @@ ATSCont::create_temp_tscont(TSCont mutexSrc, T_FUTURE &cbFuture, const std::shar
 
   return cont; // convert to TSCont
 }
+
+TSCont
+ATSCont::create_temp_tscont(TSCont mutexSrc, const std::shared_ptr<void> &counted)
+{
+  auto contp = std::make_unique<ATSCont>(mutexSrc); // uses empty stub-callback!!
+  auto &cont = *contp; // hold scoped-ref
+
+  // assign new handler
+  cont = [&cont, counted](TSEvent evt, void *data) {
+    decltype(contp) contp(&cont); // free after this call
+    intptr_t ptrErr = reinterpret_cast<intptr_t>(data);
+    if (ptrErr >= 0 && ptrErr < INK_START_ERRNO + 1000) {
+      auto deleter = std::get_deleter<void (*)(void *)>(counted);
+      if (deleter) {
+        (*deleter)(counted.get());
+      }
+    }
+  };
+
+  contp.release(); // owned as ptr in lambda
+  return cont; // convert to TSCont
+}
+
 // bare Continuation lambda adaptor
 ATSCont::ATSCont(TSCont mutexSrc) : TSCont_t(TSContCreate(&ATSCont::handleTSEventCB, ( mutexSrc ? TSContMutexGet(mutexSrc) : TSMutexCreate() )))
 {
@@ -149,9 +172,11 @@ ATSCont::handleTSEventCB(TSCont cont, TSEvent event, void *data)
 ATSXformOutVConn::Uniq_t
 ATSXformOutVConn::create_if_ready(const ATSXformCont &xform, int64_t bytes, int64_t offset)
 {
-  return TSTransformOutputVConnGet(xform) 
-     ?  std::make_unique<ATSXformOutVConn>(xform, bytes, offset)
-     :  ATSXformOutVConn::Uniq_t{};
+  if ( ! TSTransformOutputVConnGet(xform) ) {
+    DEBUG_LOG("cannot create output @offset=%ld + len=%ld",offset,bytes);
+    return ATSXformOutVConn::Uniq_t{}; 
+  }
+  return std::make_unique<ATSXformOutVConn>(xform, bytes, offset);
 }
 
 ATSXformOutVConn::ATSXformOutVConn(const ATSXformCont &xform, int64_t bytes, int64_t offset)
@@ -257,7 +282,7 @@ ATSXformOutVConn::~ATSXformOutVConn()
 }
 
 // Transform continuations
-ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, int64_t bytes, int64_t offset)
+ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, int64_t bytes, int64_t offset)
   : TSCont_t(TSTransformCreate(&ATSXformCont::handleXformTSEventCB, static_cast<TSHttpTxn>(txn.getAtsHandle()))),
     _txnID(TSHttpTxnIdGet(static_cast<TSHttpTxn>(txn.getAtsHandle()))),
     _xformCB( [](TSEvent evt, TSVIO vio, int64_t left) { DEBUG_LOG("xform-event empty body handler"); return 0; }),
@@ -278,10 +303,25 @@ ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, TSHttpHookID xformType, 
   }
 
   // NOTE: maybe called long past TXN_CLOSE!
-  TSHttpTxnHookAdd(static_cast<TSHttpTxn>(txn.getAtsHandle()), xformType, xformCont);
+  TSHttpTxnHookAdd(static_cast<TSHttpTxn>(txn.getAtsHandle()), TS_HTTP_RESPONSE_TRANSFORM_HOOK, xformCont);
   // get to method via callback
   TSIOBufferWaterMarkSet(_outBufferU.get(), maxAgg); // never produce a READ_READY
-  DEBUG_LOG("output block level set to: %ldK",maxAgg);
+  DEBUG_LOG("output buffering set to: %ldK",maxAgg);
+}
+
+// Transform continuations
+ATSXformCont::ATSXformCont(atscppapi::Transaction &txn)
+  : TSCont_t(TSTransformCreate(&ATSXformCont::handleXformTSEventCB, static_cast<TSHttpTxn>(txn.getAtsHandle()))),
+    _txnID(TSHttpTxnIdGet(static_cast<TSHttpTxn>(txn.getAtsHandle()))),
+    _xformCB( [](TSEvent evt, TSVIO vio, int64_t left) { DEBUG_LOG("xform-event empty body handler"); return 0; }),
+    _outSkipBytes(-1),
+    _outWriteBytes(-1)
+    // no output buffer / reader
+{
+  // point back here
+  auto xformCont = get();
+  TSContDataSet(xformCont, this);
+  TSHttpTxnHookAdd(static_cast<TSHttpTxn>(txn.getAtsHandle()), TS_HTTP_RESPONSE_CLIENT_HOOK, xformCont);
 }
 
 int
@@ -313,8 +353,27 @@ ATSXformCont::~ATSXformCont()
   TSCont_t::reset();
 }
 
+// simple Xform "client" with no changes (skip/truncate) possible
+BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook)
+  : ATSXformCont(txn),
+    _writeHook(writeHook),
+    _teeBufferP(TSIOBufferCreate()),
+    _teeReaderP(TSIOBufferReaderAlloc(this->_teeBufferP.get()))
+{
+  // limit input speed to a degree
+  long maxAgg = 0;
+  if ( TSMgmtIntGet("proxy.config.cache.agg_write_backlog",&maxAgg) != TS_SUCCESS ) {
+    maxAgg = 20 * (1<<20); // 20M watermark
+  }
+
+  // get to method via callback
+  TSIOBufferWaterMarkSet(_teeBufferP.get(), maxAgg); // never produce a READ_READY
+  DEBUG_LOG("tee-buffer block-aligned buffer to: %ld", maxAgg);
+}
+
+// Xform "client" with skip/truncate
 BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, int64_t xformLen, int64_t xformOffset)
-  : ATSXformCont(txn, TS_HTTP_RESPONSE_TRANSFORM_HOOK, xformLen, xformOffset),
+  : ATSXformCont(txn, xformLen, xformOffset),
     _writeHook(writeHook),
     _teeBufferP(TSIOBufferCreate()),
     _teeReaderP(TSIOBufferReaderAlloc(this->_teeBufferP.get()))
@@ -323,8 +382,8 @@ BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, 
 
   // get to method via callback
   set_body_handler([this](TSEvent evt, TSVIO vio, int64_t left) { return this->inputEvent(evt, vio, left); });
-  TSIOBufferWaterMarkSet(_teeBufferP.get(), TSIOBufferWaterMarkGet(outputBuffer()) ); // never produce a READ_READY
-  DEBUG_LOG("tee-buffer block level set to: %ld", xformLen + xformOffset);
+  TSIOBufferWaterMarkSet(_teeBufferP.get(), TSIOBufferWaterMarkGet(outputBuffer()) ); // avoid producing a READ_READY
+  DEBUG_LOG("tee-buffer buffering set to: %ld", xformLen + xformOffset);
 }
 
 void
@@ -332,6 +391,71 @@ BlockTeeXform::teeReenable()
 {
   auto range = teeAvail();
   _writeHook(_teeReaderP.get(), range.first, range.second); // attempt new absorb of input
+}
+
+#if 0
+    TSHttpTxnClientReqGet(txn, &buf, &loc);
+
+    req_buf = TSMBufferCreate();
+    TSHttpHdrClone(req_buf, buf, loc, &req_hdr_loc);
+
+    req_io_buf         = TSIOBufferCreate();
+    req_io_buf_reader  = TSIOBufferReaderAlloc(req_io_buf);
+    resp_io_buf        = TSIOBufferCreate();
+    resp_io_buf_reader = TSIOBufferReaderAlloc(resp_io_buf);
+
+    TSHttpHdrPrint(req_buf, req_hdr_loc, req_io_buf);
+    TSIOBufferWrite(req_io_buf, "\r\n", 2); 
+
+    vconn = TSHttpConnectWithPluginId(&state->req_info->client_addr.sa, PLUGIN_NAME, 0); 
+
+    state->r_vio = TSVConnRead(vconn, consume_cont, state->resp_io_buf, INT64_MAX);
+    state->w_vio = TSVConnWrite(vconn, consume_cont, state->req_io_buf_reader, TSIOBufferReaderAvail(state->req_io_buf_reader));
+
+#endif
+
+static void sub_server_hdrs(atscppapi::Transaction &origTxn, TSIOBuffer reqBuffer, const std::string &rangeStr)
+{
+  TSMLoc mbufLoc, loc;
+  TSMBuffer buf;
+  TSMBuffer_t mbuf{ TSMBufferCreate() };
+
+  // make a clone [nothing uses mloc field handles]
+  TSHttpTxnClientReqGet(static_cast<TSHttpTxn>(origTxn.getAtsHandle()), &buf, &loc);
+  TSHttpHdrClone(mbuf.get(), buf, loc, &mbufLoc);
+
+  // replace the one header
+  atscppapi::Headers(mbuf.get(), mbufLoc).set(RANGE_TAG, rangeStr);
+
+  // print corrected request to output buffer
+  TSHttpHdrPrint(mbuf.get(), mbufLoc, reqBuffer);
+  TSIOBufferWrite(reqBuffer, "\r\n", 2); 
+}
+
+TSVConn spawn_sub_txn(atscppapi::Transaction &origTxn, int64_t begin, int64_t end)
+{
+  struct WriteHdr {
+     TSIOBuffer_t       _buf{ TSIOBufferCreate() };
+     TSIOBufferReader_t _rdr{ TSIOBufferReaderAlloc(_buf.get()) };
+  };
+
+  auto data = std::make_shared<WriteHdr>();
+  auto reqbuf = data->_buf.get();
+  auto reqrdr = data->_rdr.get();
+
+  auto newRange = std::string("bytes=") + std::to_string(begin);
+
+  // need range endpoint?
+  if ( begin >= 0 ) {
+    newRange += ( end > 0 ? std::to_string(-end).c_str() : "-" );
+  }
+
+  sub_server_hdrs(origTxn, reqbuf, newRange);
+
+  auto vconn = TSHttpConnectWithPluginId(origTxn.getClientAddress(), PLUGIN_NAME, 0); 
+  // set up destruct when an event (any) returns
+  TSVConnWrite(vconn, ATSCont::create_temp_tscont(nullptr, std::move(data)), reqrdr, TSIOBufferReaderAvail(reqrdr));
+  return vconn;
 }
 
 class BlockStoreXform;
