@@ -100,6 +100,7 @@ public:
   const std::string & blockRangeStr() const { return _blkRangeStr; }
 
   const std::vector<ATSCacheKey> & keysInRange() const { return _keysInRange; }
+  std::vector<ATSCacheKey> & keysInRange() { return _keysInRange; }
 
   int64_t assetLen() const { return _assetLen; }
   int64_t contentLen() const { return _endByte - _beginByte; }
@@ -173,62 +174,57 @@ private:
 };
 
 /////////////////////////////////////////////////
+struct BlockWriteInfo;
+
 /////////////////////////////////////////////////
 class BlockStoreXform : public BlockTeeXform, 
                         public std::enable_shared_from_this<BlockStoreXform>
 {
+  friend struct BlockWriteInfo;
 public:
   using Ptr_t = std::shared_ptr<BlockStoreXform>;
   using WriteVCs_t = std::vector<ATSVConnFuture>;
   using WriteVCsPtr_t = std::shared_ptr<std::vector<ATSVConnFuture>>;
 
-  struct BlockWriteData {
-    Ptr_t      _writeXform;
-    int        _txnid;
-    int        _blkid;
-    int        _ind;
-    TSCacheKey _key;
-  };
-
 public:
   BlockStoreXform(BlockSetAccess &ctxt, int blockCount);
   ~BlockStoreXform() override;
 
-  int64_t vconn_future_count() const { return _vcsToWriteP->size(); }
-  int64_t vconn_count() const { return _vcsReady; }
-  long write_count() const { return this->shared_from_this().use_count() - 1; } 
-
-  void start_write_futures(int min);
-
-  void reset_write_futures() {
-    _vcsToWriteP.reset();
-    start_write_futures(0);
-  }
-
+  long write_count() const { return this->_writeCheck.use_count() - 1; } 
 private:
-  const ATSVConnFuture &get_vconn_future(const ATSCacheKey &key) const {
-    return _vcsToWriteP->operator []( &key - &_ctxt.keysInRange().front() );
-  }
-
-  ATSVConnFuture &at_vconn_future(const ATSCacheKey &key) 
-  {
-    auto i = &key - &_ctxt.keysInRange().front();
-    if ( i >= vconn_future_count() ) {
-      _vcsToWriteP->resize(i+1);
-    }
-    return _vcsToWriteP->operator [](i);
-  }
-
-  TSVConn next_valid_vconn(int64_t pos, int64_t len, int64_t &skipDist);
+  TSCacheKey next_valid_vconn(int64_t pos, int64_t len, int64_t &skipDist);
 
   void handleBodyRead(TSIOBufferReader r, int64_t pos, int64_t len);
-  static TSEvent handleBlockWrite(TSCont, TSEvent, void *, const BlockWriteData &);
+  static TSEvent handleBlockWrite(TSCont, TSEvent, void *, const std::unique_ptr<BlockWriteInfo> &);
 
 private:
-  BlockSetAccess &_ctxt;
-  WriteVCsPtr_t   _vcsToWriteP;  // can detach upon surprising new ETag
-  int             _vcsReady = 0;
-  TSEvent         _blockVIOUntil = TS_EVENT_NONE; // event targeted to fix block
+  BlockSetAccess       &_ctxt;
+  std::shared_ptr<void> _writeCheck = std::shared_ptr<void>(this, [](BlockStoreXform*){ });
+  int                   _vcsReady = 0;
+  TSEvent               _blockVIOUntil = TS_EVENT_NONE; // event targeted to fix block
+};
+
+struct BlockWriteInfo 
+{
+  BlockWriteInfo(BlockStoreXform &store, TSIOBuffer buff, TSIOBufferReader rdr, int blk) : 
+      _writeXform(store.shared_from_this()), 
+      _ind(blk),
+      _key(store._ctxt.keysInRange()[blk].release()),
+      _buff(buff),
+      _rdr(rdr),
+      _blkid(store._ctxt.firstIndex() + blk)
+  { }
+
+  BlockStoreXform::Ptr_t _writeXform;
+  int                    _ind;
+  ATSCacheKey            _key;
+  ATSVConnFuture         _vconn;
+  TSIOBuffer_t           _buff;
+  TSIOBufferReader_t     _rdr;
+  std::shared_ptr<void>  _writeRef;
+
+  int                    _blkid; // for debug
+  int                    _txnid = ThreadTxnID::get(); // for debug
 };
 
 /////////////////////////////////////////////////
