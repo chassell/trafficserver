@@ -147,6 +147,7 @@ inline std::pair<int64_t,int64_t> write_range_avail(TSVIO vio) {
 struct ATSCacheKey : public TSCacheKey_t {
   explicit ATSCacheKey() : TSCacheKey_t{TSCacheKeyCreate()} { }
   explicit ATSCacheKey(TSCacheKey key) : TSCacheKey_t{key} { }
+  explicit ATSCacheKey(ATSCacheKey &&old) : TSCacheKey_t{old.release()} { }
   ATSCacheKey(const std::string &url, std::string const &etag, uint64_t offset);
 
   operator TSCacheKey() const { return get(); }
@@ -168,9 +169,10 @@ public:
                                    const std::shared_ptr<void> &counted = std::shared_ptr<void>());
 public:
   explicit ATSCont(TSCont mutexSrc=nullptr); // no handler
+  explicit ATSCont(ATSCont &&old) : TSCont_t(old.release()), _userCB(std::move(old._userCB)) { }
   virtual ~ATSCont();
 
-  // handle TSHttpTxn continuations with a method
+  // handle TSHttpTxn continuations with a method (no dtor implied)
   template <class T_OBJ, typename T_DATA> 
   ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, const T_DATA&), T_DATA &&cbdata, TSCont mutexSrc=nullptr);
 
@@ -198,12 +200,26 @@ private:
 // cover up interface
 struct ATSVConnFuture : private std::shared_future<TSVConn> 
 {
-  using std::shared_future<TSVConn>::operator=; // allow use
+  using TSVConnFut_t = std::shared_future<TSVConn>; // allow use
+  using TSVConnProm_t = std::promise<TSVConn>; // allow use
+  using TSVConnFut_t::operator=; // allow use
 
   explicit ATSVConnFuture() = default;
   explicit ATSVConnFuture(const ATSVConnFuture &) = default;
 
+  explicit ATSVConnFuture(TSVConn vconn) 
+  {
+    TSVConnProm_t prom;
+    static_cast<TSVConnFut_t&>(*this) = prom.get_future();
+    prom.set_value(vconn);
+  }
+
   ~ATSVConnFuture();
+
+  ATSVConnFuture &operator=(ATSVConnFuture &&old) {
+    *this = static_cast<TSVConnFut_t&&>(old);
+    return *this;
+  }
 
   operator bool() const { return std::shared_future<TSVConn>::valid(); }
   int error() const;
@@ -392,9 +408,9 @@ ATSCont::ATSCont(TSEvent (*funcp)(TSCont, TSEvent, void *, const T_DATA&), T_DAT
   static_cast<void>(cbdata);
   // memorize user data to forward on
   _userCB = decltype(_userCB)(
-    [this, funcp, cbdata](TSEvent event, void *evtdata) 
+    [this, funcp, &cbdata](TSEvent event, void *evtdata) 
     {
-       if ( (*funcp)(get(), event, evtdata, cbdata) != TS_EVENT_CONTINUE ) {
+       if ( (*funcp)(*this, event, evtdata, cbdata) != TS_EVENT_CONTINUE ) {
          delete this;
        }
     });
