@@ -177,8 +177,8 @@ private:
 struct BlockWriteInfo;
 
 /////////////////////////////////////////////////
-class BlockStoreXform : public BlockTeeXform, 
-                        public std::enable_shared_from_this<BlockStoreXform>
+class BlockStoreXform : public std::enable_shared_from_this<BlockStoreXform>,
+                        public BlockTeeXform
 {
   friend struct BlockWriteInfo;
 public:
@@ -191,31 +191,35 @@ public:
   ~BlockStoreXform() override;
 
   long write_count() const { return this->_writeCheck.use_count() - 1; } 
+  void reset_write_keys() {
+    _keysToWrite.clear();
+    std::swap(_ctxt._keysInRange,_keysToWrite);
+  }
 private:
   TSCacheKey next_valid_vconn(int64_t pos, int64_t len, int64_t &skipDist);
 
   void handleBodyRead(TSIOBufferReader r, int64_t pos, int64_t len, int64_t added);
-  static TSEvent handleBlockWrite(TSCont, TSEvent, void *, const std::shared_ptr<BlockWriteInfo> &);
 
 private:
   BlockSetAccess       &_ctxt;
-  std::shared_ptr<void> _writeCheck = std::shared_ptr<void>(this, [](BlockStoreXform*){ });
+  std::shared_ptr<void> _writeCheck = std::shared_ptr<void>(&_writeCheck, [](std::shared_ptr<void>*){ });
   int                   _vcsReady = 0;
+  std::vector<ATSCacheKey> _keysToWrite; // in order with index
   std::atomic<TSEvent>  _blockVIOUntil{TS_EVENT_NONE}; // event targeted to fix block
 };
 
-struct BlockWriteInfo 
+struct BlockWriteInfo : public std::enable_shared_from_this<BlockWriteInfo>
 {
-  BlockWriteInfo(BlockStoreXform &store, TSIOBuffer buff, TSIOBufferReader rdr, int blk) : 
-      _writeXform(store.shared_from_this()), 
-      _ind(blk),
-      _key(store._ctxt.keysInRange()[blk].release()),
-      _buff(buff),
-      _rdr(rdr),
-      _blkid(store._ctxt.firstIndex() + blk)
-  { }
+  using Ptr_t = std::shared_ptr<BlockWriteInfo>;
 
-  ~BlockWriteInfo() = default;
+  BlockWriteInfo(BlockStoreXform &store, TSIOBuffer buff, TSIOBufferReader rdr, int blk);
+  ~BlockWriteInfo();
+
+  static TSEvent handleBlockWriteCB(TSCont c, TSEvent evt, void *p, const std::shared_ptr<BlockWriteInfo> &ptr) {
+    return ptr->handleBlockWrite(c,evt,p);
+  }
+
+  TSEvent handleBlockWrite(TSCont, TSEvent, void *);
 
   BlockStoreXform::Ptr_t _writeXform;
   int                    _ind;
