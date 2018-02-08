@@ -226,7 +226,7 @@ ATSVConnFuture::error() const
   using std::future_status;
 
   if ( ! std::shared_future<TSVConn>::valid() ) {
-    return SOCK_ERRNO;
+    return ESOCK_NO_SOCK_SERVER_CONN;
   }
   if ( wait_for(seconds::zero()) != future_status::ready ) {
     return ESOCK_TIMEOUT;
@@ -265,8 +265,10 @@ ATSXformOutVConn::~ATSXformOutVConn()
 
   atscppapi::ScopedContinuationLock lock(_inVConn);
   if ( _outVIO ) {
+    DEBUG_LOG("write-complete @%#lx [@%#lx] invconn=%p outvconn=%p",
+             TSVIONDoneGet(_outVIO), TSVIONBytesGet(_outVIO), 
+             _inVConn, _outVConn);
     TSVIONBytesSet( _outVIO, TSVIONDoneGet(_outVIO) );
-    DEBUG_LOG("write-complete @%#lx invconn=%p outvconn=%p",TSVIONDoneGet(_outVIO), _inVConn, _outVConn);
     TSVIOReenable(_outVIO);
     _outVIO = nullptr;
   }
@@ -297,14 +299,11 @@ ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, int64_t bytes, int64_t o
   auto xformCont = get();
   TSContDataSet(xformCont, this);
 
-  long maxAgg = 5 * (1<<20);
-  TSMgmtIntGet("proxy.config.cache.agg_write_backlog",&maxAgg);
-
   // NOTE: maybe called long past TXN_CLOSE!
   TSHttpTxnHookAdd(static_cast<TSHttpTxn>(txn.getAtsHandle()), TS_HTTP_RESPONSE_TRANSFORM_HOOK, xformCont);
   // get to method via callback
-  DEBUG_LOG("output buffering set to: %ldK",maxAgg>>12);
-  TSIOBufferWaterMarkSet(_outBufferU.get(), maxAgg>>2); // never produce a READ_READY
+  DEBUG_LOG("output buffering begins with: %ldK",1L<<6);
+  TSIOBufferWaterMarkSet(_outBufferU.get(), 1<<16); // start to flush early 
 }
 
 // Transform continuations
