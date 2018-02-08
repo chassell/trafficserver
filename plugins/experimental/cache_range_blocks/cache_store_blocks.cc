@@ -53,11 +53,12 @@ BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
                   ctxt._beginByte % ctxt.blockSize()),
     _ctxt(ctxt)
 {
+  reset_write_keys();
 }
 
 BlockStoreXform::~BlockStoreXform()
 {
-  DEBUG_LOG("destruct start");
+  DEBUG_LOG("destruct start: writes:%ld", write_count());
 }
 
 void
@@ -127,6 +128,7 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
   _etagStr = currETag;
 
   reset_range_keys();
+  _storeXform->reset_write_keys();
 
   if ( indexLen() > 100 ) {
     TSHttpTxnServerRespNoStoreSet(atsTxn(),1); // don't store!
@@ -155,7 +157,7 @@ BlockStoreXform::next_valid_vconn(int64_t inpos, int64_t len, int64_t &skip)
   // amt past boundary (maybe full block)
   auto fwdDist = ((inpos + blksz - 1) % blksz) + 1; // between 1 and blksz
   auto nxtPos = inpos - fwdDist + blksz; // (can be same as inpos)
-  auto &keys = _ctxt.keysInRange();
+  auto &keys = _keysToWrite;
   auto blk = nxtPos / blksz;
 
   // find nxtPos within this new span ... and before end
@@ -189,6 +191,10 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t donepos, int64_
     return;
   }
 
+  if ( donepos == readypos && ! added ) {
+    return;
+  }
+
   auto firstBlk = _ctxt.firstIndex();
 
   // prevent multiple starts of a storage
@@ -203,23 +209,23 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t donepos, int64_
   // too much load to add a new write
   while ( donepos < readypos ) 
   {
-    if ( write_count() >= WRITE_COUNT_LIMIT && _blockVIOUntil == TS_EVENT_CACHE_CLOSE ) {
-      return; // silent...
-    }
+    teerdr = teeReader(); // reset if changed
+    auto navail = TSIOBufferReaderAvail(teerdr); // recheck..
+    donepos = readypos - navail; // 
+    auto blk = static_cast<int>(donepos / blksz);
 
     if ( write_count() >= WRITE_COUNT_LIMIT ) {
-      _blockVIOUntil = TS_EVENT_CACHE_CLOSE; // set blocked-cause flag
+      auto older = _blockVIOUntil.exchange(TS_EVENT_CACHE_CLOSE);
+      if ( older == TS_EVENT_CACHE_CLOSE && ! added ) {
+//        DEBUG_LOG("store **** stop for wakeup 1<<%ld pos:%#lx+%#lx", firstBlk + blk, donepos, navail);
+        return; // silent...
+      }
       break;
     }
 
-    _blockVIOUntil = TS_EVENT_NONE; // can proceed
-
-    teerdr = teeReader(); // reset if changed
-    auto navail = TSIOBufferReaderAvail(teeReader()); // recheck..
-    donepos = readypos - navail; // 
-    auto blk = donepos / blksz;
-
+    _blockVIOUntil = TS_EVENT_NONE; // need more input only...
     if ( ! navail || donepos >= endpos ) {
+//      DEBUG_LOG("store **** stop for end 1<<%ld pos:%#lx+%#lx", firstBlk + blk, donepos, navail);
       return; // complete
     }
 
@@ -230,7 +236,7 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t donepos, int64_
     // new blocking problem?
     if (! currKey && _blockVIOUntil ) {
       DEBUG_LOG("store **** stop at current block 1<<%ld pos:%#lx+%#lx", firstBlk + blk, donepos, navail);
-      return;
+      return; // restart needed...
     }
 
     // no block to write?
@@ -238,7 +244,7 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t donepos, int64_
       // no need to save these bytes?
       TSIOBufferReaderConsume(teerdr, navail);
       DEBUG_LOG("store **** skip current block 1<<%ld pos:%#lx+%#lx", firstBlk + blk, donepos, navail);
-      return;
+      return; // more input needed
       //////// RETURN
     }
 
@@ -257,7 +263,7 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t donepos, int64_
     auto wrlen = std::min(endpos - donepos,blksz); // len needed for a block write...
 
     if ( navail < wrlen && ! added ) {
-      return; // silent
+      return;
       //////// RETURN
     }
 
@@ -267,109 +273,182 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t donepos, int64_
       //////// RETURN
     }
 
-    // reader has more than the needed bytes for a complete write
-//    auto &vcFuture = at_vconn_future(keys[blk]); // should be correct now...
-//
-//    ink_assert(vcFuture.get() == currBlock);
-
-    // ATSCacheKey key(_ctxt.clientUrl(), _ctxt._etagStr, (firstBlk + blk) * _ctxt.blockSize());
-
-    // give ownership of current teereader / teebuffer
-    auto callDatap = std::make_shared<BlockWriteInfo>(*this, teeBuffer(), teeReader(), static_cast<int>(blk));
-    // make a totally async set of callbacks to write out new block
-    cloneAndSkip(blksz); // substitute new buffer ...
-
+    // going to give ownership of current teereader / teebuffer
+    auto callDatap = std::make_shared<BlockWriteInfo>(*this, teeBuffer(), teeReader(), blk);
     auto &callData = *callDatap;
 
     ink_assert( currKey == callData._key.get() );
 
-    // need to use new for complicated ctor
-    auto blockCont = new ATSCont(&BlockStoreXform::handleBlockWrite, std::move(callDatap)); // separate mutexes!
-    TSCacheWrite(blockCont->get(), callData._key.get()); // find room to store each key...
+    // direct new to allow self-delete
+    auto blockCont = (new ATSCont(&BlockWriteInfo::handleBlockWriteCB, 
+                                   callDatap->shared_from_this()))
+                 ->get(); // get the TSCont
 
-    DEBUG_LOG("store ++++ beginning block w/write 1<<%ld nwrites:%ld @%#lx+%#lx [final @%#lx]", 
-             _ctxt.firstIndex() + blk, write_count(), donepos, navail, donepos + wrlen);
+    auto wrcnt = write_count();
+
+    // notify quickly if we need a new wakeup...
+    if ( wrcnt >= WRITE_COUNT_LIMIT ) {
+      DEBUG_LOG("store ++++ beginning [full] write 1<<%ld nwrites:%ld @%#lx+%#lx [final @%#lx]", 
+               _ctxt.firstIndex() + blk, write_count(), donepos, navail, donepos + wrlen);
+      _blockVIOUntil.exchange(TS_EVENT_CACHE_CLOSE); // set flag 
+    } else {
+      DEBUG_LOG("store ++++ beginning write 1<<%ld nwrites:%ld @%#lx+%#lx [final @%#lx]", 
+               _ctxt.firstIndex() + blk, write_count(), donepos, navail, donepos + wrlen);
+    }
+
+    cloneAndSkip(blksz); // move on to new buffers...
+
+    auto r = TSCacheWrite(blockCont, callData._key.get()); // find room to store each key...
+
+    // Did write fail totally?
+    auto err = callData._vconn.error();
+    if ( err && err != ESOCK_TIMEOUT ) 
+    {
+      DEBUG_LOG("store ++++ failed write 1<<%ld [%s] nwrites:%ld @%#lx+%#lx [final @%#lx]", 
+               _ctxt.firstIndex() + blk, InkStrerror(callData._vconn.error()),
+               write_count(), donepos, navail, donepos + wrlen);
+      _blockVIOUntil.exchange(TS_EVENT_CACHE_CLOSE); // set flag 
+      return; // wait for wakeup ...
+    }
+
+    if ( ! TSActionDone(r) ) {
+      DEBUG_LOG("store ++++ incomplete write 1<<%ld nwrites:%ld @%#lx+%#lx [final @%#lx]", 
+               _ctxt.firstIndex() + blk, write_count(), donepos, navail, donepos + wrlen);
+      _blockVIOUntil.exchange(TS_EVENT_CACHE_CLOSE); // set flag 
+      return; // wait for wakeup ...
+    }
+
+    if ( callDatap.use_count() == 1 ) {
+      DEBUG_LOG("store ++++ completed write 1<<%ld nwrites:%ld @%#lx+%#lx [final @%#lx]", 
+               _ctxt.firstIndex() + blk, write_count(), donepos, navail, donepos + wrlen);
+    } else {
+      DEBUG_LOG("store ++++ started write 1<<%ld nwrites:%ld @%#lx+%#lx [final @%#lx]", 
+               _ctxt.firstIndex() + blk, write_count(), donepos, navail, donepos + wrlen);
+    }
+
+    if ( wrcnt >= WRITE_COUNT_LIMIT ) {
+      return; // requested a wakeup already
+    }
+    // continue...
   }
 
-  DEBUG_LOG("store **** waiting at current block 1<<%ld pos:%#lx+%#lx", firstBlk + donepos/blksz, donepos, readypos - donepos);
+  auto navail = TSIOBufferReaderAvail(teerdr); // recheck after swap
+  if ( readypos >= endpos && navail ) {
+    _blockVIOUntil = TS_EVENT_CACHE_CLOSE;
+  }
+
+  DEBUG_LOG("store **** nwrites:%ld waiting at current block 1<<%ld pos:%#lx+%#lx", write_count(), firstBlk + donepos/blksz, donepos, readypos - donepos);
+}
+
+BlockWriteInfo::BlockWriteInfo(BlockStoreXform &store, TSIOBuffer buff, TSIOBufferReader rdr, int blk) : 
+      _writeXform(store.shared_from_this()), 
+      _ind(blk),
+      _key(store._keysToWrite[blk].release()),
+      _buff(buff),
+      _rdr(rdr),
+      _writeRef(store._writeCheck),
+      _blkid(store._ctxt.firstIndex() + blk)
+{
+  DEBUG_LOG("ctor 1<<%d xform active:%ld writes:%ld",  
+      _blkid, _writeXform.use_count(), _writeXform->write_count());
+}
+
+BlockWriteInfo::~BlockWriteInfo() {
+  DEBUG_LOG("dtor 1<<%d xform active:%ld writes:%ld",  
+      _blkid, _writeXform.use_count(), _writeXform->write_count());
 }
 
 TSEvent
-BlockStoreXform::handleBlockWrite(TSCont cont, TSEvent event, void *edata, const std::shared_ptr<BlockWriteInfo> &blockp)
+BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
 {
-  BlockWriteInfo &block = *blockp;
-  ThreadTxnID txnid(block._txnid);
+  ThreadTxnID txnid(_txnid);
 
   if (!edata) {
     DEBUG_LOG("empty edata event e#%d", event);
     return TS_EVENT_ERROR; // done
   }
 
-  TSVConn vconn = static_cast<TSVConn>(edata);
-  intptr_t verr = -reinterpret_cast<intptr_t>(edata);
-
   switch (event) {
+    case TS_EVENT_CACHE_OPEN_WRITE_FAILED:
+    {
+      auto verr = -reinterpret_cast<intptr_t>(edata);
+      auto vconn = static_cast<TSVConn>(edata);
+      _vconn = ATSVConnFuture(vconn); // replace with the error value
+      // async result was not found in time..
+      auto r = TSContSchedule(cont, 0, TS_THREAD_POOL_TASK); // XXX: deadlocks if not immediate!?!
+      DEBUG_LOG("scheduled reopen write check [%s] to 1<<%d nwrites:%ld", InkStrerror(verr), _blkid, _writeXform->write_count());
+      break;
+    }
 
-  case TS_EVENT_CACHE_OPEN_WRITE_FAILED:
-    DEBUG_LOG("failed open write check [%s] to 1<<%d nwrites:%ld", InkStrerror(verr), block._blkid, block._writeXform->write_count()-1);
-    TSContSchedule(cont, 0, TS_THREAD_POOL_DEFAULT);
-    break;
+    case TS_EVENT_IMMEDIATE:
+    {
+      DEBUG_LOG("restarted open write with 1<<%d nwrites:%ld",_blkid, _writeXform->write_count());
+      auto r = TSCacheWrite(cont, _key.get()); // find room to store each key...
+      if ( ! TSActionDone(r) ) {
+        DEBUG_LOG("waiting on open write with 1<<%d nwrites:%ld",_blkid, _writeXform->write_count());
+      }
+      break;
+    }
 
-  case TS_EVENT_IMMEDIATE:
-    TSCacheWrite(cont, block._key.get()); // find room to store each key...
-    break;
+    case TS_EVENT_CACHE_OPEN_WRITE:
+    {
+      TSVConn vconn = static_cast<TSVConn>(edata);
+      DEBUG_LOG("completed open write with 1<<%d nwrites:%ld",_blkid, _writeXform->write_count());
+      _vconn = ATSVConnFuture(vconn);
+      auto wrlen = std::min(TSIOBufferReaderAvail(_rdr.get()),(1L<<20));
+      TSVConnWrite(vconn, cont, _rdr.get(), wrlen); // copy older buffer bytes out
+      break;
+    }
 
-  case TS_EVENT_CACHE_OPEN_WRITE:
-  {
-    DEBUG_LOG("completed open write with 1<<%d nwrites:%ld",block._blkid, block._writeXform->write_count()-1);
-    block._vconn = ATSVConnFuture(vconn);
-    auto wrlen = std::min(TSIOBufferReaderAvail(block._rdr.get()),(1L<<20));
-    TSVConnWrite(vconn, cont, block._rdr.get(), wrlen); // copy older buffer bytes out
-    break;
-  }
-
-  case TS_EVENT_VCONN_WRITE_READY:
+    case TS_EVENT_VCONN_WRITE_READY:
     {
       TSVIO vio = static_cast<TSVIO>(edata);
       // didn't detect enough bytes in buffer to complete?
       TSIOBufferReader writeRdr = TSVIOReaderGet(vio);
       if (! TSIOBufferReaderAvail(writeRdr)) {
-        DEBUG_LOG("cache-write 1<<%d flush empty e#%d -> %ld? %ld?", block._blkid, event, TSVIONDoneGet(vio), TSVIONBytesGet(vio));
+        DEBUG_LOG("cache-write 1<<%d flush empty e#%d -> %ld? %ld?", _blkid, event, TSVIONDoneGet(vio), TSVIONBytesGet(vio));
         break; // surprising!
       }
-      DEBUG_LOG("cache-write 1<<%d flush e#%d -> %ld? %ld?", block._blkid, event, TSVIONDoneGet(vio), TSVIONBytesGet(vio));
+      DEBUG_LOG("cache-write 1<<%d flush e#%d -> %ld? %ld?", _blkid, event, TSVIONDoneGet(vio), TSVIONBytesGet(vio));
       TSVIOReenable(vio);
       break;
     }
 
-  case TS_EVENT_VCONN_WRITE_COMPLETE:
+    case TS_EVENT_VCONN_WRITE_COMPLETE:
     {
       TSVIO vio = static_cast<TSVIO>(edata);
-      BlockStoreXform &store = *block._writeXform; // doesn't change
-      int wrcnt = store.write_count();
+      BlockStoreXform &store = *_writeXform; // doesn't change
+
+      _writeRef.reset(); // remove flag of write
+
+      int wrcnt = store.write_count(); // there can be only one zero!
       auto vconnv = TSVIOVConnGet(vio);
 
       // attempt to close VConn here
+      auto &flagEvt = _writeXform->_blockVIOUntil;
       auto oflag = TS_EVENT_CONTINUE;
-      auto &flagEvt = block._writeXform->_blockVIOUntil;
 
-      flagEvt.compare_exchange_strong(oflag,TS_EVENT_NONE); // need un-blocking?
+      if ( ! wrcnt ) {
+        flagEvt.compare_exchange_strong(oflag,TS_EVENT_NONE); // need un-blocking?
+      }
 
       if ( oflag == TS_EVENT_CACHE_CLOSE ) {
-        DEBUG_LOG("completed store with wakeup to 1<<%d nwrites:%d",block._blkid,wrcnt);
-        TSVConnClose(vconnv); // flush and store
-        TSContSchedule(store, 0, TS_THREAD_POOL_DEFAULT);
+        DEBUG_LOG("completed store with wakeup to 1<<%d nwrites:%d",_blkid,wrcnt);
+//        TSVConnClose(vconnv); // flush and store
+        TSContSchedule(store, 0, TS_THREAD_POOL_TASK); // wakeup!
+      } else if ( flagEvt == TS_EVENT_CACHE_CLOSE ) {
+        DEBUG_LOG("completed non-final store to 1<<%d nwrites:%d",_blkid,wrcnt);
       } else {
-        DEBUG_LOG("completed store to 1<<%d nwrites:%d",block._blkid,wrcnt);
-        TSVConnClose(vconnv); // flush and store
+        DEBUG_LOG("completed store to 1<<%d nwrites:%d",_blkid,wrcnt);
+//        TSVConnClose(vconnv); // flush and store
       }
-      block._vconn.release();
+//      _vconn.release();
       return TS_EVENT_NONE; // call dtor of ATSCont
     }
 
-  default:
-    DEBUG_LOG("unknown event: e#%d", event);
-    break;
+    default:
+      DEBUG_LOG("unknown event: e#%d", event);
+      break;
   }
   return TS_EVENT_CONTINUE; // re-use ATSCont with data block
 }
