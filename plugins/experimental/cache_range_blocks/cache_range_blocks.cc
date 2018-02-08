@@ -90,17 +90,22 @@ BlockSetAccess::~BlockSetAccess()
   {
     atscppapi::ScopedContinuationLock lock(_mutexOnlyCont); // to close
 
-    DEBUG_LOG("top delete mid 1");
-    _storeXform.reset(); // clear first
-    DEBUG_LOG("top delete mid 2");
-    _readXform.reset(); // clear next
-    DEBUG_LOG("top delete mid 3");
-    _keysInRange.clear();
-    DEBUG_LOG("top delete mid 4");
+    if ( _storeXform ) {
+      DEBUG_LOG("store destruct: refs:%ld",_storeXform.use_count());
+      _storeXform.reset(); // clear first
+    }
+    if ( _readXform ) {
+      DEBUG_LOG("read destruct: refs:%ld",_storeXform.use_count());
+      _readXform.reset(); // clear next
+    }
+    if ( ! _keysInRange.empty() ) {
+      DEBUG_LOG("keys destruct: n:%ld",_keysInRange.size());
+      _keysInRange.clear();
+    }
   }
 
   _mutexOnlyCont.reset();
-  DEBUG_LOG("top delete end");
+  DEBUG_LOG("delete end");
 }
 
 void
