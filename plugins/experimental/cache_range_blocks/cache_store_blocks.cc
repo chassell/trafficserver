@@ -23,7 +23,7 @@
 
 #include <algorithm>
 
-#define WRITE_COUNT_LIMIT 8
+#define WRITE_COUNT_LIMIT 4
 
 void
 BlockSetAccess::start_cache_miss()
