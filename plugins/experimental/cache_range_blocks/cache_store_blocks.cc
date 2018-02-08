@@ -48,12 +48,11 @@ BlockSetAccess::start_cache_miss()
 
 BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
   : BlockTeeXform(ctxt.txn(), 
-                  [this](TSIOBufferReader r, int64_t inpos, int64_t len) { this->handleBodyRead(r, inpos, len); },
+                  [this](TSIOBufferReader r, int64_t inpos, int64_t len, int64_t added) { this->handleBodyRead(r, inpos, len, added); },
                   ctxt.contentLen(),
                   ctxt._beginByte % ctxt.blockSize()),
     _ctxt(ctxt)
 {
-  DEBUG_LOG("tee-buffer block level reset to: %ld", ctxt.blockSize());
 }
 
 BlockStoreXform::~BlockStoreXform()
@@ -129,6 +128,11 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
 
   reset_range_keys();
 
+  if ( indexLen() > 100 ) {
+    TSHttpTxnServerRespNoStoreSet(atsTxn(),1); // don't store!
+    TSHttpTxnUntransformedRespCache(atsTxn(),0); // don't store!
+  }
+
   resp.setStatusCode(HTTP_STATUS_OK);
   respHdrs.set(CONTENT_ENCODING_TAG, CONTENT_ENCODING_INTERNAL); // promote matches
   respHdrs.append(VARY_TAG,ACCEPT_ENCODING_TAG); // please notice it!
@@ -163,6 +167,7 @@ BlockStoreXform::next_valid_vconn(int64_t inpos, int64_t len, int64_t &skip)
       continue;
     }
  
+    skip = nxtPos - inpos; // report if a skip is needed...
     return keys[blk].get();
   }
 
@@ -176,7 +181,7 @@ BlockStoreXform::next_valid_vconn(int64_t inpos, int64_t len, int64_t &skip)
 // called from writeHook
 //      -- after outputBuffer() was filled
 void
-BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t donepos, int64_t readypos)
+BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t donepos, int64_t readypos, int64_t added)
 {
   // input has closed down?
   if (!teerdr) {
@@ -220,16 +225,16 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t donepos, int64_
 
     // check any unneeded bytes before next block
     int64_t skipDist = 0;
-    auto currBlock = next_valid_vconn(donepos, navail, skipDist);
+    auto currKey = next_valid_vconn(donepos, navail, skipDist);
 
     // new blocking problem?
-    if (! currBlock && _blockVIOUntil ) {
+    if (! currKey && _blockVIOUntil ) {
       DEBUG_LOG("store **** stop at current block 1<<%ld pos:%#lx+%#lx", firstBlk + blk, donepos, navail);
       return;
     }
 
     // no block to write?
-    if (! currBlock) {
+    if (! currKey) {
       // no need to save these bytes?
       TSIOBufferReaderConsume(teerdr, navail);
       DEBUG_LOG("store **** skip current block 1<<%ld pos:%#lx+%#lx", firstBlk + blk, donepos, navail);
@@ -237,7 +242,7 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t donepos, int64_
       //////// RETURN
     }
 
-    if (skipDist) {
+    if (skipDist > 0) {
       TSIOBufferReaderConsume(teerdr, skipDist); // skipped
 
       navail = TSIOBufferReaderAvail(teerdr); // recheck..
@@ -250,6 +255,11 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t donepos, int64_
     // reader has reached block boundary now...
 
     auto wrlen = std::min(endpos - donepos,blksz); // len needed for a block write...
+
+    if ( navail < wrlen && ! added ) {
+      return; // silent
+      //////// RETURN
+    }
 
     if ( navail < wrlen ) {
       DEBUG_LOG("store **** reading in pos:%#lx+%#lx [<= +%#lx]", donepos, navail, wrlen);
@@ -265,12 +275,16 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t donepos, int64_
     // ATSCacheKey key(_ctxt.clientUrl(), _ctxt._etagStr, (firstBlk + blk) * _ctxt.blockSize());
 
     // give ownership of current teereader / teebuffer
-    auto callDatap = std::make_unique<BlockWriteInfo>(*this, teeBuffer(), teeReader(), static_cast<int>(blk));
+    auto callDatap = std::make_shared<BlockWriteInfo>(*this, teeBuffer(), teeReader(), static_cast<int>(blk));
     // make a totally async set of callbacks to write out new block
     cloneAndSkip(blksz); // substitute new buffer ...
 
     auto &callData = *callDatap;
-    auto blockCont = std::make_unique<ATSCont>(&BlockStoreXform::handleBlockWrite, std::move(callDatap)); // separate mutexes!
+
+    ink_assert( currKey == callData._key.get() );
+
+    // need to use new for complicated ctor
+    auto blockCont = new ATSCont(&BlockStoreXform::handleBlockWrite, std::move(callDatap)); // separate mutexes!
     TSCacheWrite(blockCont->get(), callData._key.get()); // find room to store each key...
 
     DEBUG_LOG("store ++++ beginning block w/write 1<<%ld nwrites:%ld @%#lx+%#lx [final @%#lx]", 
@@ -281,7 +295,7 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t donepos, int64_
 }
 
 TSEvent
-BlockStoreXform::handleBlockWrite(TSCont cont, TSEvent event, void *edata, const std::unique_ptr<BlockWriteInfo> &blockp)
+BlockStoreXform::handleBlockWrite(TSCont cont, TSEvent event, void *edata, const std::shared_ptr<BlockWriteInfo> &blockp)
 {
   BlockWriteInfo &block = *blockp;
   ThreadTxnID txnid(block._txnid);
@@ -291,23 +305,32 @@ BlockStoreXform::handleBlockWrite(TSCont cont, TSEvent event, void *edata, const
     return TS_EVENT_ERROR; // done
   }
 
-  TSVIO vio = static_cast<TSVIO>(edata);
   TSVConn vconn = static_cast<TSVConn>(edata);
   intptr_t verr = -reinterpret_cast<intptr_t>(edata);
 
   switch (event) {
+
   case TS_EVENT_CACHE_OPEN_WRITE_FAILED:
-    DEBUG_LOG("failed read check [%s] to 1<<%d nwrites:%ld", InkStrerror(verr), block._blkid, block._writeXform->write_count()-1);
-    return TS_EVENT_NONE; // call dtor of ATSCont
+    DEBUG_LOG("failed open write check [%s] to 1<<%d nwrites:%ld", InkStrerror(verr), block._blkid, block._writeXform->write_count()-1);
+    TSContSchedule(cont, 0, TS_THREAD_POOL_DEFAULT);
+    break;
+
+  case TS_EVENT_IMMEDIATE:
+    TSCacheWrite(cont, block._key.get()); // find room to store each key...
+    break;
 
   case TS_EVENT_CACHE_OPEN_WRITE:
-    DEBUG_LOG("completed open read with 1<<%d nwrites:%ld",block._blkid, block._writeXform->write_count()-1);
+  {
+    DEBUG_LOG("completed open write with 1<<%d nwrites:%ld",block._blkid, block._writeXform->write_count()-1);
     block._vconn = ATSVConnFuture(vconn);
-    TSVConnWrite(vconn, cont, block._rdr.get(), TSIOBufferReaderAvail(block._rdr.get())); // copy older buffer bytes out
+    auto wrlen = std::min(TSIOBufferReaderAvail(block._rdr.get()),(1L<<20));
+    TSVConnWrite(vconn, cont, block._rdr.get(), wrlen); // copy older buffer bytes out
     break;
+  }
 
   case TS_EVENT_VCONN_WRITE_READY:
     {
+      TSVIO vio = static_cast<TSVIO>(edata);
       // didn't detect enough bytes in buffer to complete?
       TSIOBufferReader writeRdr = TSVIOReaderGet(vio);
       if (! TSIOBufferReaderAvail(writeRdr)) {
@@ -321,25 +344,18 @@ BlockStoreXform::handleBlockWrite(TSCont cont, TSEvent event, void *edata, const
 
   case TS_EVENT_VCONN_WRITE_COMPLETE:
     {
+      TSVIO vio = static_cast<TSVIO>(edata);
       BlockStoreXform &store = *block._writeXform; // doesn't change
       int wrcnt = store.write_count();
       auto vconnv = TSVIOVConnGet(vio);
 
       // attempt to close VConn here
-      
-      auto xfmutex = TSContMutexGet(store);
-      TSEvent blockEvt = block._writeXform->_blockVIOUntil; // need un-blocking?
+      auto oflag = TS_EVENT_CONTINUE;
+      auto &flagEvt = block._writeXform->_blockVIOUntil;
 
-      // quick grab..
-      if ( xfmutex && TSMutexLockTry(xfmutex) == TS_SUCCESS )
-      {
-        if ( block._writeXform->_blockVIOUntil == TS_EVENT_CACHE_CLOSE ) {
-          block._writeXform->_blockVIOUntil = TS_EVENT_NONE;
-        }
-        TSMutexUnlock(xfmutex);
-      }
+      flagEvt.compare_exchange_strong(oflag,TS_EVENT_NONE); // need un-blocking?
 
-      if ( blockEvt == TS_EVENT_CACHE_CLOSE ) {
+      if ( oflag == TS_EVENT_CACHE_CLOSE ) {
         DEBUG_LOG("completed store with wakeup to 1<<%d nwrites:%d",block._blkid,wrcnt);
         TSVConnClose(vconnv); // flush and store
         TSContSchedule(store, 0, TS_THREAD_POOL_DEFAULT);
@@ -347,6 +363,7 @@ BlockStoreXform::handleBlockWrite(TSCont cont, TSEvent event, void *edata, const
         DEBUG_LOG("completed store to 1<<%d nwrites:%d",block._blkid,wrcnt);
         TSVConnClose(vconnv); // flush and store
       }
+      block._vconn.release();
       return TS_EVENT_NONE; // call dtor of ATSCont
     }
 

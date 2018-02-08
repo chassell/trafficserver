@@ -69,7 +69,7 @@ ATSCacheKey::ATSCacheKey(const std::string &url, std::string const &etag, uint64
   // match must be same etag and block pos
   TSCacheKeyDigestSet(key, str.data(), str.size());
   // disk randomized by etag and pos
-  TSCacheKeyHostNameSet(key, str.data()+origLen, str.size()-origLen);
+  TSCacheKeyHostNameSet(key, str.data()+origLen+1, str.size()-origLen-1);
 }
 
 template <class T_FUTURE>
@@ -297,16 +297,14 @@ ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, int64_t bytes, int64_t o
   auto xformCont = get();
   TSContDataSet(xformCont, this);
 
-  long maxAgg = 0;
-  if ( TSMgmtIntGet("proxy.config.cache.agg_write_backlog",&maxAgg) != TS_SUCCESS ) {
-    maxAgg = 20 * (1<<20); // 20M watermark
-  }
+  long maxAgg = 5 * (1<<20);
+  TSMgmtIntGet("proxy.config.cache.agg_write_backlog",&maxAgg);
 
   // NOTE: maybe called long past TXN_CLOSE!
   TSHttpTxnHookAdd(static_cast<TSHttpTxn>(txn.getAtsHandle()), TS_HTTP_RESPONSE_TRANSFORM_HOOK, xformCont);
   // get to method via callback
-  TSIOBufferWaterMarkSet(_outBufferU.get(), maxAgg); // never produce a READ_READY
-  DEBUG_LOG("output buffering set to: %ldK",maxAgg);
+  DEBUG_LOG("output buffering set to: %ldK",maxAgg>>12);
+  TSIOBufferWaterMarkSet(_outBufferU.get(), maxAgg>>2); // never produce a READ_READY
 }
 
 // Transform continuations
@@ -361,14 +359,12 @@ BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook)
     _teeReaderP(TSIOBufferReaderAlloc(this->_teeBufferP.get()))
 {
   // limit input speed to a degree
-  long maxAgg = 0;
-  if ( TSMgmtIntGet("proxy.config.cache.agg_write_backlog",&maxAgg) != TS_SUCCESS ) {
-    maxAgg = 20 * (1<<20); // 20M watermark
-  }
+  long maxAgg = 5 * (1<<20);
+  TSMgmtIntGet("proxy.config.cache.agg_write_backlog",&maxAgg);
 
   // get to method via callback
+  DEBUG_LOG("tee-buffer block-aligned buffer to: %ld", maxAgg>>10);
   TSIOBufferWaterMarkSet(_teeBufferP.get(), maxAgg); // never produce a READ_READY
-  DEBUG_LOG("tee-buffer block-aligned buffer to: %ld", maxAgg);
 }
 
 // Xform "client" with skip/truncate
@@ -380,17 +376,20 @@ BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, 
 {
   ink_assert( xformLen + xformOffset >= 0LL );
 
+  long maxAgg = 5 * (1<<20);
+  TSMgmtIntGet("proxy.config.cache.agg_write_backlog",&maxAgg);
+
   // get to method via callback
   set_body_handler([this](TSEvent evt, TSVIO vio, int64_t left) { return this->inputEvent(evt, vio, left); });
-  TSIOBufferWaterMarkSet(_teeBufferP.get(), TSIOBufferWaterMarkGet(outputBuffer()) ); // avoid producing a READ_READY
-  DEBUG_LOG("tee-buffer buffering set to: %ld", xformLen + xformOffset);
+  DEBUG_LOG("tee buffering set to: %ldK", maxAgg>>10);
+  TSIOBufferWaterMarkSet(_teeBufferP.get(), maxAgg); // avoid producing a READ_READY
 }
 
 void
 BlockTeeXform::teeReenable()
 {
   auto range = teeAvail();
-  _writeHook(_teeReaderP.get(), range.first, range.second); // attempt new absorb of input
+  _writeHook(_teeReaderP.get(), range.first, range.second, 0); // attempt new absorb of input
 }
 
 #if 0

@@ -194,14 +194,14 @@ public:
 private:
   TSCacheKey next_valid_vconn(int64_t pos, int64_t len, int64_t &skipDist);
 
-  void handleBodyRead(TSIOBufferReader r, int64_t pos, int64_t len);
-  static TSEvent handleBlockWrite(TSCont, TSEvent, void *, const std::unique_ptr<BlockWriteInfo> &);
+  void handleBodyRead(TSIOBufferReader r, int64_t pos, int64_t len, int64_t added);
+  static TSEvent handleBlockWrite(TSCont, TSEvent, void *, const std::shared_ptr<BlockWriteInfo> &);
 
 private:
   BlockSetAccess       &_ctxt;
   std::shared_ptr<void> _writeCheck = std::shared_ptr<void>(this, [](BlockStoreXform*){ });
   int                   _vcsReady = 0;
-  TSEvent               _blockVIOUntil = TS_EVENT_NONE; // event targeted to fix block
+  std::atomic<TSEvent>  _blockVIOUntil{TS_EVENT_NONE}; // event targeted to fix block
 };
 
 struct BlockWriteInfo 
@@ -214,6 +214,8 @@ struct BlockWriteInfo
       _rdr(rdr),
       _blkid(store._ctxt.firstIndex() + blk)
   { }
+
+  ~BlockWriteInfo() = default;
 
   BlockStoreXform::Ptr_t _writeXform;
   int                    _ind;

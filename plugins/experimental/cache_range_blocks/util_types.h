@@ -108,7 +108,7 @@ template <>
 inline void
 default_delete<TSCont_t::element_type>::operator()(TSCont cont) const
 {
-  TSDebug("cache_range_block", "%s: destroyed %p",__func__,cont);
+  TSDebug("cache_range_blocks", "%s: TSCont destroyed %p",__func__,cont);
   TSContDestroy(cont);
 }
 template <>
@@ -169,12 +169,14 @@ public:
                                    const std::shared_ptr<void> &counted = std::shared_ptr<void>());
 public:
   explicit ATSCont(TSCont mutexSrc=nullptr); // no handler
-  explicit ATSCont(ATSCont &&old) : TSCont_t(old.release()), _userCB(std::move(old._userCB)) { }
+  explicit ATSCont(ATSCont &&old) : TSCont_t(old.release()), _userCB(std::move(old._userCB)) { 
+//      TSDebug("cache_range_blocks", "[%d] [%s:%d] %s(): move ctor %p cont:%p",  -1, __FILE__, __LINE__, __func__, this, get());
+    }
   virtual ~ATSCont();
 
   // handle TSHttpTxn continuations with a method (no dtor implied)
   template <class T_OBJ, typename T_DATA> 
-  ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, const T_DATA&), T_DATA &&cbdata, TSCont mutexSrc=nullptr);
+  ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, const T_DATA&), T_DATA cbdata, TSCont mutexSrc=nullptr);
 
   // handle TSHttpTxn continuations with a function and a copied type
   template <typename T_DATA>
@@ -308,7 +310,7 @@ public:
   set_body_handler(const XformCB_t &fxn)
   {
     _xformCB = fxn;
-    TSDebug("cache_range_block", "%s",__func__);
+    TSDebug("cache_range_blocks", "%s",__func__);
   }
 
   int64_t copy_next_len(int64_t);
@@ -352,7 +354,7 @@ private:
 
 class BlockTeeXform : public ATSXformCont
 {
-  using HookType = std::function<void(TSIOBufferReader, int64_t inpos, int64_t newlen)>;
+  using HookType = std::function<void(TSIOBufferReader, int64_t inpos, int64_t newlen, int64_t added)>;
 
 public:
   BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook);
@@ -382,9 +384,10 @@ private:
 
 // accepts TSHttpTxn handler functions
 template <class T_OBJ, typename T_DATA>
-ATSCont::ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, const T_DATA&), T_DATA &&cbdata, TSCont mutexSrc)
+ATSCont::ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, const T_DATA&), T_DATA cbdata, TSCont mutexSrc)
   : TSCont_t(TSContCreate(&ATSCont::handleTSEventCB, ( mutexSrc ? TSContMutexGet(mutexSrc) : TSMutexCreate() )))
 {
+//  TSDebug("cache_range_blocks", "[%d] [%s:%d] %s(): ctor %p cont:%p",  -1, __FILE__, __LINE__, __func__, this, get());
   // point back here
   TSContDataSet(get(), this);
 
@@ -402,13 +405,14 @@ template <typename T_DATA>
 ATSCont::ATSCont(TSEvent (*funcp)(TSCont, TSEvent, void *, const T_DATA&), T_DATA &&cbdata, TSCont mutexSrc)
   : TSCont_t(TSContCreate(&ATSCont::handleTSEventCB, ( mutexSrc ? TSContMutexGet(mutexSrc) : TSMutexCreate() )))
 {
+//  TSDebug("cache_range_blocks", "[%d] [%s:%d] %s(): ctor %p cont:%p",  -1, __FILE__, __LINE__, __func__, this, get());
   // point back here
   TSContDataSet(get(), this);
 
   static_cast<void>(cbdata);
   // memorize user data to forward on
   _userCB = decltype(_userCB)(
-    [this, funcp, &cbdata](TSEvent event, void *evtdata) 
+    [this, funcp, cbdata](TSEvent event, void *evtdata) 
     {
        if ( (*funcp)(*this, event, evtdata, cbdata) != TS_EVENT_CONTINUE ) {
          delete this;

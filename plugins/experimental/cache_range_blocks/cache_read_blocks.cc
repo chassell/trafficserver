@@ -64,7 +64,7 @@ BlockSetAccess::launch_block_tests()
   // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
   auto barrierLock = std::shared_ptr<BlockSetAccess>(this, deleter);
 
-  int limit = 50; // block-reads spawned at one time...
+  int limit = 10; // block-reads spawned at one time...
  
   for ( auto i = keys.begin() + _vcsToRead.size() ; i != keys.end() ; ++i, ++nxtBlk )
   {
