@@ -283,8 +283,10 @@ ATSXformCont::xform_input_event()
     _outVConnU = ATSXformOutVConn::create_if_ready(*this, _outWriteBytes, _outSkipBytes);
     _outVConnU->check_refill(event);
     auto wmark = TSIOBufferWaterMarkGet(outputBuffer());
-    DEBUG_LOG("input block level set: %ld",wmark);
-    TSIOBufferWaterMarkSet(TSVIOBufferGet(xformInputVIO()), wmark);
+    auto inbuff = TSVIOBufferGet(xformInputVIO());
+    auto owmark = TSIOBufferWaterMarkGet(inbuff);
+    DEBUG_LOG("input buffering set: %ld [old:%ld]",wmark,owmark);
+    TSIOBufferWaterMarkSet(inbuff, wmark);
   }
 
   auto xfinrdr = TSVIOReaderGet(xfinvio);
@@ -402,9 +404,18 @@ ATSXformOutVConn::check_refill(TSEvent event)
 
   // time to flag for Reenable?
   if ( ! outready ) {
-    DEBUG_LOG("xform empty: @%#lx w/avail 0", pos);
     _outVIOWaiting = event; // can't do it now...
     _outVIOWaitingTS = ink_microseconds(MICRO_REAL); // can't do it now...
+    auto ooutMark = TSIOBufferWaterMarkGet(_outBuffer);
+    auto noutMark = std::min(std::min(ooutMark,_writeBytes),1L<<24); // 16M
+    noutMark = std::max(noutMark*2,1L<<16);
+    TSIOBufferWaterMarkSet(_outBuffer, noutMark );
+
+    auto inbuff = TSVIOBufferGet(_inVIO);
+    auto oinMark = TSIOBufferWaterMarkGet(inbuff);
+    TSIOBufferWaterMarkSet(inbuff, std::max(oinMark,noutMark) );
+
+    DEBUG_LOG("xform empty: @%#lx watermark %ldK -> %ldK", pos, ooutMark>>10, noutMark>>10);
     return true;
   }
 
@@ -498,14 +509,12 @@ BlockTeeXform::inputEvent(TSEvent event, TSVIO evtvio, int64_t left)
     DEBUG_LOG("unkn vio event: e#%d +%#lx %p", event, left, evtvio);
   }
 
-  auto range = teeAvail(); // NOTE: accounts for consumed 
-  auto oavail = range.second - range.first;
+  auto range = teeAvail();
+  auto oavail = range.second - range.first; // without left added in
+  auto teemax = TSIOBufferWaterMarkGet(_teeBufferP.get()); // without bytes copied
 
-  if ( oavail > TSIOBufferWaterMarkGet(_teeBufferP.get()) ) {
-    left = 0; // use no incoming bytes...
-  }
-
-  if ( left ) {
+  // allow copy if there's enough in buffer right now
+  if ( left && oavail < teemax ) {
     left = TSIOBufferCopy(_teeBufferP.get(), TSVIOReaderGet(inputVIO()), left, 0);
     // NOTE: copied but not Consumed
 
@@ -515,7 +524,9 @@ BlockTeeXform::inputEvent(TSEvent event, TSVIO evtvio, int64_t left)
 
     DEBUG_LOG("tee buffer bytes post-copy: @%#lx+%#lx [+%#lx]", range.first, navail, left);
   } else {
+    // new bytes will hit watermark level
     DEBUG_LOG("tee buffer bytes blocked-copy: @%#lx+%#lx+%#lx", range.first, oavail, left);
+    left = 0;
   }
 
   _writeHook(_teeReaderP.get(), range.first, range.second, left); // cannot un-consume in the write-hook
