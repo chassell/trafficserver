@@ -174,9 +174,6 @@ private:
 };
 
 /////////////////////////////////////////////////
-struct BlockWriteInfo;
-
-/////////////////////////////////////////////////
 class BlockStoreXform : public std::enable_shared_from_this<BlockStoreXform>,
                         public BlockTeeXform
 {
@@ -201,13 +198,14 @@ private:
   void handleBodyRead(TSIOBufferReader r, int64_t pos, int64_t len, int64_t added);
 
 private:
-  BlockSetAccess       &_ctxt;
-  std::shared_ptr<void> _writeCheck = std::shared_ptr<void>(&_writeCheck, [](std::shared_ptr<void>*){ });
-  int                   _vcsReady = 0;
+  BlockSetAccess          &_ctxt;
   std::vector<ATSCacheKey> _keysToWrite; // in order with index
-  std::atomic<TSEvent>  _blockVIOUntil{TS_EVENT_NONE}; // event targeted to fix block
+  std::shared_ptr<void>    _writeCheck{&this->_writeCheck, [](std::shared_ptr<void>*){ }};
+  ATSCont                  _wakeupCont{_ctxt._mutexOnlyCont.get()}; // no handler at first
+  std::atomic<TSEvent>     _blockVIOUntil{TS_EVENT_NONE}; // event targeted to fix block
 };
 
+/////////////////////////////////////////////////
 struct BlockWriteInfo : public std::enable_shared_from_this<BlockWriteInfo>
 {
   using Ptr_t = std::shared_ptr<BlockWriteInfo>;
@@ -232,6 +230,7 @@ struct BlockWriteInfo : public std::enable_shared_from_this<BlockWriteInfo>
   int                    _blkid; // for debug
   int                    _txnid = ThreadTxnID::get(); // for debug
 };
+
 
 /////////////////////////////////////////////////
 /////////////////////////////////////////////////
