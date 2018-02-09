@@ -389,12 +389,7 @@ BlockTeeXform::teeReenable()
 {
   atscppapi::ScopedContinuationLock lock(*this);
 
-  auto inrdr = TSVIOReaderGet(inputVIO());
   auto teemax = TSIOBufferWaterMarkGet(_teeBufferP.get()); // without bytes copied
-  auto avail = 0;
-  if ( inrdr ) {
-    avail = TSIOBufferReaderAvail(inrdr);
-  }
 
   auto range = teeAvail();
   _writeHook(_teeReaderP.get(), range.first, range.second, 0); // attempt new absorb of input
@@ -405,10 +400,12 @@ BlockTeeXform::teeReenable()
     return; // need another reenable
   }
 
-  // bytes can be absorbed?
-  DEBUG_LOG("re-trying buffered bytes: %d", avail);
-  TSContSchedule(*this, 0, TS_THREAD_POOL_DEFAULT); // attempt re-use of input buffer
-  return;
+  auto inrdr = TSVIOReaderGet(inputVIO());
+  if ( inrdr && TSIOBufferReaderAvail(inrdr) ) {
+    // bytes can be absorbed?
+    DEBUG_LOG("re-submitting input: %ld", TSIOBufferReaderAvail(inrdr));
+    TSContSchedule(*this, 0, TS_THREAD_POOL_DEFAULT); // attempt re-use of input buffer
+  }
 }
 
 #if 0
