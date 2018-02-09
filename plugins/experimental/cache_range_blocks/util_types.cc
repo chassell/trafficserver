@@ -387,8 +387,28 @@ BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, 
 void
 BlockTeeXform::teeReenable()
 {
+  atscppapi::ScopedContinuationLock lock(*this);
+
+  auto inrdr = TSVIOReaderGet(inputVIO());
+  auto teemax = TSIOBufferWaterMarkGet(_teeBufferP.get()); // without bytes copied
+  auto avail = 0;
+  if ( inrdr ) {
+    avail = TSIOBufferReaderAvail(inrdr);
+  }
+
   auto range = teeAvail();
   _writeHook(_teeReaderP.get(), range.first, range.second, 0); // attempt new absorb of input
+  auto nrange = teeAvail(); // check new..
+
+  // still too many?
+  if ( nrange.second >= nrange.first + teemax ) {
+    return; // need another reenable
+  }
+
+  // bytes can be absorbed?
+  DEBUG_LOG("re-trying buffered bytes: %d", avail);
+  TSContSchedule(*this, 0, TS_THREAD_POOL_DEFAULT); // attempt re-use of input buffer
+  return;
 }
 
 #if 0
