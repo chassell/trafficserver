@@ -191,6 +191,12 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t donepos, int64_
     return;
   }
 
+  if ( ! donepos && added ) {
+    auto newRef = shared_from_this();
+    _wakeupCont = [newRef](TSEvent, void *) { newRef->teeReenable(); };
+  }
+
+
   if ( donepos == readypos && ! added ) {
     return;
   }
@@ -302,7 +308,7 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t donepos, int64_
 
     // Did write fail totally?
     auto err = callData._vconn.error();
-    if ( err && err != ESOCK_TIMEOUT ) 
+    if ( err > ESOCK_TIMEOUT ) // ignore normal errnos (ESTALE..)
     {
       DEBUG_LOG("store ++++ failed write 1<<%ld [%s] nwrites:%ld @%#lx+%#lx [final @%#lx]", 
                _ctxt.firstIndex() + blk, InkStrerror(callData._vconn.error()),
@@ -333,8 +339,14 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t donepos, int64_
   }
 
   auto navail = TSIOBufferReaderAvail(teerdr); // recheck after swap
-  if ( readypos >= endpos && navail ) {
-    _blockVIOUntil = TS_EVENT_CACHE_CLOSE;
+
+  if ( readypos >= endpos && ! navail ) {
+    _wakeupCont = [](TSEvent, void *) { }; // last reference goes now
+    return;
+  } 
+  
+  if ( readypos >= endpos ) {
+    _blockVIOUntil = TS_EVENT_CACHE_CLOSE; // new blocks always wakeup
   }
 
   DEBUG_LOG("store **** nwrites:%ld waiting at current block 1<<%ld pos:%#lx+%#lx", write_count(), firstBlk + donepos/blksz, donepos, readypos - donepos);
@@ -415,36 +427,40 @@ BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
     }
 
     case TS_EVENT_VCONN_WRITE_COMPLETE:
-    {
-      TSVIO vio = static_cast<TSVIO>(edata);
-      BlockStoreXform &store = *_writeXform; // doesn't change
+      {
+        TSVIO vio = static_cast<TSVIO>(edata);
+        BlockStoreXform &store = *_writeXform; // doesn't change
 
-      _writeRef.reset(); // remove flag of write
+        _writeRef.reset(); // remove flag of write
 
-      int wrcnt = store.write_count(); // there can be only one zero!
-      auto vconnv = TSVIOVConnGet(vio);
+        int wrcnt = store.write_count(); // there can be only one zero!
 
-      // attempt to close VConn here
-      auto &flagEvt = _writeXform->_blockVIOUntil;
-      auto oflag = TS_EVENT_CONTINUE;
+        // attempt to close VConn here
+        auto &flagEvt = _writeXform->_blockVIOUntil;
+        auto oflag = TS_EVENT_CONTINUE;
 
-      if ( ! wrcnt ) {
-        flagEvt.compare_exchange_strong(oflag,TS_EVENT_NONE); // need un-blocking?
-      }
+        TSVConnClose(_vconn.release());
+        // replace with number to recognize (not null)
+        _vconn = ATSVConnFuture(reinterpret_cast<TSVConn>(-ESTALE));
 
-      if ( oflag == TS_EVENT_CACHE_CLOSE ) {
+        if ( ! wrcnt ) {
+          flagEvt.compare_exchange_strong(oflag,TS_EVENT_NONE); // need un-blocking?
+        }
+
+        if ( oflag != TS_EVENT_CACHE_CLOSE && flagEvt == TS_EVENT_CACHE_CLOSE ) {
+          DEBUG_LOG("completed non-final store to 1<<%d nwrites:%d",_blkid,wrcnt);
+          return TS_EVENT_NONE;
+        } 
+        
+        if ( oflag != TS_EVENT_CACHE_CLOSE ) {
+          DEBUG_LOG("completed store to 1<<%d nwrites:%d",_blkid,wrcnt);
+          return TS_EVENT_NONE;
+        }
+
         DEBUG_LOG("completed store with wakeup to 1<<%d nwrites:%d",_blkid,wrcnt);
-//        TSVConnClose(vconnv); // flush and store
-        TSContSchedule(store, 0, TS_THREAD_POOL_TASK); // wakeup!
-      } else if ( flagEvt == TS_EVENT_CACHE_CLOSE ) {
-        DEBUG_LOG("completed non-final store to 1<<%d nwrites:%d",_blkid,wrcnt);
-      } else {
-        DEBUG_LOG("completed store to 1<<%d nwrites:%d",_blkid,wrcnt);
-//        TSVConnClose(vconnv); // flush and store
+        TSContSchedule(store._wakeupCont.get(), 0, TS_THREAD_POOL_TASK);
+        return TS_EVENT_NONE; // call dtor of ATSCont
       }
-//      _vconn.release();
-      return TS_EVENT_NONE; // call dtor of ATSCont
-    }
 
     default:
       DEBUG_LOG("unknown event: e#%d", event);
