@@ -157,7 +157,6 @@ ATSXformCont::handleXformInputEvent(TSEvent event, TSVIO evio)
 
       // past first write and no bytes available?
       if ( TSVIONDoneGet(evio) && ! TSIOBufferReaderAvail(TSVIOReaderGet(evio)) ) {
-        _xformCB(TS_EVENT_CONTINUE, xformInputVIO(), 0);
         err = eErrXformExtraImmEvent; // no data and not done?
         break;
       }
@@ -406,16 +405,17 @@ ATSXformOutVConn::check_refill(TSEvent event)
   if ( ! outready ) {
     _outVIOWaiting = event; // can't do it now...
     _outVIOWaitingTS = ink_microseconds(MICRO_REAL); // can't do it now...
+    auto inbuff = TSVIOBufferGet(_inVIO);
+    auto oinMark = TSIOBufferWaterMarkGet(inbuff);
+
     auto ooutMark = TSIOBufferWaterMarkGet(_outBuffer);
     auto noutMark = std::min(std::min(ooutMark,_writeBytes),1L<<24); // 16M
     noutMark = std::max(noutMark*2,1L<<16);
-    TSIOBufferWaterMarkSet(_outBuffer, noutMark );
 
-    auto inbuff = TSVIOBufferGet(_inVIO);
-    auto oinMark = TSIOBufferWaterMarkGet(inbuff);
+    TSIOBufferWaterMarkSet(_outBuffer, noutMark);
     TSIOBufferWaterMarkSet(inbuff, std::max(oinMark,noutMark) );
 
-    DEBUG_LOG("xform empty: @%#lx watermark %ldK -> %ldK", pos, ooutMark>>10, noutMark>>10);
+    DEBUG_LOG("xform empty: @%#lx in/out buffering %ldK -> %ldK", pos, ooutMark>>10, noutMark>>10);
     return true;
   }
 
@@ -491,11 +491,6 @@ BlockTeeXform::inputEvent(TSEvent event, TSVIO evtvio, int64_t left)
     DEBUG_LOG("xform output complete");
     _writeHook(nullptr, 0, 0, 0);
     return left;
-  }
-
-  // redundant wakeup event arriving
-  if ( event == TS_EVENT_CONTINUE ) {
-    teeReenable(); // any changes?
   }
 
   if (!left) {
