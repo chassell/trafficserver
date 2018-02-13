@@ -138,7 +138,11 @@ default_delete<TSIOBufferReader_t::element_type>::operator()(TSIOBufferReader re
 }
 
 inline std::pair<int64_t,int64_t> write_range_avail(TSVIO vio) { 
-  int64_t avail = TSIOBufferReaderAvail(TSVIOReaderGet(vio));
+  auto rdr = TSVIOReaderGet(vio);
+  if ( ! rdr ) {
+    return std::make_pair(0,0);
+  }
+  int64_t avail = TSIOBufferReaderAvail(rdr);
   int64_t pos = TSVIONDoneGet(vio);
   return std::make_pair( pos, pos + avail );
 }

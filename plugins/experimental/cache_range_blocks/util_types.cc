@@ -387,25 +387,30 @@ BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, 
 void
 BlockTeeXform::teeReenable()
 {
-  atscppapi::ScopedContinuationLock lock(*this);
-
+  auto range = teeAvail();
   auto teemax = TSIOBufferWaterMarkGet(_teeBufferP.get()); // without bytes copied
 
-  auto range = teeAvail();
+  DEBUG_LOG("performing reenable: [%#lx-%#lx)",range.first,range.second);
+
+  atscppapi::ScopedContinuationLock lock(*this);
+
   _writeHook(_teeReaderP.get(), range.first, range.second, 0); // attempt new absorb of input
   auto nrange = teeAvail(); // check new..
 
   // still too many?
   if ( nrange.second >= nrange.first + teemax ) {
+    DEBUG_LOG("too full for new input: [%#lx-%#lx)",nrange.first,nrange.second);
     return; // need another reenable
   }
 
-  auto inrdr = TSVIOReaderGet(inputVIO());
-  if ( inrdr && TSIOBufferReaderAvail(inrdr) ) {
-    // bytes can be absorbed?
-    DEBUG_LOG("re-submitting input: %ld", TSIOBufferReaderAvail(inrdr));
-    TSContSchedule(*this, 0, TS_THREAD_POOL_DEFAULT); // attempt re-use of input buffer
+  auto inrange = inputAvail();
+  if ( inrange.first >= inrange.second ) { // bytes can be absorbed?
+    DEBUG_LOG("waiting on empty xform-input");
+    return; // need another reenable
   }
+
+  DEBUG_LOG("re-submitting input: %ld", inrange.second - inrange.first );
+  TSContSchedule(*this, 0, TS_THREAD_POOL_DEFAULT); // attempt re-use of input buffer
 }
 
 #if 0
