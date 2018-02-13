@@ -396,6 +396,10 @@ TSRemapNewInstance(int, char *[], void **hndl, char *, int)
   return TS_SUCCESS;
 }
 
+///////////////// done with ATSCPPAPI
+// void TSRemapDeleteInstance()
+// void TSRemapInit()
+
 void
 TSPluginInit(int, const char **)
 {
@@ -406,4 +410,10 @@ TSPluginInit(int, const char **)
     pluginPtr = std::make_shared<RangeDetect>();
     pluginPtr->addHooks(); // hook for all transactions
   }
+}
+
+void
+TSRemapDone(void)
+{
+  DEBUG_LOG("attempting plugin removal");
 }

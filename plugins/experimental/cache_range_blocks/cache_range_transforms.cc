@@ -284,8 +284,8 @@ ATSXformCont::xform_input_event()
     auto wmark = TSIOBufferWaterMarkGet(outputBuffer());
     auto inbuff = TSVIOBufferGet(xformInputVIO());
     auto owmark = TSIOBufferWaterMarkGet(inbuff);
-    DEBUG_LOG("input buffering set: %ld [old:%ld]",wmark,owmark);
-    TSIOBufferWaterMarkSet(inbuff, wmark);
+    DEBUG_LOG("input buffering set: out:%ld in:%ld",wmark,std::max(owmark,(1L<<20)));
+    TSIOBufferWaterMarkSet(inbuff, std::max(owmark,(1L<<20)));
   }
 
   auto xfinrdr = TSVIOReaderGet(xfinvio);
@@ -405,17 +405,26 @@ ATSXformOutVConn::check_refill(TSEvent event)
   if ( ! outready ) {
     _outVIOWaiting = event; // can't do it now...
     _outVIOWaitingTS = ink_microseconds(MICRO_REAL); // can't do it now...
+
     auto inbuff = TSVIOBufferGet(_inVIO);
+    if ( ! inbuff || TSVIONTodoGet(_inVIO) < (1L<<20) ) {
+      return true;
+    }
+
+    auto inrdr = TSVIOReaderGet(_inVIO);
     auto oinMark = TSIOBufferWaterMarkGet(inbuff);
+    auto oinAvail = TSIOBufferReaderAvail(inrdr);
 
-    auto ooutMark = TSIOBufferWaterMarkGet(_outBuffer);
-    auto noutMark = std::min(std::min(ooutMark,_writeBytes),1L<<24); // 16M
-    noutMark = std::max(noutMark*2,1L<<16);
+    auto nMark = std::max(oinMark,oinAvail)*2;
+    nMark = std::min(std::min(nMark,TSVIONTodoGet(_inVIO)),1L<<24); // 16M max
 
-    TSIOBufferWaterMarkSet(_outBuffer, noutMark);
-    TSIOBufferWaterMarkSet(inbuff, std::max(oinMark,noutMark) );
+    // auto ooutMark = TSIOBufferWaterMarkGet(_outBuffer);
+    // noutMark = std::max(noutMark*2,1L<<16);
+    // TSIOBufferWaterMarkSet(_outBuffer, noutMark);
 
-    DEBUG_LOG("xform empty: @%#lx in/out buffering %ldK -> %ldK", pos, ooutMark>>10, noutMark>>10);
+    TSIOBufferWaterMarkSet(inbuff, nMark);
+//    DEBUG_LOG("xform empty: @%#lx in/out buffering %ldK -> %ldK", pos, ooutMark>>10, noutMark>>10);
+    DEBUG_LOG("xform empty: @%#lx in buffering %ldK -> %ldK", pos, oinMark>>10, nMark>>10);
     return true;
   }
 
@@ -532,10 +541,16 @@ TSIOBufferReader
 BlockTeeXform::cloneAndSkip(int64_t oskip)
 {
   auto oavail = TSIOBufferReaderAvail(_teeReaderP.get());
-  auto skip = std::min(oavail, oskip);
 
+  if ( ! oavail ) {
+    DEBUG_LOG("tee buffer emptied");
+    _teeBufferP.release();
+    return _teeReaderP.release();
+  }
+
+  auto skip = std::min(oavail, oskip);
   if ( skip != oskip ) {
-    DEBUG_LOG("tee buffer clone shrank: %#lx < %#lx", skip, oskip);
+    DEBUG_LOG("tee buffer clone truncated: %#lx < %#lx", skip, oskip);
   }
 
   auto ordr = _teeReaderP.release(); // caller must free it

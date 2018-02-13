@@ -187,6 +187,7 @@ public:
   BlockStoreXform(BlockSetAccess &ctxt, int blockCount);
   ~BlockStoreXform() override;
 
+  const std::vector<ATSCacheKey> & keysToWrite() const { return _keysToWrite; }
   long write_count() const { return this->_writeCheck.use_count() - 1; } 
   void reset_write_keys() {
     _keysToWrite.clear();
@@ -210,7 +211,8 @@ struct BlockWriteInfo : public std::enable_shared_from_this<BlockWriteInfo>
 {
   using Ptr_t = std::shared_ptr<BlockWriteInfo>;
 
-  BlockWriteInfo(BlockStoreXform &store, TSIOBuffer buff, TSIOBufferReader rdr, int blk);
+  // move key into store
+  BlockWriteInfo(BlockStoreXform &store, ATSCacheKey &key, int blk);
   ~BlockWriteInfo();
 
   static TSEvent handleBlockWriteCB(TSCont c, TSEvent evt, void *p, const std::shared_ptr<BlockWriteInfo> &ptr) {
