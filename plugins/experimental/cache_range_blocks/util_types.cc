@@ -286,7 +286,6 @@ ATSXformOutVConn::~ATSXformOutVConn()
 // Transform continuations
 ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, int64_t bytes, int64_t offset)
   : TSCont_t(TSTransformCreate(&ATSXformCont::handleXformTSEventCB, static_cast<TSHttpTxn>(txn.getAtsHandle()))),
-    _txnID(TSHttpTxnIdGet(static_cast<TSHttpTxn>(txn.getAtsHandle()))),
     _xformCB( [](TSEvent evt, TSVIO vio, int64_t left) { DEBUG_LOG("xform-event empty body handler"); return 0; }),
     _outSkipBytes(offset),
     _outWriteBytes(bytes),
@@ -309,7 +308,6 @@ ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, int64_t bytes, int64_t o
 // Transform continuations
 ATSXformCont::ATSXformCont(atscppapi::Transaction &txn)
   : TSCont_t(TSTransformCreate(&ATSXformCont::handleXformTSEventCB, static_cast<TSHttpTxn>(txn.getAtsHandle()))),
-    _txnID(TSHttpTxnIdGet(static_cast<TSHttpTxn>(txn.getAtsHandle()))),
     _xformCB( [](TSEvent evt, TSVIO vio, int64_t left) { DEBUG_LOG("xform-event empty body handler"); return 0; }),
     _outSkipBytes(-1),
     _outWriteBytes(-1)

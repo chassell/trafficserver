@@ -27,6 +27,8 @@
 
 thread_local int ThreadTxnID::g_pluginTxnID = -1;
 
+std::atomic<long> ThreadTxnID::g_ident{ 8000 };
+
 static int parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_t &end);
 
 void BlockSetAccess::start_if_range_present(Transaction &txn) 
@@ -38,10 +40,12 @@ void BlockSetAccess::start_if_range_present(Transaction &txn)
     return; // cannot handle new blocks 
   }
 
+#if TS_VERSION_MAJOR >= 7 
   auto pluginClient = TSHttpTxnPluginTagGet(static_cast<TSHttpTxn>(txn.getAtsHandle()));
   if ( pluginClient && ! strcmp(pluginClient, PLUGIN_NAME) ) {
     return; // ignore any recursing txn...
   }
+#endif
 
   ThreadTxnID txnid{txn};
 

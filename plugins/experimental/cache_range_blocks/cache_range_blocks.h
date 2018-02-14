@@ -32,6 +32,7 @@
 #include <string>
 #include <vector>
 #include <future>
+#include <atomic>
 
 #pragma once
 
@@ -42,6 +43,7 @@
 class ThreadTxnID
 {
   static thread_local int g_pluginTxnID;
+  static std::atomic<long> g_ident;
 
 public:
   static int get() { 
@@ -49,12 +51,19 @@ public:
              //    ? atscppapi::TransactionPlugin::getTxnID() : 
                 g_pluginTxnID );
   }
+  static int create_id(TSHttpTxn txn) {
+    TSHRTime begin = 0;
+    TSHttpTxnMilestoneGet(txn, TS_MILESTONE_UA_READ_HEADER_DONE, &begin);
+    return (begin % 9000) + 1000;
+  }
 
   ThreadTxnID(atscppapi::Transaction &txn) {
-    g_pluginTxnID = TSHttpTxnIdGet(static_cast<TSHttpTxn>(txn.getAtsHandle()));
+//    g_pluginTxnID = TSHttpTxnIdGet(static_cast<TSHttpTxn>(txn.getAtsHandle()));
+    g_pluginTxnID = create_id(static_cast<TSHttpTxn>(txn.getAtsHandle()));
   }
   ThreadTxnID(TSHttpTxn txn) {
-    g_pluginTxnID = TSHttpTxnIdGet(txn);
+//    g_pluginTxnID = TSHttpTxnIdGet(txn);
+    g_pluginTxnID = create_id(txn);
   }
   ThreadTxnID(int txnid) {
     g_pluginTxnID = txnid;

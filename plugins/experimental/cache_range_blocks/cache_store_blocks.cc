@@ -294,8 +294,11 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
       desc = "completed";
     }
 
-    DEBUG_LOG("store ++++ %s write 1<<%ld [%s] nwrites:%ld @%#lx+%#lx [final @%#lx]", 
-               desc, _ctxt.firstIndex() + blk, InkStrerror(callData._vconn.error()),
+//    DEBUG_LOG("store ++++ %s write 1<<%ld [%s] nwrites:%ld @%#lx+%#lx [final @%#lx]", 
+    DEBUG_LOG("store ++++ %s write 1<<%ld [%d] nwrites:%ld @%#lx+%#lx [final @%#lx]", 
+               desc, _ctxt.firstIndex() + blk, 
+//               InkStrerror(callData._vconn.error()),
+               callData._vconn.error(),
                write_count(), donepos, navail, donepos + wrlen);
   }
 
@@ -355,7 +358,11 @@ BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
       _vconn = ATSVConnFuture(vconn); // replace with the error value
       // async result was not found in time..
       atscppapi::ScopedContinuationLock lock(cont);
-      DEBUG_LOG("scheduled reopen write check [%s] to 1<<%d nwrites:%ld", InkStrerror(verr), _blkid, _writeXform->write_count());
+//      DEBUG_LOG("scheduled reopen write check [%s] to 1<<%d nwrites:%ld", 
+      DEBUG_LOG("scheduled reopen write check [%ld] to 1<<%d nwrites:%ld", 
+//            InkStrerror(verr), 
+            verr, 
+            _blkid, _writeXform->write_count());
       TSContSchedule(cont, 30, TS_THREAD_POOL_TASK);
       break;
     }

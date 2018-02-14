@@ -124,7 +124,7 @@ BlockSetAccess::handle_block_tests()
     }
 
     if ( error == ESOCK_TIMEOUT ) {
-      DEBUG_LOG("read not ready: 1<<%ld %s %d", blkInd, InkStrerror(error),error);
+      DEBUG_LOG("read not ready: 1<<%ld [%d]", blkInd, error);
       // leave skip [likely nonzero]
       // leave nrdy also
       continue;
@@ -132,13 +132,13 @@ BlockSetAccess::handle_block_tests()
 
     if ( error == ECACHE_NO_DOC ) {
       ++skip; // allowing new store
-      DEBUG_LOG("read not present: 1<<%ld %s %d", blkInd, InkStrerror(error),error);
+      DEBUG_LOG("read not present: 1<<%ld [%d]", blkInd, error);
       continue;
     }
 
     if ( error ) {
       ++skip;
-      DEBUG_LOG("read not usable: 1<<%ld %s %d", blkInd, InkStrerror(error),error);
+      DEBUG_LOG("read not usable: 1<<%ld [%d]", blkInd, error);
       keyp.reset(); // disallow new storage
       continue;
     } 
