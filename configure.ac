@@ -1974,6 +1974,7 @@ AC_CONFIG_FILES([
   plugins/experimental/cache_key_genid/Makefile
   plugins/experimental/cache_promote/Makefile
   plugins/experimental/cache_range_requests/Makefile
+  plugins/experimental/cache_range_blocks/Makefile
   plugins/experimental/cachekey/Makefile
   plugins/experimental/channel_stats/Makefile
   plugins/experimental/collapsed_connection/Makefile

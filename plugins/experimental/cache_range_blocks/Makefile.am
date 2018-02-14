@@ -14,56 +14,17 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-SUBDIRS = \
- acme \
- authproxy \
- background_fetch \
- balancer \
- buffer_upload \
- cachekey \
- cache_range_requests \
- cache_range_blocks \
- cache_promote \
- collapsed_connection \
- collapsed_forwarding \
- custom_redirect \
- epic \
- escalate \
- esi \
- generator \
- geoip_acl \
- header_normalize \
- hipes \
- inliner \
- metalink \
- multiplexer \
- memcache \
- memcached_remap \
- regex_revalidate \
- remap_stats \
- s3_auth \
- ssl_cert_loader \
- sslheaders \
- stale_while_revalidate \
- url_sig \
- xdebug \
- mp4 \
- stream_editor
+include $(top_srcdir)/build/plugins.mk
 
-if ENABLE_CPPAPI
-if BUILD_WEBP_TRANSFORM_PLUGIN
- SUBDIRS += webp_transform
-endif
-endif
 
-if HAS_MYSQL
-  SUBDIRS += mysql_remap
-endif
+pkglib_LTLIBRARIES = cache_range_blocks.la
+cache_range_blocks_la_LIBADD = -latscppapi
+cache_range_blocks_la_LDFLAGS = $(TS_PLUGIN_LDFLAGS) \
+		      -L$(top_builddir)/lib/atscppapi/src
 
-if BUILD_LUAJIT
-  SUBDIRS += ts_lua
-endif
-
-if HAS_KYOTOCABINET
-  SUBDIRS += cache_key_genid
-endif
+cache_range_blocks_la_SOURCES = \
+  cache_range_blocks.cc \
+  cache_store_blocks.cc \
+  cache_read_blocks.cc \
+  cache_range_transforms.cc \
+  util_types.cc
