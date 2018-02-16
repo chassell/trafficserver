@@ -304,8 +304,16 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
   auto &readypos = teeRange.second;
 
   if ( ! donepos && added ) {
-    auto newRef = shared_from_this();
-    _wakeupCont = [newRef](TSEvent, void *) { newRef->teeReenable(); };
+    auto keepRef = shared_from_this();
+    _wakeupCont = [keepRef](TSEvent, void *) { 
+        atscppapi::ScopedContinuationLock lock(*keepRef);
+        auto keepRef2 = keepRef;
+        // mutex may be only part left..
+        if ( keepRef && keepRef2 && keepRef.use_count() > 1 ) {
+          keepRef->_blockVIOUntil = TS_EVENT_NONE; // allow ending/re-wakeup now...
+          keepRef->teeReenable();
+        }
+    };
   }
 
   if ( donepos == readypos && ! added ) {
@@ -405,23 +413,29 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
                write_count(), donepos, navail, donepos + wrlen);
   }
 
-  // at or past the end?
-  if ( readypos >= endpos && donepos >= endpos ) {
-    _wakeupCont = [](TSEvent, void *) { }; // last reference goes now
-    return;                                          //// RETURN
-  } 
-  
   // if no input events left...
-  if ( readypos >= endpos ) {
+  if ( readypos >= endpos && donepos < endpos ) {
     newBlockEvent = TS_EVENT_CACHE_CLOSE; // always request wakeup
   }
 
   if ( prevBlockEvent != newBlockEvent ) {
     DEBUG_LOG("store **** nwrites:%ld wakeup-blocked at current block 1<<%ld pos:%#lx+%#lx", write_count(), firstBlk + donepos/blksz, donepos, readypos - donepos);
     _blockVIOUntil.compare_exchange_strong(prevBlockEvent,newBlockEvent); // need un-blocking?
-  } else if ( newBlockEvent ) {
-    DEBUG_LOG("store **** nwrites:%ld still wakeup-blocked at current block 1<<%ld pos:%#lx+%#lx", write_count(), firstBlk + donepos/blksz, donepos, readypos - donepos);
+    return; // new wakeup..
   }
+
+  if ( newBlockEvent ) {
+    DEBUG_LOG("store **** nwrites:%ld still wakeup-blocked at current block 1<<%ld pos:%#lx+%#lx", write_count(), firstBlk + donepos/blksz, donepos, readypos - donepos);
+    return; // waiting wakeup
+  } 
+  
+  if ( readypos < endpos || donepos < endpos ) {
+    return; // tee-buffer is not empty...
+  }
+
+  DEBUG_LOG("store **** nwrites:%ld all blocks completed at current block 1<<%ld pos:%#lx+%#lx", write_count(), firstBlk + donepos/blksz, donepos, readypos - donepos);
+  // no bytes left ...
+  _wakeupCont = [](TSEvent, void *) { }; // last reference goes now
 }
 
 BlockWriteInfo::BlockWriteInfo(BlockStoreXform &store, ATSCacheKey &key, int blk) : 
@@ -438,7 +452,8 @@ BlockWriteInfo::BlockWriteInfo(BlockStoreXform &store, ATSCacheKey &key, int blk
 }
 
 BlockWriteInfo::~BlockWriteInfo() {
-  DEBUG_LOG("dtor 1<<%d xform active:%ld writes:%ld",  
+  _writeRef.reset();
+  DEBUG_LOG("dtor 1<<%d xform left active:%ld writes:%ld",  
       _blkid, _writeXform.use_count(), _writeXform->write_count());
 }
 
@@ -534,7 +549,7 @@ BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
         
         // ask to change CACHE_CLOSE to NONE .. or change only if CONTINUE (never) ...
         auto oflag = TS_EVENT_CACHE_CLOSE; // flag 
-        flagEvt.compare_exchange_strong(oflag,TS_EVENT_NONE); // need un-blocking?
+        flagEvt.compare_exchange_strong(oflag,TS_EVENT_VCONN_WRITE_READY); // prevent end ... but claim wakeup
 
         // did not try to grab... but would have succeeded
          
@@ -548,10 +563,12 @@ BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
           return TS_EVENT_NONE;
         }
 
-        // (avoid deadlock)
+        // wakeup is claimed by this call ...
+
+        // (avoid deadlock with my own mutex!!)
         if ( TSMutexLockTry(mutex) ) {
           TSMutexUnlock(mutex); 
-          TSMutexUnlock(mutex); // unlock enclosing (or noop)
+          TSMutexUnlock(mutex); // unlock enclosing (or just a noop)
         }
 
         atscppapi::ScopedContinuationLock lock(wakeupCont);
