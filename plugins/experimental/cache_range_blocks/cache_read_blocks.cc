@@ -208,7 +208,7 @@ BlockSetAccess::start_cache_hit()
 }
 
 BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t toSkip)
-  : ATSXformCont(ctxt.txn(), ctxt.contentLen(), toSkip) // zero bytes length, zero bytes offset...
+  : ATSXformCont(ctxt.txn(), ctxt.contentLen(), toSkip) // may be zero/zero..
 {
   auto &vconns = ctxt._vcsToRead;
   auto len = std::min( TSVConnCacheObjectSizeGet(vconns[0].get()), toSkip + ctxt.contentLen() );
