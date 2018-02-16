@@ -447,7 +447,7 @@ ATSXformOutVConn::check_refill(TSEvent event)
     // noutMark = std::max(noutMark*2,1L<<16);
     // TSIOBufferWaterMarkSet(_outBuffer, noutMark);
 
-    TSIOBufferWaterMarkSet(inbuff, nMark);
+    TSIOBufferWaterMarkSet(inbuff, std::max(nMark,oinMark));
 //    DEBUG_LOG("xform empty: @%#lx in/out buffering %ldK -> %ldK", pos, ooutMark>>10, noutMark>>10);
     DEBUG_LOG("xform empty: @%#lx in buffering %ldK -> %ldK", pos, oinMark>>10, nMark>>10);
     return true;
