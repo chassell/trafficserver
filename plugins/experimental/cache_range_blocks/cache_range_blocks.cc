@@ -31,21 +31,30 @@ std::atomic<long> ThreadTxnID::g_ident{ 8000 };
 
 static int parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_t &end);
 
+static bool is_internal_txn(Transaction &txn)
+{
+  auto atsTxn = static_cast<TSHttpTxn>(txn.getAtsHandle());
+
+#if TS_VERSION_MAJOR >= 7 
+  auto pluginClient = TSHttpTxnPluginTagGet(atsTxn);
+  if ( pluginClient && ! strcmp(pluginClient, PLUGIN_NAME) ) {
+    return true; // ignore any recursing txn...
+  }
+#else
+  if ( TSHttpTxnIsInternal(atsTxn) == TS_SUCCESS) {
+    return true; // ignore any recursing txn...
+  }
+#endif
+  return false;
+}
+
 void BlockSetAccess::start_if_range_present(Transaction &txn) 
 {
   int i = 0;
-
   TSCacheReady(&i);
   if ( ! i ) {
     return; // cannot handle new blocks 
   }
-
-#if TS_VERSION_MAJOR >= 7 
-  auto pluginClient = TSHttpTxnPluginTagGet(static_cast<TSHttpTxn>(txn.getAtsHandle()));
-  if ( pluginClient && ! strcmp(pluginClient, PLUGIN_NAME) ) {
-    return; // ignore any recursing txn...
-  }
-#endif
 
   ThreadTxnID txnid{txn};
 
@@ -78,7 +87,6 @@ BlockSetAccess::BlockSetAccess(Transaction &txn)
 {
   DEBUG_LOG("using range detected: %s", _clntRangeStr.c_str());
   TransactionPlugin::registerHook(HOOK_READ_REQUEST_HEADERS_POST_REMAP);
-  TransactionPlugin::registerHook(HOOK_CACHE_LOOKUP_COMPLETE);
   txn.addPlugin(this);                  // delete this when done
 }
 
@@ -99,7 +107,7 @@ BlockSetAccess::~BlockSetAccess()
       _storeXform.reset(); // clear first
     }
     if ( _readXform ) {
-      DEBUG_LOG("read destruct: refs:%ld",_storeXform.use_count());
+      DEBUG_LOG("read destruct");
       _readXform.reset(); // clear next
     }
     if ( ! _keysInRange.empty() ) {
@@ -116,7 +124,18 @@ void
 BlockSetAccess::handleReadRequestHeadersPostRemap(Transaction &txn)
 {
   ThreadTxnID txnid{_txn};
-  clean_client_request(); // permit match to a stub-file [disallowed by default]
+  // attempt first 
+  auto r = parse_range(_clntRangeStr, 0, _beginByte, _endByte);
+  if ( r < 0 && _endByte ) {
+    txn.resume();
+    return;
+  }
+
+  TransactionPlugin::registerHook(HOOK_CACHE_LOOKUP_COMPLETE);
+
+  if ( ! is_internal_txn(txn) ) {
+    clean_client_request(); // permit match to a stub-file [disallowed by default]
+  }
   txn.resume();
 }
 
@@ -134,29 +153,25 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1); // just permit a range in cached HTTP request
 
-  if (pstub == &_clntHdrs) {
-    DEBUG_LOG("stub-init request");
-  } else {
-    // no interest in cacheing a new file... so waive any storage of a reply
-    TSHttpTxnServerRespNoStoreSet(_atsTxn,1);
+  auto r = 0;
 
+  if (pstub != &_clntHdrs) {
+    // no interest in cacheing a new file... so waive any storage of a reply
     _etagStr = pstub->value(ETAG_TAG); // hold on for later
 
     auto srvrRange = pstub->value(CONTENT_RANGE_TAG); // not in clnt hdrs
     auto l = srvrRange.find('/');
+
     l = ( l != srvrRange.npos ? l + 1 : srvrRange.size() ); // index of nul if no '/' found
     _assetLen = std::atol( srvrRange.c_str() + l );
-  } 
-
-  auto r = parse_range(_clntRangeStr, _assetLen, _beginByte, _endByte);
-
-  if ( _assetLen && r <= 0 ) {
-    txn.resume(); // the range is not serviceable! pass onwards 
-    return;
+    r = parse_range(_clntRangeStr, _assetLen, _beginByte, _endByte);
+    if ( _assetLen && r <= 0 ) {
+      txn.resume(); // the range is not serviceable! pass onwards 
+      return;
+    }
+  } else {
+    DEBUG_LOG("stub-init request: stub req passthru len=%ld",contentLen());
   }
-
-  // many ranges can be satisfied .. so prevent system from blocking it
-  _clntHdrs.erase(RANGE_TAG);
 
   // a store operation is possible ... but blocks to transform might be available 
 
@@ -234,6 +249,7 @@ BlockSetAccess::clean_server_request(Transaction &txn)
 {
   auto &proxyReq = txn.getServerRequest().getHeaders();
 
+  // remove the encoding flag...
   auto fields = proxyReq.values(ACCEPT_ENCODING_TAG);
   // is stub-encoding field found?
   if ( fields.find(CONTENT_ENCODING_INTERNAL, fields.rfind(',')) != fields.npos ) {
@@ -320,7 +336,7 @@ parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_t &end)
     end = len; // end is implied
   } else if (start < 0 && -start == end) {
     start += len; // bytes before end
-    end   = len;       // end is implied
+    end = len;       // end is implied
   } else {
     ++end; // change inclusive to exclusive
   }

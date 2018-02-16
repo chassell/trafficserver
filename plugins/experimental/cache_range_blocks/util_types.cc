@@ -188,7 +188,7 @@ ATSXformOutVConn::ATSXformOutVConn(const ATSXformCont &xform, int64_t bytes, int
     _skipBytes(offset),
     _writeBytes(bytes)
 {
-  if ( ! bytes && _inVIO ) {
+  if ( ! _writeBytes && offset && _inVIO ) {
     const_cast<int64_t&>(_writeBytes) = TSVIONBytesGet(_inVIO) - offset;
   }
 }
@@ -289,6 +289,7 @@ ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, int64_t bytes, int64_t o
     _xformCB( [](TSEvent evt, TSVIO vio, int64_t left) { DEBUG_LOG("xform-event empty body handler"); return 0; }),
     _outSkipBytes(offset),
     _outWriteBytes(bytes),
+    _transformHook(TS_HTTP_RESPONSE_TRANSFORM_HOOK),
     _outBufferU(TSIOBufferCreate()),
     _outReaderU(TSIOBufferReaderAlloc(this->_outBufferU.get()))
 {
@@ -297,9 +298,8 @@ ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, int64_t bytes, int64_t o
   // point back here
   auto xformCont = get();
   TSContDataSet(xformCont, this);
+  TSHttpTxnHookAdd(static_cast<TSHttpTxn>(txn.getAtsHandle()), TS_HTTP_READ_RESPONSE_HDR_HOOK, xformCont);
 
-  // NOTE: maybe called long past TXN_CLOSE!
-  TSHttpTxnHookAdd(static_cast<TSHttpTxn>(txn.getAtsHandle()), TS_HTTP_RESPONSE_TRANSFORM_HOOK, xformCont);
   // get to method via callback
   DEBUG_LOG("output buffering begins with: %ldK",1L<<6);
   TSIOBufferWaterMarkSet(_outBufferU.get(), 1<<16); // start to flush early 
@@ -310,13 +310,14 @@ ATSXformCont::ATSXformCont(atscppapi::Transaction &txn)
   : TSCont_t(TSTransformCreate(&ATSXformCont::handleXformTSEventCB, static_cast<TSHttpTxn>(txn.getAtsHandle()))),
     _xformCB( [](TSEvent evt, TSVIO vio, int64_t left) { DEBUG_LOG("xform-event empty body handler"); return 0; }),
     _outSkipBytes(-1),
-    _outWriteBytes(-1)
+    _outWriteBytes(-1),
+    _transformHook(TS_HTTP_RESPONSE_CLIENT_HOOK)
     // no output buffer / reader
 {
   // point back here
   auto xformCont = get();
   TSContDataSet(xformCont, this);
-  TSHttpTxnHookAdd(static_cast<TSHttpTxn>(txn.getAtsHandle()), TS_HTTP_RESPONSE_CLIENT_HOOK, xformCont);
+  TSHttpTxnHookAdd(static_cast<TSHttpTxn>(txn.getAtsHandle()), TS_HTTP_READ_RESPONSE_HDR_HOOK, xformCont);
 }
 
 int
@@ -343,6 +344,8 @@ ATSXformCont::~ATSXformCont()
   TSContDataSet(cont, nullptr); // prevent new events
 
   DEBUG_LOG("final destruct %p",cont);
+
+  _transformHook = TS_HTTP_LAST_HOOK; // start no transform on late events...
 
   _xformCB = XformCB_t{}; // no callbacks
   TSCont_t::reset();
@@ -434,23 +437,38 @@ BlockTeeXform::teeReenable()
 
 static void sub_server_hdrs(atscppapi::Transaction &origTxn, TSIOBuffer reqBuffer, const std::string &rangeStr)
 {
-  TSMLoc mbufLoc, loc;
+  auto &purl = origTxn.getClientRequest().getPristineUrl();
+  auto txnh = static_cast<TSHttpTxn>(origTxn.getAtsHandle());
+  TSMLoc urlLoc, hdrLoc, loc;
   TSMBuffer buf;
-  TSMBuffer_t mbuf{ TSMBufferCreate() };
+  TSMBuffer_t nbuf{ TSMBufferCreate() };
 
   // make a clone [nothing uses mloc field handles]
-  TSHttpTxnClientReqGet(static_cast<TSHttpTxn>(origTxn.getAtsHandle()), &buf, &loc);
-  TSHttpHdrClone(mbuf.get(), buf, loc, &mbufLoc);
+  TSHttpTxnClientReqGet(txnh, &buf, &loc);
+  TSHttpHdrClone(nbuf.get(), buf, loc, &hdrLoc);
+  TSHttpHdrUrlGet(nbuf.get(), hdrLoc, &urlLoc);
 
   // replace the one header
-  atscppapi::Headers(mbuf.get(), mbufLoc).set(RANGE_TAG, rangeStr);
+  atscppapi::Headers hdrs(nbuf.get(), hdrLoc);
+  hdrs.set(RANGE_TAG, rangeStr);
+
+  atscppapi::Url url(nbuf.get(), urlLoc);
+
+  url.setPath(purl.getPath());
+  url.setQuery(purl.getQuery());
+  url.setScheme(purl.getScheme());
+  url.setHost(purl.getHost());
+  url.setPort(purl.getPort());
+
+  DEBUG_LOG("internal request\n------------------------\nGET %s HTTP/1.1\n%s\n---------------------------", url.getUrlString().c_str(), hdrs.wireStr().c_str());
 
   // print corrected request to output buffer
-  TSHttpHdrPrint(mbuf.get(), mbufLoc, reqBuffer);
+  TSHttpHdrPrint(nbuf.get(), hdrLoc, reqBuffer);
   TSIOBufferWrite(reqBuffer, "\r\n", 2); 
 }
 
-TSVConn spawn_sub_txn(atscppapi::Transaction &origTxn, int64_t begin, int64_t end)
+TSVConn 
+spawn_sub_range(atscppapi::Transaction &origTxn, int64_t begin, int64_t end)
 {
   struct WriteHdr {
      TSIOBuffer_t       _buf{ TSIOBufferCreate() };
@@ -471,9 +489,29 @@ TSVConn spawn_sub_txn(atscppapi::Transaction &origTxn, int64_t begin, int64_t en
   sub_server_hdrs(origTxn, reqbuf, newRange);
 
   auto vconn = TSHttpConnectWithPluginId(origTxn.getClientAddress(), PLUGIN_NAME, 0); 
-  // set up destruct when an event (any) returns
-  TSVConnWrite(vconn, ATSCont::create_temp_tscont(nullptr, std::move(data)), reqrdr, TSIOBufferReaderAvail(reqrdr));
+  auto wrlen = TSIOBufferReaderAvail(reqrdr);
+
+  // destruct when an event (any) returns
+  TSVConnWrite(vconn, ATSCont::create_temp_tscont(nullptr, std::move(data)), reqrdr, wrlen);
   return vconn;
+}
+
+void 
+spawn_range_request(atscppapi::Transaction &origTxn, int64_t begin, int64_t end, int64_t rdlen)
+{
+  struct ReadHdr {
+     TSIOBuffer_t       _buf{ TSIOBufferCreate() };
+     ATSVConnFuture     _vc;
+  };
+
+  auto data = std::make_shared<ReadHdr>();
+  auto rspbuf = data->_buf.get();
+  TSIOBufferWaterMarkSet(rspbuf, rdlen + (1<<16)); 
+
+  // add 64K to the watermark... for response header itself
+  TSVConn vconn = spawn_sub_range(origTxn, begin, end);
+//  data->_vc = ATSVConnFuture(vconn);
+//  TSVConnRead(vconn, ATSCont::create_temp_tscont(nullptr, std::move(data)), rspbuf, rdlen + (1<<16));
 }
 
 class BlockStoreXform;

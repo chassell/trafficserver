@@ -31,11 +31,11 @@ void
 BlockSetAccess::reset_range_keys()
 {
   _keysInRange.clear();
-  _keysInRange.reserve(indexLen());
+  _keysInRange.reserve(indexCnt());
 
   if ( _etagStr.empty() || _beginByte < 0 || _beginByte >= _endByte ) {
     DEBUG_LOG("keys are all empty: etag:%s bytes=[%ld-%ld)", _etagStr.c_str(), _beginByte, _endByte);
-    _keysInRange.resize(indexLen());  // resize with defaults
+    _keysInRange.resize(indexCnt());  // resize with defaults
     return;
   }
 
@@ -54,11 +54,11 @@ BlockSetAccess::launch_block_tests()
   };
 
   if ( _vcsToRead.empty() ) {
-    _vcsToRead.reserve(indexLen());
+    _vcsToRead.reserve(indexCnt());
   }
 
   auto &keys  = keysInRange();
-  auto nxtBlk = _beginByte / blockSize();
+  auto nxtBlk = firstIndex();
   nxtBlk += _vcsToRead.size();
 
   // create refcount-barrier from Deleter (called on last-ptr-copy dtor)

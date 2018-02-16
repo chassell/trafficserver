@@ -19,6 +19,7 @@
 #include "ts/ink_time.h"
 
 #include <atscppapi/HttpStatus.h>
+#include <utils_internal.h>
 
 enum {
   eNoError=0,
@@ -219,6 +220,25 @@ ATSXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
   if (!xfinvconn || !xformInputVIO()) {
     return 0;
   }
+ 
+  if ( event == TS_EVENT_HTTP_READ_RESPONSE_HDR ) 
+  {
+    auto &txn = utils::internal::getTransaction(static_cast<TSHttpTxn>(edata));
+    if ( _transformHook != TS_HTTP_LAST_HOOK) {
+      DEBUG_LOG("transform txn started: e#%d %p", event, edata);
+      // transform will happen...
+      TSHttpTxnHookAdd(static_cast<TSHttpTxn>(edata), _transformHook, cont);
+      _transformHook = TS_HTTP_LAST_HOOK;
+    } else {
+      DEBUG_LOG("transform txn disabled: e#%d %p", event, edata);
+    }
+    txn.resume();
+    return 0;
+  }
+
+  if (!xformInputVIO()) {
+    return 0;
+  }
 
   // check for rude shutdown?
   if (cont != xfinvconn) {
@@ -278,8 +298,8 @@ ATSXformCont::xform_input_event()
 
   // only create at precise start..
   if ( ! _outVIOWaiting && ! _outVConnU ) {
-    DEBUG_LOG("create xform write vio: len=%#lx skip=%#lx", _outWriteBytes, _outSkipBytes);
-    _outVConnU = ATSXformOutVConn::create_if_ready(*this, _outWriteBytes, _outSkipBytes);
+    DEBUG_LOG("create xform write vio: len=%#lx skip=%#lx", _outWriteBytes, std::max(_outSkipBytes,0L));
+    _outVConnU = ATSXformOutVConn::create_if_ready(*this, _outWriteBytes, std::max(_outSkipBytes,0L));
     _outVConnU->check_refill(event);
     auto wmark = TSIOBufferWaterMarkGet(outputBuffer());
     auto inbuff = TSVIOBufferGet(xformInputVIO());
@@ -308,11 +328,16 @@ ATSXformCont::xform_input_event()
 
   auto inready = std::min(inavail, TSVIONTodoGet(xfinvio));
 
-  /////////////
+  ////////////
   // ask for reduced amount to copy
   /////////////
 
-  inready = _xformCB(event, xfinvio, inready); // send bytes-left in segment
+  if ( inpos + _outSkipBytes >= 0 ) {
+    inready = _xformCB(event, xfinvio, inready); // send bytes-left in segment
+  } else {
+    // skipped bytes not handled yet..
+    inready = std::min(_outSkipBytes - inpos, inready); // reduce to amt left...
+  }
 
   /////////////
   // copy to output...
@@ -326,7 +351,7 @@ ATSXformCont::xform_input_event()
   DEBUG_LOG("!!! copy-next-copied : @%#lx+%#lx +%#lx", inpos, inready, inavail);
 
   // reset new positions
-  inrdr   = TSVIOReaderGet(xfinvio); // reset if changed!
+  inrdr   = TSVIOReaderGet(xfinvio); // reset if changed! (??)
   inpos   = TSVIONDoneGet(xfinvio);
   inavail = TSIOBufferReaderAvail(inrdr);
   DEBUG_LOG(" ^^^^^^^^^^^ cb-event: @%#lx buff=+%#lx rdy=+%#lx [%p]", inpos, inavail, inready, inrdr);

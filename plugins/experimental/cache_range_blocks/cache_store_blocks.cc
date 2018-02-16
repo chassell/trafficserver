@@ -24,6 +24,8 @@
 #include <algorithm>
 
 #define WRITE_COUNT_LIMIT 4
+#define BLOCK_COUNT_MINIMUM 50
+#define STUB_MAX_BYTES 1024
 
 void
 BlockSetAccess::start_cache_miss()
@@ -43,14 +45,14 @@ BlockSetAccess::start_cache_miss()
 
   TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS);
 
-  _storeXform = std::make_shared<BlockStoreXform>(*this,indexLen());
+  _storeXform = std::make_shared<BlockStoreXform>(*this, _beginByte - firstIndex()*_blkSize);
 }
 
-BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int blockCount)
+BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int offset)
   : BlockTeeXform(ctxt.txn(), 
                   [this](TSIOBufferReader r, int64_t inpos, int64_t len, int64_t added) { this->handleBodyRead(r, inpos, len, added); },
-                  ctxt.contentLen(),
-                  ctxt._beginByte % ctxt.blockSize()),
+                  ctxt.contentLen(), 
+                  offset), // offset may be *negative*...
     _ctxt(ctxt)
 {
   reset_write_keys();
@@ -67,37 +69,32 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
   auto &resp = txn.getServerResponse();
   auto &respHdrs = resp.getHeaders();
 
-  if ( resp.getStatusCode() != HTTP_STATUS_PARTIAL_CONTENT ) {
-    DEBUG_LOG("rejecting due to unusable status: %d",resp.getStatusCode());
-    _storeXform.reset(); // cannot perform transform!
-    txn.resume();
-    return; // cannot use this for cache ...
-  }
-
-  auto contentEnc = respHdrs.values(CONTENT_ENCODING_TAG);
-
-  if ( ! contentEnc.empty() && contentEnc != "identity" )
-  {
-    DEBUG_LOG("rejecting due to unusable encoding: %s",contentEnc.c_str());
-    _storeXform.reset(); // cannot perform transform!
-    txn.resume();
-    return; // cannot use this for range block storage ...
-  }
-
-  ink_assert( _storeXform );
-
   auto srvrRange = respHdrs.value(CONTENT_RANGE_TAG); // not in clnt hdrs
-  auto l = srvrRange.find('/');
-  l = ( l != srvrRange.npos ? l + 1 : srvrRange.size() ); // zero-length c-string if no '/' found
-  auto srvrAssetLen = std::atol( srvrRange.c_str() + l);
+  auto bodyLen = respHdrs.value(CONTENT_LENGTH_TAG); // not in clnt hdrs
+  auto ilen = srvrRange.find('/');
+  auto iend = srvrRange.rfind('-',ilen);
+  auto ibeg = srvrRange.rfind(' ',iend);
+  ilen = ( ilen != srvrRange.npos ? ilen + 1 : srvrRange.size() ); // zero-length c-string if no '/' found
+  iend = ( iend != srvrRange.npos ? iend + 1 : srvrRange.size() ); // zero-length c-string if no '/' found
+  ibeg = ( ibeg != srvrRange.npos ? ibeg + 1 : srvrRange.size() ); // zero-length c-string if no '/' found
 
-  if ( srvrAssetLen <= 0 ) 
+  auto bodyBytes = std::atol( bodyLen.c_str() );
+
+  _srvrBeginByte = std::atol( srvrRange.c_str() + ibeg);
+  _srvrEndByte = std::atol( srvrRange.c_str() + iend) + 1;
+
+  auto srvrAssetLen = std::atol( srvrRange.c_str() + ilen);
+
+  // happens if not a 206...
+  if ( srvrAssetLen <= 0 )
   {
-    DEBUG_LOG("rejecting due to unparsable asset length: %s",srvrRange.c_str());
+    DEBUG_LOG("rejecting due to unusable length: %s",srvrRange.c_str());
     _storeXform.reset(); // cannot perform transform!
     txn.resume();
     return; // cannot use this for range block storage ...
   }
+
+  TSHttpTxnServerRespNoStoreSet(atsTxn(),1); // assume blocks only first...
 
   // orig client requested bytes-from-end-of-stream
   if ( _beginByte < 0 ) {
@@ -110,37 +107,146 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
     _endByte = srvrAssetLen;
   }
 
+  if ( _srvrBeginByte + bodyBytes != _srvrEndByte || _srvrBeginByte > _beginByte ) {
+    DEBUG_LOG("rejecting due to unusable response: sbeg=%ld send=%ld cl=%ld beg=%ld range=%s / length=%s",
+              _srvrBeginByte, _srvrEndByte, bodyBytes, _beginByte,
+             srvrRange.c_str(),bodyLen.c_str());
+    _storeXform.reset(); // cannot perform transform!
+    txn.resume();
+    return; // cannot use this for range block storage ...
+  }
+
+  // server range is valid and should cover original request...
+
+  if ( _endByte > _srvrEndByte ) 
+  {
+    _endByte = _srvrEndByte; // match position of end byte...
+    DEBUG_LOG("confused due to differences: range=%s / length=%s",srvrRange.c_str(),bodyLen.c_str());
+  }
+
+  // adjusted so ranges overlap ...
+  auto ofirstInd = firstIndex();
+
+  // round to first of usable blocks...
+  _firstInd = (_srvrBeginByte + _blkSize-1)/_blkSize;  // round up
+  // round to first after usable blocks (w/end block always usable)
+  _endInd = ( _srvrEndByte <  srvrAssetLen ? _srvrEndByte/_blkSize : endIndex() ); // round down (non-ending)
+
+  // corrected estimate of all aspects 
   auto currETag = respHdrs.value(ETAG_TAG);
 
-  if (srvrAssetLen == _assetLen && currETag == _etagStr ) {
-    TSHttpTxnServerRespNoStoreSet(atsTxn(),1); // we don't need to save this... assuredly..
-    DEBUG_LOG("srvr-resp: len=%#lx (%ld-%ld) final=%s etag=%s", _assetLen, _beginByte, _endByte, srvrRange.c_str(), _etagStr.c_str());
+  if (srvrAssetLen != _assetLen || currETag != _etagStr) 
+  {
+    _assetLen = srvrAssetLen;
+    _etagStr = currETag;
+
+    _keysInRange.clear(); // discard old ones!
+
+    // XXX: delete obsolete blocks if etag changed??
+    // first ever response about this asset...
+
+    DEBUG_LOG("stub-reset: len=%#lx olen=%#lx (%ld-%ld) final=%s etag=%s", srvrAssetLen, _assetLen, _beginByte, _endByte, srvrRange.c_str(), currETag.c_str());
+    // new stub needed!
+
+    _storeXform->new_asset_body(txn);
     txn.resume(); // continue with expected transform
     return;
   }
 
-  DEBUG_LOG("stub-reset: len=%#lx olen=%#lx (%ld-%ld) final=%s etag=%s", srvrAssetLen, _assetLen, _beginByte, _endByte, srvrRange.c_str(), currETag.c_str());
-  // resetting the stub headers
-
-  TSHttpTxnServerRespNoStoreSet(atsTxn(),0); // must assume now we need to save these headers!
-
-  _assetLen = srvrAssetLen;
-  _etagStr = currETag;
-
-  reset_range_keys();
-  _storeXform->reset_write_keys();
-
-  if ( indexLen() > 100 ) {
-    TSHttpTxnServerRespNoStoreSet(atsTxn(),1); // don't store!
-    TSHttpTxnUntransformedRespCache(atsTxn(),0); // don't store!
+  // was response not block-aligned?
+  if ( ofirstInd != _firstInd )
+  {
+    // must reset list of blocks to match..
+    reset_range_keys();
+    _storeXform->reset_write_keys(); // all new
   }
 
-  resp.setStatusCode(HTTP_STATUS_OK);
-  respHdrs.set(CONTENT_ENCODING_TAG, CONTENT_ENCODING_INTERNAL); // promote matches
-  respHdrs.append(VARY_TAG,ACCEPT_ENCODING_TAG); // please notice it!
+  // normal case with valid stub file in place?
+  DEBUG_LOG("srvr-resp: len=%#lx (%ld-%ld) final=%s etag=%s", _assetLen, _beginByte, _endByte, srvrRange.c_str(), _etagStr.c_str());
 
-  DEBUG_LOG("stub-hdrs:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
+  // discover correct values...
   txn.resume();
+}
+
+
+void
+BlockStoreXform::new_asset_body(Transaction &txn) 
+{
+  auto &resp = txn.getServerResponse();
+  auto &respHdrs = resp.getHeaders();
+  auto atsTxn = _ctxt.atsTxn();
+
+  auto contentEnc = respHdrs.values(CONTENT_ENCODING_TAG);
+  auto storeBytes = _ctxt.contentLen();
+  auto minBlockAsset = BLOCK_COUNT_MINIMUM * _ctxt.blockSize();
+  auto maxBytes = _ctxt.assetLen();
+
+  if ( ! contentEnc.empty() && contentEnc != "identity" )
+  {
+    disable_transform_start(); // cannot perform transform!
+    DEBUG_LOG("rejecting due to unusable encoding: %s",contentEnc.c_str());
+    return; // cannot use this for range block storage or a stub file...
+  }
+
+  // store whole small file?  
+  if ( maxBytes <= minBlockAsset && storeBytes == maxBytes ) 
+  {
+    disable_transform_start(); // no transform to perform.. 
+    // respond as if a if-range failed...
+    resp.setStatusCode(HTTP_STATUS_OK);
+    TSHttpTxnServerRespNoStoreSet(atsTxn,0); // must assume now we need to save these headers!
+    respHdrs.erase(CONTENT_RANGE_TAG); // as if it wasn't a 206 ever...
+    DEBUG_LOG("cache-store of whole 206:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
+    return;
+  }
+
+  // too small for use of blocks??
+  if ( maxBytes <= minBlockAsset )
+  {
+    disable_transform_start(); // no transform to perform.. 
+    // 206 on through...
+    // but spawn a simple 'background' fetch...
+    DEBUG_LOG("no-store of small 206:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
+    spawn_range_request(txn,0,0, maxBytes);
+    DEBUG_LOG("no-store of small 206");
+    return;
+  }
+
+  // big files only ....
+
+  // knowing the etag/size means it's time to reset...
+  _ctxt.reset_range_keys();
+  reset_write_keys();
+
+  reset_output_length(storeBytes);
+
+  // a non-stub sized request?
+  if ( storeBytes > STUB_MAX_BYTES ) 
+  {
+    TSHttpTxnUntransformedRespCache(atsTxn,0); // don't store untransformed!
+    TSHttpTxnTransformedRespCache(atsTxn,0); // don't store transformed!
+
+
+    // 206 on through...
+    // spawn a real stub... 
+    DEBUG_LOG("stub-create recurse pre:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
+    spawn_range_request(txn,1,2, 1); // get a small range instead ...
+    DEBUG_LOG("stub-create recurse post");
+    return;
+  }
+
+  // stub sized storage request ... 
+
+  // respond as if a if-range failed...
+  resp.setStatusCode(HTTP_STATUS_OK);
+  TSHttpTxnServerRespNoStoreSet(atsTxn,0); // must assume now we need to save these headers!
+  TSHttpTxnUntransformedRespCache(atsTxn,0); // don't store untransformed!
+  TSHttpTxnTransformedRespCache(atsTxn,1); // don't store untransformed!
+
+  respHdrs.set(CONTENT_ENCODING_TAG, CONTENT_ENCODING_INTERNAL); // promote matches
+  respHdrs.append(VARY_TAG,ACCEPT_ENCODING_TAG); // please check for a stub!
+
+  DEBUG_LOG("stub for large file:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
 }
 
 
@@ -185,6 +291,8 @@ BlockStoreXform::next_valid_vconn(int64_t donepos, int64_t readypos, int64_t &sk
 void
 BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64_t oreadypos, int64_t added)
 {
+  ThreadTxnID txnid{_txnid};
+
   // input has closed down?
   if (!teerdr) {
     DEBUG_LOG("store **** final call");
