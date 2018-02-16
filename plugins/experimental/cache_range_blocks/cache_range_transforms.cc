@@ -298,14 +298,18 @@ ATSXformCont::xform_input_event()
 
   // only create at precise start..
   if ( ! _outVIOWaiting && ! _outVConnU ) {
-    DEBUG_LOG("create xform write vio: len=%#lx skip=%#lx", _outWriteBytes, std::max(_outSkipBytes,0L));
     _outVConnU = ATSXformOutVConn::create_if_ready(*this, _outWriteBytes, std::max(_outSkipBytes,0L));
-    _outVConnU->check_refill(event);
-    auto wmark = TSIOBufferWaterMarkGet(outputBuffer());
-    auto inbuff = TSVIOBufferGet(xformInputVIO());
-    auto owmark = TSIOBufferWaterMarkGet(inbuff);
-    DEBUG_LOG("input buffering set: out:%ld in:%ld",wmark,std::max(owmark,(1L<<20)));
-    TSIOBufferWaterMarkSet(inbuff, std::max(owmark,(1L<<20)));
+    if ( _outVConnU ) {
+      DEBUG_LOG("create xform write vio: len=%#lx skip=%#lx", _outWriteBytes, std::max(_outSkipBytes,0L));
+      _outVConnU->check_refill(event);
+      auto wmark = TSIOBufferWaterMarkGet(outputBuffer());
+      auto inbuff = TSVIOBufferGet(xformInputVIO());
+      auto owmark = TSIOBufferWaterMarkGet(inbuff);
+      DEBUG_LOG("input buffering set: out:%ld in:%ld",wmark,std::max(owmark,(1L<<20)));
+      TSIOBufferWaterMarkSet(inbuff, std::max(owmark,(1L<<20)));
+    } else {
+      DEBUG_LOG("delayed xform write vio: len=%#lx skip=%#lx", _outWriteBytes, std::max(_outSkipBytes,0L));
+    }
   }
 
   auto xfinrdr = TSVIOReaderGet(xfinvio);
