@@ -388,12 +388,12 @@ BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, 
 void
 BlockTeeXform::teeReenable()
 {
+  atscppapi::ScopedContinuationLock lock(*this);
+
   auto range = teeAvail();
   auto teemax = TSIOBufferWaterMarkGet(_teeBufferP.get()); // without bytes copied
 
   DEBUG_LOG("performing reenable: [%#lx-%#lx)",range.first,range.second);
-
-  atscppapi::ScopedContinuationLock lock(*this);
 
   _writeHook(_teeReaderP.get(), range.first, range.second, 0); // attempt new absorb of input
   auto nrange = teeAvail(); // check new..
