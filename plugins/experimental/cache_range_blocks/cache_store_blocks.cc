@@ -318,11 +318,6 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
   auto newBlockEvent = _blockVIOUntil.load(); // atomic grab
   auto prevBlockEvent = newBlockEvent;
 
-  // force clean if okay...
-  if ( write_count() < WRITE_COUNT_LIMIT ) {
-    _blockVIOUntil = TS_EVENT_NONE; // need more input only...
-  }
-
   // update positions (aliases) on each loop
   for ( ; donepos < readypos && ! newBlockEvent ; teeRange = teeAvail() ) 
   {
@@ -425,7 +420,7 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
     DEBUG_LOG("store **** nwrites:%ld wakeup-blocked at current block 1<<%ld pos:%#lx+%#lx", write_count(), firstBlk + donepos/blksz, donepos, readypos - donepos);
     _blockVIOUntil.compare_exchange_strong(prevBlockEvent,newBlockEvent); // need un-blocking?
   } else if ( newBlockEvent ) {
-    DEBUG_LOG("store **** nwrites:%ld still blocked at current block 1<<%ld pos:%#lx+%#lx", write_count(), firstBlk + donepos/blksz, donepos, readypos - donepos);
+    DEBUG_LOG("store **** nwrites:%ld still wakeup-blocked at current block 1<<%ld pos:%#lx+%#lx", write_count(), firstBlk + donepos/blksz, donepos, readypos - donepos);
   }
 }
 
@@ -538,13 +533,18 @@ BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
         }
         
         // ask to change CACHE_CLOSE to NONE .. or change only if CONTINUE (never) ...
-        auto oflag = ( ! wrcnt ? TS_EVENT_CACHE_CLOSE : TS_EVENT_CONTINUE ); // flag 
+        auto oflag = TS_EVENT_CACHE_CLOSE; // flag 
         flagEvt.compare_exchange_strong(oflag,TS_EVENT_NONE); // need un-blocking?
 
         // did not try to grab... but would have succeeded
          
-        if ( oflag != TS_EVENT_CACHE_CLOSE ) {
+        if ( oflag == TS_EVENT_NONE ) {
           DEBUG_LOG("completed final store to 1<<%d nwrites:0",_blkid);
+          return TS_EVENT_NONE;
+        }
+
+        if ( oflag != TS_EVENT_CACHE_CLOSE ) {
+          DEBUG_LOG("completed final store to 1<<%d nwrites:0 (flag:%d)",_blkid,oflag);
           return TS_EVENT_NONE;
         }
 
