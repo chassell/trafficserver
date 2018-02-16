@@ -324,7 +324,6 @@ struct ATSXformCont : public TSCont_t {
 public:
   ATSXformCont() = delete; // nullptr by default
   ATSXformCont(ATSXformCont &&) = delete;
-  ATSXformCont(atscppapi::Transaction &txn);
   ATSXformCont(atscppapi::Transaction &txn, int64_t bytes, int64_t offset = 0);
 
   // external-only body
@@ -346,7 +345,7 @@ public:
   std::pair<int64_t,int64_t> inputAvail() const { return write_range_avail(inputVIO()); }
   std::pair<int64_t,int64_t> outputAvail() const { return write_range_avail(outputVIO()); }
 
-  void reset_input_vio(TSVIO vio) { _inVIO = vio; }
+  void reset_input_vio(TSVIO vio);
   void reset_output_length(int64_t len) { _outWriteBytes = len; }
 
   void
@@ -406,7 +405,6 @@ class BlockTeeXform : public ATSXformCont
   using HookType = std::function<void(TSIOBufferReader, int64_t inpos, int64_t newlen, int64_t added)>;
 
 public:
-  BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook);
   BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, int64_t xformLen, int64_t xformOffset);
   virtual ~BlockTeeXform() = default;
 

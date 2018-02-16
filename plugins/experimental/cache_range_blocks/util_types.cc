@@ -289,7 +289,7 @@ ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, int64_t bytes, int64_t o
     _xformCB( [](TSEvent evt, TSVIO vio, int64_t left) { DEBUG_LOG("xform-event empty body handler"); return 0; }),
     _outSkipBytes(offset),
     _outWriteBytes(bytes),
-    _transformHook(TS_HTTP_RESPONSE_TRANSFORM_HOOK),
+    _transformHook(TS_HTTP_LAST_HOOK),
     _outBufferU(TSIOBufferCreate()),
     _outReaderU(TSIOBufferReaderAlloc(this->_outBufferU.get()))
 {
@@ -298,26 +298,25 @@ ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, int64_t bytes, int64_t o
   // point back here
   auto xformCont = get();
   TSContDataSet(xformCont, this);
-  TSHttpTxnHookAdd(static_cast<TSHttpTxn>(txn.getAtsHandle()), TS_HTTP_READ_RESPONSE_HDR_HOOK, xformCont);
+
+  if ( ! offset && ! (bytes % ( 1 << 20 )) ) {
+    _transformHook = TS_HTTP_RESPONSE_CLIENT_HOOK; // no active output pumping needed...
+  } else {
+    _transformHook = TS_HTTP_RESPONSE_TRANSFORM_HOOK;
+  }
+
+  if ( txn.getCacheStatus() == atscppapi::Transaction::CACHE_LOOKUP_HIT_FRESH ) {
+    // must add real transform now now...
+    TSHttpTxnHookAdd(static_cast<TSHttpTxn>(txn.getAtsHandle()), _transformHook, xformCont);
+    _transformHook = TS_HTTP_LAST_HOOK;
+  } else {
+    // allow it to be failed later ...
+    TSHttpTxnHookAdd(static_cast<TSHttpTxn>(txn.getAtsHandle()), TS_HTTP_READ_RESPONSE_HDR_HOOK, xformCont);
+  }
 
   // get to method via callback
   DEBUG_LOG("output buffering begins with: %ldK",1L<<6);
   TSIOBufferWaterMarkSet(_outBufferU.get(), 1<<16); // start to flush early 
-}
-
-// Transform continuations
-ATSXformCont::ATSXformCont(atscppapi::Transaction &txn)
-  : TSCont_t(TSTransformCreate(&ATSXformCont::handleXformTSEventCB, static_cast<TSHttpTxn>(txn.getAtsHandle()))),
-    _xformCB( [](TSEvent evt, TSVIO vio, int64_t left) { DEBUG_LOG("xform-event empty body handler"); return 0; }),
-    _outSkipBytes(-1),
-    _outWriteBytes(-1),
-    _transformHook(TS_HTTP_RESPONSE_CLIENT_HOOK)
-    // no output buffer / reader
-{
-  // point back here
-  auto xformCont = get();
-  TSContDataSet(xformCont, this);
-  TSHttpTxnHookAdd(static_cast<TSHttpTxn>(txn.getAtsHandle()), TS_HTTP_READ_RESPONSE_HDR_HOOK, xformCont);
 }
 
 int
@@ -351,20 +350,12 @@ ATSXformCont::~ATSXformCont()
   TSCont_t::reset();
 }
 
-// simple Xform "client" with no changes (skip/truncate) possible
-BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook)
-  : ATSXformCont(txn),
-    _writeHook(writeHook),
-    _teeBufferP(TSIOBufferCreate()),
-    _teeReaderP(TSIOBufferReaderAlloc(this->_teeBufferP.get()))
+void 
+ATSXformCont::reset_input_vio(TSVIO vio)
 {
-  // limit input speed to a degree
-  long maxAgg = 5 * (1<<20);
-  TSMgmtIntGet("proxy.config.cache.agg_write_backlog",&maxAgg);
-
-  // get to method via callback
-  DEBUG_LOG("tee-buffer block-aligned buffer to: %ld", maxAgg>>10);
-  TSIOBufferWaterMarkSet(_teeBufferP.get(), maxAgg); // never produce a READ_READY
+  // XXX may check for xfinput --> non-xfinput 
+  //    to make hook delayed or not..?
+  _inVIO = vio;
 }
 
 // Xform "client" with skip/truncate
@@ -499,17 +490,21 @@ spawn_sub_range(atscppapi::Transaction &origTxn, int64_t begin, int64_t end)
 void 
 spawn_range_request(atscppapi::Transaction &origTxn, int64_t begin, int64_t end, int64_t rdlen)
 {
-  struct ReadHdr {
-     TSIOBuffer_t       _buf{ TSIOBufferCreate() };
-     ATSVConnFuture     _vc;
-  };
+  // ignore TSVConn and assume it is cleared on its own...
+  spawn_sub_range(origTxn, begin, end);
 
-  auto data = std::make_shared<ReadHdr>();
-  auto rspbuf = data->_buf.get();
-  TSIOBufferWaterMarkSet(rspbuf, rdlen + (1<<16)); 
+//  struct ReadHdr {
+//     TSIOBuffer_t       _buf{ TSIOBufferCreate() };
+//     ATSVConnFuture     _vc;
+//  };
+
+//  auto data = std::make_shared<ReadHdr>();
+//  auto rspbuf = data->_buf.get();
 
   // add 64K to the watermark... for response header itself
-  TSVConn vconn = spawn_sub_range(origTxn, begin, end);
+//  TSIOBufferWaterMarkSet(rspbuf, rdlen + (1<<16)); 
+
+//  TSVConn vconn = spawn_sub_range(origTxn, begin, end);
 //  data->_vc = ATSVConnFuture(vconn);
 //  TSVConnRead(vconn, ATSCont::create_temp_tscont(nullptr, std::move(data)), rspbuf, rdlen + (1<<16));
 }
