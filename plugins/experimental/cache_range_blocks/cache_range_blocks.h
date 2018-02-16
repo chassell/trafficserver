@@ -40,42 +40,6 @@
 
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
-class ThreadTxnID
-{
-  static thread_local int g_pluginTxnID;
-  static std::atomic<long> g_ident;
-
-public:
-  static int get() { 
-    return ( // atscppapi::TransactionPlugin::getTxnID() >= 0 
-             //    ? atscppapi::TransactionPlugin::getTxnID() : 
-                g_pluginTxnID );
-  }
-  static int create_id(TSHttpTxn txn) {
-    TSHRTime begin = 0;
-    TSHttpTxnMilestoneGet(txn, TS_MILESTONE_UA_READ_HEADER_DONE, &begin);
-    return (begin % 9000) + 1000;
-  }
-
-  ThreadTxnID(atscppapi::Transaction &txn) {
-//    g_pluginTxnID = TSHttpTxnIdGet(static_cast<TSHttpTxn>(txn.getAtsHandle()));
-    g_pluginTxnID = create_id(static_cast<TSHttpTxn>(txn.getAtsHandle()));
-  }
-  ThreadTxnID(TSHttpTxn txn) {
-//    g_pluginTxnID = TSHttpTxnIdGet(txn);
-    g_pluginTxnID = create_id(txn);
-  }
-  ThreadTxnID(int txnid) {
-    g_pluginTxnID = txnid;
-  }
-  ~ThreadTxnID() {
-    g_pluginTxnID = _oldTxnID; // restore
-  }
-
-private:
-  int _oldTxnID = g_pluginTxnID; // always save it ..
-};
-
 #define PLUGIN_NAME "cache_range_blocks"
 #define DEBUG_LOG(fmt, ...) TSDebug(PLUGIN_NAME, "[%d] [%s:%d] %s(): " fmt,  ThreadTxnID::get(), __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
 #define ERROR_LOG(fmt, ...) TSError("[%d] [%s:%d] %s(): " fmt, ThreadTxnID::get(), __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
@@ -113,9 +77,11 @@ public:
 
   int64_t assetLen() const { return _assetLen; }
   int64_t contentLen() const { return _endByte - _beginByte; }
-  int64_t indexLen() const { return endIndex() - firstIndex(); }
-  int64_t firstIndex() const { return _beginByte / _blkSize; }
-  int64_t endIndex() const { return (_endByte + _blkSize-1) / _blkSize; }
+  // assume index of first of *read* blocks...
+  int64_t firstIndex() const { return ( _firstInd >= 0 ? _firstInd : _beginByte / _blkSize ); }
+  // assume index of ending of *read* blocks...
+  int64_t endIndex() const { return ( _endInd > 0 ? _endInd : (_endByte + _blkSize-1) / _blkSize ); }
+  int64_t indexCnt() const { return endIndex() - firstIndex(); }
   int64_t blockSize() const { return _blkSize; }
   
   void clean_client_request(); // allow secondary-accepting block-set match
@@ -148,8 +114,6 @@ private:
 private:
   Headers *get_stub_hdrs();
 
-  int64_t select_needed_blocks();
-
   void start_cache_miss();
   void start_cache_hit();
   void set_cache_hit_bitset();
@@ -168,6 +132,12 @@ private:
 
   int64_t _beginByte = -1L;
   int64_t _endByte   = -1L;
+
+  int64_t _srvrBeginByte = -1L;
+  int64_t _srvrEndByte   = -1L;
+
+  int64_t _firstInd = -1L;
+  int64_t _endInd   = -1L;
 
   // objs w/destructors
 
@@ -198,17 +168,22 @@ public:
 
   const std::vector<ATSCacheKey> & keysToWrite() const { return _keysToWrite; }
   long write_count() const { return this->_writeCheck.use_count() - 1; } 
+
   void reset_write_keys() {
     _keysToWrite.clear();
     std::swap(_ctxt._keysInRange,_keysToWrite);
   }
+
+  void new_asset_body(Transaction &txn);
 private:
+
   TSCacheKey next_valid_vconn(int64_t pos, int64_t len, int64_t &skipDist);
 
   void handleBodyRead(TSIOBufferReader r, int64_t pos, int64_t len, int64_t added);
 
 private:
   BlockSetAccess          &_ctxt;
+  int                      _txnid = ThreadTxnID::get(); // for debug
   std::vector<ATSCacheKey> _keysToWrite; // in order with index
   std::shared_ptr<void>    _writeCheck{&this->_writeCheck, [](std::shared_ptr<void>*){ }};
   ATSCont                  _wakeupCont{_ctxt._mutexOnlyCont.get()}; // no handler at first

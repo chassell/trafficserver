@@ -70,6 +70,8 @@ is_base64_bit_set(const std::string &base64, unsigned i)
 }
 
 void forward_vio_event(TSEvent event, TSVIO invio, TSCont mutexCont);
+TSVConn spawn_sub_range(atscppapi::Transaction &origTxn, int64_t begin, int64_t end);
+void spawn_range_request(atscppapi::Transaction &origTxn, int64_t begin, int64_t end, int64_t rdlen);
 
 class XformReader;
 
@@ -159,6 +161,42 @@ struct ATSCacheKey : public TSCacheKey_t {
     return get() && *reinterpret_cast<const ats::CryptoHash*>(get()) != ats::CryptoHash();
   }
 
+};
+
+class ThreadTxnID
+{
+  static thread_local int g_pluginTxnID;
+  static std::atomic<long> g_ident;
+
+public:
+  static int get() { 
+    return g_pluginTxnID;
+//    return ( // atscppapi::TransactionPlugin::getTxnID() >= 0 
+//             //    ? atscppapi::TransactionPlugin::getTxnID() : 
+  }
+  static int create_id(TSHttpTxn txn) {
+    TSHRTime begin = 0;
+    TSHttpTxnMilestoneGet(txn, TS_MILESTONE_UA_READ_HEADER_DONE, &begin);
+    return (begin % 9000) + 1000;
+  }
+
+  ThreadTxnID(atscppapi::Transaction &txn) {
+//    g_pluginTxnID = TSHttpTxnIdGet(static_cast<TSHttpTxn>(txn.getAtsHandle()));
+    g_pluginTxnID = create_id(static_cast<TSHttpTxn>(txn.getAtsHandle()));
+  }
+  ThreadTxnID(TSHttpTxn txn) {
+//    g_pluginTxnID = TSHttpTxnIdGet(txn);
+    g_pluginTxnID = create_id(txn);
+  }
+  ThreadTxnID(int txnid) {
+    g_pluginTxnID = txnid;
+  }
+  ~ThreadTxnID() {
+    g_pluginTxnID = _oldTxnID; // restore
+  }
+
+private:
+  int _oldTxnID = g_pluginTxnID; // always save it ..
 };
 
 // object to request write/read into cache
@@ -309,6 +347,7 @@ public:
   std::pair<int64_t,int64_t> outputAvail() const { return write_range_avail(outputVIO()); }
 
   void reset_input_vio(TSVIO vio) { _inVIO = vio; }
+  void reset_output_length(int64_t len) { _outWriteBytes = len; }
 
   void
   set_body_handler(const XformCB_t &fxn)
@@ -317,7 +356,11 @@ public:
     TSDebug("cache_range_blocks", "%s",__func__);
   }
 
-  int64_t copy_next_len(int64_t);
+  void
+  disable_transform_start() {
+    _transformHook = TS_HTTP_LAST_HOOK;
+  }
+
   int64_t skip_next_len(int64_t);
 
 private:
@@ -335,12 +378,14 @@ private:
 
   static int handleXformTSEventCB(TSCont cont, TSEvent event, void *data);
 protected:
-  int _txnID;
+  int _txnID = ThreadTxnID::get();
 
 private:
   XformCB_t _xformCB;
-  int64_t const _outSkipBytes;
-  int64_t const _outWriteBytes;
+  int64_t _outSkipBytes;
+  int64_t _outWriteBytes;
+
+  TSHttpHookID _transformHook; // needs init.. but may be reset!
 
   int _inLastError = 0;
   TSVIO _inVIO = nullptr;
