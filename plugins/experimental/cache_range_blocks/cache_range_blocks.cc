@@ -127,6 +127,7 @@ BlockSetAccess::handleReadRequestHeadersPostRemap(Transaction &txn)
   // attempt first 
   auto r = parse_range(_clntRangeStr, 0, _beginByte, _endByte);
   if ( r < 0 && _endByte ) {
+    DEBUG_LOG("cannot use invalid range: %s", _clntRangeStr.c_str());
     txn.resume();
     return;
   }
@@ -147,11 +148,10 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   // file was found in full?
   if (!pstub) {
+    DEBUG_LOG("direct file cached: %d", _txn.getCacheStatus());
     txn.resume();
     return; // main file made it through
   }
-
-  txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1); // just permit a range in cached HTTP request
 
   auto r = 0;
 
@@ -166,12 +166,15 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     _assetLen = std::atol( srvrRange.c_str() + l );
     r = parse_range(_clntRangeStr, _assetLen, _beginByte, _endByte);
     if ( _assetLen && r <= 0 ) {
+      DEBUG_LOG("cannot parse range: beg=%ld end=%ld len[stub]=%ld, %s %s",_beginByte,_endByte,_assetLen,_etagStr.c_str(), _clntRangeStr.c_str());
       txn.resume(); // the range is not serviceable! pass onwards 
       return;
     }
   } else {
     DEBUG_LOG("stub-init request: stub req passthru len=%ld",contentLen());
   }
+
+  txn.configIntSet(TS_CONFIG_HTTP_CACHE_RANGE_WRITE, 1); // just permit a range in cached HTTP request
 
   // a store operation is possible ... but blocks to transform might be available 
 
