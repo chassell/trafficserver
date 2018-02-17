@@ -31,6 +31,7 @@ std::atomic<long> ThreadTxnID::g_ident{ 8000 };
 
 static int parse_range(std::string rangeFld, int64_t len, int64_t &start, int64_t &end);
 
+#if 0
 static bool is_internal_txn(Transaction &txn)
 {
   auto atsTxn = static_cast<TSHttpTxn>(txn.getAtsHandle());
@@ -47,6 +48,7 @@ static bool is_internal_txn(Transaction &txn)
 #endif
   return false;
 }
+#endif
 
 void BlockSetAccess::start_if_range_present(Transaction &txn) 
 {
@@ -134,9 +136,7 @@ BlockSetAccess::handleReadRequestHeadersPostRemap(Transaction &txn)
 
   TransactionPlugin::registerHook(HOOK_CACHE_LOOKUP_COMPLETE);
 
-  if ( ! is_internal_txn(txn) ) {
-    clean_client_request(); // permit match to a stub-file [disallowed by default]
-  }
+  clean_client_request(); // permit match to a stub-file [disallowed by default]
   txn.resume();
 }
 
