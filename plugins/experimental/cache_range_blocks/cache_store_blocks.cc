@@ -207,7 +207,7 @@ BlockStoreXform::new_asset_body(Transaction &txn)
     // 206 on through...
     // but spawn a simple 'background' fetch...
     DEBUG_LOG("no-store of small 206:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
-    spawn_range_request(txn,0,0, maxBytes);
+    spawn_sub_range(txn,0,0);
     DEBUG_LOG("no-store of small 206");
     return;
   }
@@ -230,7 +230,7 @@ BlockStoreXform::new_asset_body(Transaction &txn)
     // 206 on through...
     // spawn a real stub... 
     DEBUG_LOG("stub-create recurse pre:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
-    spawn_range_request(txn,1,2, 1); // get a small range instead ...
+    spawn_sub_range(txn,1,2); // get a small range instead ...
     DEBUG_LOG("stub-create recurse post");
     return;
   }
@@ -392,8 +392,8 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
 
     // Did write fail totally?
     auto desc = "";
-    auto err = callData._vconn.error();
-    if ( err > ESOCK_TIMEOUT ) {
+    auto err = callData._vio.error();
+    if ( err > EAGAIN ) {
       desc = "failed";
     } else if ( ! TSActionDone(r) ) {
       desc = "delayed";
@@ -408,8 +408,8 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
 //    DEBUG_LOG("store ++++ %s write 1<<%ld [%s] nwrites:%ld @%#lx+%#lx [final @%#lx]", 
     DEBUG_LOG("store ++++ %s write 1<<%ld [%d] nwrites:%ld @%#lx+%#lx [final @%#lx]", 
                desc, _ctxt.firstIndex() + blk, 
-//               InkStrerror(callData._vconn.error()),
-               callData._vconn.error(),
+//               InkStrerror(callData._vio.error()),
+               callData._vio.error(),
                write_count(), donepos, navail, donepos + wrlen);
   }
 
@@ -443,7 +443,6 @@ BlockWriteInfo::BlockWriteInfo(BlockStoreXform &store, ATSCacheKey &key, int blk
       _ind(blk),
       _key(std::move(key)),
       _buff{TSIOBufferCreate()},
-      _rdr{TSIOBufferReaderAlloc(_buff.get())},
       _writeRef{store._writeCheck},
       _blkid(store._ctxt.firstIndex() + blk)
 {
@@ -472,8 +471,8 @@ BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
     case TS_EVENT_CACHE_OPEN_WRITE_FAILED:
     {
       auto verr = -reinterpret_cast<intptr_t>(edata);
-      auto vconn = static_cast<TSVConn>(edata);
-      _vconn = ATSVConnFuture(vconn); // replace with the error value
+      _vio = ATSVIOFuture(static_cast<TSVIO>(edata)); // store error for outside to read...
+
       // async result was not found in time..
       atscppapi::ScopedContinuationLock lock(cont);
 //      DEBUG_LOG("scheduled reopen write check [%s] to 1<<%d nwrites:%ld", 
@@ -492,7 +491,7 @@ BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
       auto r = TSCacheWrite(cont, _key.get()); // find room to store each key...
       if ( ! TSActionDone(r) ) {
         DEBUG_LOG("waiting on open write with 1<<%d nwrites:%ld",_blkid, _writeXform->write_count());
-       }
+      }
       break;
     }
 
@@ -500,9 +499,10 @@ BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
     {
       TSVConn vconn = static_cast<TSVConn>(edata);
       DEBUG_LOG("completed open write with 1<<%d nwrites:%ld",_blkid, _writeXform->write_count());
-      _vconn = ATSVConnFuture(vconn);
-      auto wrlen = std::min(TSIOBufferReaderAvail(_rdr.get()),(1L<<20));
-      TSVConnWrite(vconn, cont, _rdr.get(), wrlen); // copy older buffer bytes out
+      auto rdr = TSIOBufferReaderAlloc(_buff.get());
+      auto wrlen = std::min(TSIOBufferReaderAvail(rdr),(1L<<20));
+      auto vio = TSVConnWrite(vconn, cont, rdr, wrlen); // copy older buffer bytes out
+      _vio = ATSVIOFuture(static_cast<TSVIO>(vio));
       break;
     }
 
@@ -532,9 +532,8 @@ BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
         // attempt to close VConn here
         auto &flagEvt = _writeXform->_blockVIOUntil;
 
-        TSVConnClose(_vconn.release());
         // replace with number to recognize (not null)
-        _vconn = ATSVConnFuture(reinterpret_cast<TSVConn>(-ESTALE));
+        _vio = ATSVIOFuture(reinterpret_cast<TSVIO>(-ESTALE));
 
         // don't try but note 
         if ( wrcnt && flagEvt == TS_EVENT_CACHE_CLOSE ) {
