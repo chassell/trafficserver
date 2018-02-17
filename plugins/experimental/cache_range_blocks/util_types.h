@@ -93,6 +93,7 @@ using TSMutex_t          = std::unique_ptr<std::remove_pointer<TSMutex>::type>;
 using TSMBuffer_t        = std::unique_ptr<std::remove_pointer<TSMBuffer>::type>;
 using TSIOBuffer_t       = std::unique_ptr<std::remove_pointer<TSIOBuffer>::type>;
 using TSIOBufferReader_t = std::unique_ptr<std::remove_pointer<TSIOBufferReader>::type>;
+using TSVIO_t            = std::unique_ptr<std::remove_pointer<TSVIO>::type>;
 
 using TSMutexPtr_t = std::shared_ptr<std::remove_pointer<TSMutex>::type>;
 
@@ -123,20 +124,29 @@ template <>
 inline void
 default_delete<TSMBuffer_t::element_type>::operator()(TSMBuffer buff) const
 {
-  TSMBufferDestroy(buff);
+  if ( buff ) {
+    TSMBufferDestroy(buff);
+  }
 }
 template <>
 inline void
 default_delete<TSIOBuffer_t::element_type>::operator()(TSIOBuffer buff) const
 {
-  TSIOBufferDestroy(buff);
+  if ( buff ) {
+    TSIOBufferDestroy(buff);
+  }
 }
 template <>
 inline void
 default_delete<TSIOBufferReader_t::element_type>::operator()(TSIOBufferReader reader) const
 {
-  TSIOBufferReaderFree(reader);
+  if ( reader ) {
+    TSIOBufferReaderFree(reader);
+  }
 }
+
+template <> void default_delete<TSVIO_t::element_type>::operator()(TSVIO vio) const;
+
 }
 
 inline std::pair<int64_t,int64_t> write_range_avail(TSVIO vio) { 
@@ -146,6 +156,7 @@ inline std::pair<int64_t,int64_t> write_range_avail(TSVIO vio) {
   }
   int64_t avail = TSIOBufferReaderAvail(rdr);
   int64_t pos = TSVIONDoneGet(vio);
+  avail = std::min(avail, TSVIONTodoGet(vio)); // don't span past end...
   return std::make_pair( pos, pos + avail );
 }
 
@@ -242,38 +253,44 @@ private:
 };
 
 // cover up interface
-struct ATSVConnFuture : private std::shared_future<TSVConn> 
+template <typename T_DATA>
+struct ATSFuture : private std::shared_future<T_DATA> 
 {
-  using TSVConnFut_t = std::shared_future<TSVConn>; // allow use
-  using TSVConnProm_t = std::promise<TSVConn>; // allow use
-  using TSVConnFut_t::operator=; // allow use
+  using TSFut_t = std::shared_future<T_DATA>; // allow use
+  using TSProm_t = std::promise<T_DATA>; // allow use
+  using TSFut_t::operator=; // allow use
 
-  explicit ATSVConnFuture() = default;
-  explicit ATSVConnFuture(const ATSVConnFuture &) = default;
+  explicit ATSFuture() = default;
+  explicit ATSFuture(const ATSFuture &) = default;
 
-  explicit ATSVConnFuture(TSVConn vconn) 
+  explicit ATSFuture(T_DATA vconn) 
   {
-    TSVConnProm_t prom;
-    static_cast<TSVConnFut_t&>(*this) = prom.get_future();
+    TSProm_t prom;
+    static_cast<TSFut_t&>(*this) = prom.get_future();
     prom.set_value(vconn);
   }
 
-  ~ATSVConnFuture();
+  ~ATSFuture();
 
-  ATSVConnFuture &operator=(ATSVConnFuture &&old) {
-    *this = static_cast<TSVConnFut_t&&>(old);
+  ATSFuture &operator=(ATSFuture &&old) {
+    *this = static_cast<TSFut_t&&>(old);
     return *this;
   }
 
-  operator bool() const { return std::shared_future<TSVConn>::valid(); }
+  operator bool() const { return std::shared_future<T_DATA>::valid(); }
   int error() const;
   bool valid() const { return ! error(); }
   bool is_close_able() const;
-  TSVConn release()
-     { auto v = get(); operator=(std::shared_future<TSVConn>{}); return v; }
-  TSVConn get() const 
-     { return valid() ? std::shared_future<TSVConn>::get() : nullptr; }
+  T_DATA release()
+     { auto v = get(); operator=(std::shared_future<T_DATA>{}); return v; }
+  T_DATA get() const 
+     { return valid() ? std::shared_future<T_DATA>::get() : nullptr; }
+
 };
+
+using ATSVConnFuture = ATSFuture<TSVConn>;
+using ATSVIOFuture = ATSFuture<TSVIO>;
+
 
 struct ATSXformOutVConn
 {
@@ -284,10 +301,9 @@ struct ATSXformOutVConn
 
   ATSXformOutVConn(const ATSXformCont &xform, int64_t len, int64_t offset);
 
-  operator TSVConn() const { return _outVConn; }
   operator TSVIO() const { return _outVIO; }
-  operator TSIOBuffer() const { return _outBuffer; }
-  operator TSIOBufferReader() const { return _outReader; }
+  std::pair<int64_t,int64_t> outputAvail() const { return write_range_avail(_outVIO); }
+  std::pair<int64_t,int64_t> inputAvail() const { return write_range_avail(_inVIO); }
 
   ~ATSXformOutVConn();
 
@@ -296,15 +312,15 @@ struct ATSXformOutVConn
   bool check_refill(TSEvent event);
 
 private:
-  TSVConn const _inVConn = nullptr;
-  TSVIO const _inVIO = nullptr;
-  TSVConn const _outVConn = nullptr;
-  TSIOBuffer _outBuffer;
-  TSIOBufferReader _outReader;
+  TSCont const _cont;
   int64_t const _skipBytes;
   int64_t const _writeBytes;
 
-  TSVIO _outVIO = nullptr;
+  TSVIO_t _outVIOPtr; // shut down automatically
+  TSVIO const _outVIO;
+
+  TSVIO _inVIO = nullptr;
+
   TSEvent _outVIOWaiting = TS_EVENT_NONE;
   uint64_t _outVIOWaitingTS = 0UL;
 
@@ -334,16 +350,28 @@ public:
 
   TSVIO xformInputVIO() const { return TSVConnWriteVIOGet(get()); }
   TSVIO inputVIO() const { return _inVIO; }
+  TSIOBufferReader inputReader() const { return TSVIOReaderGet(_inVIO); }
 
-  TSVConn output() const { return _outVConnU ? static_cast<TSVConn>(*_outVConnU) : nullptr; }
-  TSVIO outputVIO() const { return _outVConnU ? static_cast<TSVIO>(*_outVConnU) : nullptr; }
+  TSVIO outputVIO() const { return _outVConnU ? _outVConnU->operator TSVIO() : nullptr; }
 
   TSIOBuffer outputBuffer() const { return _outBufferU.get(); }
-  TSIOBufferReader outputReader() const { return _outReaderU.get(); }
+
+  int64_t outputLen() const { return _outWriteBytes; }
+  int64_t outputOffset() const { return _outSkipBytes; }
 
   std::pair<int64_t,int64_t> xformInputAvail() const { return write_range_avail(xformInputVIO()); }
   std::pair<int64_t,int64_t> inputAvail() const { return write_range_avail(inputVIO()); }
   std::pair<int64_t,int64_t> outputAvail() const { return write_range_avail(outputVIO()); }
+  std::pair<int64_t,int64_t> bufferAvail() const {
+      if ( ! outputVIO() ) {
+        int64_t ndone = TSVIONDoneGet(inputVIO());
+        return std::make_pair( ndone, ndone );
+      }
+      auto r = write_range_avail(outputVIO());
+      r.first += _outSkipBytes; // offset + or -
+      r.second += _outSkipBytes; // offset + or -
+      return std::move(r);
+    }
 
   void reset_input_vio(TSVIO vio);
   void reset_output_length(int64_t len) { _outWriteBytes = len; }
@@ -359,8 +387,6 @@ public:
   disable_transform_start() {
     _transformHook = TS_HTTP_LAST_HOOK;
   }
-
-  int64_t skip_next_len(int64_t);
 
 private:
   int check_completions(TSEvent event);
@@ -416,7 +442,6 @@ public:
     return std::make_pair( _lastInputNDone - avail, _lastInputNDone );
   }
 
-  TSIOBufferReader cloneAndSkip(int64_t bytes);
   void teeReenable();
 
 private:

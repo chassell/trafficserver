@@ -143,8 +143,8 @@ private:
 
   ATSCont _mutexOnlyCont;
 
-  std::vector<ATSCacheKey> _keysInRange;               // in order with index
-  std::vector<ATSVConnFuture> _vcsToRead; // indexed as the keys
+  std::vector<ATSCacheKey> _keysInRange;   // in order with index
+  std::vector<ATSVIOFuture> _cacheVIOs;    // indexed as the keys
 
   // delayed creation: transform objects must be committed to, only upon response
 
@@ -159,8 +159,6 @@ class BlockStoreXform : public std::enable_shared_from_this<BlockStoreXform>,
   friend struct BlockWriteInfo;
 public:
   using Ptr_t = std::shared_ptr<BlockStoreXform>;
-  using WriteVCs_t = std::vector<ATSVConnFuture>;
-  using WriteVCsPtr_t = std::shared_ptr<std::vector<ATSVConnFuture>>;
 
 public:
   BlockStoreXform(BlockSetAccess &ctxt, int blockCount);
@@ -208,9 +206,8 @@ struct BlockWriteInfo : public std::enable_shared_from_this<BlockWriteInfo>
   BlockStoreXform::Ptr_t _writeXform;
   int                    _ind;
   ATSCacheKey            _key;
-  ATSVConnFuture         _vconn;
   TSIOBuffer_t           _buff;
-  TSIOBufferReader_t     _rdr;
+  ATSVIOFuture           _vio;
   std::shared_ptr<void>  _writeRef;
 
   int                    _blkid; // for debug
@@ -232,6 +229,11 @@ private:
   BlockReadXform(BlockSetAccess &ctxt, int64_t skip);
 
   void launch_block_reads();
+  void on_empty_buffer();
+
+  const int64_t             _blkSize;   // local copy..
+  std::vector<ATSCacheKey>  _keysToRead; // in order with index
+  std::vector<ATSVIOFuture> _cacheVIOs; // indexed as the keys
 };
 
 //}

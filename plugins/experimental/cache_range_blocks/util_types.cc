@@ -38,6 +38,45 @@ const int8_t base64_values[80] = {
 
 const char base64_chars[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+template <> void std::default_delete<TSVIO_t::element_type>::operator()(TSVIO vio) const
+{
+  TSIOBuffer_t buff{ TSVIOBufferGet(vio) };
+  if ( ! buff ) {
+    return;
+  }
+  TSIOBufferReader_t rdr{ TSVIOReaderGet(vio) };
+
+  if ( TSVIONTodoGet(vio) ) 
+  {
+    TSVIONBytesSet(vio, TSVIONDoneGet(vio));
+    TSContCall(TSVIOContGet(vio), TS_EVENT_VCONN_WRITE_COMPLETE, vio); // notify it's done...
+  }
+
+  auto vconn = TSVIOVConnGet(vio);
+
+  if ( vconn ) {
+    TSVConnClose(vconn);
+  }
+
+  auto bytes = TSIOBufferReaderAvail(TSIOBufferReader_t{TSIOBufferReaderAlloc(buff.get())}.get());
+
+  // no reader ... means no responsibility for it..
+  if ( ! rdr ) {
+    DEBUG_LOG("vc %p: read ended with %ld bytes", vconn, bytes);
+    buff.release(); // don't delete it..
+    return;
+  }
+
+  // only close if drained ...
+  if ( bytes ) {
+    DEBUG_LOG("vc %p: write ended with %ld bytes", vconn, bytes);
+    buff.release(); // leave alone .. with bytes...
+    return;
+  } 
+
+  DEBUG_LOG("vc %p: write ended", vconn);
+}
+
 void
 forward_vio_event(TSEvent event, TSVIO tgt, TSCont mutexCont)
 {
@@ -88,19 +127,21 @@ ATSCont::create_temp_tscont(TSCont mutexSrc, T_FUTURE &cbFuture, const std::shar
   cbFuture = prom.get_future().share(); // link to promise
 
   // assign new handler
-  cont = [&cont, &prom, counted](TSEvent evt, void *data) {
+  cont = [&cont, &prom, counted](TSEvent evt, void *data) 
+  {
     decltype(contp) contp(&cont); // free after this call
     decltype(promp) promp(&prom); // free after this call
 
     prom.set_value(static_cast<FutureData_t>(data)); // store correctly
 
-    // bad ptr?  then call deleter on this!
-    auto ptrErr = -reinterpret_cast<intptr_t>(data);
-    if (ptrErr >= 0 && ptrErr < INK_START_ERRNO + 1000) {
-      auto deleter = std::get_deleter<void (*)(void *)>(counted);
-      if (deleter) {
-        (*deleter)(counted.get());
-      }
+    auto errVal = reinterpret_cast<intptr_t>(data) >> 16;
+    if ( errVal != -1 ) {
+      return;
+    }
+
+    auto deleter = std::get_deleter<void (*)(void *)>(counted);
+    if (deleter) {
+      (*deleter)(counted.get());
     }
   };
 
@@ -109,6 +150,68 @@ ATSCont::create_temp_tscont(TSCont mutexSrc, T_FUTURE &cbFuture, const std::shar
 
   return cont; // convert to TSCont
 }
+
+template <>
+TSCont
+ATSCont::create_temp_tscont(TSCont mutexSrc, std::shared_future<TSVIO> &cbFuture, const std::shared_ptr<void> &counted)
+{
+  // alloc two objs to pass into lambda
+  auto contp = std::make_unique<ATSCont>(mutexSrc); // uses empty stub-callback!!
+  auto promp = std::make_unique<std::promise<TSVIO>>();
+
+  auto &cont = *contp; // hold scoped-ref
+  auto &prom = *promp; // hold scoped-ref
+
+  cbFuture = prom.get_future().share(); // link to promise
+
+  // assign new handler
+  cont = [&cont, &prom, counted](TSEvent evt, void *data) 
+  {
+    auto errVal = reinterpret_cast<intptr_t>(data) >> 16;
+    TSVIO vio = static_cast<TSVIO>(data);
+    TSVConn vconn = static_cast<TSVConn>(data);
+
+    switch (evt) {
+      case TS_EVENT_CACHE_OPEN_READ:
+        TSVConnRead(vconn, cont, TSIOBufferCreate(), TSVConnCacheObjectSizeGet(vconn));
+        return; // try again...
+      case TS_EVENT_VCONN_READ_READY:
+        return; // try again...
+
+      case TS_EVENT_VCONN_READ_COMPLETE:
+        break; // set vio from data...
+
+      default:
+        if ( ~errVal && errVal ) {
+          // no error result?
+          errVal = -1; // call deleter
+          vio = reinterpret_cast<TSVIO>(-evt); // store it...
+        }
+        break;
+    }
+
+    // last callback now...
+
+    decltype(contp) contp(&cont);
+    decltype(promp) promp(&prom);
+
+    prom.set_value(vio); // done (or error)
+
+    // call deleter if not a normal pointer...
+    if ( ! ~errVal || ! errVal ) {
+      auto deleter = std::get_deleter<void (*)(void *)>(counted);
+      if (deleter) {
+        (*deleter)(counted.get());
+      }
+    } 
+  };
+
+  contp.release(); // owned as ptr in lambda
+  promp.release(); // owned as ptr in lambda
+
+  return cont; // convert to TSCont
+}
+
 
 TSCont
 ATSCont::create_temp_tscont(TSCont mutexSrc, const std::shared_ptr<void> &counted)
@@ -169,31 +272,24 @@ ATSCont::handleTSEventCB(TSCont cont, TSEvent event, void *data)
   return 0;
 }
 
-ATSXformOutVConn::Uniq_t
-ATSXformOutVConn::create_if_ready(const ATSXformCont &xform, int64_t bytes, int64_t offset)
-{
-  if ( ! TSTransformOutputVConnGet(xform) ) {
-    DEBUG_LOG("cannot create output @offset=%ld + len=%ld",offset,bytes);
-    return ATSXformOutVConn::Uniq_t{}; 
-  }
-  return std::make_unique<ATSXformOutVConn>(xform, bytes, offset);
-}
-
 ATSXformOutVConn::ATSXformOutVConn(const ATSXformCont &xform, int64_t bytes, int64_t offset)
-  : _inVConn(xform),
-    _inVIO(xform.inputVIO()),
-    _outVConn( TSTransformOutputVConnGet(xform) ),
-    _outBuffer(xform.outputBuffer()),
-    _outReader(xform.outputReader()),
+  : _cont(xform),
     _skipBytes(offset),
-    _writeBytes(bytes)
+    _writeBytes(bytes),
+    _outVIO(nullptr),
+    _inVIO(xform.inputVIO())
 {
-  if ( ! _writeBytes && offset && _inVIO ) {
-    const_cast<int64_t&>(_writeBytes) = TSVIONBytesGet(_inVIO) - offset;
+  if ( ! bytes && offset && _inVIO ) {
+    bytes = TSVIONBytesGet(_inVIO) - offset;
   }
+  _outVIOPtr.reset( TSVConnWrite( TSTransformOutputVConnGet(xform), _cont,
+                            TSIOBufferReaderAlloc(xform.outputBuffer()),
+                            bytes) );
+  const_cast<TSVIO&>(_outVIO) = _outVIOPtr.get();
 }
 
-ATSVConnFuture::~ATSVConnFuture()
+template <>
+ATSFuture<TSVConn>::~ATSFuture()
 {
   auto vconn = get();
   if ( ! vconn ) {
@@ -210,29 +306,30 @@ ATSVConnFuture::~ATSVConnFuture()
   }
 }
 
-bool
-ATSVConnFuture::is_close_able() const
+template <typename T_DATA> 
+bool ATSFuture<T_DATA>::is_close_able() const
 {
   using namespace std::chrono;
   using std::future_status;
 
-  return ( ! std::shared_future<TSVConn>::valid() || wait_for(seconds::zero()) == future_status::ready );
+  return ( ! std::shared_future<TSVConn>::valid() || this->wait_for(seconds::zero()) == future_status::ready );
 }
 
-int
-ATSVConnFuture::error() const
+template <typename T_DATA> 
+int ATSFuture<T_DATA>::error() const
 {
   using namespace std::chrono;
   using std::future_status;
 
   if ( ! std::shared_future<TSVConn>::valid() ) {
-    return ESOCK_NO_SOCK_SERVER_CONN;
+    return EINVAL;
   }
-  if ( wait_for(seconds::zero()) != future_status::ready ) {
-    return ESOCK_TIMEOUT;
+  if ( this->wait_for(seconds::zero()) != future_status::ready ) {
+    return EAGAIN;
   }
   auto ptrErr = reinterpret_cast<intptr_t>(std::shared_future<TSVConn>::get());
-  if ( ptrErr >= -INK_START_ERRNO - 1000 && ptrErr <= 0 ) {
+  auto errChk = ptrErr >> 16;
+  if ( ! errChk || ! ~errChk ) {
     return -ptrErr;
   }
   return 0;
@@ -258,27 +355,23 @@ ATSXformOutVConn::is_close_able() const
 
 ATSXformOutVConn::~ATSXformOutVConn()
 {
-  if ( ! _inVConn ) {
+  if ( ! _cont ) {
     DEBUG_LOG("late destruct");
     return;
   }
 
-  atscppapi::ScopedContinuationLock lock(_inVConn);
+  atscppapi::ScopedContinuationLock lock(_cont);
   if ( _outVIO ) {
     DEBUG_LOG("write-complete @%#lx [@%#lx] invconn=%p outvconn=%p",
              TSVIONDoneGet(_outVIO), TSVIONBytesGet(_outVIO), 
-             _inVConn, _outVConn);
+             _cont, _cont);
     TSVIONBytesSet( _outVIO, TSVIONDoneGet(_outVIO) );
     TSVIOReenable(_outVIO);
-    _outVIO = nullptr;
+    const_cast<TSVIO&>(_outVIO) = nullptr;
+    _outVIOPtr.reset(); // close, end, free VIO ..
   }
 
-  if ( _outVConn ) {
-    TSVConnShutdown(_outVConn, 0, 1); // do only once!
-  }
-
-  const_cast<TSVConn&>(_outVConn) = nullptr;
-  const_cast<TSVConn&>(_inVConn) = nullptr;
+  const_cast<TSVConn&>(_cont) = nullptr;
 
   DEBUG_LOG("shutdown-complete");
 }
@@ -290,8 +383,7 @@ ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, int64_t bytes, int64_t o
     _outSkipBytes(offset),
     _outWriteBytes(bytes),
     _transformHook(TS_HTTP_LAST_HOOK),
-    _outBufferU(TSIOBufferCreate()),
-    _outReaderU(TSIOBufferReaderAlloc(this->_outBufferU.get()))
+    _outBufferU(TSIOBufferCreate())
 {
   ink_assert( bytes + offset >= 0LL );
 
@@ -356,6 +448,9 @@ ATSXformCont::reset_input_vio(TSVIO vio)
   // XXX may check for xfinput --> non-xfinput 
   //    to make hook delayed or not..?
   _inVIO = vio;
+  if ( _outVConnU ) {
+    _outVConnU->_inVIO = vio;
+  }
 }
 
 // Xform "client" with skip/truncate
@@ -404,27 +499,6 @@ BlockTeeXform::teeReenable()
   DEBUG_LOG("re-submitting input: %ld", inrange.second - inrange.first );
   TSContSchedule(*this, 0, TS_THREAD_POOL_DEFAULT); // attempt re-use of input buffer
 }
-
-#if 0
-    TSHttpTxnClientReqGet(txn, &buf, &loc);
-
-    req_buf = TSMBufferCreate();
-    TSHttpHdrClone(req_buf, buf, loc, &req_hdr_loc);
-
-    req_io_buf         = TSIOBufferCreate();
-    req_io_buf_reader  = TSIOBufferReaderAlloc(req_io_buf);
-    resp_io_buf        = TSIOBufferCreate();
-    resp_io_buf_reader = TSIOBufferReaderAlloc(resp_io_buf);
-
-    TSHttpHdrPrint(req_buf, req_hdr_loc, req_io_buf);
-    TSIOBufferWrite(req_io_buf, "\r\n", 2); 
-
-    vconn = TSHttpConnectWithPluginId(&state->req_info->client_addr.sa, PLUGIN_NAME, 0); 
-
-    state->r_vio = TSVConnRead(vconn, consume_cont, state->resp_io_buf, INT64_MAX);
-    state->w_vio = TSVConnWrite(vconn, consume_cont, state->req_io_buf_reader, TSIOBufferReaderAvail(state->req_io_buf_reader));
-
-#endif
 
 static void sub_server_hdrs(atscppapi::Transaction &origTxn, TSIOBuffer reqBuffer, const std::string &rangeStr)
 {
@@ -491,7 +565,6 @@ void
 spawn_range_request(atscppapi::Transaction &origTxn, int64_t begin, int64_t end, int64_t rdlen)
 {
   // ignore TSVConn and assume it is cleared on its own...
-  spawn_sub_range(origTxn, begin, end);
 
 //  struct ReadHdr {
 //     TSIOBuffer_t       _buf{ TSIOBufferCreate() };
@@ -516,5 +589,6 @@ class BlockReadXform;
 // template ATSCont::ATSCont(BlockReadXform &obj, void (BlockReadXform::*funcp)(TSEvent, void *, const decltype(nullptr) &), decltype(nullptr),TSCont);
 
 template TSCont ATSCont::create_temp_tscont(TSCont, ATSVConnFuture &, const std::shared_ptr<void> &);
+template TSCont ATSCont::create_temp_tscont(TSCont, ATSVIOFuture &, const std::shared_ptr<void> &);
 
 //}

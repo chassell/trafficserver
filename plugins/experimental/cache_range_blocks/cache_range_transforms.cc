@@ -221,6 +221,7 @@ ATSXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
     return 0;
   }
  
+  // handle possible disable of transform...
   if ( event == TS_EVENT_HTTP_READ_RESPONSE_HDR ) 
   {
     auto &txn = utils::internal::getTransaction(static_cast<TSHttpTxn>(edata));
@@ -285,6 +286,33 @@ ATSXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
   return 0;
 }
 
+
+ATSXformOutVConn::Uniq_t
+ATSXformOutVConn::create_if_ready(const ATSXformCont &xform, int64_t bytes, int64_t offset)
+{
+  if ( ! TSTransformOutputVConnGet(xform) ) {
+    DEBUG_LOG("cannot create output @offset=%ld + len=%ld",offset,bytes);
+    return ATSXformOutVConn::Uniq_t{}; 
+  }
+  auto selfU = std::make_unique<ATSXformOutVConn>(xform, bytes, offset);
+  DEBUG_LOG("create xform write vio: len=%#lx skip=%#lx", offset, std::max(offset,0L));
+  selfU->check_refill(TS_EVENT_IMMEDIATE);
+  auto wmark = TSIOBufferWaterMarkGet(xform.outputBuffer());
+  auto inbuff = TSVIOBufferGet(xform.xformInputVIO());
+  auto owmark = TSIOBufferWaterMarkGet(inbuff);
+  DEBUG_LOG("input buffering set: out:%ld in:%ld",wmark,std::max(owmark,(1L<<20)));
+  TSIOBufferWaterMarkSet(inbuff, std::max(owmark,(1L<<20)));
+
+  if ( xform.xformInputVIO() != xform.inputVIO() ) {
+      auto xfinrdr = TSVIOReaderGet(xform.xformInputVIO());
+      auto avail = TSIOBufferReaderAvail(xfinrdr);
+      TSIOBufferReaderConsume(xfinrdr, avail); // empty out now..
+      DEBUG_LOG("consume skip input-buffer event: avail %ld",avail);
+  }
+  return std::move(selfU);
+}
+
+
 int
 ATSXformCont::xform_input_event()
 {
@@ -299,86 +327,74 @@ ATSXformCont::xform_input_event()
   // only create at precise start..
   if ( ! _outVIOWaiting && ! _outVConnU ) {
     _outVConnU = ATSXformOutVConn::create_if_ready(*this, _outWriteBytes, std::max(_outSkipBytes,0L));
-    if ( _outVConnU ) {
-      DEBUG_LOG("create xform write vio: len=%#lx skip=%#lx", _outWriteBytes, std::max(_outSkipBytes,0L));
-      _outVConnU->check_refill(event);
-      auto wmark = TSIOBufferWaterMarkGet(outputBuffer());
-      auto inbuff = TSVIOBufferGet(xformInputVIO());
-      auto owmark = TSIOBufferWaterMarkGet(inbuff);
-      DEBUG_LOG("input buffering set: out:%ld in:%ld",wmark,std::max(owmark,(1L<<20)));
-      TSIOBufferWaterMarkSet(inbuff, std::max(owmark,(1L<<20)));
-    } else {
-      DEBUG_LOG("delayed xform write vio: len=%#lx skip=%#lx", _outWriteBytes, std::max(_outSkipBytes,0L));
-    }
   }
 
-  auto xfinrdr = TSVIOReaderGet(xfinvio);
-  auto avail = TSIOBufferReaderAvail(xfinrdr);
-
-  if ( _inVIO && xfinvio != _inVIO ) {
-    TSIOBufferReaderConsume(xfinrdr, avail); // empty out now..
-    DEBUG_LOG("consume skip input-buffer event: avail %ld",avail);
-    return eNoError;
-  }
+  // XXX may need to sink later xfinput bytes!
 
   // event edata is _inVIO or from it ...
 
-  auto inrdr = TSVIOReaderGet(xfinvio); // reset if changed!
-  auto inpos   = TSVIONDoneGet(xfinvio);
-  auto inavail = TSIOBufferReaderAvail(inrdr);
+  auto inAvail = inputAvail();
+  auto oinready = inAvail.second - inAvail.first;
 
-  auto oinpos   = inpos;
-  auto oinavail = inavail;
-
-  auto inready = std::min(inavail, TSVIONTodoGet(xfinvio));
+  auto oinpos = inAvail.first;
+  auto inpos = oinpos;
+  auto inready = oinready;
 
   ////////////
   // ask for reduced amount to copy
   /////////////
 
   if ( inpos + _outSkipBytes >= 0 ) {
-    inready = _xformCB(event, xfinvio, inready); // send bytes-left in segment
+    inready = _xformCB(event, inputVIO(), inready); // send bytes-left in segment
   } else {
-    // skipped bytes not handled yet..
-    inready = std::min(_outSkipBytes - inpos, inready); // reduce to amt left...
+    // skip past all non-presented bytes only
+    inready = std::min(- (inpos + _outSkipBytes), inready); // reduce to amt left...
   }
 
   /////////////
   // copy to output...
   /////////////
 
-  inready = TSIOBufferCopy(outputBuffer(), inrdr, inready, 0); // copy them
-  TSIOBufferReaderConsume(inrdr, inready);                     // advance the input used
+  if ( inpos - _outSkipBytes >= 0 ) {
+    inready = TSIOBufferCopy(outputBuffer(), inputReader(), inready, 0); // copy them
+  } else {
+    // skip past all non-copied bytes only
+    inready = std::min(- (inpos - _outSkipBytes), inready); // reduce to amt left...
+  }
 
-  TSVIONDoneSet(xfinvio, TSVIONDoneGet(xfinvio) + inready);      // advance toward end
+  inpos += inready;
 
-  DEBUG_LOG("!!! copy-next-copied : @%#lx+%#lx +%#lx", inpos, inready, inavail);
+  TSIOBufferReaderConsume(inputReader(), inready);          // advance input reader
+  TSVIONDoneSet(inputVIO(), inpos); // advance input stream
 
   // reset new positions
-  inrdr   = TSVIOReaderGet(xfinvio); // reset if changed! (??)
-  inpos   = TSVIONDoneGet(xfinvio);
-  inavail = TSIOBufferReaderAvail(inrdr);
-  DEBUG_LOG(" ^^^^^^^^^^^ cb-event: @%#lx buff=+%#lx rdy=+%#lx [%p]", inpos, inavail, inready, inrdr);
+  inAvail = inputAvail();
+  auto inleft = inAvail.second - inAvail.first;
+
+  ink_assert( inpos == inAvail.first );
+
+  DEBUG_LOG(" ^^^^^^^^^^^ cb-event: @%#lx+%#lx (%#lx used)", inpos, inleft, inready);
 
   // no change at all and no data left?
-  if ( ! inavail && oinpos == inpos ) {
-//    DEBUG_LOG("xform input waiting: @%#lx w/no change", inpos);
+  if ( ! inleft && oinpos == inpos && xfinvio == _inVIO ) {
+    DEBUG_LOG("xform input waiting: @%#lx w/no change", inpos);
     forward_vio_event(TS_EVENT_VCONN_WRITE_READY, xfinvio, *this);
     return eErrXformExtraImmEvent;
   }
 
-  // have output and data was consumed?
-  if ( oinavail > inavail && _outVConnU ) {
+  // output possible and data was consumed?
+  if ( oinready > inleft && _outVConnU ) {
     _outVConnU->check_refill(event);
     auto err = xform_input_completion(event);
     if (err) {
       return err; // RETURN
     }
+    // continue on if okay...
   }
 
   // the input is waiting for something...
-  if ( inavail ) {
-    DEBUG_LOG("xform input buffer left: buff=%#lx", TSIOBufferReaderAvail(inrdr));
+  if ( inleft ) {
+    DEBUG_LOG("xform input buffer left: buff=%#lx", inleft);
     _inVIOWaiting = event;
     return eNoError;
     // RETURN
@@ -399,33 +415,15 @@ ATSXformCont::xform_input_event()
 bool
 ATSXformOutVConn::check_refill(TSEvent event)
 {
-  auto outready = ( _outVIO ? TSIOBufferReaderAvail(TSVIOReaderGet(_outVIO)) : TSIOBufferReaderAvail(_outReader) );
-  auto pos = ( _outVIO ? TSVIONDoneGet(_outVIO) : -_skipBytes ) ;
-
-  // ready to start write?
-  if ( ! _outVIO && outready >= _skipBytes ) {
-    if ( _skipBytes ) {
-      DEBUG_LOG("xform begin write: skip %#lx w/extra +%#lx", _skipBytes, outready + pos);
-      TSIOBufferReaderConsume(_outReader, _skipBytes);
-      outready = TSIOBufferReaderAvail(_outReader);
-    }
-    DEBUG_LOG("xform begin write: %#lx w/avail %#lx", _writeBytes, outready);
-    _outVIO = TSVConnWrite(_outVConn,_inVConn,_outReader,_writeBytes);
-    return false;
-  }
-
-  // not ready
-  if ( ! _outVIO ) {
-    DEBUG_LOG("xform no-write with early data: @%#lx w/avail %#lx", - (outready + pos), outready);
-    return false; // need more to start
-  }
-
-  auto left = TSVIONTodoGet(_outVIO);
+  auto outrdr = TSVIOReaderGet(_outVIO);
+  auto outAvail = outputAvail();
+  auto outready = outAvail.second - outAvail.first;
+  auto pos = outAvail.first;
 
   // past end of write?
-  if ( ! left ) {
+  if ( pos == outAvail.second ) {
     DEBUG_LOG("xform consume past end: @%#lx w/avail %#lx", pos, outready);
-    TSIOBufferReaderConsume(_outReader, outready);
+    TSIOBufferReaderConsume(outrdr, outready);
     _outVIOWaiting = TS_EVENT_NONE; // flushed new data...
     return false;
   }
@@ -465,6 +463,7 @@ ATSXformOutVConn::check_refill(TSEvent event)
   }
 
   auto delay = ( ink_microseconds(MICRO_REAL) - _outVIOWaitingTS ); // can't do it now...
+  auto left = TSVIONTodoGet(_outVIO);
 
   // less than 128K (or to end) ready and delay is only <10ms 
   if ( outready < std::min(left+0,(1L<<17)) && delay < 10000 ) {
@@ -475,51 +474,6 @@ ATSXformOutVConn::check_refill(TSEvent event)
   TSVIOReenable(_outVIO);
   _outVIOWaiting = TS_EVENT_NONE; // flushed new data...
   return false;
-}
-
-int64_t
-ATSXformCont::skip_next_len(int64_t left)
-{
-  if (!left || !_inVIO) {
-    return 0L;
-  }
-
-  TSIOBufferReader reader    = nullptr;
-  auto xfinvio = xformInputVIO();
-
-  // if special input and output VIO is not started...
-  if ( xfinvio != _inVIO && _outVConnU && ! _outVConnU->operator TSVIO() ) {
-    reader = *_outVConnU; // skip within pre-write buffer
-  } else if ( _inVIO && xfinvio == _inVIO ) {
-    reader = TSVIOReaderGet(_inVIO); // within transform input buffer
-  }
-
-  auto done = TSVIONDoneGet(_inVIO);
-  auto violimit = std::min(left, TSVIONBytesGet(_inVIO) - done);
-
-  if ( ! reader ) {
-    DEBUG_LOG("!!! cannot skip currently: @%#lx+%#lx limit=%#lx", done, left, violimit);
-    return 0L;
-  }
-
-  auto nbytesin = TSIOBufferReaderAvail(reader);
-  auto ncopied  = std::min(nbytesin + 0, violimit);
-
-  if (!ncopied) {
-    DEBUG_LOG("!!! skip-next-none : @%#lx+%#lx +%#lx +%#lx", done, left, nbytesin, violimit);
-    return 0L;
-  }
-
-  TSIOBufferReaderConsume(reader, ncopied);                // advance input
-
-  if ( xfinvio == _inVIO ) {
-    DEBUG_LOG("!!! skip-input-write: @%#lx+%#lx +%#lx +%#lx", done, left, nbytesin, ncopied);
-    TSVIONDoneSet(_inVIO, TSVIONDoneGet(_inVIO) + ncopied); // advance toward end
-  } else {
-    DEBUG_LOG("!!! skip-pre-write: @%#lx+%#lx +%#lx +%#lx", done, left, nbytesin, ncopied);
-  }
-
-  return ncopied;
 }
 
 int64_t
@@ -565,39 +519,3 @@ BlockTeeXform::inputEvent(TSEvent event, TSVIO evtvio, int64_t left)
   _writeHook(_teeReaderP.get(), range.first, range.second, left); // cannot un-consume in the write-hook
   return left; // always show advance from Tee
 }
-
-TSIOBufferReader
-BlockTeeXform::cloneAndSkip(int64_t oskip)
-{
-  auto oavail = TSIOBufferReaderAvail(_teeReaderP.get());
-
-  if ( ! oavail ) {
-    DEBUG_LOG("tee buffer emptied");
-    _teeBufferP.release();
-    return _teeReaderP.release();
-  }
-
-  auto skip = std::min(oavail, oskip);
-  if ( skip != oskip ) {
-    DEBUG_LOG("tee buffer clone truncated: %#lx < %#lx", skip, oskip);
-  }
-
-  auto ordr = _teeReaderP.release(); // caller must free it
-  auto obuff = _teeBufferP.release(); // caller must free it
-
-  TSIOBufferReader_t ordr2( TSIOBufferReaderClone(ordr) ); // delete upon return
-
-  TSIOBufferReaderConsume(ordr2.get(), skip); // advance input to next point
-
-  _teeBufferP.reset(TSIOBufferCreate());
-  _teeReaderP.reset(TSIOBufferReaderAlloc(_teeBufferP.get()));
-
-  if ( TSIOBufferWaterMarkGet(obuff) > 0 ) {
-    TSIOBufferWaterMarkSet(_teeBufferP.get(), TSIOBufferWaterMarkGet(obuff) );
-    TSIOBufferWaterMarkSet(obuff, skip);
-  }
-
-  TSIOBufferCopy(_teeBufferP.get(), ordr2.get(), oavail - skip, 0); // save extra bytes as before
-  return ordr;
-}
-
