@@ -187,7 +187,7 @@ public:
   }
   static int create_id(TSHttpTxn txn) {
     TSHRTime begin = 0;
-    TSHttpTxnMilestoneGet(txn, TS_MILESTONE_UA_READ_HEADER_DONE, &begin);
+    TSHttpTxnMilestoneGet(txn, TS_MILESTONE_SM_START, &begin);
     return (begin % 9000) + 1000;
   }
 
@@ -273,18 +273,19 @@ struct ATSFuture : private std::shared_future<T_DATA>
   ~ATSFuture();
 
   ATSFuture &operator=(ATSFuture &&old) {
-    *this = static_cast<TSFut_t&&>(old);
+    ATSFuture(release()); // delete old future-value
+    TSFut_t::operator=(old); // assign over empty one
     return *this;
   }
 
-  operator bool() const { return std::shared_future<T_DATA>::valid(); }
+  operator bool() const { return TSFut_t::valid(); }
   int error() const;
   bool valid() const { return ! error(); }
   bool is_close_able() const;
   T_DATA release()
-     { auto v = get(); operator=(std::shared_future<T_DATA>{}); return v; }
+     { auto v = get(); operator=(TSFut_t{}); return v; }
   T_DATA get() const 
-     { return valid() ? std::shared_future<T_DATA>::get() : nullptr; }
+     { return valid() ? TSFut_t::get() : nullptr; }
 
 };
 
@@ -354,7 +355,7 @@ public:
 
   TSVIO outputVIO() const { return _outVConnU ? _outVConnU->operator TSVIO() : nullptr; }
 
-  TSIOBuffer outputBuffer() const { return _outBufferU.get(); }
+  TSIOBuffer outputBuffer() const { return _outVConnU ? TSVIOBufferGet(_outVConnU->operator TSVIO()) : _outBufferU.get(); }
 
   int64_t outputLen() const { return _outWriteBytes; }
   int64_t outputOffset() const { return _outSkipBytes; }
@@ -383,10 +384,7 @@ public:
     TSDebug("cache_range_blocks", "%s",__func__);
   }
 
-  void
-  disable_transform_start() {
-    _transformHook = TS_HTTP_LAST_HOOK;
-  }
+  void init_enabled_transform();
 
 private:
   int check_completions(TSEvent event);
@@ -406,6 +404,7 @@ protected:
   int _txnID = ThreadTxnID::get();
 
 private:
+  TSHttpTxn _txn;
   XformCB_t _xformCB;
   int64_t _outSkipBytes;
   int64_t _outWriteBytes;
@@ -417,8 +416,7 @@ private:
   TSEvent _inVIOWaiting = TS_EVENT_NONE;
 
   ATSXformOutVConn::Uniq_t _outVConnU;
-  TSIOBuffer_t const _outBufferU;
-  TSIOBufferReader_t const _outReaderU;
+  TSIOBuffer_t             _outBufferU;
 
   // for if WRITE_READY when _outVIO ran out...
   TSEvent _outVIOWaiting = TS_EVENT_NONE;

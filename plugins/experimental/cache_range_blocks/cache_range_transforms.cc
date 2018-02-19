@@ -221,22 +221,6 @@ ATSXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
     return 0;
   }
  
-  // handle possible disable of transform...
-  if ( event == TS_EVENT_HTTP_READ_RESPONSE_HDR ) 
-  {
-    auto &txn = utils::internal::getTransaction(static_cast<TSHttpTxn>(edata));
-    if ( _transformHook != TS_HTTP_LAST_HOOK) {
-      DEBUG_LOG("transform txn started: e#%d %p", event, edata);
-      // transform will happen...
-      TSHttpTxnHookAdd(static_cast<TSHttpTxn>(edata), _transformHook, cont);
-      _transformHook = TS_HTTP_LAST_HOOK;
-    } else {
-      DEBUG_LOG("transform txn disabled: e#%d %p", event, edata);
-    }
-    txn.resume();
-    return 0;
-  }
-
   if (!xformInputVIO()) {
     return 0;
   }
@@ -295,20 +279,13 @@ ATSXformOutVConn::create_if_ready(const ATSXformCont &xform, int64_t bytes, int6
     return ATSXformOutVConn::Uniq_t{}; 
   }
   auto selfU = std::make_unique<ATSXformOutVConn>(xform, bytes, offset);
-  DEBUG_LOG("create xform write vio: len=%#lx skip=%#lx", offset, std::max(offset,0L));
+  DEBUG_LOG("create xform write vio: len=%#lx skip=%#lx", bytes, std::max(offset,0L));
   selfU->check_refill(TS_EVENT_IMMEDIATE);
   auto wmark = TSIOBufferWaterMarkGet(xform.outputBuffer());
   auto inbuff = TSVIOBufferGet(xform.xformInputVIO());
   auto owmark = TSIOBufferWaterMarkGet(inbuff);
   DEBUG_LOG("input buffering set: out:%ld in:%ld",wmark,std::max(owmark,(1L<<20)));
   TSIOBufferWaterMarkSet(inbuff, std::max(owmark,(1L<<20)));
-
-  if ( xform.xformInputVIO() != xform.inputVIO() ) {
-      auto xfinrdr = TSVIOReaderGet(xform.xformInputVIO());
-      auto avail = TSIOBufferReaderAvail(xfinrdr);
-      TSIOBufferReaderConsume(xfinrdr, avail); // empty out now..
-      DEBUG_LOG("consume skip input-buffer event: avail %ld",avail);
-  }
   return std::move(selfU);
 }
 
@@ -327,9 +304,17 @@ ATSXformCont::xform_input_event()
   // only create at precise start..
   if ( ! _outVIOWaiting && ! _outVConnU ) {
     _outVConnU = ATSXformOutVConn::create_if_ready(*this, _outWriteBytes, std::max(_outSkipBytes,0L));
+    if ( _outVConnU ) {
+      _outBufferU.release(); // no more holding it...
+    }
   }
 
-  // XXX may need to sink later xfinput bytes!
+  if ( xfinvio != _inVIO ) {
+      auto xfinrdr = TSVIOReaderGet(xfinvio);
+      auto avail = TSIOBufferReaderAvail(xfinrdr);
+      TSIOBufferReaderConsume(xfinrdr, avail); // empty out now..
+      DEBUG_LOG("consume skip input-buffer event: avail %ld",avail);
+  }
 
   // event edata is _inVIO or from it ...
 
@@ -344,22 +329,32 @@ ATSXformCont::xform_input_event()
   // ask for reduced amount to copy
   /////////////
 
+  // hide bytes from CB if skip < 0
   if ( inpos + _outSkipBytes >= 0 ) {
     inready = _xformCB(event, inputVIO(), inready); // send bytes-left in segment
   } else {
     // skip past all non-presented bytes only
     inready = std::min(- (inpos + _outSkipBytes), inready); // reduce to amt left...
+
+    if ( inpos + inready + _outSkipBytes >= 0 ) {
+      TSContSchedule(*this,0,TS_THREAD_POOL_DEFAULT); // call back again after
+    }
   }
 
   /////////////
   // copy to output...
   /////////////
 
+  // hide bytes from BufferCopy if skip > 0
   if ( inpos - _outSkipBytes >= 0 ) {
     inready = TSIOBufferCopy(outputBuffer(), inputReader(), inready, 0); // copy them
   } else {
     // skip past all non-copied bytes only
     inready = std::min(- (inpos - _outSkipBytes), inready); // reduce to amt left...
+
+    if ( inpos + inready - _outSkipBytes >= 0 ) {
+      TSContSchedule(*this,0,TS_THREAD_POOL_DEFAULT); // call back again after
+    }
   }
 
   inpos += inready;
@@ -419,9 +414,10 @@ ATSXformOutVConn::check_refill(TSEvent event)
   auto outAvail = outputAvail();
   auto outready = outAvail.second - outAvail.first;
   auto pos = outAvail.first;
+  auto left = TSVIONTodoGet(_outVIO);
 
   // past end of write?
-  if ( pos == outAvail.second ) {
+  if ( ! left ) {
     DEBUG_LOG("xform consume past end: @%#lx w/avail %#lx", pos, outready);
     TSIOBufferReaderConsume(outrdr, outready);
     _outVIOWaiting = TS_EVENT_NONE; // flushed new data...
@@ -463,7 +459,6 @@ ATSXformOutVConn::check_refill(TSEvent event)
   }
 
   auto delay = ( ink_microseconds(MICRO_REAL) - _outVIOWaitingTS ); // can't do it now...
-  auto left = TSVIONTodoGet(_outVIO);
 
   // less than 128K (or to end) ready and delay is only <10ms 
   if ( outready < std::min(left+0,(1L<<17)) && delay < 10000 ) {

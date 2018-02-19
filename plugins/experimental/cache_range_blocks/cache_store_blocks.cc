@@ -27,25 +27,13 @@
 #define BLOCK_COUNT_MINIMUM 50
 #define STUB_MAX_BYTES 1024
 
-void
-BlockSetAccess::start_cache_miss()
+BlockStoreXform::Ptr_t
+BlockStoreXform::start_cache_miss(BlockSetAccess &ctxt, TSHttpTxn txn, int64_t offset)
 {
-  TSHttpTxnCacheLookupStatusSet(atsTxn(), TS_CACHE_LOOKUP_MISS);
+  TSHttpTxnCacheLookupStatusSet(txn, TS_CACHE_LOOKUP_MISS);
+  ctxt.registerHook(BlockSetAccess::HOOK_READ_RESPONSE_HEADERS);
 
-  TSHttpTxnTransformedRespCache(atsTxn(),0);
-  if ( _etagStr.empty() ) {
-    DEBUG_LOG("cache-resp-wr: stub len=%#lx [blk:%ldK]", _assetLen, _blkSize/1024);
-    TSHttpTxnServerRespNoStoreSet(atsTxn(),0); // first assume we must store this..
-    TSHttpTxnUntransformedRespCache(atsTxn(),1);
-  } else {
-    DEBUG_LOG("cache-resp-wr: blocks len=%#lx [blk:%ldK]", _assetLen, _blkSize/1024);
-    TSHttpTxnServerRespNoStoreSet(atsTxn(),1); // first assume we cannot use this..
-    TSHttpTxnUntransformedRespCache(atsTxn(),0);
-  }
-
-  TransactionPlugin::registerHook(HOOK_READ_RESPONSE_HEADERS);
-
-  _storeXform = std::make_shared<BlockStoreXform>(*this, _beginByte - firstIndex()*_blkSize);
+  return std::make_shared<BlockStoreXform>(ctxt, offset);
 }
 
 BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int offset)
@@ -55,17 +43,20 @@ BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int offset)
                   offset), // offset may be *negative*...
     _ctxt(ctxt)
 {
+  DEBUG_LOG("construct start: offset %d", offset);
   reset_write_keys();
 }
 
 BlockStoreXform::~BlockStoreXform()
 {
-  DEBUG_LOG("destruct start: writes:%ld", write_count());
+  DEBUG_LOG("destruct start: nwrites:%ld", write_count());
 }
 
 void
 BlockSetAccess::handleReadResponseHeaders(Transaction &txn) 
 {
+  ThreadTxnID txnid{txn};
+
   auto &resp = txn.getServerResponse();
   auto &respHdrs = resp.getHeaders();
 
@@ -89,7 +80,7 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
   if ( srvrAssetLen <= 0 )
   {
     DEBUG_LOG("rejecting due to unusable length: %s",srvrRange.c_str());
-    _storeXform.reset(); // cannot perform transform!
+    // _storeXform.reset(); // cannot perform transform!
     txn.resume();
     return; // cannot use this for range block storage ...
   }
@@ -111,7 +102,7 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
     DEBUG_LOG("rejecting due to unusable response: sbeg=%ld send=%ld cl=%ld beg=%ld range=%s / length=%s",
               _srvrBeginByte, _srvrEndByte, bodyBytes, _beginByte,
              srvrRange.c_str(),bodyLen.c_str());
-    _storeXform.reset(); // cannot perform transform!
+    // _storeXform.reset(); // cannot perform transform!
     txn.resume();
     return; // cannot use this for range block storage ...
   }
@@ -159,12 +150,14 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
     // must reset list of blocks to match..
     reset_range_keys();
     _storeXform->reset_write_keys(); // all new
+    DEBUG_LOG("srvr-resp: reset len=%#lx (%ld-%ld) final=%s etag=%s", _assetLen, _beginByte, _endByte, srvrRange.c_str(), _etagStr.c_str());
+  } else {
+    // normal case with valid stub file in place?
+    DEBUG_LOG("srvr-resp: aligned len=%#lx (%ld-%ld) final=%s etag=%s", _assetLen, _beginByte, _endByte, srvrRange.c_str(), _etagStr.c_str());
   }
 
-  // normal case with valid stub file in place?
-  DEBUG_LOG("srvr-resp: len=%#lx (%ld-%ld) final=%s etag=%s", _assetLen, _beginByte, _endByte, srvrRange.c_str(), _etagStr.c_str());
-
   // discover correct values...
+  _storeXform->init_enabled_transform();
   txn.resume();
 }
 
@@ -183,7 +176,6 @@ BlockStoreXform::new_asset_body(Transaction &txn)
 
   if ( ! contentEnc.empty() && contentEnc != "identity" )
   {
-    disable_transform_start(); // cannot perform transform!
     DEBUG_LOG("rejecting due to unusable encoding: %s",contentEnc.c_str());
     return; // cannot use this for range block storage or a stub file...
   }
@@ -191,7 +183,6 @@ BlockStoreXform::new_asset_body(Transaction &txn)
   // store whole small file?  
   if ( maxBytes <= minBlockAsset && storeBytes == maxBytes ) 
   {
-    disable_transform_start(); // no transform to perform.. 
     // respond as if a if-range failed...
     resp.setStatusCode(HTTP_STATUS_OK);
     TSHttpTxnServerRespNoStoreSet(atsTxn,0); // must assume now we need to save these headers!
@@ -203,7 +194,6 @@ BlockStoreXform::new_asset_body(Transaction &txn)
   // too small for use of blocks??
   if ( maxBytes <= minBlockAsset )
   {
-    disable_transform_start(); // no transform to perform.. 
     // 206 on through...
     // but spawn a simple 'background' fetch...
     DEBUG_LOG("no-store of small 206:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
@@ -226,12 +216,13 @@ BlockStoreXform::new_asset_body(Transaction &txn)
     TSHttpTxnUntransformedRespCache(atsTxn,0); // don't store untransformed!
     TSHttpTxnTransformedRespCache(atsTxn,0); // don't store transformed!
 
-
     // 206 on through...
     // spawn a real stub... 
     DEBUG_LOG("stub-create recurse pre:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
     spawn_sub_range(txn,1,2); // get a small range instead ...
     DEBUG_LOG("stub-create recurse post");
+
+    init_enabled_transform();
     return;
   }
 
@@ -247,6 +238,8 @@ BlockStoreXform::new_asset_body(Transaction &txn)
   respHdrs.append(VARY_TAG,ACCEPT_ENCODING_TAG); // please check for a stub!
 
   DEBUG_LOG("stub for large file:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
+
+  init_enabled_transform();
 }
 
 
@@ -267,7 +260,7 @@ BlockStoreXform::next_valid_vconn(int64_t donepos, int64_t readypos, int64_t &sk
   auto blk = keyPos / blksz;
 
   // find keyPos within this new span ... and before end
-  for ( ; keyPos <= readypos ; (keyPos += blksz),++blk ) 
+  for ( ; blk < static_cast<int>(keys.size()) && keyPos <= readypos ; (keyPos += blksz),++blk ) 
   {
     if ( keys[blk] ) {
       skip = keyPos - donepos; // report if a skip is needed...
@@ -365,7 +358,7 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
 
     // going to give ownership of current teereader / teebuffer
     ++wrcnt; // add write count
-    auto takeKey( std::move(_keysToWrite[blk]) ); // clear the key...
+    ATSCacheKey takeKey{ _keysToWrite[blk].release() }; // clear the key...
     auto callDatap = std::make_shared<BlockWriteInfo>(*this, takeKey, blk); // takes key
     auto &callData = *callDatap;
 
@@ -393,7 +386,7 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
     // Did write fail totally?
     auto desc = "";
     auto err = callData._vio.error();
-    if ( err > EAGAIN ) {
+    if ( err != EAGAIN && err != ENOTCONN && err ) {
       desc = "failed";
     } else if ( ! TSActionDone(r) ) {
       desc = "delayed";
@@ -406,10 +399,12 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
     }
 
 //    DEBUG_LOG("store ++++ %s write 1<<%ld [%s] nwrites:%ld @%#lx+%#lx [final @%#lx]", 
-    DEBUG_LOG("store ++++ %s write 1<<%ld [%d] nwrites:%ld @%#lx+%#lx [final @%#lx]", 
-               desc, _ctxt.firstIndex() + blk, 
+    DEBUG_LOG("store ++++ %s write 1<<%ld [err:%d] active:%ld nwrites:%ld @%#lx+%#lx [final @%#lx]", 
+               desc, 
+               _ctxt.firstIndex() + blk, 
 //               InkStrerror(callData._vio.error()),
                callData._vio.error(),
+               callData.ref_count()-1,
                write_count(), donepos, navail, donepos + wrlen);
   }
 
@@ -446,14 +441,14 @@ BlockWriteInfo::BlockWriteInfo(BlockStoreXform &store, ATSCacheKey &key, int blk
       _writeRef{store._writeCheck},
       _blkid(store._ctxt.firstIndex() + blk)
 {
-  DEBUG_LOG("ctor 1<<%d xform active:%ld writes:%ld",  
+  DEBUG_LOG("ctor 1<<%d xform active:%ld nwrites:%ld",  
       _blkid, _writeXform.use_count(), _writeXform->write_count());
 }
 
 BlockWriteInfo::~BlockWriteInfo() {
   _writeRef.reset();
-  DEBUG_LOG("dtor 1<<%d xform left active:%ld writes:%ld",  
-      _blkid, _writeXform.use_count(), _writeXform->write_count());
+  DEBUG_LOG("dtor 1<<%d xform left active:%ld nwrites:%ld",  
+      _blkid, _writeXform.use_count()-1, _writeXform->write_count());
 }
 
 TSEvent
@@ -522,6 +517,9 @@ BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
 
     case TS_EVENT_VCONN_WRITE_COMPLETE:
       {
+        // replace with number to recognize (not null)
+        _vio = ATSVIOFuture(reinterpret_cast<TSVIO>(-ENOTCONN));
+
         BlockStoreXform &store = *_writeXform; // doesn't change
         auto wakeupCont = store._wakeupCont.get();
 
@@ -531,9 +529,6 @@ BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
 
         // attempt to close VConn here
         auto &flagEvt = _writeXform->_blockVIOUntil;
-
-        // replace with number to recognize (not null)
-        _vio = ATSVIOFuture(reinterpret_cast<TSVIO>(-ESTALE));
 
         // don't try but note 
         if ( wrcnt && flagEvt == TS_EVENT_CACHE_CLOSE ) {

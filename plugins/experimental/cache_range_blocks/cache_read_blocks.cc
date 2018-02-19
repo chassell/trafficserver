@@ -27,231 +27,20 @@
 
 using namespace atscppapi;
 
-void
-BlockSetAccess::reset_range_keys()
+BlockReadXform::Ptr_t 
+BlockReadXform::try_cache_hit(BlockSetAccess &ctxt, int64_t offset)
 {
-  _keysInRange.clear();
-  _keysInRange.reserve(indexCnt());
-
-  if ( _etagStr.empty() || _beginByte < 0 || _beginByte >= _endByte ) {
-    DEBUG_LOG("keys are all empty: etag:%s bytes=[%ld-%ld)", _etagStr.c_str(), _beginByte, _endByte);
-    _keysInRange.resize(indexCnt());  // resize with defaults
-    return;
-  }
-
-  for ( auto b = firstIndex() * _blkSize ; b < _endByte ; b += _blkSize) {
-    _keysInRange.push_back(std::move(ATSCacheKey(clientUrl(), _etagStr, b)));
-  }
+  return std::make_shared<BlockReadXform>(ctxt, offset); // skip this many
 }
 
-void
-BlockSetAccess::launch_block_tests()
-{
-  // stateless callback as deleter...
-  using Deleter_t                = void (*)(BlockSetAccess *);
-  static const Deleter_t deleter = [](BlockSetAccess *ptr) {
-    ptr->handle_block_tests(); // recurse from last one
-  };
-
-  if ( _cacheVIOs.empty() ) {
-    _cacheVIOs.reserve(indexCnt());
-  }
-
-  auto &keys  = keysInRange();
-  auto nxtBlk = firstIndex();
-  nxtBlk += _cacheVIOs.size();
-
-  // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
-  auto barrierLock = std::shared_ptr<BlockSetAccess>(this, deleter);
-
-  int limit = 10; // block-reads spawned at one time...
- 
-  for ( auto i = keys.begin() + _cacheVIOs.size() ; i != keys.end() ; ++i, ++nxtBlk )
-  {
-    auto &key = *i; // examine all the not-future'd keys
-    _cacheVIOs.emplace_back();
-    // prep for async reads that init into VConn-futures
-    auto contp      = ATSCont::create_temp_tscont(_mutexOnlyCont, _cacheVIOs.back(), barrierLock);
-    TSCacheRead(contp, key);
-
-    if ( ! --limit ) {
-      break;
-    }
-  }
-}
-
-// start read of all the blocks
-void
-BlockSetAccess::handle_block_tests()
-{
-  using namespace std::chrono;
-  using std::future_status;
-
-  //
-  // mutex for single choice (read or write only) ...
-  //
-
-  if (_storeXform || _readXform) {
-    return; // transform has already begun
-  }
-
-  //
-  // checking once ...
-  //
-
-  auto nrdy     = 0U;
-  auto skip     = 0U;
-  auto finalBlk = _assetLen / _blkSize; // round down..
-
-  //
-  // scan *all* keys and vconns to check if ready
-  //
-  for( auto &&keyp : _keysInRange ) {
-    auto i = &keyp - &_keysInRange.front();
-    auto blkInd = firstIndex() + i;
-
-    if ( i >= static_cast<ptrdiff_t>(_cacheVIOs.size()) ) {
-      break; // see if store is needed yet?
-    }
-
-    auto &rdFut = _cacheVIOs[i];
-    int error = rdFut.error();
-
-    // key was reset with result visible..
-    if ( ! keyp ) {
-      ( error ? ++skip : ++nrdy );
-      continue;
-    }
-
-    if ( error == EAGAIN ) {
-      DEBUG_LOG("read not ready: 1<<%ld [%d]", blkInd, error);
-      // leave skip [likely nonzero]
-      // leave nrdy also
-      continue;
-    }
-
-    if ( error == ECACHE_NO_DOC ) {
-      ++skip; // allowing new store
-      DEBUG_LOG("read not present: 1<<%ld [%d]", blkInd, error);
-      continue;
-    }
-
-    if ( error ) {
-      ++skip;
-      DEBUG_LOG("read not usable: 1<<%ld [%d]", blkInd, error);
-      keyp.reset(); // disallow new storage
-      continue;
-    } 
-
-    auto vio = rdFut.get();
-    auto blkLen = TSVIONDoneGet(vio);
-    auto neededLen = ( blkInd == finalBlk ? ((_assetLen-1) % blockSize())+1 : blockSize() );
-
-    // vconn/block is right size?
-    if ( blkLen != neededLen ) {
-      ++skip; // needs storage
-      DEBUG_LOG("read returned wrong size: 1<<%ld n=%ld", blkInd, blkLen);
-      continue;
-    }
-
-    // block writing to successful reads?
-    keyp.reset(); // disallow new storage of successful read
-
-    if ( skip ) {
-      ++skip;
-      DEBUG_LOG("read successful after skip : 1<<%ld vio:%p + ", blkInd, vio);
-      continue;
-    }
-
-    // all from the start that are successful
-    ++nrdy;
-    DEBUG_LOG("read successful present : 1<<%ld vio:%p + ", blkInd, vio);
-  }
-
-  //
-  // done scanning all keys
-  //
-
-  // ready to read from cache? 
-  if ( nrdy == _keysInRange.size() ) {
-    start_cache_hit();
-    return;
-  }
-
-  if ( nrdy == _cacheVIOs.size() ) {
-    launch_block_tests(); // start more block tests
-    return;
-  }
-
-  //
-  // not all are ready and doing a write instead
-  //
-
-  // if all cache futures are accounted for...
-  if ( skip + nrdy == _cacheVIOs.size() ) {
-    _cacheVIOs.clear(); // close early
-  }
-
-  for ( auto i = nrdy ; i-- ; ) {
-    _keysInRange[i].reset(); // clear the leading keys that don't need replacing...
-  }
-
-  start_cache_miss();
-  _txn.resume();
-}
-
-void
-BlockSetAccess::start_cache_hit()
-{
-  _readXform = std::make_unique<BlockReadXform>(*this, _beginByte % _blkSize); // skip this many
-  _txn.resume();
-}
-
-void
-BlockReadXform::on_empty_buffer()
-{
-  auto pos = bufferAvail();
-  auto opos = outputAvail();
-  DEBUG_LOG("buffer low: @%#lx-%#lx", pos.first, pos.second);
-
-  // more required from input stream... 
-  if ( TSVIONTodoGet(inputVIO()) ) {
-    TSVIOReenable(inputVIO()); // just reenable [if blocked]
-    return;
-  }
-
-  if ( ! TSVIONTodoGet(outputVIO()) ) {
-    return; // extra?
-  }
-
-  // input read/write is at completion?  start new one...
-  auto nxt = (pos.second + _blkSize-1)/_blkSize; // next *full* block..
-  if ( nxt >= static_cast<int>(_keysToRead.size()) ) {
-    DEBUG_LOG("empty and %#lx-%#lx incomplete.", opos.second, outputLen());
-    return; // no reads left to start!
-  }
-
-  if ( nxt >= static_cast<int>(_cacheVIOs.size()) ) {
-  }
-
-  auto vio = _cacheVIOs[nxt].get();
-  if ( ! vio ) {
-    ink_assert(!"need a block that's missing");
-  }
-
-  // just begin with an input
-  TSContCall(*this, TS_EVENT_IMMEDIATE, this);
-}
-
-
-BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int64_t offset)
+BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int offset)
   : ATSXformCont(ctxt.txn(), ctxt.contentLen(), offset), // may be zero/zero..
+    _ctxt(ctxt),
     _blkSize(ctxt.blockSize())
 {
-  _cacheVIOs.swap(ctxt._cacheVIOs);
-  _keysToRead.swap(ctxt._keysInRange);
+  DEBUG_LOG("construct start: offset %d", offset);
 
-  // initial handler ....
+// initial handler ....
   set_body_handler([this](TSEvent event, TSVIO vio, int64_t left) 
   {
       if ( event != TS_EVENT_VCONN_WRITE_READY ) {
@@ -275,3 +64,182 @@ BlockReadXform::~BlockReadXform()
 {
   DEBUG_LOG("destruct start");
 }
+
+void
+BlockReadXform::launch_block_tests()
+{
+  // stateless callback as deleter...
+  using Deleter_t                = void (*)(BlockReadXform *);
+  static const Deleter_t deleter = [](BlockReadXform *ptr) {
+    ptr->read_block_tests(); // recurse from last one
+  };
+
+  if ( _cacheVIOs.empty() ) {
+    _cacheVIOs.reserve(_ctxt.indexCnt());
+  }
+
+  auto &keys  = _ctxt.keysInRange();
+  auto nxtBlk = _ctxt.firstIndex();
+  nxtBlk += _cacheVIOs.size();
+
+  // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
+  auto barrierLock = std::shared_ptr<BlockReadXform>(this, deleter);
+
+  int limit = 10; // block-reads spawned at one time...
+ 
+  for ( auto i = keys.begin() + _cacheVIOs.size() ; i != keys.end() ; ++i, ++nxtBlk )
+  {
+    auto &key = *i; // examine all the not-future'd keys
+    _cacheVIOs.emplace_back();
+    // prep for async reads that init into VConn-futures
+    auto contp      = ATSCont::create_temp_tscont(*this, _cacheVIOs.back(), barrierLock);
+    TSCacheRead(contp, key);
+
+    if ( ! --limit ) {
+      break;
+    }
+  }
+}
+
+// start read of all the blocks
+void
+BlockReadXform::read_block_tests()
+{
+  //
+  // mutex for single choice (read or write only) ...
+  //
+
+  auto &keys  = _ctxt.keysInRange();
+  auto blkSize = _ctxt.blockSize();
+  auto assetLen = _ctxt.assetLen();
+  auto nrdy     = 0U;
+  auto skip     = 0U;
+  auto finalBlk = assetLen / blkSize; // round down..
+  auto neededLen = blkSize; 
+
+  //
+  // scan *all* keys and vconns to check if ready
+  //
+  for( auto &&rdFut : _cacheVIOs ) {
+    auto i = &rdFut - &_cacheVIOs.front();
+    auto blkInd = _ctxt.firstIndex() + i;
+
+    int error = rdFut.error();
+    auto key = keys[i].get(); // disallow any new storage 
+
+    // key was reset and result is ready ...
+    if ( ! key ) {
+      ( error ? ++skip : ++nrdy );
+      continue; // no need to analyze it...
+    }
+
+    if ( error == EAGAIN ) {
+      DEBUG_LOG("read not ready: 1<<%ld [%d]", blkInd, error);
+      // leave skip [likely nonzero]
+      // leave nrdy also
+      continue;
+    }
+
+    if ( error == ECACHE_NO_DOC ) {
+      ++skip; // allow a cache-miss to store it ..
+      DEBUG_LOG("read not present: 1<<%ld [%d]", blkInd, error);
+      continue;
+    }
+
+    // no new storage with this key ...
+
+    keys[i].release(); // disallow any new storage 
+
+    if ( error ) {
+      ++skip; // more messy?
+      DEBUG_LOG("read not usable: 1<<%ld [%d]", blkInd, error);
+      continue;
+    } 
+
+    // error is 0...
+
+    auto vio = rdFut.get();
+
+    auto len = TSVIONDoneGet(vio);
+
+    if ( blkInd == finalBlk ) {
+      neededLen = ((assetLen-1) % blkSize)+1;
+    }
+
+    // vconn/block is right size?
+    if ( len != neededLen ) {
+      ++skip; // allow a cache-miss to overwrite it...
+      DEBUG_LOG("read returned wrong size: 1<<%ld n=%ld", blkInd, len);
+      continue;
+    }
+
+    // successful whole read ...
+
+    if ( skip ) {
+      ++skip;
+      DEBUG_LOG("read successful after skip : 1<<%ld vio:%p + ", blkInd, vio);
+      continue;
+    }
+
+    // all from the start that are successful
+    ++nrdy;
+    DEBUG_LOG("read successful present : 1<<%ld vio:%p + ", blkInd, vio);
+  }
+
+  //
+  // done scanning all keys
+  //
+
+  if ( outputVIO() ) {
+    // these are live blocks?   ask to write them...
+    TSContCall(*this, TS_EVENT_VCONN_WRITE_READY, outputVIO());
+    return;
+  } 
+
+  // early only!
+
+  // no early parts to use?
+  if ( nrdy > 0 ) {
+    init_enabled_transform();
+  }
+  _ctxt.cache_blk_hits(nrdy, _cacheVIOs.size() - nrdy);
+}
+
+void
+BlockReadXform::on_empty_buffer()
+{
+  auto pos = bufferAvail();
+  auto opos = outputAvail();
+  DEBUG_LOG("buffer low: @%#lx-%#lx", pos.first, pos.second);
+
+  // more required from input stream... 
+  if ( TSVIONTodoGet(inputVIO()) ) {
+    TSVIOReenable(inputVIO()); // just reenable [if blocked]
+    return;
+  }
+
+  if ( ! TSVIONTodoGet(outputVIO()) ) {
+    return; // extra?
+  }
+
+  // input read/write is at completion?  start new one...
+  auto nxt = (pos.second + _blkSize-1)/_blkSize; // next *full* block..
+  if ( nxt >= static_cast<int>(_ctxt.keysInRange().size()) ) {
+    DEBUG_LOG("empty and %#lx-%#lx incomplete.", opos.second, outputLen());
+    return; // no reads left to start!
+  }
+
+  if ( nxt >= static_cast<int>(_cacheVIOs.size()) ) {
+    ink_assert(!"time for a recurse");
+    return;
+  }
+
+  auto vio = _cacheVIOs[nxt].get();
+  if ( vio ) {
+    reset_input_vio(vio);
+    return;
+  }
+
+  launch_block_tests();
+}
+

@@ -123,6 +123,23 @@ BlockSetAccess::~BlockSetAccess()
 }
 
 void
+BlockSetAccess::reset_range_keys()
+{
+  _keysInRange.clear();
+  _keysInRange.reserve(indexCnt());
+
+  if ( _etagStr.empty() || _beginByte < 0 || _beginByte >= _endByte ) {
+    DEBUG_LOG("keys are all empty: etag:%s bytes=[%ld-%ld)", _etagStr.c_str(), _beginByte, _endByte);
+    _keysInRange.resize(indexCnt());  // resize with defaults
+    return;
+  }
+
+  for ( auto b = firstIndex() * _blkSize ; b < _endByte ; b += _blkSize) {
+    _keysInRange.push_back(std::move(ATSCacheKey(_url, _etagStr, b)));
+  }
+}
+
+void
 BlockSetAccess::handleReadRequestHeadersPostRemap(Transaction &txn)
 {
   ThreadTxnID txnid{_txn};
@@ -196,12 +213,13 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     if ( ! endBlk && firstBlk >= 0 ) {
       _blkRangeStr += std::to_string(_blkSize * firstBlk) + "-";
     } else if ( ! endBlk && firstBlk < 0 ) {
-      _blkRangeStr += std::string("-") + std::to_string(_blkSize * (1-firstBlk));
+      _blkRangeStr += std::string("-") + std::to_string(-firstBlk*_blkSize + _blkSize);
     } else if ( endBlk ) {
-      _blkRangeStr += std::to_string(_blkSize * firstBlk) + "-" + std::to_string(_blkSize * endBlk - 1);
+      _blkRangeStr += std::to_string(firstBlk*_blkSize) + "-" + std::to_string(endBlk*_blkSize - 1);
     }
 
-    start_cache_miss();
+    DEBUG_LOG("cache-resp-wr: stub len=unkn [blk:%ldK]", _blkSize/1024);
+    _storeXform = BlockStoreXform::start_cache_miss(*this, atsTxn(), _beginByte - firstIndex()*_blkSize);
     txn.resume();
     return;
   }
@@ -210,11 +228,22 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   // use known values (if enough) to create keys
   reset_range_keys(); 
-
-  // nothing handled until handle_block_tests is done...
-  launch_block_tests(); // test if blocks are ready...
-  // delay txn.resume()
+  _readXform = BlockReadXform::try_cache_hit(*this, _beginByte % _blkSize);
+  _readXform->launch_block_tests();
 }
+
+void
+BlockSetAccess::cache_blk_hits(int nrdy, int failed) 
+{
+  if ( ! nrdy ) {
+    _storeXform = BlockStoreXform::start_cache_miss(*this, atsTxn(), _beginByte - firstIndex()*_blkSize);
+  } else {
+    _readXform->init_enabled_transform();
+  }
+
+  txn().resume();
+}
+
 
 // handled for init-only case
 void
@@ -271,10 +300,10 @@ BlockSetAccess::clean_server_request(Transaction &txn)
   }
 
   // replace with a block-based range if known
-  if (!blockRangeStr().empty()) {
-    proxyReq.set(RANGE_TAG, blockRangeStr());  // adjusted range string..
+  if (!_blkRangeStr.empty()) {
+    proxyReq.set(RANGE_TAG, _blkRangeStr);  // adjusted range string..
   } else {
-    proxyReq.set(RANGE_TAG, clientRangeStr()); // restore as before..
+    proxyReq.set(RANGE_TAG, _clntRangeStr); // restore as before..
   }
 }
 

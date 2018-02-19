@@ -67,14 +67,8 @@ public:
 
   Transaction & txn() const { return _txn; }
   TSHttpTxn atsTxn() const { return _atsTxn; }
-  Headers & clientHdrs() { return _clntHdrs; }
-  const std::string & clientUrl() const { return _url; }
-  const std::string & clientRangeStr() const { return _clntRangeStr; }
-  const std::string & blockRangeStr() const { return _blkRangeStr; }
 
   const std::vector<ATSCacheKey> & keysInRange() const { return _keysInRange; }
-  std::vector<ATSCacheKey> & keysInRange() { return _keysInRange; }
-
   int64_t assetLen() const { return _assetLen; }
   int64_t contentLen() const { return _endByte - _beginByte; }
   // assume index of first of *read* blocks...
@@ -84,6 +78,8 @@ public:
   int64_t indexCnt() const { return endIndex() - firstIndex(); }
   int64_t blockSize() const { return _blkSize; }
   
+  std::vector<ATSCacheKey> & keysInRange() { return _keysInRange; }
+
   void clean_client_request(); // allow secondary-accepting block-set match
   
   // clean up, increase range-request, avoid any 304/200 if client didn't request one
@@ -91,6 +87,8 @@ public:
 
   void prepare_cached_stub(Transaction &txn);
   void clean_client_response(Transaction &txn);
+
+  void cache_blk_hits(int count, int failed);
 
 public:
   // permit use of blocks if possible
@@ -106,17 +104,8 @@ public:
   // restore the request as before...
   void handleSendResponseHeaders(Transaction &txn) override;
 private:
-
   void reset_range_keys();
-  void launch_block_tests();
-  void handle_block_tests();
-
-private:
   Headers *get_stub_hdrs();
-
-  void start_cache_miss();
-  void start_cache_hit();
-  void set_cache_hit_bitset();
 
 private:
   Transaction &_txn;
@@ -144,11 +133,10 @@ private:
   ATSCont _mutexOnlyCont;
 
   std::vector<ATSCacheKey> _keysInRange;   // in order with index
-  std::vector<ATSVIOFuture> _cacheVIOs;    // indexed as the keys
 
   // delayed creation: transform objects must be committed to, only upon response
 
-  std::unique_ptr<BlockReadXform> _readXform;   // state-object ptr [registers Transforms/Continuations]
+  std::shared_ptr<BlockReadXform> _readXform;   // state-object ptr [registers Transforms/Continuations]
   std::shared_ptr<BlockStoreXform> _storeXform; // state-object ptr [registers Transforms/Continuations]
 };
 
@@ -157,22 +145,22 @@ class BlockStoreXform : public std::enable_shared_from_this<BlockStoreXform>,
                         public BlockTeeXform
 {
   friend struct BlockWriteInfo;
+
 public:
   using Ptr_t = std::shared_ptr<BlockStoreXform>;
 
-public:
+  static Ptr_t start_cache_miss(BlockSetAccess &, TSHttpTxn txn, int64_t offset);
   BlockStoreXform(BlockSetAccess &ctxt, int blockCount);
-  ~BlockStoreXform() override;
 
-  const std::vector<ATSCacheKey> & keysToWrite() const { return _keysToWrite; }
-  long write_count() const { return this->_writeCheck.use_count() - 1; } 
+  ~BlockStoreXform() override;
 
   void reset_write_keys() {
     _keysToWrite.clear();
     std::swap(_ctxt._keysInRange,_keysToWrite);
   }
 
-  void new_asset_body(Transaction &txn);
+  long write_count() const { return this->_writeCheck.use_count() - 1; } 
+  void new_asset_body(Transaction &txn); // upon real changes...
 private:
 
   TSCacheKey next_valid_vconn(int64_t pos, int64_t len, int64_t &skipDist);
@@ -183,9 +171,11 @@ private:
   BlockSetAccess          &_ctxt;
   int                      _txnid = ThreadTxnID::get(); // for debug
   std::vector<ATSCacheKey> _keysToWrite; // in order with index
+  // harmless ref-counter...
   std::shared_ptr<void>    _writeCheck{&this->_writeCheck, [](std::shared_ptr<void>*){ }};
   ATSCont                  _wakeupCont{_ctxt._mutexOnlyCont.get()}; // no handler at first
   std::atomic<TSEvent>     _blockVIOUntil{TS_EVENT_NONE}; // event targeted to fix block
+  ATSVConnFuture           _subReqVC;
 };
 
 /////////////////////////////////////////////////
@@ -196,6 +186,8 @@ struct BlockWriteInfo : public std::enable_shared_from_this<BlockWriteInfo>
   // move key into store
   BlockWriteInfo(BlockStoreXform &store, ATSCacheKey &key, int blk);
   ~BlockWriteInfo();
+
+  long ref_count() const { return this->_writeXform.use_count(); } 
 
   static TSEvent handleBlockWriteCB(TSCont c, TSEvent evt, void *p, const std::shared_ptr<BlockWriteInfo> &ptr) {
     return ptr->handleBlockWrite(c,evt,p);
@@ -219,20 +211,25 @@ struct BlockWriteInfo : public std::enable_shared_from_this<BlockWriteInfo>
 /////////////////////////////////////////////////
 class BlockReadXform : public ATSXformCont
 {
-  template <typename _Tp, typename... _Args>
-  friend unique_ptr<_Tp> std::make_unique(_Args &&... __args); // when it needs to change over
+  using Ptr_t = std::shared_ptr<BlockReadXform>;
+//  template <typename _Tp, typename... _Args>
+//  friend unique_ptr<_Tp> std::make_unique(_Args &&... __args); // when it needs to change over
 
 public:
+  static Ptr_t try_cache_hit(BlockSetAccess &, int64_t offset);
+
+  BlockReadXform(BlockSetAccess &ctxt, int skip);
   ~BlockReadXform() override;
 
+  void launch_block_tests();
 private:
-  BlockReadXform(BlockSetAccess &ctxt, int64_t skip);
+  void read_block_tests();
 
   void launch_block_reads();
   void on_empty_buffer();
 
+  BlockSetAccess           &_ctxt;
   const int64_t             _blkSize;   // local copy..
-  std::vector<ATSCacheKey>  _keysToRead; // in order with index
   std::vector<ATSVIOFuture> _cacheVIOs; // indexed as the keys
 };
 
