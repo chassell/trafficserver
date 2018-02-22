@@ -43,18 +43,18 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int offset)
 // initial handler ....
   set_body_handler([this](TSEvent event, TSVIO vio, int64_t left) 
   {
-      if ( event != TS_EVENT_VCONN_WRITE_READY ) {
-        DEBUG_LOG("ignoring unhandled event. e#%d %p %ld %p",event,vio,left,inputVIO());
-        return 0L;
-      }
-
-      if ( ! left && vio == outputVIO() ) {
-        this->on_empty_buffer();
-        return 0L;
-      }
-
-      TSVIOReenable(vio); // just reenable [if blocked]
+    if ( event != TS_EVENT_VCONN_WRITE_READY ) {
+      DEBUG_LOG("ignoring unhandled event. e#%d %p %ld %p",event,vio,left,inputVIO());
       return 0L;
+    }
+
+    if ( ! left && vio == outputVIO() ) {
+      this->on_empty_buffer();
+      return 0L;
+    }
+
+    TSVIOReenable(vio); // just reenable [if blocked]
+    return 0L;
   });
   TSHttpTxnUntransformedRespCache(ctxt.atsTxn(), 0);
   TSHttpTxnTransformedRespCache(ctxt.atsTxn(), 0);
@@ -68,12 +68,6 @@ BlockReadXform::~BlockReadXform()
 void
 BlockReadXform::launch_block_tests()
 {
-  // stateless callback as deleter...
-  using Deleter_t                = void (*)(BlockReadXform *);
-  static const Deleter_t deleter = [](BlockReadXform *ptr) {
-    ptr->read_block_tests(); // recurse from last one
-  };
-
   if ( _cacheVIOs.empty() ) {
     _cacheVIOs.reserve(_ctxt.indexCnt());
   }
@@ -83,7 +77,9 @@ BlockReadXform::launch_block_tests()
   nxtBlk += _cacheVIOs.size();
 
   // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
-  auto barrierLock = std::shared_ptr<BlockReadXform>(this, deleter);
+  auto barrierLock = std::shared_ptr<BlockReadXform>(this, [](BlockReadXform *ptr) {
+      ptr->read_block_tests(); // notify on end/fail
+    });
 
   int limit = 10; // block-reads spawned at one time...
  
@@ -91,10 +87,14 @@ BlockReadXform::launch_block_tests()
   {
     auto &key = *i; // examine all the not-future'd keys
     _cacheVIOs.emplace_back();
-    // prep for async reads that init into VConn-futures
-    auto contp      = ATSCont::create_temp_tscont(*this, _cacheVIOs.back(), barrierLock);
-    TSCacheRead(contp, key);
+    // create an async read w/no vconn yet ...
+    auto contp = ATSCont::create_temp_tscont(nullptr,_cacheVIOs.back(),nullptr,barrierLock);
+    auto r = TSCacheRead(contp, key);
+    if ( TSActionDone(r) && _cacheVIOs.back().get() ) {
+      continue; // skip limit...
+    }
 
+    // wait for maximum amount to read...
     if ( ! --limit ) {
       break;
     }
@@ -198,10 +198,12 @@ BlockReadXform::read_block_tests()
 
   // early only!
 
-  // no early parts to use?
+  // early parts ready?
   if ( nrdy > 0 ) {
+    reset_input_vio(_cacheVIOs[0].get());
     init_enabled_transform();
   }
+
   _ctxt.cache_blk_hits(nrdy, _cacheVIOs.size() - nrdy);
 }
 
