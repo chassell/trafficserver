@@ -175,7 +175,7 @@ private:
   std::shared_ptr<void>    _writeCheck{&this->_writeCheck, [](std::shared_ptr<void>*){ }};
   ATSCont                  _wakeupCont{_ctxt._mutexOnlyCont.get()}; // no handler at first
   std::atomic<TSEvent>     _blockVIOUntil{TS_EVENT_NONE}; // event targeted to fix block
-  ATSVConnFuture           _subReqVC;
+  ATSVIO                   _subRangeVIO;
 };
 
 /////////////////////////////////////////////////
@@ -198,9 +198,10 @@ struct BlockWriteInfo : public std::enable_shared_from_this<BlockWriteInfo>
   BlockStoreXform::Ptr_t _writeXform;
   int                    _ind;
   ATSCacheKey            _key;
-  TSIOBuffer_t           _buff;
-  ATSVIOFuture           _vio;
-  std::shared_ptr<void>  _writeRef;
+  TSIOBuffer_t           _buff{ TSIOBufferCreate() };
+  TSIOBufferReader_t     _rdr{ TSIOBufferReaderAlloc(this->_buff.get()) };
+  std::shared_ptr<void>  _writeRef{ this->_writeXform->_writeCheck };
+  TSVIO_t                _vio;
 
   int                    _blkid; // for debug
   int                    _txnid = ThreadTxnID::get(); // for debug
