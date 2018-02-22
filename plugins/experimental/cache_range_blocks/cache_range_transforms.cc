@@ -272,16 +272,16 @@ ATSXformCont::handleXformTSEvent(TSCont cont, TSEvent event, void *edata)
 
 
 ATSXformOutVConn::Uniq_t
-ATSXformOutVConn::create_if_ready(const ATSXformCont &xform, int64_t bytes, int64_t offset)
+ATSXformOutVConn::create_if_ready(const ATSXformCont &xform, TSIOBufferReader rdr, int64_t bytes, int64_t offset)
 {
   if ( ! TSTransformOutputVConnGet(xform) ) {
     DEBUG_LOG("cannot create output @offset=%ld + len=%ld",offset,bytes);
     return ATSXformOutVConn::Uniq_t{}; 
   }
-  auto selfU = std::make_unique<ATSXformOutVConn>(xform, bytes, offset);
+  auto selfU = std::make_unique<ATSXformOutVConn>(xform, rdr, bytes, offset);
   DEBUG_LOG("create xform write vio: len=%#lx skip=%#lx", bytes, std::max(offset,0L));
   selfU->check_refill(TS_EVENT_IMMEDIATE);
-  auto wmark = TSIOBufferWaterMarkGet(xform.outputBuffer());
+  auto wmark = TSIOBufferWaterMarkGet(*selfU);
   auto inbuff = TSVIOBufferGet(xform.xformInputVIO());
   auto owmark = TSIOBufferWaterMarkGet(inbuff);
   DEBUG_LOG("input buffering set: out:%ld in:%ld",wmark,std::max(owmark,(1L<<20)));
@@ -303,9 +303,10 @@ ATSXformCont::xform_input_event()
 
   // only create at precise start..
   if ( ! _outVIOWaiting && ! _outVConnU ) {
-    _outVConnU = ATSXformOutVConn::create_if_ready(*this, _outWriteBytes, std::max(_outSkipBytes,0L));
+    _outVConnU = ATSXformOutVConn::create_if_ready(*this, _outReaderU.get(), _outWriteBytes, std::max(_outSkipBytes,0L));
     if ( _outVConnU ) {
-      _outBufferU.release(); // no more holding it...
+      _outReaderU.release();
+      _outBufferU.release();
     }
   }
 
@@ -326,35 +327,40 @@ ATSXformCont::xform_input_event()
   auto inready = oinready;
 
   ////////////
-  // ask for reduced amount to copy
-  /////////////
+  // output more than stored?
+  ////////////
+  auto preStoreExtra = (-_outSkipBytes) - inpos; // distance from skip-end..
 
-  // hide bytes from CB if skip < 0
-  if ( inpos + _outSkipBytes >= 0 ) {
+  // any bytes left to hide from callback?
+  if ( preStoreExtra <= 0 ) {
     inready = _xformCB(event, inputVIO(), inready); // send bytes-left in segment
-  } else {
-    // skip past all non-presented bytes only
-    inready = std::min(- (inpos + _outSkipBytes), inready); // reduce to amt left...
+  } else if ( inready > preStoreExtra ) {
+    inpos += preStoreExtra; // jump midway forward
+    inready -= preStoreExtra; // set fewer bytes
 
-    if ( inpos + inready + _outSkipBytes >= 0 ) {
-      TSContSchedule(*this,0,TS_THREAD_POOL_DEFAULT); // call back again after
-    }
+    TSIOBufferReaderConsume(inputReader(), preStoreExtra); // pre-advance reader
+    TSVIONDoneSet(inputVIO(), inpos);                    // pre-advance point
+
+    inready = _xformCB(event, inputVIO(), inready); // present bytes left 
   }
 
   /////////////
-  // copy to output...
+  // output less than amount stored?
   /////////////
+  //
+  auto skipStoreLeft = _outSkipBytes - inpos; // distance from skip-end
 
   // hide bytes from BufferCopy if skip > 0
-  if ( inpos - _outSkipBytes >= 0 ) {
+  if ( skipStoreLeft <= 0 ) {
     inready = TSIOBufferCopy(outputBuffer(), inputReader(), inready, 0); // copy them
-  } else {
-    // skip past all non-copied bytes only
-    inready = std::min(- (inpos - _outSkipBytes), inready); // reduce to amt left...
+  } else if ( inready > skipStoreLeft ) {
+    inpos += skipStoreLeft; // jump midway forward
+    inready -= skipStoreLeft; // set fewer bytes
 
-    if ( inpos + inready - _outSkipBytes >= 0 ) {
-      TSContSchedule(*this,0,TS_THREAD_POOL_DEFAULT); // call back again after
-    }
+    TSIOBufferReaderConsume(inputReader(), skipStoreLeft); // pre-advance reader
+    TSVIONDoneSet(inputVIO(), inpos);                    // pre-advance point
+
+    inready = TSIOBufferCopy(outputBuffer(), inputReader(), inready, 0); // copy them
   }
 
   inpos += inready;
