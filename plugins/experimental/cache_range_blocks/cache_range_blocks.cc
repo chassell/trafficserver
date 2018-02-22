@@ -201,6 +201,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
   txn.configIntSet(TS_CONFIG_HTTP_DEFAULT_BUFFER_SIZE,TS_IOBUFFER_SIZE_INDEX_1M); // 1M buffer-size by default
   txn.configIntSet(TS_CONFIG_HTTP_DEFAULT_BUFFER_WATER_MARK,1<<20);               // 1M buffer-wait by default
   txn.configIntSet(TS_CONFIG_NET_SOCK_RECV_BUFFER_SIZE_OUT,1<<20);                // 1M kernel TCP buffer
+  txn.configFloatSet(TS_CONFIG_HTTP_BACKGROUND_FILL_COMPLETED_THRESHOLD,1.001);   // No background fills
 
   auto firstBlk = firstIndex();
   auto endBlk = endIndex();
@@ -274,6 +275,7 @@ BlockSetAccess::clean_client_request()
 
   _clntHdrs.append(ACCEPT_ENCODING_TAG, CONTENT_ENCODING_INTERNAL ";q=0.001"); // but accept block-set too
   _clntHdrs.set(ACCEPT_ENCODING_TAG, _clntHdrs.values(ACCEPT_ENCODING_TAG)); // on one line...
+  _clntHdrs.erase(RANGE_TAG); // no hint of range request left...
 }
 
 void
