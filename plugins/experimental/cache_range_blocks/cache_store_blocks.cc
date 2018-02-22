@@ -82,7 +82,7 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
     DEBUG_LOG("rejecting due to unusable length: %s",srvrRange.c_str());
     // _storeXform.reset(); // cannot perform transform!
     txn.resume();
-    return; // cannot use this for range block storage ...
+    return; // no transform enabled
   }
 
   TSHttpTxnServerRespNoStoreSet(atsTxn(),1); // assume blocks only first...
@@ -104,7 +104,7 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
              srvrRange.c_str(),bodyLen.c_str());
     // _storeXform.reset(); // cannot perform transform!
     txn.resume();
-    return; // cannot use this for range block storage ...
+    return; // no transform enabled
   }
 
   // server range is valid and should cover original request...
@@ -141,7 +141,7 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
 
     _storeXform->new_asset_body(txn);
     txn.resume(); // continue with expected transform
-    return;
+    return; // no transform enabled
   }
 
   // was response not block-aligned?
@@ -177,29 +177,29 @@ BlockStoreXform::new_asset_body(Transaction &txn)
   if ( ! contentEnc.empty() && contentEnc != "identity" )
   {
     DEBUG_LOG("rejecting due to unusable encoding: %s",contentEnc.c_str());
-    return; // cannot use this for range block storage or a stub file...
+    return; // no transform enabled
   }
 
   // store whole small file?  
   if ( maxBytes <= minBlockAsset && storeBytes == maxBytes ) 
   {
-    // respond as if a if-range failed...
+    // respond as if a if-range passed the whole file ...
     resp.setStatusCode(HTTP_STATUS_OK);
     TSHttpTxnServerRespNoStoreSet(atsTxn,0); // must assume now we need to save these headers!
     respHdrs.erase(CONTENT_RANGE_TAG); // as if it wasn't a 206 ever...
     DEBUG_LOG("cache-store of whole 206:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
-    return;
+    return; // no transform enabled
   }
 
   // too small for use of blocks??
   if ( maxBytes <= minBlockAsset )
   {
-    // 206 on through...
-    // but spawn a simple 'background' fetch...
+    // 206 on through... but spawn a simple 'background' fetch...
     DEBUG_LOG("no-store of small 206:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
-    spawn_sub_range(txn,0,0);
+    auto pluginvc = spawn_sub_range(txn,0,0);
+    ATSCont::create_temp_tscont(pluginvc, _subRangeVIO, nullptr); // create a VConnRead that is freed later
     DEBUG_LOG("no-store of small 206");
-    return;
+    return; // no transform enabled
   }
 
   // big files only ....
@@ -210,34 +210,26 @@ BlockStoreXform::new_asset_body(Transaction &txn)
 
   reset_output_length(storeBytes);
 
-  // a non-stub sized request?
-  if ( storeBytes > STUB_MAX_BYTES ) 
-  {
-    TSHttpTxnUntransformedRespCache(atsTxn,0); // don't store untransformed!
-    TSHttpTxnTransformedRespCache(atsTxn,0); // don't store transformed!
-
-    // 206 on through...
-    // spawn a real stub... 
-    DEBUG_LOG("stub-create recurse pre:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
-    spawn_sub_range(txn,1,2); // get a small range instead ...
-    DEBUG_LOG("stub-create recurse post");
-
-    init_enabled_transform();
-    return;
-  }
-
-  // stub sized storage request ... 
-
-  // respond as if a if-range failed...
-  resp.setStatusCode(HTTP_STATUS_OK);
-  TSHttpTxnServerRespNoStoreSet(atsTxn,0); // must assume now we need to save these headers!
   TSHttpTxnUntransformedRespCache(atsTxn,0); // don't store untransformed!
-  TSHttpTxnTransformedRespCache(atsTxn,1); // don't store untransformed!
 
-  respHdrs.set(CONTENT_ENCODING_TAG, CONTENT_ENCODING_INTERNAL); // promote matches
-  respHdrs.append(VARY_TAG,ACCEPT_ENCODING_TAG); // please check for a stub!
+  if ( storeBytes <= STUB_MAX_BYTES ) {
+    TSHttpTxnServerRespNoStoreSet(atsTxn,0); // allow storage
+    TSHttpTxnTransformedRespCache(atsTxn,1);   // store transformed!
 
-  DEBUG_LOG("stub for large file:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
+    // respond as if a if-range failed...
+    resp.setStatusCode(HTTP_STATUS_OK);
+
+    respHdrs.set(CONTENT_ENCODING_TAG, CONTENT_ENCODING_INTERNAL); // promote matches
+    respHdrs.append(VARY_TAG,ACCEPT_ENCODING_TAG); // please check for a stub!
+
+    DEBUG_LOG("store block-storage stub:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
+  } else {
+    // 206 on through... but spawn a real stub request ... 
+    DEBUG_LOG("stub-create recurse pre:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
+    auto pluginvc = spawn_sub_range(txn,1,2); // stub gets one byte range ...
+    ATSCont::create_temp_tscont(pluginvc, _subRangeVIO, nullptr); // create a VConnRead that is freed later
+    DEBUG_LOG("stub-create recurse post");
+  }
 
   init_enabled_transform();
 }
@@ -362,7 +354,10 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
     auto callDatap = std::make_shared<BlockWriteInfo>(*this, takeKey, blk); // takes key
     auto &callData = *callDatap;
 
-    TSIOBufferCopy(callData._buff.get(), teerdr, wrlen, 0); // split off data for storage
+    auto n = TSIOBufferCopy(callData._buff.get(), teerdr, wrlen, 0); // split off data for storage
+
+    ink_assert( wrlen == n );
+
     TSIOBufferReaderConsume(teerdr, wrlen);
 
     // direct new to allow self-delete
@@ -385,10 +380,7 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
 
     // Did write fail totally?
     auto desc = "";
-    auto err = callData._vio.error();
-    if ( err != EAGAIN && err != ENOTCONN && err ) {
-      desc = "failed";
-    } else if ( ! TSActionDone(r) ) {
+    if ( ! TSActionDone(r) ) {
       desc = "delayed";
     } else if ( callDatap.use_count() > 1 ) {
       newBlockEvent = prevBlockEvent; // no wakeup
@@ -399,11 +391,9 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
     }
 
 //    DEBUG_LOG("store ++++ %s write 1<<%ld [%s] nwrites:%ld @%#lx+%#lx [final @%#lx]", 
-    DEBUG_LOG("store ++++ %s write 1<<%ld [err:%d] active:%ld nwrites:%ld @%#lx+%#lx [final @%#lx]", 
+    DEBUG_LOG("store ++++ %s write 1<<%ld active:%ld nwrites:%ld @%#lx+%#lx [final @%#lx]", 
                desc, 
                _ctxt.firstIndex() + blk, 
-//               InkStrerror(callData._vio.error()),
-               callData._vio.error(),
                callData.ref_count()-1,
                write_count(), donepos, navail, donepos + wrlen);
   }
@@ -433,16 +423,15 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
   _wakeupCont = [](TSEvent, void *) { }; // last reference goes now
 }
 
-BlockWriteInfo::BlockWriteInfo(BlockStoreXform &store, ATSCacheKey &key, int blk) : 
+BlockWriteInfo::BlockWriteInfo(BlockStoreXform &store, ATSCacheKey &key, int blk) :
       _writeXform{store.shared_from_this()}, 
       _ind(blk),
       _key(std::move(key)),
-      _buff{TSIOBufferCreate()},
-      _writeRef{store._writeCheck},
       _blkid(store._ctxt.firstIndex() + blk)
 {
   DEBUG_LOG("ctor 1<<%d xform active:%ld nwrites:%ld",  
       _blkid, _writeXform.use_count(), _writeXform->write_count());
+  TSIOBufferWaterMarkSet(_buff.get(), (1<<20)); // single write only...
 }
 
 BlockWriteInfo::~BlockWriteInfo() {
@@ -466,10 +455,9 @@ BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
     case TS_EVENT_CACHE_OPEN_WRITE_FAILED:
     {
       auto verr = -reinterpret_cast<intptr_t>(edata);
-      _vio = ATSVIOFuture(static_cast<TSVIO>(edata)); // store error for outside to read...
+      atscppapi::ScopedContinuationLock lock(cont);
 
       // async result was not found in time..
-      atscppapi::ScopedContinuationLock lock(cont);
 //      DEBUG_LOG("scheduled reopen write check [%s] to 1<<%d nwrites:%ld", 
       DEBUG_LOG("scheduled reopen write check [%ld] to 1<<%d nwrites:%ld", 
 //            InkStrerror(verr), 
@@ -482,6 +470,7 @@ BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
     case TS_EVENT_TIMEOUT:
     case TS_EVENT_IMMEDIATE:
     {
+
       DEBUG_LOG("restarted open write with 1<<%d nwrites:%ld",_blkid, _writeXform->write_count());
       auto r = TSCacheWrite(cont, _key.get()); // find room to store each key...
       if ( ! TSActionDone(r) ) {
@@ -493,11 +482,11 @@ BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
     case TS_EVENT_CACHE_OPEN_WRITE:
     {
       TSVConn vconn = static_cast<TSVConn>(edata);
-      DEBUG_LOG("completed open write with 1<<%d nwrites:%ld",_blkid, _writeXform->write_count());
-      auto rdr = TSIOBufferReaderAlloc(_buff.get());
-      auto wrlen = std::min(TSIOBufferReaderAvail(rdr),(1L<<20));
-      auto vio = TSVConnWrite(vconn, cont, rdr, wrlen); // copy older buffer bytes out
-      _vio = ATSVIOFuture(static_cast<TSVIO>(vio));
+      auto wrlen = std::min(TSIOBufferReaderAvail(_rdr.get()),(1L<<20));
+      DEBUG_LOG("completed open write with 1<<%d nwrites:%ld len:%ld",_blkid, _writeXform->write_count(), wrlen);
+      _vio.reset(TSVConnWrite(vconn, cont, _rdr.get(), wrlen)); // copy older buffer bytes out
+      _rdr.release(); // owned
+      _buff.release(); // owned
       break;
     }
 
@@ -506,71 +495,69 @@ BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
       TSVIO vio = static_cast<TSVIO>(edata);
       // didn't detect enough bytes in buffer to complete?
       TSIOBufferReader writeRdr = TSVIOReaderGet(vio);
-      if (! TSIOBufferReaderAvail(writeRdr)) {
-        DEBUG_LOG("cache-write 1<<%d flush empty e#%d -> %ld? %ld?", _blkid, event, TSVIONDoneGet(vio), TSVIONBytesGet(vio));
+      if (TSIOBufferReaderAvail(writeRdr)) {
+        DEBUG_LOG("cache-write 1<<%d flush e#%d -> %ld? %ld?", _blkid, event, TSVIONDoneGet(vio), TSVIONBytesGet(vio));
+        TSVIOReenable(vio);
         break; // surprising!
       }
-      DEBUG_LOG("cache-write 1<<%d flush e#%d -> %ld? %ld?", _blkid, event, TSVIONDoneGet(vio), TSVIONBytesGet(vio));
-      TSVIOReenable(vio);
+      DEBUG_LOG("cache-write 1<<%d flush empty e#%d -> %ld? %ld?", _blkid, event, TSVIONDoneGet(vio), TSVIONBytesGet(vio));
       break;
     }
 
     case TS_EVENT_VCONN_WRITE_COMPLETE:
-      {
-        // replace with number to recognize (not null)
-        _vio = ATSVIOFuture(reinterpret_cast<TSVIO>(-ENOTCONN));
+    {
+      // *reset* value (destruct on old value!)
+      BlockStoreXform &store = *_writeXform; // doesn't change
+      auto wakeupCont = store._wakeupCont.get();
 
-        BlockStoreXform &store = *_writeXform; // doesn't change
-        auto wakeupCont = store._wakeupCont.get();
+      _writeRef.reset(); // remove flag of write
 
-        _writeRef.reset(); // remove flag of write
+      int wrcnt = store.write_count(); // there can be only one zero!
 
-        int wrcnt = store.write_count(); // there can be only one zero!
+      // attempt to close VConn here
+      auto &flagEvt = _writeXform->_blockVIOUntil;
 
-        // attempt to close VConn here
-        auto &flagEvt = _writeXform->_blockVIOUntil;
-
-        // don't try but note 
-        if ( wrcnt && flagEvt == TS_EVENT_CACHE_CLOSE ) {
-          DEBUG_LOG("completed non-final store to 1<<%d nwrites:%d",_blkid,wrcnt);
-          return TS_EVENT_NONE;
-        }
-
-        if ( wrcnt ) {
-          DEBUG_LOG("completed store to 1<<%d nwrites:%d",_blkid,wrcnt);
-          return TS_EVENT_NONE;
-        }
-        
-        // ask to change CACHE_CLOSE to NONE .. or change only if CONTINUE (never) ...
-        auto oflag = TS_EVENT_CACHE_CLOSE; // flag 
-        flagEvt.compare_exchange_strong(oflag,TS_EVENT_VCONN_WRITE_READY); // prevent end ... but claim wakeup
-
-        // did not try to grab... but would have succeeded
-         
-        if ( oflag == TS_EVENT_NONE ) {
-          DEBUG_LOG("completed final store to 1<<%d nwrites:0",_blkid);
-          return TS_EVENT_NONE;
-        }
-
-        if ( oflag != TS_EVENT_CACHE_CLOSE ) {
-          DEBUG_LOG("completed final store to 1<<%d nwrites:0 (flag:%d)",_blkid,oflag);
-          return TS_EVENT_NONE;
-        }
-
-        // wakeup is claimed by this call ...
-
-        // (avoid deadlock with my own mutex!!)
-        if ( TSMutexLockTry(mutex) ) {
-          TSMutexUnlock(mutex); 
-          TSMutexUnlock(mutex); // unlock enclosing (or just a noop)
-        }
-
-        atscppapi::ScopedContinuationLock lock(wakeupCont);
-        DEBUG_LOG("completed store with wakeup to 1<<%d nwrites:%d",_blkid,wrcnt);
-        TSContSchedule(wakeupCont, 0, TS_THREAD_POOL_TASK);
-
-        return TS_EVENT_NONE; // call dtor of ATSCont
+      // don't try but note 
+      if ( wrcnt && flagEvt == TS_EVENT_CACHE_CLOSE ) {
+        DEBUG_LOG("completed non-final store to 1<<%d nwrites:%d",_blkid,wrcnt);
+        return TS_EVENT_NONE;
       }
+
+      if ( wrcnt ) {
+        DEBUG_LOG("completed store to 1<<%d nwrites:%d",_blkid,wrcnt);
+        return TS_EVENT_NONE;
+      }
+      
+      // ask to change CACHE_CLOSE to NONE .. or change only if CONTINUE (never) ...
+      auto oflag = TS_EVENT_CACHE_CLOSE; // flag 
+      flagEvt.compare_exchange_strong(oflag,TS_EVENT_VCONN_WRITE_READY); // prevent end ... but claim wakeup
+
+      // did not try to grab... but would have succeeded
+       
+      if ( oflag == TS_EVENT_NONE ) {
+        DEBUG_LOG("completed final store to 1<<%d nwrites:0",_blkid);
+        return TS_EVENT_NONE;
+      }
+
+      if ( oflag != TS_EVENT_CACHE_CLOSE ) {
+        DEBUG_LOG("completed final store to 1<<%d nwrites:0 (flag:%d)",_blkid,oflag);
+        return TS_EVENT_NONE;
+      }
+
+      // wakeup is claimed by this call ...
+
+      // (avoid deadlock with my own mutex!!)
+      if ( TSMutexLockTry(mutex) ) {
+        TSMutexUnlock(mutex); 
+        TSMutexUnlock(mutex); // unlock enclosing (or just a noop)
+      }
+
+      atscppapi::ScopedContinuationLock lock(wakeupCont);
+      DEBUG_LOG("completed store with wakeup to 1<<%d nwrites:%d",_blkid,wrcnt);
+      TSContSchedule(wakeupCont, 0, TS_THREAD_POOL_TASK);
+
+      return TS_EVENT_NONE; // call dtor of ATSCont
+    }
 
     default:
       DEBUG_LOG("unknown event: e#%d", event);
