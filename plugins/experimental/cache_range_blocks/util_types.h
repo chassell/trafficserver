@@ -21,6 +21,7 @@
 
 #include <atscppapi/Url.h>
 #include <atscppapi/Transaction.h>
+#include <atscppapi/Mutex.h>
 
 #include <memory>
 #include <string>
@@ -143,6 +144,7 @@ default_delete<TSIOBufferReader_t::element_type>::operator()(TSIOBufferReader re
     TSIOBufferReaderFree(reader);
   }
 }
+} // namespace std
 
 inline std::pair<int64_t,int64_t> vio_range_avail(TSVIO vio) { 
   auto rdr = TSVIOReaderGet(vio);
@@ -209,16 +211,24 @@ struct ATSCacheKey : public TSCacheKey_t {
 struct ATSVIO
 {
   ATSVIO() = default;
-  ATSVIO(ATSVIO &&v) = default;
+  ATSVIO(const ATSVIO &v) = default;
   ATSVIO(TSVIO v) : _vio(v) { }
 
   TSVIO get() const { return _vio; }
 
+  bool operator==(TSVIO v) { return _vio == v; }
+  bool operator!=(TSVIO v) { return _vio != v; }
+
+  ATSVIO &operator=(const ATSVIO &v) { _vio = v._vio; return *this; }
+  ATSVIO &operator=(TSVIO v) { _vio = v; return *this; }
+
   operator TSVIO() const { return _vio; }
+
   operator TSIOBuffer() const 
      { return ( _vio ? TSVIOBufferGet(_vio) : nullptr ); }
   operator TSIOBufferReader() const 
      { return ( _vio ? TSVIOReaderGet(_vio) : nullptr ); }
+  operator TSCont() const { return cont(); }
 
   TSCont cont() const
      { return ( _vio ? TSVIOContGet(_vio) : nullptr ); }
@@ -228,81 +238,85 @@ struct ATSVIO
   std::pair<int64_t,int64_t> avail() const 
      { return vio_range_avail(_vio); }
   bool ready() const 
-     { return _vio && operator TSVIOBufferGet(_vio); }
+     { return _vio && operator TSIOBuffer(); }
+  bool write_ready() const 
+     { return ready() && operator TSIOBufferReader(); }
   bool active() const 
      { return ready() && TSVIONTodoGet(_vio); }
   bool completed() const 
      { return _vio && TSVIONDoneGet(_vio) && ! TSVIONTodoGet(_vio); }
 
-  int64_t done() const 
+  int64_t ndone() const 
      { return _vio ? TSVIONDoneGet(_vio) : -1; }
-  int64_t left() const 
+  int64_t nleft() const 
      { return _vio ? TSVIONTodoGet(_vio) : -1; }
-  int64_t todo() const 
+  int64_t ntodo() const 
      { return _vio ? TSVIONTodoGet(_vio) : -1; }
-  int64_t bytes() const 
+  int64_t nbytes() const 
      { return _vio ? TSVIONBytesGet(_vio) : -1; }
+
+  void drain(int64_t adj) 
+     { _vio ? TSVIONDoneSet(_vio, ndone() + adj) : (void)-1; }
+  void fill(int64_t adj)
+     { _vio ? TSVIONBytesSet(_vio, nbytes() + adj) : (void)-1; }
+  void ndone(int64_t n)
+     { _vio ? TSVIONDoneSet(_vio,n) : (void)-1; }
+  void nbytes(int64_t n)
+     { _vio ? TSVIONBytesSet(_vio,n) : (void)-1; }
+
+  int waiting() const 
+     { return operator TSIOBufferReader() ? TSIOBufferReaderAvail(*this) : -1; }
 
   operator bool() const { return ready(); }
 
-  ATSVIO ivc_writer() const { return TSVConnWriteVIOGet(vconn()); }
-  ATSVIO ivc_reader() const { return TSVConnReadVIOGet(vconn()); }
-
-  is_ivc_writer() const { return ivc_writer() == _vio; }
-  is_ivc_reader() const { return ivc_reader() == _vio; }
-
-  TSCont call(TSEvent evt) {
-    TSCont c = *this;  
-    if ( c ) {
-      TSContCall(c, evt, _vio);
-    }
-    return c;
+  void shutdown() {
+    TSVConnShutdown(vconn(), ! write_ready(), write_ready());
   }
+
+  ATSVIO const ivc_writer() const { return TSVConnWriteVIOGet(vconn()); }
+  ATSVIO const ivc_input() const { return TSVConnWriteVIOGet(vconn()); }
+  ATSVIO ivc_writer() { return TSVConnWriteVIOGet(vconn()); }
+  ATSVIO ivc_input() { return TSVConnWriteVIOGet(vconn()); }
+
+  ATSVIO const ivc_reader() const { return TSVConnReadVIOGet(vconn()); }
+  ATSVIO const ivc_buffer() const { return TSVConnReadVIOGet(vconn()); }
+  ATSVIO ivc_reader() { return TSVConnReadVIOGet(vconn()); }
+  ATSVIO ivc_buffer() { return TSVConnReadVIOGet(vconn()); }
+
+  void free() {
+    free_owned(); // discard any owned objs
+    shutdown(); // allow a new VIO to same VConn
+    const_cast<TSVIO&>(_vio) = nullptr;
+  }
+
+  bool is_ivc_writer() const { return ivc_writer() == _vio; }
+  bool is_ivc_reader() const { return ivc_reader() == _vio; }
+
+  void send_src_event(TSEvent evt) {
+    if ( cont() ) {
+       atscppapi::ScopedContinuationLock lock(cont());
+       TSContCall(cont(),evt,_vio);
+    }
+  }
+  void send_dst_event(TSEvent evt, void *data) {
+    if ( vconn() ) {
+       atscppapi::ScopedContinuationLock lock(vconn());
+       TSContCall(vconn(),evt,data);
+    }
+  }
+
+  int64_t ivc_copy(int64_t inskip=0);
+  int64_t ivc_transfer(int64_t inskip=0);
 
  protected:
-  void close_vconn() 
-  {
-    if ( ready() ) {
-      atscppapi::ScopedContinuationLock lock(cont());
-      TSVConnClose(vconn()); // close finally...
-    }
-  }
+  void close_vconn();
+  void free_owned();
+  void complete_vio();
 
-  void free_owned() 
-  {
-    atscppapi::ScopedContinuationLock lock(cont());
-
-    TSBufferReader_t{operator TSIOBufferReader()}; // always (if any)
-    if ( ! is_ivc_writer() ) {
-      TSBuffer_t{operator TSIOBuffer()}; // writers have other ways...
-    }
-  }
-
-  void complete_vio() 
-  {
-    if ( ! _vio ) {
-      return;
-    }
-
-    auto rdr = operator TSIOBufferReader();
-    if ( ! todo() ) {
-      return; // nothing needed...
-    }
-
-    auto evt = TS_EVENT_VCONN_READ_COMPLETE;
-
-    atscppapi::ScopedContinuationLock lock(cont());
-    if ( rdr ) {
-      TSIOBufferReaderConsume(rdr, TSIOBufferReaderAvail(rdr)); // flush bytes...
-      evt = TS_EVENT_VCONN_WRITE_COMPLETE;
-    }
-
-    TSVIONBytesSet(_vio, done()); // cut it short now...
-    TSContCall(cont(), evt, _vio); // notified...
-  }
-
-  TSVIO const _vio = nullptr;
+  TSVIO _vio = nullptr;
 };
+
+
 
 // object to request write/read into cache
 struct ATSCont : public TSCont_t {
@@ -314,32 +328,28 @@ public:
   template <class T_FUTURE>
   static TSCont create_temp_tscont(TSCont mutexSrc, T_FUTURE &cbFuture,
                                    const std::shared_ptr<void> &counted = std::shared_ptr<void>());
-  static TSCont create_temp_tscont(TSVConn vconn, ATSVIOFuture &vioFuture, TSIOBufferReader buff, 
-                                   const std::shared_ptr<void> &counted = std::shared_ptr<void>());
-  static TSCont create_temp_tsvio(TSCont mutex, ATSVIOFuture &vioFuture, TSIOBufferReader buff, 
-                                   const std::shared_ptr<void> &counted = std::shared_ptr<void>());
+//  static TSCont create_temp_tscont(TSVConn vconn, ATSVIOFuture &vioFuture, TSIOBufferReader buff, 
+//                                   const std::shared_ptr<void> &counted = std::shared_ptr<void>());
+//  static TSCont create_temp_tsvio(TSCont mutex, ATSVIOFuture &vioFuture, TSIOBufferReader buff, 
+//                                   const std::shared_ptr<void> &counted = std::shared_ptr<void>());
 public:
-  explicit ATSCont(TSCont orig, TSCont mutexSrc=nullptr); // no handler
+  explicit ATSCont(TSCont mutexSrc=nullptr); // no handler
   explicit ATSCont(ATSCont &&old) : TSCont_t(old.release()), _userCB(std::move(old._userCB)) { 
 //      TSDebug("cache_range_blocks", "[%d] [%s:%d] %s(): move ctor %p cont:%p",  -1, __FILE__, __LINE__, __func__, this, get());
     }
   virtual ~ATSCont();
 
-  // handle TSHttpTxn continuations with a function and a copied type
-  template <typename T_DATA>
-  ATSCont(ATSVIO_Reader &obj, void (ATSVIO_Reader::*funcp)(TSEvent, void *, const T_DATA&), T_DATA cbdata, TSCont mutexSrc=nullptr);
-
-  // handle TSHttpTxn continuations with a method (no dtor implied)
+  // continuation with a method (no auto-dtor)
   template <class T_OBJ, typename T_DATA> 
   ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, void *, const T_DATA&), T_DATA cbdata, TSCont mutexSrc=nullptr);
 
-  template <class T_OBJ, typename T_DATA> 
-  ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSEvent, int64_t, TSVConn, const T_DATA&), T_DATA cbdata, TSCont mutexSrc)
-
-  // handle TSHttpTxn continuations with a function and a copied type
+  // continuation with deletion upon return of TS_EVENT_NONE...
   template <typename T_DATA>
   ATSCont(TSEvent (*funcp)(TSCont, TSEvent, void *, const T_DATA&), T_DATA &&cbdata, TSCont mutexSrc=nullptr);
 
+  // vconn-continuation with a method (no auto-dtor) and flag for "shutdown" status ...
+  template <class T_OBJ, typename T_DATA>
+  ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(int, TSEvent, void *, const T_DATA&), T_DATA cbdata, TSCont mutexSrc);
 public:
   operator TSCont() const { return get(); }
 
@@ -352,7 +362,6 @@ public:
 
 private:
   static int handleTSEventCB(TSCont cont, TSEvent event, void *data);
-  static TSEvent handle_event(ATSCont &cont, std::promise<TSVIO> &prom, TSIOBufferReader rdr, TSEvent evt, void *data);
 
   // holds object and function pointer
   std::function<void(TSEvent, void *)> _userCB;
@@ -400,74 +409,151 @@ struct ATSFuture : private std::shared_future<T_DATA>
 // destructors are special for both...
 template <> ATSFuture<TSVConn>::~ATSFuture();
 template <> ATSFuture<TSVIO>::~ATSFuture();
-
 using ATSVConnFuture = ATSFuture<TSVConn>;
 
+class NullVConn;
 
-
-// Writes *into* and *from* a buffer...
-struct ATSVConn : 
+struct ATSVConn
 {
- public:
-  ATSVConn() : _vconn{ *this, &handleTSEvent, std::shared_ptr<void>(), nullptr }
-     { }
-  virtual ~ATSVConn() = 0;
+  // standard obj-api *must* be invalid for a bit...
+  ATSVConn() = default;
+  ATSVConn(const ATSVConn &) = default;
+  ATSVConn(TSVConn vc) : _vconn(vc) { }
 
-  void handleTSEvent(TSEvent event, void *evtdata, const std::shared_ptr<void>&)
-  {
-    auto rvio = ATSVConn{vconnp}.ivc_reader(); // last known buff-end
-    auto evtvio = ATSVIO{static_cast<TSVIO>(evtdata)}; // wrapper for it
-    switch (event) {
-      case TS_EVENT_IMMEDIATE:
-      {
-        // writing into our VC
-        auto wvio = ATSVConn{vconnp}.ivc_writer(); // input position...
-        on_reenabled(wvio.bytes() - rvio.bytes(), cbdata); // update internal marker (rvio)
-        break;
-      }
-
-      case TS_EVENT_READ_READY:
-      {
-        // reading from an external VC
-        on_reader_blocked(evtvio.bytes() - rvio.bytes(), evtvio.get(), cbdata); // update internal marker (rvio)
-        // must reactivate
-        break;
-      }
-
-      case TS_EVENT_WRITE_READY:
-      {
-        // writing to an external VC
-        auto outvio = ATSVIO{static_cast<TSVIO>(evtdata)};
-        on_writer_blocked(rvio.bytes() - evtvio.bytes(), evtvio.get(), cbdata); // external pull/startup
-      }
-
-      case 
-    }
-  }
-
- public:
-  operator TSVConn() { return _vconn; }
+  operator TSVConn() const { return _vconn; }
   ATSVIO input() const { return TSVConnWriteVIOGet(_vconn); }
-  ATSVIO buffer() const { return TSVConnReadVIOGet(_vconn); }
 
- public:
-  virtual add_outflow(TSVConn vc) = 0;
+ protected:
+  ATSVConn &operator=(TSVConn vc) { _vconn = vc; return *this; }
 
  private:
-  ATSCont _vconn;
+  TSVConn _vconn = nullptr;
 };
 
 
 
-struct BufferVConn : public ATSCont, public ATSVConn
+// Allo writes *into* and *from* a held buffer...
+struct ATSVConnAPI : public ATSVConn
 {
-  BufferVConn() 
-     : ATSCont{ *this, &handleTSEvent, nullptr, nullptr }, ATSVConn{ static_cast<ATSCont&>(*this) }
-     { } // own event-handler
+ public:
+  // standard obj-api *must* be invalid for a bit...
+  ATSVConnAPI() = default;
+  ATSVConnAPI(const ATSVConnAPI &) = default;
+
+  virtual ~ATSVConnAPI() = 0; // no obvious dtor possible
+
+  ATSVIO buffer() const { return TSVConnReadVIOGet(operator TSVConn()); }
+  int64_t buffer_base() const { return buffer().ndone(); }
+  int64_t buffer_newest() const { return buffer().nbytes(); }
+
+  int64_t waiting(const ATSVIO &vio) const { return buffer_newest() - (vio.ndone() + buffer_base()); }
+
+ public:
+  // NOTE: auto-wakeup via VC for starting read/write 
+  virtual TSVIO add_output(TSVConn vc, int64_t len, int64_t skip) { return nullptr; }
+  virtual TSVIO add_stream(TSVConn vc)                            { return nullptr; }
+  virtual TSVIO add_tee_stream(TSVConn vc)                        { return nullptr; }
+
+
+  virtual void on_input(int64_t bytes) = 0;      // new input with data 
+  virtual void on_input_ended(int64_t bytes) = 0; // input source is stopping
+  virtual void on_reenabled(int64_t bytes) = 0;  // possibly new data
+
+  // cannot ignore queued inputs..
+  virtual void on_pre_input(TSCont wrreply) { 
+    ink_assert(!"lost critical event");
+  }
+
+  // never-blocked reads are okay by default...
+  virtual void on_read_blocked(int64_t bytes, ATSVIO vio) { 
+    ink_assert(!"lost critical event");
+  }
+  virtual void on_read_ended(int64_t bytes, ATSVIO vio) { 
+    // data now appended somewhere
+  }
+
+  // used to clone/replace a new write to this VConn
+  virtual void on_writer_chain(ATSVIO vio) {
+    ink_assert(!"lost critical event");
+  }
+
+  // never-blocked writes (with vconn as continuation) is okay...
+  virtual void on_writer_blocked(int64_t bytes, ATSVIO vio) {
+    ink_assert(!"lost critical event");
+  }
+  virtual void on_writer_ended(int64_t bytes, ATSVIO vio) {
+    // data was read from from somewhere
+  }
+
+  // unknown events are not okay
+  virtual void on_event(TSEvent evt, void *data) {
+    ink_assert(!"unknown event");
+  }
+
+ protected:
+  void handleTSEvent(int closed, TSEvent event, void *evtdata, const std::shared_ptr<void>&);
+
+  int64_t bytes_ready();
+};
+
+class NullVConn : public ATSVConnAPI
+{
+ public: 
+  NullVConn() {
+    ATSVConn::operator=(_cont);
+//    operator=(_cont.operator TSCont());
+  }
+
+ protected:
+  void on_input(int64_t bytes) override { };       // new input with data 
+  void on_input_ended(int64_t bytes) override { }; // input source is stopping
+  void on_reenabled(int64_t bytes) override { };   // possibly new data
+
+  ATSCont const _cont{ static_cast<ATSVConnAPI&>(*this), &NullVConn::handleTSEvent, std::shared_ptr<void>(), nullptr };
+};
+
+
+class BufferVConn : public ATSVConnAPI
+{
+  BufferVConn() { 
+    ATSVConn::operator=(_cont);
+//    static_cast<ATSVConn&>(*this).operator=(_cont.operator TSCont());
+  }
   virtual ~BufferVConn();
 
-  ATSCont _vconnU;
-  TSVIO_t  _outvio[2] = { nullptr, nullptr }; // outward readers of buffer
+  void add_input_skip(int64_t skip) { skip ? (_inputSkip += skip) : 0; }
+
+  // NOTE: auto-wakeup via VC for starting read/write 
+  TSVIO add_output(TSVConn vc, int64_t len, int64_t skip) override;
+  TSVIO add_stream(TSVConn vc) override;
+  TSVIO add_tee_stream(TSVConn vc) override;
+  void on_input(int64_t bytes) override;      // new input with data 
+  void on_input_ended(int64_t bytes) override; // input source is stopping
+  void on_reenabled(int64_t bytes) override;  // possibly new data
+
+  void on_pre_input(TSCont wrreply) override;
+
+  // destination of reads (queueable)
+  void on_read_blocked(int64_t bytes, ATSVIO vio) override;
+  void on_read_ended(int64_t bytes, ATSVIO vio) override;
+
+  // source of writes (queueable)
+  void on_writer_chain(ATSVIO vio) override;
+  void on_writer_blocked(int64_t bytes, ATSVIO vio) override;
+  void on_writer_ended(int64_t bytes, ATSVIO vio) override;
+  void on_event(TSEvent evt, void *data) override;
+
+  ATSCont        const _cont{ static_cast<ATSVConnAPI&>(*this), &BufferVConn::handleTSEvent, std::shared_ptr<void>(), nullptr };
+  TSIOBufferReader_t   _prevReader; // [last reader assigned to a write]
+  TSIOBufferReader_t   _currReader; // [last reader assigned to a write]
+  ATSVIO               _outvio; // needs reenable if non-null
+  ATSVIO               _teevio; // needs reenable if non-null
+
+  std::vector<TSCont>  _preInputs;
+  std::vector<TSVConn> _outputQueue;
+
+  std::atomic<int64_t> _inputSkip{0L};
+  std::atomic<int64_t> _resetWriteLen{0L};
 };
 
 
@@ -672,7 +758,7 @@ ATSCont::ATSCont(TSEvent (*funcp)(TSCont, TSEvent, void *, const T_DATA&), T_DAT
 
 // accepts TSHttpTxn handler functions
 template <class T_OBJ, typename T_DATA>
-ATSCont::ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSVConn, TSEvent, void *, const T_DATA&), T_DATA cbdata, TSCont mutexSrc)
+ATSCont::ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(int, TSEvent, void *, const T_DATA&), T_DATA cbdata, TSCont mutexSrc)
   : TSCont_t(TSVConnCreate(&ATSCont::handleTSEventCB, ( mutexSrc ? TSContMutexGet(mutexSrc) : TSMutexCreate() )))
 {
 //  TSDebug("cache_range_blocks", "[%d] [%s:%d] %s(): ctor %p cont:%p",  -1, __FILE__, __LINE__, __func__, this, get());
@@ -684,7 +770,7 @@ ATSCont::ATSCont(T_OBJ &obj, void (T_OBJ::*funcp)(TSVConn, TSEvent, void *, cons
 
   // memorize user data to forward on
   _userCB = decltype(_userCB)([&obj, funcp, vconnp, cbdata](TSEvent event, void *evtdata) {
-    (obj.*funcp)(vconnp, event, evtdata, cbdata); 
+    (obj.*funcp)(TSVConnClosedGet(vconnp), event, evtdata, cbdata); 
   });
 
   // deletion from obj's scope .. [helped by Cont-data nullptr]
