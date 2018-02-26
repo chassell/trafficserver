@@ -201,7 +201,7 @@ struct BlockWriteInfo : public std::enable_shared_from_this<BlockWriteInfo>
   TSIOBuffer_t           _buff{ TSIOBufferCreate() };
   TSIOBufferReader_t     _rdr{ TSIOBufferReaderAlloc(this->_buff.get()) };
   std::shared_ptr<void>  _writeRef{ this->_writeXform->_writeCheck };
-  TSVIO_t                _vio;
+  TSVIO                  _vio;
 
   int                    _blkid; // for debug
   int                    _txnid = ThreadTxnID::get(); // for debug
