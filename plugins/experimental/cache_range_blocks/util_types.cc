@@ -742,40 +742,6 @@ void ProxyVConn::on_event(TSEvent evt, void *edata)
   }
 }
 
-ATSXformOutVConn::Uniq_t
-ATSXformOutVConn::create_if_ready(const ATSXformCont &xform, TSIOBufferReader rdr, int64_t bytes, int64_t offset)
-{
-  if ( ! TSTransformOutputVConnGet(xform) ) {
-    DEBUG_LOG("cannot create output @offset=%ld + len=%ld",offset,bytes);
-    return ATSXformOutVConn::Uniq_t{}; 
-  }
-  auto selfU = std::make_unique<ATSXformOutVConn>(xform, rdr, bytes, offset);
-  DEBUG_LOG("create xform write vio: len=%#lx skip=%#lx", bytes, std::max(offset,0L));
-  selfU->check_refill(TS_EVENT_IMMEDIATE);
-  auto wmark = TSIOBufferWaterMarkGet(*selfU);
-  auto inbuff = TSVIOBufferGet(xform.xformInputVIO());
-  auto owmark = TSIOBufferWaterMarkGet(inbuff);
-  DEBUG_LOG("input buffering set: out:%ld in:%ld",wmark,std::max(owmark,(1L<<20)));
-  TSIOBufferWaterMarkSet(inbuff, std::max(owmark,(1L<<20)));
-  return std::move(selfU);
-}
-
-
-ATSXformOutVConn::ATSXformOutVConn(const ATSXformCont &xform, TSIOBufferReader rdr, int64_t bytes, int64_t offset)
-  : _cont(xform),
-    _skipBytes(offset),
-    _writeBytes(bytes),
-    _outVIO(nullptr),
-    _inVIO(xform.inputVIO())
-{
-  if ( ! bytes && offset && _inVIO ) {
-    bytes = TSVIONBytesGet(_inVIO) - offset;
-  }
-  auto vconn = TSTransformOutputVConnGet(xform);
-  // immediate call ...
-  const_cast<TSVIO&>(_outVIO) = TSVConnWrite(vconn, _cont, rdr, bytes);
-}
-
 template <typename T_DATA> 
 bool ATSFuture<T_DATA>::is_close_able() const
 {
@@ -805,54 +771,11 @@ int ATSFuture<T_DATA>::error() const
   return 0;
 }
 
-void
-ATSXformOutVConn::set_close_able()
-{
-  if ( _outVIO ) {
-    TSVIONBytesSet(_outVIO, TSVIONDoneGet(_outVIO)); // define it as complete
-  }
-}
-
-bool
-ATSXformOutVConn::is_close_able() const
-{
-  if ( ! _outVIO || ! TSVIONTodoGet(_outVIO) ) {
-    return true;
-  }
-
-  return false; // not ready to delete now...
-}
-
-ATSXformOutVConn::~ATSXformOutVConn()
-{
-  if ( ! _cont ) {
-    DEBUG_LOG("late destruct");
-    return;
-  }
-
-  atscppapi::ScopedContinuationLock lock(_cont);
-  if ( _outVIO ) {
-    DEBUG_LOG("write-complete @%#lx [@%#lx] invconn=%p outvconn=%p",
-             TSVIONDoneGet(_outVIO), TSVIONBytesGet(_outVIO), 
-             _cont, _cont);
-    const_cast<TSVIO&>(_outVIO) = nullptr;
-  }
-
-  const_cast<TSVConn&>(_cont) = nullptr;
-
-  DEBUG_LOG("shutdown-complete");
-}
-
 // Transform continuations
-ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, int64_t bytes, int64_t offset)
+ATSXformVConn::ATSXformVConn(atscppapi::Transaction &txn, int64_t bytes, int64_t offset)
   : BufferVConn(txn, std::shared_ptr<TSContO_t>()),
     _txn(static_cast<TSHttpTxn>(txn.getAtsHandle())),
-    _xformCB( [](TSEvent evt, TSVIO vio, int64_t left) { DEBUG_LOG("xform-event empty body handler"); return 0; }),
-    _outSkipBytes(offset),
-    _outWriteBytes(bytes),
-    _transformHook(TS_HTTP_LAST_HOOK),
-    _outBufferU(TSIOBufferCreate()),  // until output starts..
-    _outReaderU(TSIOBufferReaderAlloc(this->_outBufferU.get()))
+    _transformHook(TS_HTTP_LAST_HOOK)
 {
   ink_assert( bytes + offset >= 0LL );
 
@@ -865,73 +788,15 @@ ATSXformCont::ATSXformCont(atscppapi::Transaction &txn, int64_t bytes, int64_t o
 
   // get to method via callback
   DEBUG_LOG("output buffering begins with: %ldK",1L<<6);
-  TSIOBufferWaterMarkSet(_outBufferU.get(), 1<<16); // start to flush early 
+  TSIOBufferWaterMarkSet(data().buffer(), 1<<16); // start to flush early 
 }
 
-void
-ATSXformCont::init_enabled_transform()
-{
-  if (_transformHook == TS_HTTP_LAST_HOOK) {
-    DEBUG_LOG("transform txn disabled");
-    return;
-  }
-  DEBUG_LOG("transform txn started e#%d", _transformHook);
-  TSHttpTxnHookAdd(_txn, _transformHook, *this);
-  _transformHook = TS_HTTP_LAST_HOOK;
-}
-
-ATSXformCont::~ATSXformCont()
+ATSXformVConn::~ATSXformVConn()
 {
   DEBUG_LOG("final destruct %p",operator TSVConn());
 
   _transformHook = TS_HTTP_LAST_HOOK; // start no transform on late events...
 }
-
-// Xform "client" with skip/truncate
-BlockTeeXform::BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, int64_t xformLen, int64_t xformOffset)
-  : ATSXformCont(txn, xformLen, xformOffset),
-    _writeHook(writeHook),
-    _teeBufferP(TSIOBufferCreate()),
-    _teeReaderP(TSIOBufferReaderAlloc(this->_teeBufferP.get()))
-{
-  ink_assert( xformLen + xformOffset >= 0LL );
-
-  long maxAgg = 5 * (1<<20);
-  TSMgmtIntGet("proxy.config.cache.agg_write_backlog",&maxAgg);
-
-  // get to method via callback
-  TSIOBufferWaterMarkSet(_teeBufferP.get(), maxAgg); // avoid producing a READ_READY
-}
-
-void
-BlockTeeXform::teeReenable()
-{
-  atscppapi::ScopedContinuationLock lock(*this);
-
-  auto range = teeAvail();
-  auto teemax = TSIOBufferWaterMarkGet(_teeBufferP.get()); // without bytes copied
-
-  DEBUG_LOG("performing reenable: [%#lx-%#lx)",range.first,range.second);
-
-  _writeHook(_teeReaderP.get(), range.first, range.second, 0); // attempt new absorb of input
-  auto nrange = teeAvail(); // check new..
-
-  // still too many?
-  if ( nrange.second >= nrange.first + teemax ) {
-    DEBUG_LOG("too full for new input: [%#lx-%#lx)",nrange.first,nrange.second);
-    return; // need another reenable
-  }
-
-  auto inrange = inputAvail();
-  if ( inrange.first >= inrange.second ) { // bytes can be absorbed?
-    DEBUG_LOG("waiting on empty xform-input");
-    return; // need another reenable
-  }
-
-  DEBUG_LOG("re-submitting input: %ld", inrange.second - inrange.first );
-  TSVIOReenable(xformInputVIO());
-}
-
 
 static void sub_server_hdrs(atscppapi::Transaction &origTxn, TSIOBuffer reqBuffer, const std::string &rangeStr)
 {

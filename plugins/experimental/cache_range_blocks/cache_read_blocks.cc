@@ -40,22 +40,6 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int offset)
 {
   DEBUG_LOG("construct start: offset %d", offset);
 
-// initial handler ....
-  set_body_handler([this](TSEvent event, TSVIO vio, int64_t left) 
-  {
-    if ( event != TS_EVENT_VCONN_WRITE_READY ) {
-      DEBUG_LOG("ignoring unhandled event. e#%d %p %ld %p",event,vio,left,inputVIO());
-      return 0L;
-    }
-
-    if ( ! left && vio == outputVIO() ) {
-      this->on_empty_buffer();
-      return 0L;
-    }
-
-    TSVIOReenable(vio); // just reenable [if blocked]
-    return 0L;
-  });
   TSHttpTxnUntransformedRespCache(ctxt.atsTxn(), 0);
   TSHttpTxnTransformedRespCache(ctxt.atsTxn(), 0);
 }
@@ -68,33 +52,34 @@ BlockReadXform::~BlockReadXform()
 void
 BlockReadXform::launch_block_tests()
 {
-  if ( _cacheVIOs.empty() ) {
-    _cacheVIOs.reserve(_ctxt.indexCnt());
-  }
-
+  auto assetLen = _ctxt.assetLen();
+  auto blkSize = _ctxt.blockSize();
+  auto finalBlk = assetLen / blkSize; // round down..
   auto &keys  = _ctxt.keysInRange();
   auto nxtBlk = _ctxt.firstIndex();
   nxtBlk += _cacheVIOs.size();
 
   // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
-  auto barrierLock = std::shared_ptr<BlockReadXform>(this, [](BlockReadXform *ptr) {
-      ptr->read_block_tests(); // notify on end/fail
+  auto barrierLock = std::shared_ptr<BlockReadXform>(this, [this](void *ptr) {
+      read_block_tests(ptr); // notify on end/fail
     });
 
   int limit = 10; // block-reads spawned at one time...
  
   for ( auto i = keys.begin() + _cacheVIOs.size() ; i != keys.end() ; ++i, ++nxtBlk )
   {
+    auto ref = barrierLock;
     auto &key = *i; // examine all the not-future'd keys
-    _cacheVIOs.emplace_back();
-    // create an async read w/no vconn yet ...
-    auto contp = ATSCont::create_temp_tscont(nullptr,_cacheVIOs.back(),nullptr,barrierLock);
-    auto r = TSCacheRead(contp, key);
-    if ( TSActionDone(r) && _cacheVIOs.back().get() ) {
-      continue; // skip limit...
+    TSCacheKey keyp = key;
+    _cacheVIOs.emplace_back(std::move(ref));
+
+    if ( nxtBlk == finalBlk ) {
+      _cacheVIOs.back().add_outflow(bufferVC(),((assetLen-1) % blkSize)+1,0);
+    } else {
+      _cacheVIOs.back().add_outflow(bufferVC(),blkSize,0);
     }
 
-    // wait for maximum amount to read...
+    TSCacheRead(_cacheVIOs.back(),keyp); // begin the read and write ...
     if ( ! --limit ) {
       break;
     }
@@ -103,28 +88,27 @@ BlockReadXform::launch_block_tests()
 
 // start read of all the blocks
 void
-BlockReadXform::read_block_tests()
+BlockReadXform::read_block_tests(void *ptr)
 {
+  // simple test to see if we errored early...
+
   //
   // mutex for single choice (read or write only) ...
   //
 
+  auto minfailed = ( ptr == this ? 0 : reinterpret_cast<intptr_t>(ptr) );
   auto &keys  = _ctxt.keysInRange();
-  auto blkSize = _ctxt.blockSize();
-  auto assetLen = _ctxt.assetLen();
   auto nrdy     = 0U;
   auto skip     = 0U;
-  auto finalBlk = assetLen / blkSize; // round down..
-  auto neededLen = blkSize; 
 
   //
   // scan *all* keys and vconns to check if ready
   //
-  for( auto &&rdFut : _cacheVIOs ) {
-    auto i = &rdFut - &_cacheVIOs.front();
+  for( auto &&pxyVC : _cacheVIOs ) {
+    auto i = &pxyVC - &_cacheVIOs.front();
     auto blkInd = _ctxt.firstIndex() + i;
 
-    int error = rdFut.error();
+    int error = pxyVC.error();
     auto key = keys[i].get(); // disallow any new storage 
 
     // key was reset and result is ready ...
@@ -148,100 +132,38 @@ BlockReadXform::read_block_tests()
 
     // no new storage with this key ...
 
-    keys[i].release(); // disallow any new storage 
+    keys[i].reset(); // disallow any new storage there
 
     if ( error ) {
       ++skip; // more messy?
       DEBUG_LOG("read not usable: 1<<%ld [%d]", blkInd, error);
       continue;
-    } 
+    }
 
     // error is 0...
 
-    auto vio = rdFut.get();
-
-    auto len = TSVIONDoneGet(vio);
-
-    if ( blkInd == finalBlk ) {
-      neededLen = ((assetLen-1) % blkSize)+1;
-    }
-
-    // vconn/block is right size?
-    if ( len != neededLen ) {
-      ++skip; // allow a cache-miss to overwrite it...
-      DEBUG_LOG("read returned wrong size: 1<<%ld n=%ld", blkInd, len);
-      continue;
-    }
-
-    // successful whole read ...
+    // successful whole read for this block ...
 
     if ( skip ) {
       ++skip;
-      DEBUG_LOG("read successful after skip : 1<<%ld vio:%p + ", blkInd, vio);
+      DEBUG_LOG("read successful after skip : 1<<%ld vio:%p + ", blkInd, pxyVC.operator TSVConn());
       continue;
     }
 
     // all from the start that are successful
     ++nrdy;
-    DEBUG_LOG("read successful present : 1<<%ld vio:%p + ", blkInd, vio);
+    DEBUG_LOG("read successful present : 1<<%ld vio:%p + ", blkInd, pxyVC.operator TSVConn());
   }
 
   //
   // done scanning all keys
   //
 
-  if ( outputVIO() ) {
-    // these are live blocks?   ask to write them...
-    TSContCall(*this, TS_EVENT_VCONN_WRITE_READY, outputVIO());
-    return;
-  } 
-
-  // early only!
-
-  // early parts ready?
-  if ( nrdy > 0 ) {
-    reset_input_vio(_cacheVIOs[0].get());
-    init_enabled_transform();
+  if ( ! outputVIO() && nrdy > 0 ) {
+    _ctxt.cache_blk_hits(nrdy, _cacheVIOs.size() - nrdy);
   }
 
-  _ctxt.cache_blk_hits(nrdy, _cacheVIOs.size() - nrdy);
+  if ( ! skip && ! minfailed ) {
+    launch_block_tests(); // next set!
+  }
 }
-
-void
-BlockReadXform::on_empty_buffer()
-{
-  auto pos = bufferAvail();
-  auto opos = outputAvail();
-  DEBUG_LOG("buffer low: @%#lx-%#lx", pos.first, pos.second);
-
-  // more required from input stream... 
-  if ( TSVIONTodoGet(inputVIO()) ) {
-    TSVIOReenable(inputVIO()); // just reenable [if blocked]
-    return;
-  }
-
-  if ( ! TSVIONTodoGet(outputVIO()) ) {
-    return; // extra?
-  }
-
-  // input read/write is at completion?  start new one...
-  auto nxt = (pos.second + _blkSize-1)/_blkSize; // next *full* block..
-  if ( nxt >= static_cast<int>(_ctxt.keysInRange().size()) ) {
-    DEBUG_LOG("empty and %#lx-%#lx incomplete.", opos.second, outputLen());
-    return; // no reads left to start!
-  }
-
-  if ( nxt >= static_cast<int>(_cacheVIOs.size()) ) {
-    ink_assert(!"time for a recurse");
-    return;
-  }
-
-  auto vio = _cacheVIOs[nxt].get();
-  if ( vio ) {
-    reset_input_vio(vio);
-    return;
-  }
-
-  launch_block_tests();
-}
-

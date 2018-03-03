@@ -31,6 +31,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <deque>
 #include <future>
 #include <atomic>
 
@@ -179,7 +180,8 @@ private:
 };
 
 /////////////////////////////////////////////////
-struct BlockWriteInfo : public std::enable_shared_from_this<BlockWriteInfo>
+struct BlockWriteInfo : public std::enable_shared_from_this<BlockWriteInfo>,
+                        public ProxyVConn
 {
   using Ptr_t = std::shared_ptr<BlockWriteInfo>;
 
@@ -189,20 +191,15 @@ struct BlockWriteInfo : public std::enable_shared_from_this<BlockWriteInfo>
 
   long ref_count() const { return this->_writeXform.use_count(); } 
 
+  // for final event/VConn
   static TSEvent handleBlockWriteCB(TSCont c, TSEvent evt, void *p, const std::shared_ptr<BlockWriteInfo> &ptr) {
     return ptr->handleBlockWrite(c,evt,p);
   }
 
-  TSEvent handleBlockWrite(TSCont, TSEvent, void *);
-
   BlockStoreXform::Ptr_t _writeXform;
-  int                    _ind;
-  ATSCacheKey            _key;
-  TSIOBuffer_t           _buff{ TSIOBufferCreate() };
-  TSIOBufferReader_t     _rdr{ TSIOBufferReaderAlloc(this->_buff.get()) };
   std::shared_ptr<void>  _writeRef{ this->_writeXform->_writeCheck };
-  TSVIO                  _vio;
-
+  ATSCacheKey            _key;
+  int                    _ind;
   int                    _blkid; // for debug
   int                    _txnid = ThreadTxnID::get(); // for debug
 };
@@ -224,14 +221,14 @@ public:
 
   void launch_block_tests();
 private:
-  void read_block_tests();
+  void read_block_tests(void *ptr);
 
   void launch_block_reads();
   void on_empty_buffer();
 
   BlockSetAccess           &_ctxt;
   const int64_t             _blkSize;   // local copy..
-  std::vector<ATSVIOFuture> _cacheVIOs; // indexed as the keys
+  std::deque<ProxyVConn>    _cacheVIOs; // indexed as the keys
 };
 
 //}

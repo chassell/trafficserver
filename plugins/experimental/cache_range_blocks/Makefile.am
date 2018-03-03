@@ -26,5 +26,7 @@ cache_range_blocks_la_SOURCES = \
   cache_range_blocks.cc \
   cache_store_blocks.cc \
   cache_read_blocks.cc \
-  cache_range_transforms.cc \
   util_types.cc
+
+
+ ######### cache_range_transforms.cc \

@@ -472,6 +472,7 @@ struct ATSVConn
   operator TSVConn() const { return _vconn; }
   ATSVIO pullvio() const { return _vconn ? TSVConnWriteVIOGet(_vconn) : nullptr; }
   ATSVIO pushvio() const { return _vconn ? TSVConnReadVIOGet(_vconn) : nullptr; }
+  ATSVConn xformvc() const { return _vconn ? TSTransformOutputVConnGet(_vconn) : nullptr; }
 
  protected:
   ATSVConn &operator=(TSVConn vc) { _vconn = vc; return *this; }
@@ -695,155 +696,41 @@ class ProxyVConn : public BufferVConn
   std::function<TSAction(TSCont cont)> _retry;
 };
 
-struct ATSXformOutVConn
-{
-  friend ATSXformCont;
-  using Uniq_t = std::unique_ptr<ATSXformOutVConn>;
-
-  static Uniq_t create_if_ready(const ATSXformCont &xform, TSIOBufferReader rdr, int64_t len, int64_t offset);
-
-  ATSXformOutVConn(const ATSXformCont &xform, TSIOBufferReader rdr, int64_t len, int64_t offset);
-
-  operator TSVIO() const { return _outVIO; }
-  operator TSIOBuffer() const { return TSVIOBufferGet(_outVIO); }
-  operator TSIOBufferReader() const { return TSVIOReaderGet(_outVIO); }
-
-  std::pair<int64_t,int64_t> outputAvail() const { return vio_range_avail(_outVIO); }
-  std::pair<int64_t,int64_t> inputAvail() const { return vio_range_avail(_inVIO); }
-
-  ~ATSXformOutVConn();
-
-  void set_close_able(); // two phases: pre-VIO close and post-VIO close
-  bool is_close_able() const; // two phases: pre-VIO close and post-VIO close
-  bool check_refill(TSEvent event);
-
-private:
-  ATSVConn     _outputVC;
-  TSCont const _cont;
-  int64_t const _skipBytes;
-  int64_t const _writeBytes;
-
-  TSVIO const _outVIO;
-
-  TSVIO _inVIO = nullptr;
-
-  TSEvent _outVIOWaiting = TS_EVENT_NONE;
-  uint64_t _outVIOWaitingTS = 0UL;
-
-  ATSXformOutVConn() = delete;
-  ATSXformOutVConn(ATSXformOutVConn&&) = delete;
-  ATSXformOutVConn(const ATSXformOutVConn&) = delete;
-};
-
-
 // object to request write/read into cache
-struct ATSXformCont : private BufferVConn {
-  using XformCBFxn_t = int64_t(TSEvent, TSVIO, int64_t);
-  using XformCB_t = std::function<int64_t(TSEvent, TSVIO, int64_t)>;
+class ATSXformVConn : private BufferVConn 
+{
   template <class T, typename... Args> friend std::unique_ptr<T> std::make_unique(Args &&... args);
 
 public:
-  ATSXformCont() = delete; // nullptr by default
-  ATSXformCont(ATSXformCont &&) = delete;
-  ATSXformCont(atscppapi::Transaction &txn, int64_t bytes, int64_t offset = 0);
+  ATSXformVConn() = delete; // nullptr by default
+  ATSXformVConn(ATSXformCont &&) = delete;
+  ATSXformVConn(atscppapi::Transaction &txn, int64_t bytes, int64_t offset = 0);
 
   // external-only body
-  virtual ~ATSXformCont();
+  virtual ~ATSXformVConn();
 
 public:
-  operator TSVConn() const { return this->operator TSVConn(); }
+  // detect output source... to pick...
+  ATSVIO outputVIO() const { return xformvc().pullvio(); }
+  const ATSVConn &inputVC() const { return outputVIO().reader() == _bufferVC.data() ? _bufferVC : *this; }
 
-  ATSVIO xformInputVIO() const { return input(); }
-  ATSVIO inputVIO() const { return _bufferVC.input().get() ? _bufferVC.input() : input(); }
   ATSVConn bufferVC() const { return _bufferVC; }
-  ATSVIO outputVIO() const { return _outVConnU ? static_cast<TSVIO>(*_outVConnU) : nullptr; }
+  ATSVIO xformInputVIO() const { return input(); }
 
-  std::pair<int64_t,int64_t> xformInputAvail() const { return vio_range_avail(xformInputVIO()); }
-  std::pair<int64_t,int64_t> inputAvail() const { return vio_range_avail(inputVIO()); }
-  std::pair<int64_t,int64_t> outputAvail() const { return vio_range_avail(outputVIO()); }
-  std::pair<int64_t,int64_t> bufferAvail() const 
-    {
-      int64_t ndone = TSVIONDoneGet(inputVIO());
-      if ( ! outputVIO() ) {
-        return std::make_pair( ndone, ndone );
-      }
-      auto r = vio_range_avail(outputVIO());
-      r.first += _outSkipBytes; // offset + or -
-      r.second += _outSkipBytes; // offset + or -
-      return std::move(r);
-    }
-
-  void reset_output_length(int64_t len) { _outWriteBytes = len; }
-  void init_enabled_transform();
+  void reset_output_length(int64_t len) { xformvc().pullvio().nbytes(len); }
 
 private:
   int check_completions(TSEvent event);
+  int check_transform_commit(); // detect current hook and begin transform when enabled
 
-  int xform_input_event();  // for pure input events
-  int xform_input_completion(TSEvent event);  // checks input events
-  const char *xform_input_completion_desc(int error);
-
-  int handleXformTSEvent(TSCont cont, TSEvent event, void *data);
-
-  int handleXformBufferEvent(TSEvent event, TSVIO evio);
-  int handleXformInputEvent(TSEvent event, TSVIO evio);
-  int handleXformOutputEvent(TSEvent event);
-
-  static int handleXformTSEventCB(TSCont cont, TSEvent event, void *data);
 protected:
   int _txnID = ThreadTxnID::get();
 
 private:
-  TSHttpTxn _txn;
-  XformCB_t _xformCB;
-  int64_t _outSkipBytes;
-  int64_t _outWriteBytes;
-
-
+  TSHttpTxn    _txn;
   TSHttpHookID _transformHook; // needs init.. but may be reset!
-
-  int _inLastError = 0;
-  TSVIO _inVIO = nullptr;
-  TSEvent _inVIOWaiting = TS_EVENT_NONE;
-
-  BufferVConn              _bufferVC;
-  ATSXformOutVConn::Uniq_t _outVConnU;
-  TSIOBuffer_t             _outBufferU;
-  TSIOBufferReader_t       _outReaderU;
-
-  // for if WRITE_READY when _outVIO ran out...
-  TSEvent _outVIOWaiting = TS_EVENT_NONE;
+  BufferVConn  _bufferVC; // non-transform-fed buffer
 };
-
-
-
-class BlockTeeXform : public ATSXformCont
-{
-  using HookType = std::function<void(TSIOBufferReader, int64_t inpos, int64_t newlen, int64_t added)>;
-
-public:
-  BlockTeeXform(atscppapi::Transaction &txn, HookType &&writeHook, int64_t xformLen, int64_t xformOffset);
-  virtual ~BlockTeeXform() = default;
-
-  TSIOBuffer teeBuffer() const { return _teeBufferP.get(); }
-  TSIOBufferReader teeReader() const { return _teeReaderP.get(); }
-
-  std::pair<int64_t,int64_t> teeAvail() const { 
-    int64_t avail = TSIOBufferReaderAvail(_teeReaderP.get());
-    return std::make_pair( _lastInputNDone - avail, _lastInputNDone );
-  }
-
-  void teeReenable();
-
-private:
-  int64_t inputEvent(TSEvent event, TSVIO vio, int64_t left);
-
-  int64_t _lastInputNDone = 0;
-  HookType _writeHook;
-  TSIOBuffer_t _teeBufferP;
-  TSIOBufferReader_t _teeReaderP;
-};
-
 
 // accepts TSHttpTxn handler functions
 template <class T_OBJ, typename T_DATA>

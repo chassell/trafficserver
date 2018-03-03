@@ -274,15 +274,9 @@ BlockStoreXform::next_valid_vconn(int64_t donepos, int64_t readypos, int64_t &sk
 // called from writeHook
 //      -- after outputBuffer() was filled
 void
-BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64_t oreadypos, int64_t added)
+BlockStoreXform::handleBodyRead(int64_t odonepos, int64_t oreadypos)
 {
   ThreadTxnID txnid{_txnid};
-
-  // input has closed down?
-  if (!teerdr) {
-    DEBUG_LOG("store **** final call");
-    return;
-  }
 
   auto teeRange = std::make_pair(odonepos,oreadypos);
   auto &donepos = teeRange.first;
@@ -325,7 +319,7 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
 
     // check any unneeded bytes before next block
     int64_t skipDist = 0;
-    auto currKey = next_valid_vconn(donepos, readypos, skipDist);
+    next_valid_vconn(donepos, readypos, skipDist);
 
     if (skipDist > 0) {
       newBlockEvent = TS_EVENT_NONE;  // no wakeup needed just yet
@@ -351,19 +345,18 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
     // going to give ownership of current teereader / teebuffer
     ++wrcnt; // add write count
     ATSCacheKey takeKey{ _keysToWrite[blk].release() }; // clear the key...
-    auto callDatap = std::make_shared<BlockWriteInfo>(*this, takeKey, blk); // takes key
-    auto &callData = *callDatap;
-
-    auto n = TSIOBufferCopy(callData._buff.get(), teerdr, wrlen, 0); // split off data for storage
-
-    ink_assert( wrlen == n );
-
-    TSIOBufferReaderConsume(teerdr, wrlen);
+    auto blockWritePtr = std::make_shared<BlockWriteInfo>(*this, takeKey, blk); // takes key
+    auto &blkWrite = *blockWritePtr;
 
     // direct new to allow self-delete
     auto blockCont = (new ATSCont(&BlockWriteInfo::handleBlockWriteCB, 
-                                   callDatap->shared_from_this()))
+                                   blkWrite.shared_from_this()))
                  ->get(); // get the TSCont
+
+    // activate the CacheVC with reenable
+    TSVConnWrite(blkWrite, blockCont, TSIOBufferReaderClone(teerdr), wrlen);
+
+    TSIOBufferReaderConsume(teerdr, wrlen);
 
     // use new tee buffers with remainder of output
 
@@ -376,13 +369,12 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
       _blockVIOUntil.compare_exchange_strong(prevBlockEvent,newBlockEvent); // need un-blocking?
     } 
 
-    auto r = TSCacheWrite(blockCont, currKey); // find room to store each key...
-
     // Did write fail totally?
     auto desc = "";
-    if ( ! TSActionDone(r) ) {
-      desc = "delayed";
-    } else if ( callDatap.use_count() > 1 ) {
+//    if ( ! TSActionDone(r) ) {
+//      desc = "delayed";
+//    } else 
+    if ( callDatap.use_count() > 1 ) {
       newBlockEvent = prevBlockEvent; // no wakeup
       desc = "started"; // didn't get WRITE_COMPLETE yet
     } else {
@@ -424,6 +416,7 @@ BlockStoreXform::handleBodyRead(TSIOBufferReader teerdr, int64_t odonepos, int64
 }
 
 BlockWriteInfo::BlockWriteInfo(BlockStoreXform &store, ATSCacheKey &key, int blk) :
+      ProxyVConn{ [this](TSCont cont) -> TSAction { return TSCacheWrite(cont,this->_key); } },
       _writeXform{store.shared_from_this()}, 
       _ind(blk),
       _key(std::move(key)),
@@ -431,7 +424,7 @@ BlockWriteInfo::BlockWriteInfo(BlockStoreXform &store, ATSCacheKey &key, int blk
 {
   DEBUG_LOG("ctor 1<<%d xform active:%ld nwrites:%ld",  
       _blkid, _writeXform.use_count(), _writeXform->write_count());
-  TSIOBufferWaterMarkSet(_buff.get(), (1<<20)); // single write only...
+  TSIOBufferWaterMarkSet(data(), (1<<20)); // single write only...
 }
 
 BlockWriteInfo::~BlockWriteInfo() {
@@ -446,122 +439,55 @@ BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
   ThreadTxnID txnid(_txnid);
   auto mutex = TSContMutexGet(cont);
 
-  if (!edata) {
-    DEBUG_LOG("empty edata event e#%d", event);
-    return TS_EVENT_ERROR; // done
+  // *reset* value (destruct on old value!)
+  BlockStoreXform &store = *_writeXform; // doesn't change
+  auto wakeupCont = store._wakeupCont.get();
+
+  _writeRef.reset(); // remove flag of write
+
+  int wrcnt = store.write_count(); // there can be only one zero!
+
+  // attempt to close VConn here
+  auto &flagEvt = _writeXform->_blockVIOUntil;
+
+  // don't try but note 
+  if ( wrcnt && flagEvt == TS_EVENT_CACHE_CLOSE ) {
+    DEBUG_LOG("completed non-final store to 1<<%d nwrites:%d",_blkid,wrcnt);
+    return TS_EVENT_NONE;
   }
 
-  switch (event) {
-    case TS_EVENT_CACHE_OPEN_WRITE_FAILED:
-    {
-      auto verr = -reinterpret_cast<intptr_t>(edata);
-      atscppapi::ScopedContinuationLock lock(cont);
-
-      // async result was not found in time..
-//      DEBUG_LOG("scheduled reopen write check [%s] to 1<<%d nwrites:%ld", 
-      DEBUG_LOG("scheduled reopen write check [%ld] to 1<<%d nwrites:%ld", 
-//            InkStrerror(verr), 
-            verr, 
-            _blkid, _writeXform->write_count());
-      TSContSchedule(cont, 30, TS_THREAD_POOL_TASK);
-      break;
-    }
-
-    case TS_EVENT_TIMEOUT:
-    case TS_EVENT_IMMEDIATE:
-    {
-
-      DEBUG_LOG("restarted open write with 1<<%d nwrites:%ld",_blkid, _writeXform->write_count());
-      auto r = TSCacheWrite(cont, _key.get()); // find room to store each key...
-      if ( ! TSActionDone(r) ) {
-        DEBUG_LOG("waiting on open write with 1<<%d nwrites:%ld",_blkid, _writeXform->write_count());
-      }
-      break;
-    }
-
-    case TS_EVENT_CACHE_OPEN_WRITE:
-    {
-      TSVConn vconn = static_cast<TSVConn>(edata);
-      auto wrlen = std::min(TSIOBufferReaderAvail(_rdr.get()),(1L<<20));
-      DEBUG_LOG("completed open write with 1<<%d nwrites:%ld len:%ld",_blkid, _writeXform->write_count(), wrlen);
-      _vio.reset(TSVConnWrite(vconn, cont, _rdr.get(), wrlen)); // copy older buffer bytes out
-      _rdr.release(); // owned
-      _buff.release(); // owned
-      break;
-    }
-
-    case TS_EVENT_VCONN_WRITE_READY:
-    {
-      TSVIO vio = static_cast<TSVIO>(edata);
-      // didn't detect enough bytes in buffer to complete?
-      TSIOBufferReader writeRdr = TSVIOReaderGet(vio);
-      if (TSIOBufferReaderAvail(writeRdr)) {
-        DEBUG_LOG("cache-write 1<<%d flush e#%d -> %ld? %ld?", _blkid, event, TSVIONDoneGet(vio), TSVIONBytesGet(vio));
-        TSVIOReenable(vio);
-        break; // surprising!
-      }
-      DEBUG_LOG("cache-write 1<<%d flush empty e#%d -> %ld? %ld?", _blkid, event, TSVIONDoneGet(vio), TSVIONBytesGet(vio));
-      break;
-    }
-
-    case TS_EVENT_VCONN_WRITE_COMPLETE:
-    {
-      // *reset* value (destruct on old value!)
-      BlockStoreXform &store = *_writeXform; // doesn't change
-      auto wakeupCont = store._wakeupCont.get();
-
-      _writeRef.reset(); // remove flag of write
-
-      int wrcnt = store.write_count(); // there can be only one zero!
-
-      // attempt to close VConn here
-      auto &flagEvt = _writeXform->_blockVIOUntil;
-
-      // don't try but note 
-      if ( wrcnt && flagEvt == TS_EVENT_CACHE_CLOSE ) {
-        DEBUG_LOG("completed non-final store to 1<<%d nwrites:%d",_blkid,wrcnt);
-        return TS_EVENT_NONE;
-      }
-
-      if ( wrcnt ) {
-        DEBUG_LOG("completed store to 1<<%d nwrites:%d",_blkid,wrcnt);
-        return TS_EVENT_NONE;
-      }
-      
-      // ask to change CACHE_CLOSE to NONE .. or change only if CONTINUE (never) ...
-      auto oflag = TS_EVENT_CACHE_CLOSE; // flag 
-      flagEvt.compare_exchange_strong(oflag,TS_EVENT_VCONN_WRITE_READY); // prevent end ... but claim wakeup
-
-      // did not try to grab... but would have succeeded
-       
-      if ( oflag == TS_EVENT_NONE ) {
-        DEBUG_LOG("completed final store to 1<<%d nwrites:0",_blkid);
-        return TS_EVENT_NONE;
-      }
-
-      if ( oflag != TS_EVENT_CACHE_CLOSE ) {
-        DEBUG_LOG("completed final store to 1<<%d nwrites:0 (flag:%d)",_blkid,oflag);
-        return TS_EVENT_NONE;
-      }
-
-      // wakeup is claimed by this call ...
-
-      // (avoid deadlock with my own mutex!!)
-      if ( TSMutexLockTry(mutex) ) {
-        TSMutexUnlock(mutex); 
-        TSMutexUnlock(mutex); // unlock enclosing (or just a noop)
-      }
-
-      atscppapi::ScopedContinuationLock lock(wakeupCont);
-      DEBUG_LOG("completed store with wakeup to 1<<%d nwrites:%d",_blkid,wrcnt);
-      TSContSchedule(wakeupCont, 0, TS_THREAD_POOL_TASK);
-
-      return TS_EVENT_NONE; // call dtor of ATSCont
-    }
-
-    default:
-      DEBUG_LOG("unknown event: e#%d", event);
-      break;
+  if ( wrcnt ) {
+    DEBUG_LOG("completed store to 1<<%d nwrites:%d",_blkid,wrcnt);
+    return TS_EVENT_NONE;
   }
-  return TS_EVENT_CONTINUE; // re-use ATSCont with data block
+  
+  // ask to change CACHE_CLOSE to NONE .. or change only if CONTINUE (never) ...
+  auto oflag = TS_EVENT_CACHE_CLOSE; // flag 
+  flagEvt.compare_exchange_strong(oflag,TS_EVENT_VCONN_WRITE_READY); // prevent end ... but claim wakeup
+
+  // did not try to grab... but would have succeeded
+   
+  if ( oflag == TS_EVENT_NONE ) {
+    DEBUG_LOG("completed final store to 1<<%d nwrites:0",_blkid);
+    return TS_EVENT_NONE;
+  }
+
+  if ( oflag != TS_EVENT_CACHE_CLOSE ) {
+    DEBUG_LOG("completed final store to 1<<%d nwrites:0 (flag:%d)",_blkid,oflag);
+    return TS_EVENT_NONE;
+  }
+
+  // wakeup is claimed by this call ...
+
+  // (avoid deadlock with my own mutex!!)
+  if ( TSMutexLockTry(mutex) ) {
+    TSMutexUnlock(mutex); 
+    TSMutexUnlock(mutex); // unlock enclosing (or just a noop)
+  }
+
+  atscppapi::ScopedContinuationLock lock(wakeupCont);
+  DEBUG_LOG("completed store with wakeup to 1<<%d nwrites:%d",_blkid,wrcnt);
+  TSContSchedule(wakeupCont, 0, TS_THREAD_POOL_TASK);
+
+  return TS_EVENT_NONE; // call dtor of ATSCont
 }
