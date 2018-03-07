@@ -362,7 +362,8 @@ void BufferVConn::init()
 
   if ( ! data() && ! error() ) {
     TSVConnRead(*this,*this, TSIOBufferCreate(), 0); // symbolic read from "output-buffer" ...
-    _baseReader.reset( TSIOBufferReaderAlloc(data()) ); // mark empty buffer start
+    _bufferBaseReaderU.reset( TSIOBufferReaderAlloc(data()) ); // mark empty buffer start
+    _baseReader = _bufferBaseReaderU.get();
   }
 }
 
@@ -423,16 +424,17 @@ TSVIO BufferVConn::add_outflow_any(TSVConn dstvc, int64_t len, int64_t skip, ATS
 
   // no need to wait on input or queue...
 
-  TSIOBufferReaderConsume(_baseReader.get(),skip); // take out skip amt ...
+  TSIOBufferReaderConsume(_baseReader,skip); // take out skip amt ...
   data().drain(skip); // forward by N
 
-  _currReader.reset( TSIOBufferReaderClone(_baseReader.get()) );
+  _bufferAuxReaderU.reset( TSIOBufferReaderClone(_baseReader) );
+  _currReader = _bufferAuxReaderU.get();
 
   // compute next pos after write 
   if ( len > (INT64_MAX>>1) ) {
     _nextBasePos = -1L; // expected length is unknown...
   } else {
-    _nextBasePos = data_reader_pos(_currReader.get()) + len; // next pos expected...
+    _nextBasePos = data_reader_pos(_currReader) + len; // next pos expected...
   }
 
   // reader and nextPos ready...
@@ -448,7 +450,7 @@ TSVIO BufferVConn::add_outflow_any(TSVConn dstvc, int64_t len, int64_t skip, ATS
     return nullptr; // (correct VC at least)
   }
 
-  TSVConnWrite(dstvc, *this, _currReader.get(), len);
+  TSVConnWrite(dstvc, *this, _currReader, len);
 
   // no bytes left to full point? (or empty?)
   _outvio = data().ntodo() ? ATSVIO() : dstVIO; // need reenable..
@@ -526,7 +528,7 @@ void BufferVConn::on_pre_input(TSCont wrreply, int64_t len) // new input with da
   }
 
   // make a new input() vio.. [maybe extra immed event]
-  TSVConnWrite(*this, wrreply, g_emptyReader.get(), len);
+  TSVConnWrite(*this, wrreply, g_emptyReader, len);
 
   // TODO: instant-startup?
   if ( ! len ) { 
@@ -555,7 +557,7 @@ void BufferVConn::on_read_blocked(int64_t added, ATSVIO vio)
     added = vio.nbytes() - data().nbytes();
     data().fill(added); // reset end of bytes vio
 
-    auto rdr = _baseReader.get();
+    auto rdr = _baseReader;
     auto skip = _nextBasePos - data_reader_pos(rdr);
 
     TSIOBufferReaderConsume(rdr, skip); // reader is now shaped up..
@@ -597,7 +599,7 @@ void BufferVConn::on_writer_chain(ATSVIO vio)
 
   // replace with a real one?
   if ( _outvio == vio && _currReader ) {
-    TSVConnWrite(vconn, *this, _currReader.get(), len);
+    TSVConnWrite(vconn, *this, _currReader, len);
     return; // replaced with *real* write finally...
   }
 
@@ -660,22 +662,25 @@ void BufferVConn::on_writer_ended(ATSVIO vio)
   auto rdr = vio.reader();
 
   if ( ! rdr && _currReader ) { // if pre-closed...
-    rdr = _currReader.get();
+    rdr = _currReader;
   }
 
   atscppapi::ScopedContinuationLock lock(*this); // (probably redundant)
 
+  uint64_t newbase = 0LL;
+
+  if ( rdr == _bufferAuxReaderU.get() ) {
+    _bufferBaseReaderU.swap(_bufferAuxReaderU);
+  } else ( rdr && rdr != _bufferBaseReaderU.get() ) {
+    _bufferBaseReaderU.reset(rdr);
+  }
+
   // prepare for a sequential next write...
-  if ( rdr ) {
-    auto newbase = data_reader_pos(rdr);
-    if ( data_base() < newbase ) {
-      _baseReader.reset(rdr); // shift into new reader (vio closed now)
-      data().ndone(newbase);
-    }
-    // only remove _currReader if its identical..
-    if ( _currReader.get() == _baseReader.get() ) {
-      _currReader.release();
-    }
+  if ( rdr && (newbase=data_reader_pos(rdr)) > data_base() ) {
+    _baseReader = rdr;  // not new position
+    _bufferAuxReaderU.reset(); // clear current position
+    _currReader = nullptr;
+    data().ndone(newbase);
   }
 
   if ( ! _outputQueue.empty() ) {
@@ -773,7 +778,7 @@ int ATSFuture<T_DATA>::error() const
 
 // Transform continuations
 ATSXformVConn::ATSXformVConn(atscppapi::Transaction &txn, int64_t bytes, int64_t offset)
-  : BufferVConn(txn, std::shared_ptr<TSContO_t>()),
+  : TransactionPlugin(txn), BufferVConn(txn, std::shared_ptr<TSContO_t>()),
     _txn(static_cast<TSHttpTxn>(txn.getAtsHandle())),
     _transformHook(TS_HTTP_LAST_HOOK)
 {

@@ -21,6 +21,7 @@
 
 #include <atscppapi/Url.h>
 #include <atscppapi/Transaction.h>
+#include <atscppapi/TransactionPlugin.h>
 #include <atscppapi/Mutex.h>
 
 #include <memory>
@@ -470,9 +471,12 @@ struct ATSVConn
 
   operator bool() const { return pullvio().ready() || pushvio().ready(); }
   operator TSVConn() const { return _vconn; }
+  bool ivc_ready() const { return pullvio() && ! TSVConnClosedGet(_vconn); } // [avoid assert!]
+
   ATSVIO pullvio() const { return _vconn ? TSVConnWriteVIOGet(_vconn) : nullptr; }
   ATSVIO pushvio() const { return _vconn ? TSVConnReadVIOGet(_vconn) : nullptr; }
-  ATSVConn xformvc() const { return _vconn ? TSTransformOutputVConnGet(_vconn) : nullptr; }
+
+  ATSVConn xform_next() const { return _vconn ? TSTransformOutputVConnGet(_vconn) : nullptr; }
 
  protected:
   ATSVConn &operator=(TSVConn vc) { _vconn = vc; return *this; }
@@ -649,8 +653,8 @@ class BufferVConn : public ATSVConnAPI
     }
     _outputQueue.clear();
 
-    _baseReader.release(); // will destroy buff
-    _currReader.release(); // will destroy buff
+    _bufferBaseReader.release(); // will destroy buff
+    _bufferAuxReader.release(); // will destroy buff
     data().free(); 
     _nextBasePos = e; 
   }
@@ -668,8 +672,11 @@ class BufferVConn : public ATSVConnAPI
   // default constructor
   ATSCont              _cont{ static_cast<ATSVConnAPI&>(*this), &BufferVConn::handleVCEvent, std::shared_ptr<void>(), nullptr };
 
-  TSIOBufferReader_t   _baseReader; // always-available reader clone
-  TSIOBufferReader_t   _currReader; // latest live reader clone (or null).. for outvio
+  TSIOBufferReader_t     _bufferBaseReaderU; // used readers (clears prev. clones)
+  TSIOBufferReader_t     _bufferAuxReaderU;  // used readers (clears prev. clones)
+
+  TSIOBufferReader     _baseReader = nullptr; // always-available reader clone
+  TSIOBufferReader     _currReader = nullptr; // latest live reader clone (or null).. for outvio
   std::atomic<int64_t> _nextBasePos{0L};
 
   std::vector<std::pair<TSVConn,int64_t>> _preInputs; // a WRITE_READY event to start input ...
@@ -697,39 +704,103 @@ class ProxyVConn : public BufferVConn
 };
 
 // object to request write/read into cache
-class ATSXformVConn : private BufferVConn 
+class ATSXformVConn : public atscppapi::TransactionPlugin,
+                      private BufferVConn 
 {
   template <class T, typename... Args> friend std::unique_ptr<T> std::make_unique(Args &&... args);
 
-public:
-  ATSXformVConn() = delete; // nullptr by default
-  ATSXformVConn(ATSXformCont &&) = delete;
+ public:
   ATSXformVConn(atscppapi::Transaction &txn, int64_t bytes, int64_t offset = 0);
 
   // external-only body
   virtual ~ATSXformVConn();
 
-public:
-  // detect output source... to pick...
-  ATSVIO outputVIO() const { return xformvc().pullvio(); }
-  const ATSVConn &inputVC() const { return outputVIO().reader() == _bufferVC.data() ? _bufferVC : *this; }
+ public:
+  // TransactionPlugin::registerHook(HOOK_SEND_REQUEST_HEADERS);
+  // TransactionPlugin::registerHook(HOOK_READ_CACHE_HEADERS);
 
-  ATSVConn bufferVC() const { return _bufferVC; }
-  ATSVIO xformInputVIO() const { return input(); }
+  bool disable() {
+    // if transform started ... input() should be ready()
+    if ( BufferVConn::ivc_ready() && _stagingRawVCRef != nullptr && ! input().ready() && ! _stagingRawVIO.ready() ) {
+      _stagingRawVCRef = ATSVConn{}; // set to nullptr
+      TSVConnClose(this->operator TSVConn()); // close input [disallows hook add]
+      return true;
+    }
+    return false;
+  }
 
-  void reset_output_length(int64_t len) { xformvc().pullvio().nbytes(len); }
+  bool tee_output() {
+    // no transform or output is already in tee setup?
+    if ( BufferVConn::ivc_ready() && _stagingRawVCRef && ! _stagingRawVIO.ready() ) {
+      _stagingRawVCRef = ATSVConn{}; // set to nullptr
+      return true;
+    }
+    return false;
+  }
 
-private:
-  int check_completions(TSEvent event);
-  int check_transform_commit(); // detect current hook and begin transform when enabled
+  bool buffer_output() {
+    // internal buffer set to output.
+    if ( BufferVConn::ivc_ready() && _stagingRawVCRef != _bufferVC && ! _stagingRawVIO.ready() ) {
+      _stagingRawVCRef = ATSVConn{_bufferVC}; // set to bufferVC
+      return true;
+    }
+    return false;
+  }
 
-protected:
+  bool input_output() {
+    if ( BufferVConn::ivc_ready() && _stagingRawVCRef != this->operator TSVConn() && ! _stagingRawVIO.ready() ) {
+      _stagingRawVCRef = *this; // set to bufferVC
+      return true;
+    }
+    return false;
+  }
+
+ protected:
+  // (default: start output-vc write if none made)
+  virtual void on_pre_output() { } // empty hook 
+  virtual void on_output_ready() { } // empty hooks
+  virtual void on_input_ready() { } // empty hooks
+
+  // any CacheLookup hooks get chance to cancel transform...
+  void handleReadCacheHeaders(atscppapi::Transaction &txn) override
+  {
+    if ( BufferVConn::ivc_ready() ) {
+      TSHttpHookAdd(TS_HTTP_RESPONSE_TRANSFORM_HOOK, BufferVConn::operator TSVConn()); // activated on cached data
+    }
+    txn.resume();
+  }
+
+  // other ReadResponse hooks get chance to cancel transform...
+  void handleSendRequestHeaders(atscppapi::Transaction &txn) override
+  {
+    TransactionPlugin::registerHook(HOOK_READ_REQUEST_HEADERS);
+    txn.resume();
+  }
+
+  void handleReadResponseHeaders(atscppapi::Transaction &txn) override
+  { 
+    if ( BufferVConn::ivc_ready() && _outputVC.ivc_ready() ) { 
+      TSHttpHookAdd(TS_HTTP_RESPONSE_TRANSFORM_HOOK, BufferVConn::operator TSVConn()); // activated on cached data
+    } else if ( BufferVConn::ivc_ready() ) {
+      // output proxy was closed?
+      TSHttpHookAdd(TS_HTTP_RESPONSE_CLIENT_HOOK, BufferVConn::operator TSVConn()); // activated on cached data
+    } else {
+      // input proxy was closed!
+    }
+
+    txn.resume();
+  }
+
+ protected:
   int _txnID = ThreadTxnID::get();
 
-private:
-  TSHttpTxn    _txn;
-  TSHttpHookID _transformHook; // needs init.. but may be reset!
+ private:
   BufferVConn  _bufferVC; // non-transform-fed buffer
+  ATSVConn     _stagingRawVCRef{ this->operator TSVConn() };
+  ATSVIO       _stagingRawVIO; // cannot recover without weirdness..
+
+  ATSXformVConn() = delete; // nullptr by default
+  ATSXformVConn(ATSXformCont &&) = delete;
 };
 
 // accepts TSHttpTxn handler functions
