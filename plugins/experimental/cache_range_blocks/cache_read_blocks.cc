@@ -25,16 +25,18 @@
 #include <chrono>
 #include <algorithm>
 
+#define MAX_READ_GROUP 10
+
 using namespace atscppapi;
 
-BlockReadXform::Ptr_t 
-BlockReadXform::try_cache_hit(BlockSetAccess &ctxt, int64_t offset)
+BlockReadTform::use_p
+BlockReadTform::try_cache_hit(BlockSetAccess &ctxt, Transaction &txn, int64_t offset)
 {
-  return std::make_shared<BlockReadXform>(ctxt, offset); // skip this many
+  return std::make_shared<BlockReadTform>(ctxt, txn, offset); // skip this many
 }
 
-BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int offset)
-  : ATSXformCont(ctxt.txn(), ctxt.contentLen(), offset), // may be zero/zero..
+BlockReadTform::BlockReadTform(BlockSetAccess &ctxt, Transaction &txn, int offset)
+  : ATSTformVConn(txn, ctxt.contentLen(), offset), // may be zero/zero..
     _ctxt(ctxt),
     _blkSize(ctxt.blockSize())
 {
@@ -44,13 +46,13 @@ BlockReadXform::BlockReadXform(BlockSetAccess &ctxt, int offset)
   TSHttpTxnTransformedRespCache(ctxt.atsTxn(), 0);
 }
 
-BlockReadXform::~BlockReadXform() 
+BlockReadTform::~BlockReadTform() 
 {
   DEBUG_LOG("destruct start");
 }
 
 void
-BlockReadXform::launch_block_tests()
+BlockReadTform::add_block_reads()
 {
   auto assetLen = _ctxt.assetLen();
   auto blkSize = _ctxt.blockSize();
@@ -60,11 +62,11 @@ BlockReadXform::launch_block_tests()
   nxtBlk += _cacheVIOs.size();
 
   // create refcount-barrier from Deleter (called on last-ptr-copy dtor)
-  auto barrierLock = std::shared_ptr<BlockReadXform>(this, [this](void *ptr) {
+  auto barrierLock = std::shared_ptr<BlockReadTform>(this, [this](void *ptr) {
       read_block_tests(ptr); // notify on end/fail
     });
 
-  int limit = 10; // block-reads spawned at one time...
+  int limit = MAX_READ_GROUP; // block-reads spawned at one time...
  
   for ( auto i = keys.begin() + _cacheVIOs.size() ; i != keys.end() ; ++i, ++nxtBlk )
   {
@@ -74,9 +76,9 @@ BlockReadXform::launch_block_tests()
     _cacheVIOs.emplace_back(std::move(ref));
 
     if ( nxtBlk == finalBlk ) {
-      _cacheVIOs.back().add_outflow(bufferVC(),((assetLen-1) % blkSize)+1,0);
+      _cacheVIOs.back().add_outflow(ATSTFormVConn::outputVC(),((assetLen-1) % blkSize)+1,0);
     } else {
-      _cacheVIOs.back().add_outflow(bufferVC(),blkSize,0);
+      _cacheVIOs.back().add_outflow(ATSTFormVConn::outputVC(),blkSize,0);
     }
 
     TSCacheRead(_cacheVIOs.back(),keyp); // begin the read and write ...
@@ -88,7 +90,7 @@ BlockReadXform::launch_block_tests()
 
 // start read of all the blocks
 void
-BlockReadXform::read_block_tests(void *ptr)
+BlockReadTform::read_block_tests(void *ptr)
 {
   // simple test to see if we errored early...
 
@@ -105,7 +107,7 @@ BlockReadXform::read_block_tests(void *ptr)
   // scan *all* keys and vconns to check if ready
   //
   for( auto &&pxyVC : _cacheVIOs ) {
-    auto i = &pxyVC - &_cacheVIOs.front();
+    auto i = _lastid - (_ekeyit - _keyit);
     auto blkInd = _ctxt.firstIndex() + i;
 
     int error = pxyVC.error();
@@ -159,11 +161,11 @@ BlockReadXform::read_block_tests(void *ptr)
   // done scanning all keys
   //
 
-  if ( ! outputVIO() && nrdy > 0 ) {
+  if ( _cacheVIOs.size() <= MAX_READ_GROUP ) {
     _ctxt.cache_blk_hits(nrdy, _cacheVIOs.size() - nrdy);
   }
 
   if ( ! skip && ! minfailed ) {
-    launch_block_tests(); // next set!
+    add_block_reads(); // next set!
   }
 }

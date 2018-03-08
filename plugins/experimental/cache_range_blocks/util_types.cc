@@ -39,8 +39,8 @@ const int8_t base64_values[80] = {
 
 const char base64_chars[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-TSIOBuffer_t ATSVConn::g_emptyBuffer{ TSIOBufferCreate() };
-TSIOBufferReader_t ATSVConn::g_emptyReader{ TSIOBufferReaderAlloc(g_emptyBuffer.get()) };
+TSIOBuffer_p ATSVConn::g_emptyBuffer{ TSIOBufferCreate() };
+TSIOBufferReader_p ATSVConn::g_emptyReader{ TSIOBufferReaderAlloc(g_emptyBuffer.get()) };
 
 void
 forward_vio_event(TSEvent event, TSVIO tgt, TSCont mutexCont)
@@ -59,7 +59,7 @@ forward_vio_event(TSEvent event, TSVIO tgt, TSCont mutexCont)
 //  TSMutexLock(mutex);
 }
 
-ATSCacheKey::ATSCacheKey(const std::string &url, std::string const &etag, uint64_t offset) : TSCacheKey_t(TSCacheKeyCreate())
+ATSCacheKey::ATSCacheKey(const std::string &url, std::string const &etag, uint64_t offset) : TSCacheKey_p(TSCacheKeyCreate())
 {
   auto str = url;
   str.push_back('\0');
@@ -116,7 +116,7 @@ ATSCont::create_temp_tscont(TSCont mutexSrc, const std::shared_ptr<void> &ref)
 }
 
 // bare Continuation lambda adaptor
-ATSCont::ATSCont(TSCont mutexSrc) : TSCont_t(TSContCreate(&ATSCont::handleTSEventCB, ( mutexSrc ? TSContMutexGet(mutexSrc) : TSMutexCreate() )))
+ATSCont::ATSCont(TSCont mutexSrc) : TSCont_p(TSContCreate(&ATSCont::handleTSEventCB, ( mutexSrc ? TSContMutexGet(mutexSrc) : TSMutexCreate() )))
 {
   // point back here
   TSContDataSet(get(), this);
@@ -184,8 +184,8 @@ void ATSVIO::free_owned()
 
   // ivc_readers and all other ATSVIOs get *all* resources freed
   atscppapi::ScopedContinuationLock lock(cont());
-  TSIOBufferReader_t{operator TSIOBufferReader()}; // (if any)
-  TSIOBuffer_t{operator TSIOBuffer()}; // writers have other ways...
+  TSIOBufferReader_p{operator TSIOBufferReader()}; // (if any)
+  TSIOBuffer_p{operator TSIOBuffer()}; // writers have other ways...
 }
 
 void ATSVIO::complete_vio() 
@@ -367,7 +367,7 @@ void BufferVConn::init()
   }
 }
 
-TSVIO BufferVConn::add_ext_input(TSVConn srcvc, int64_t len) 
+TSVIO BufferVConn::add_direct_inflow(TSVConn srcvc, int64_t len) 
 {
   init();
 
@@ -528,7 +528,7 @@ void BufferVConn::on_pre_input(TSCont wrreply, int64_t len) // new input with da
   }
 
   // make a new input() vio.. [maybe extra immed event]
-  TSVConnWrite(*this, wrreply, g_emptyReader, len);
+  TSVConnWrite(*this, wrreply, g_emptyReader.get(), len);
 
   // TODO: instant-startup?
   if ( ! len ) { 
@@ -655,7 +655,7 @@ void BufferVConn::on_writer_ended(ATSVIO vio)
   // protect/free our buffer-readers...
 
   if ( vio == _teevio ) {
-    TSIOBufferReader_t{_teevio}; // quicklyh free our cloned reader 
+    TSIOBufferReader_p{_teevio}; // quicklyh free our cloned reader 
     return;
   }
 
@@ -671,8 +671,8 @@ void BufferVConn::on_writer_ended(ATSVIO vio)
 
   if ( rdr == _bufferAuxReaderU.get() ) {
     _bufferBaseReaderU.swap(_bufferAuxReaderU);
-  } else ( rdr && rdr != _bufferBaseReaderU.get() ) {
-    _bufferBaseReaderU.reset(rdr);
+  } else if ( rdr && rdr != _bufferBaseReaderU.get() ) {
+    _bufferBaseReaderU.reset(rdr); // now owned
   }
 
   // prepare for a sequential next write...
@@ -736,7 +736,7 @@ void ProxyVConn::on_event(TSEvent evt, void *edata)
         error_shutdown(ENOTBLK);
       }
 
-      if ( ! add_ext_input(cvconn,len) ) {
+      if ( ! add_direct_inflow(cvconn,len) ) {
       }
       break;
     }
@@ -777,18 +777,16 @@ int ATSFuture<T_DATA>::error() const
 }
 
 // Transform continuations
-ATSXformVConn::ATSXformVConn(atscppapi::Transaction &txn, int64_t bytes, int64_t offset)
-  : TransactionPlugin(txn), BufferVConn(txn, std::shared_ptr<TSContO_t>()),
-    _txn(static_cast<TSHttpTxn>(txn.getAtsHandle())),
-    _transformHook(TS_HTTP_LAST_HOOK)
+ATSTformVConn::ATSTformVConn(atscppapi::Transaction &txn, int64_t bytes, int64_t offset)
+  : TransactionPlugin(txn), BufferVConn(txn, TSCont_sp() )
 {
   ink_assert( bytes + offset >= 0LL );
 
   // point back here
   if ( ! offset && ! (bytes % ( 1 << 20 )) ) {
-    _transformHook = TS_HTTP_RESPONSE_CLIENT_HOOK; // no active output pumping needed...
+    tee_output();
   } else {
-    _transformHook = TS_HTTP_RESPONSE_TRANSFORM_HOOK;
+    input_output();
   }
 
   // get to method via callback
@@ -796,11 +794,9 @@ ATSXformVConn::ATSXformVConn(atscppapi::Transaction &txn, int64_t bytes, int64_t
   TSIOBufferWaterMarkSet(data().buffer(), 1<<16); // start to flush early 
 }
 
-ATSXformVConn::~ATSXformVConn()
+ATSTformVConn::~ATSTformVConn()
 {
   DEBUG_LOG("final destruct %p",operator TSVConn());
-
-  _transformHook = TS_HTTP_LAST_HOOK; // start no transform on late events...
 }
 
 static void sub_server_hdrs(atscppapi::Transaction &origTxn, TSIOBuffer reqBuffer, const std::string &rangeStr)
@@ -809,7 +805,7 @@ static void sub_server_hdrs(atscppapi::Transaction &origTxn, TSIOBuffer reqBuffe
   auto txnh = static_cast<TSHttpTxn>(origTxn.getAtsHandle());
   TSMLoc urlLoc, hdrLoc, loc;
   TSMBuffer buf;
-  TSMBuffer_t nbuf{ TSMBufferCreate() };
+  TSMBuffer_p nbuf{ TSMBufferCreate() };
 
   // make a clone [nothing uses mloc field handles]
   TSHttpTxnClientReqGet(txnh, &buf, &loc);
@@ -839,8 +835,8 @@ TSVConn
 spawn_sub_range(atscppapi::Transaction &origTxn, int64_t begin, int64_t end)
 {
   struct WriteHdr {
-     TSIOBuffer_t       _buf{ TSIOBufferCreate() };
-     TSIOBufferReader_t _rdr{ TSIOBufferReaderAlloc(_buf.get()) };
+     TSIOBuffer_p       _buf{ TSIOBufferCreate() };
+     TSIOBufferReader_p _rdr{ TSIOBufferReaderAlloc(_buf.get()) };
   };
 
   auto data = std::make_shared<WriteHdr>();
@@ -864,11 +860,11 @@ spawn_sub_range(atscppapi::Transaction &origTxn, int64_t begin, int64_t end)
   return vconn;
 }
 
-class BlockStoreXform;
-class BlockReadXform;
+class BlockBufferStore;
+class BlockReadTform;
 
-// template ATSCont::ATSCont(BlockStoreXform &obj, void (BlockStoreXform::*funcp)(TSEvent, void *, const decltype(nullptr) &), decltype(nullptr),TSCont);
-// template ATSCont::ATSCont(BlockReadXform &obj, void (BlockReadXform::*funcp)(TSEvent, void *, const decltype(nullptr) &), decltype(nullptr),TSCont);
+// template ATSCont::ATSCont(BlockBufferStore &obj, void (BlockBufferStore::*funcp)(TSEvent, void *, const decltype(nullptr) &), decltype(nullptr),TSCont);
+// template ATSCont::ATSCont(BlockReadTform &obj, void (BlockReadTform::*funcp)(TSEvent, void *, const decltype(nullptr) &), decltype(nullptr),TSCont);
 // template TSCont ATSCont::create_temp_tscont(TSCont, ATSVConnFuture &, const std::shared_ptr<void> &);
 
 //}

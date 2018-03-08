@@ -104,13 +104,13 @@ BlockSetAccess::~BlockSetAccess()
   {
     atscppapi::ScopedContinuationLock lock(_mutexOnlyCont); // to close
 
-    if ( _storeXform ) {
-      DEBUG_LOG("store destruct: refs:%ld",_storeXform.use_count());
-      _storeXform.reset(); // clear first
+    if ( _storeTform ) {
+      DEBUG_LOG("store destruct: refs:%ld",_storeTform.use_count());
+      _storeTform.reset(); // clear first
     }
-    if ( _readXform ) {
+    if ( _tform ) {
       DEBUG_LOG("read destruct");
-      _readXform.reset(); // clear next
+      _tform.reset(); // clear next
     }
     if ( ! _keysInRange.empty() ) {
       DEBUG_LOG("keys destruct: n:%ld",_keysInRange.size());
@@ -126,7 +126,6 @@ void
 BlockSetAccess::reset_range_keys()
 {
   _keysInRange.clear();
-  _keysInRange.reserve(indexCnt());
 
   if ( _etagStr.empty() || _beginByte < 0 || _beginByte >= _endByte ) {
     DEBUG_LOG("keys are all empty: etag:%s bytes=[%ld-%ld)", _etagStr.c_str(), _beginByte, _endByte);
@@ -220,7 +219,7 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
     }
 
     DEBUG_LOG("cache-resp-wr: stub len=unkn [blk:%ldK]", _blkSize/1024);
-    _storeXform = BlockStoreXform::start_cache_miss(*this, atsTxn(), _beginByte - firstIndex()*_blkSize);
+    _storeTform = _tform->full_cache_miss(*this, atsTxn(), _beginByte - firstIndex()*_blkSize);
     txn.resume();
     return;
   }
@@ -229,18 +228,16 @@ BlockSetAccess::handleReadCacheLookupComplete(Transaction &txn)
 
   // use known values (if enough) to create keys
   reset_range_keys(); 
-  _readXform = BlockReadXform::try_cache_hit(*this, _beginByte % _blkSize);
-  _readXform->launch_block_tests();
+  _tform = BlockReadTform::try_cache_hit(*this, txn, _beginByte % _blkSize);
+  _tform->add_block_reads();
 }
 
 void
 BlockSetAccess::cache_blk_hits(int nrdy, int failed) 
 {
   if ( ! nrdy ) {
-    _storeXform = BlockStoreXform::start_cache_miss(*this, atsTxn(), _beginByte - firstIndex()*_blkSize);
-  } else {
-    _readXform->init_enabled_transform();
-  }
+    _storeTform = _tform->full_cache_miss(*this, atsTxn(), _beginByte - firstIndex()*_blkSize);
+  } 
 
   txn().resume();
 }

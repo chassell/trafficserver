@@ -27,27 +27,26 @@
 #define BLOCK_COUNT_MINIMUM 50
 #define STUB_MAX_BYTES 1024
 
-BlockStoreXform::Ptr_t
-BlockStoreXform::start_cache_miss(BlockSetAccess &ctxt, TSHttpTxn txn, int64_t offset)
+BlockBufferStore::use_p
+BlockReadTform::full_cache_miss()
 {
-  TSHttpTxnCacheLookupStatusSet(txn, TS_CACHE_LOOKUP_MISS);
-  ctxt.registerHook(BlockSetAccess::HOOK_READ_RESPONSE_HEADERS);
+  TSHttpTxnCacheLookupStatusSet(_ctxt.atsTxn(), TS_CACHE_LOOKUP_MISS);
 
-  return std::make_shared<BlockStoreXform>(ctxt, offset);
+  registerHook(BlockSetAccess::HOOK_READ_RESPONSE_HEADERS);
+
+  return std::make_shared<BlockBufferStore>(std::move(outputVC()), _blkSize, _keyit, _ekeyit, _lastid);
 }
 
-BlockStoreXform::BlockStoreXform(BlockSetAccess &ctxt, int offset)
-  : BlockTeeXform(ctxt.txn(), 
-                  [this](TSIOBufferReader r, int64_t inpos, int64_t len, int64_t added) { this->handleBodyRead(r, inpos, len, added); },
-                  ctxt.contentLen(), 
-                  offset), // offset may be *negative*...
-    _ctxt(ctxt)
+BlockBufferStore::BlockBufferStore(BufferVConn &&bufferVConn, int64_t blksz, KeyRange_i bkey, KeyRange_i ekey, int lastid)
+  : _inputBuffer(std::move(bufferVConn)),
+	_keyit(std::move(bkey)), 
+    _ekeyit(std::move(ekey)), 
+    _lastid(lastid),
+    _blkSize(blksz)
 {
-  DEBUG_LOG("construct start: offset %d", offset);
-  reset_write_keys();
 }
 
-BlockStoreXform::~BlockStoreXform()
+BlockBufferStore::~BlockBufferStore()
 {
   DEBUG_LOG("destruct start: nwrites:%ld", write_count());
 }
@@ -80,7 +79,6 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
   if ( srvrAssetLen <= 0 )
   {
     DEBUG_LOG("rejecting due to unusable length: %s",srvrRange.c_str());
-    // _storeXform.reset(); // cannot perform transform!
     txn.resume();
     return; // no transform enabled
   }
@@ -102,7 +100,6 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
     DEBUG_LOG("rejecting due to unusable response: sbeg=%ld send=%ld cl=%ld beg=%ld range=%s / length=%s",
               _srvrBeginByte, _srvrEndByte, bodyBytes, _beginByte,
              srvrRange.c_str(),bodyLen.c_str());
-    // _storeXform.reset(); // cannot perform transform!
     txn.resume();
     return; // no transform enabled
   }
@@ -139,7 +136,7 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
     DEBUG_LOG("stub-reset: len=%#lx olen=%#lx (%ld-%ld) final=%s etag=%s", srvrAssetLen, _assetLen, _beginByte, _endByte, srvrRange.c_str(), currETag.c_str());
     // new stub needed!
 
-    _storeXform->new_asset_body(txn);
+    new_asset_body(txn);
     txn.resume(); // continue with expected transform
     return; // no transform enabled
   }
@@ -149,7 +146,6 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
   {
     // must reset list of blocks to match..
     reset_range_keys();
-    _storeXform->reset_write_keys(); // all new
     DEBUG_LOG("srvr-resp: reset len=%#lx (%ld-%ld) final=%s etag=%s", _assetLen, _beginByte, _endByte, srvrRange.c_str(), _etagStr.c_str());
   } else {
     // normal case with valid stub file in place?
@@ -157,22 +153,20 @@ BlockSetAccess::handleReadResponseHeaders(Transaction &txn)
   }
 
   // discover correct values...
-  _storeXform->init_enabled_transform();
   txn.resume();
 }
 
 
 void
-BlockStoreXform::new_asset_body(Transaction &txn) 
+BlockSetAccess::new_asset_body(Transaction &txn) 
 {
   auto &resp = txn.getServerResponse();
   auto &respHdrs = resp.getHeaders();
-  auto atsTxn = _ctxt.atsTxn();
 
   auto contentEnc = respHdrs.values(CONTENT_ENCODING_TAG);
-  auto storeBytes = _ctxt.contentLen();
-  auto minBlockAsset = BLOCK_COUNT_MINIMUM * _ctxt.blockSize();
-  auto maxBytes = _ctxt.assetLen();
+  auto storeBytes = contentLen();
+  auto minBlockAsset = BLOCK_COUNT_MINIMUM * blockSize();
+  auto maxBytes = assetLen();
 
   if ( ! contentEnc.empty() && contentEnc != "identity" )
   {
@@ -185,7 +179,7 @@ BlockStoreXform::new_asset_body(Transaction &txn)
   {
     // respond as if a if-range passed the whole file ...
     resp.setStatusCode(HTTP_STATUS_OK);
-    TSHttpTxnServerRespNoStoreSet(atsTxn,0); // must assume now we need to save these headers!
+    TSHttpTxnServerRespNoStoreSet(atsTxn(),0); // must assume now we need to save these headers!
     respHdrs.erase(CONTENT_RANGE_TAG); // as if it wasn't a 206 ever...
     DEBUG_LOG("cache-store of whole 206:\n-------\n%s\n------\n", respHdrs.wireStr().c_str());
     return; // no transform enabled
@@ -205,16 +199,13 @@ BlockStoreXform::new_asset_body(Transaction &txn)
   // big files only ....
 
   // knowing the etag/size means it's time to reset...
-  _ctxt.reset_range_keys();
-  reset_write_keys();
+  reset_range_keys();
 
-  reset_output_length(storeBytes);
-
-  TSHttpTxnUntransformedRespCache(atsTxn,0); // don't store untransformed!
+  TSHttpTxnUntransformedRespCache(atsTxn(),0); // don't store untransformed!
 
   if ( storeBytes <= STUB_MAX_BYTES ) {
-    TSHttpTxnServerRespNoStoreSet(atsTxn,0); // allow storage
-    TSHttpTxnTransformedRespCache(atsTxn,1);   // store transformed!
+    TSHttpTxnServerRespNoStoreSet(atsTxn(),0); // allow storage
+    TSHttpTxnTransformedRespCache(atsTxn(),1);   // store transformed!
 
     // respond as if a if-range failed...
     resp.setStatusCode(HTTP_STATUS_OK);
@@ -231,14 +222,13 @@ BlockStoreXform::new_asset_body(Transaction &txn)
     DEBUG_LOG("stub-create recurse post");
   }
 
-  init_enabled_transform();
 }
 
 
 TSCacheKey
-BlockStoreXform::next_valid_vconn(int64_t donepos, int64_t readypos, int64_t &skip)
+BlockBufferStore::next_valid_vconn(int64_t donepos, int64_t readypos, int64_t &skip)
 {
-  auto blksz = static_cast<int64_t>(_ctxt.blockSize());
+  auto blksz = _blkSize;
   auto firstBlk = _ctxt.firstIndex();
 
   skip = -1;
@@ -248,15 +238,14 @@ BlockStoreXform::next_valid_vconn(int64_t donepos, int64_t readypos, int64_t &sk
   // amt past boundary (maybe full block)
   auto fwdDist = ((donepos + blksz - 1) % blksz) + 1; // between 1 and blksz
   auto keyPos = donepos - fwdDist + blksz; // (can be same as donepos)
-  auto &keys = _keysToWrite;
   auto blk = keyPos / blksz;
 
   // find keyPos within this new span ... and before end
-  for ( ; blk < static_cast<int>(keys.size()) && keyPos <= readypos ; (keyPos += blksz),++blk ) 
+  for ( ; _keyit != _ekeyit && keyPos <= readypos ; ++_keyit, (keyPos += blksz), ++blk ) 
   {
-    if ( keys[blk] ) {
+    if ( *_keyit ) {
       skip = keyPos - donepos; // report if a skip is needed...
-      return keys[blk].get();
+      return _keyit->get();
     }
 
     // skip this...
@@ -274,7 +263,7 @@ BlockStoreXform::next_valid_vconn(int64_t donepos, int64_t readypos, int64_t &sk
 // called from writeHook
 //      -- after outputBuffer() was filled
 void
-BlockStoreXform::handleBodyRead(int64_t odonepos, int64_t oreadypos)
+BlockBufferStore::handleBodyRead(int64_t odonepos, int64_t oreadypos)
 {
   ThreadTxnID txnid{_txnid};
 
@@ -415,7 +404,7 @@ BlockStoreXform::handleBodyRead(int64_t odonepos, int64_t oreadypos)
   _wakeupCont = [](TSEvent, void *) { }; // last reference goes now
 }
 
-BlockWriteInfo::BlockWriteInfo(BlockStoreXform &store, ATSCacheKey &key, int blk) :
+BlockWriteInfo::BlockWriteInfo(BlockBufferStore &store, ATSCacheKey &key, int blk) :
       ProxyVConn{ [this](TSCont cont) -> TSAction { return TSCacheWrite(cont,this->_key); } },
       _writeXform{store.shared_from_this()}, 
       _ind(blk),
@@ -440,7 +429,7 @@ BlockWriteInfo::handleBlockWrite(TSCont cont, TSEvent event, void *edata)
   auto mutex = TSContMutexGet(cont);
 
   // *reset* value (destruct on old value!)
-  BlockStoreXform &store = *_writeXform; // doesn't change
+  BlockBufferStore &store = *_writeXform; // doesn't change
   auto wakeupCont = store._wakeupCont.get();
 
   _writeRef.reset(); // remove flag of write
